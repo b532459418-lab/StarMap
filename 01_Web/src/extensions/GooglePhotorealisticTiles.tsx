@@ -11,6 +11,7 @@ export function GooglePhotorealisticTiles({ show }: GooglePhotorealisticTilesPro
   return (
     <GooglePhotorealistic3DTileset
       showCreditsOnScreen
+      onlyUsingWithGoogleGeocoder
       onError={() => {
         console.warn('[starmap] Google Photorealistic 3D Tiles failed to load.')
       }}

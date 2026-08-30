@@ -1,12 +1,19 @@
+import type { ImageryProvider } from 'cesium'
 import {
   createMapSourceLayers as createOfficialMapSourceLayers,
   getInitialMapSource as getOfficialInitialMapSource,
   mapSourceOptions as officialMapSourceOptions,
 } from '../data/mapSources'
 import type { MapSourceId as OfficialMapSourceId } from '../data/mapSources'
-import { createGoogleImagery, googleConfigured } from './googleImagery'
+import { createGoogleImagery, createGoogleRoadmapOverlay, googleConfigured } from './googleImagery'
 
-type MapSourceLayers = ReturnType<typeof createOfficialMapSourceLayers>
+type OfficialMapSourceLayers = ReturnType<typeof createOfficialMapSourceLayers>
+
+// Google's label overlay can only be built asynchronously, so the official synchronous
+// `labels` type is widened here. Resium's ImageryLayer already accepts a promise.
+export type MapSourceLayers = Omit<OfficialMapSourceLayers, 'labels'> & {
+  labels?: ImageryProvider | Promise<ImageryProvider>
+}
 
 export type ExtendedMapSourceId = OfficialMapSourceId | 'google'
 export type MapSourceId = ExtendedMapSourceId
@@ -24,7 +31,7 @@ const configuredDefault = (import.meta.env.VITE_MAP_SOURCE ?? 'auto').trim().toL
 const googleOption: MapSourceOption = {
   id: 'google',
   label: '谷歌',
-  description: 'Google 全球卫星影像',
+  description: 'Google 卫星影像与中文注记',
   configured: googleConfigured,
 }
 
@@ -68,10 +75,25 @@ export const rememberMapSource = (source: MapSourceId) => {
   }
 }
 
+/**
+ * Providers are reused across switches so that returning to a source does not open a second Google
+ * session. Cesium's ImageryLayer.destroy() leaves the provider intact, so a cached provider stays
+ * usable after Resium removes its layer. Failed creations evict themselves to allow a later retry.
+ */
+const layerCache = new Map<MapSourceId, MapSourceLayers>()
+
 export const createMapSourceLayers = (source: MapSourceId): MapSourceLayers => {
-  if (source === 'google') {
-    return { base: createGoogleImagery() }
+  const cachedLayers = layerCache.get(source)
+  if (cachedLayers) return cachedLayers
+
+  const forget = () => {
+    layerCache.delete(source)
   }
 
-  return createOfficialMapSourceLayers(source)
+  const layers: MapSourceLayers = source === 'google'
+    ? { base: createGoogleImagery(forget), labels: createGoogleRoadmapOverlay(forget) }
+    : createOfficialMapSourceLayers(source)
+
+  layerCache.set(source, layers)
+  return layers
 }

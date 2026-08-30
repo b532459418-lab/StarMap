@@ -21,6 +21,7 @@ import type { DroneMediaItem } from './data/droneMedia'
 import { hasDroneMedia } from './data/droneMedia'
 import { localEditorAvailable } from './data/editorState'
 import { City3DToggle } from './extensions/City3DToggle'
+import { getInitialCity3DEnabled, rememberCity3DEnabled } from './extensions/city3dPreference'
 import { getInitialMapSource, rememberMapSource } from './extensions/mapSources'
 import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
@@ -73,7 +74,7 @@ function App() {
   const [pageBeforeUpdate, setPageBeforeUpdate] = useState<Exclude<AtlasPage, 'about'>>('map')
   const [imageryTuningByTheme, setImageryTuningByTheme] = useState(imageryTuningDefaults)
   const [mapSource, setMapSource] = useState<MapSourceId>(getInitialMapSource)
-  const [city3DEnabled, setCity3DEnabled] = useState(false)
+  const [city3DEnabled, setCity3DEnabled] = useState(getInitialCity3DEnabled)
   const [journeyViewMode, setJourneyViewMode] = useState<JourneyViewMode>('timeline')
   const [activeDroneMediaCityId, setActiveDroneMediaCityId] = useState<CityId>()
   const [activeDroneMediaItemId, setActiveDroneMediaItemId] = useState<string>()
@@ -399,7 +400,13 @@ function App() {
                 rememberMapSource(source)
               }}
             />
-            <City3DToggle enabled={city3DEnabled} onChange={setCity3DEnabled} />
+            <City3DToggle
+              enabled={city3DEnabled}
+              onChange={(enabled) => {
+                setCity3DEnabled(enabled)
+                rememberCity3DEnabled(enabled)
+              }}
+            />
             <MeteorShowerButton />
             <ReleaseUpdateButton
               active={activePage === 'about'}

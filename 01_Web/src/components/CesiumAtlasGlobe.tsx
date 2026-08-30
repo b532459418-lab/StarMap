@@ -1534,7 +1534,7 @@ export function CesiumAtlasGlobe({
           baseColor={Color.fromCssColorString(isNight ? '#07111f' : '#cbd5e1')}
           dynamicAtmosphereLighting={isNight}
           enableLighting={isNight}
-          show={showMapContent}
+          show={showMapContent && !showCity3DTiles}
           vertexShadowDarkness={isNight ? 0.48 : 0.3}
         />
         <CesiumSkyBox show={!isNight} />
