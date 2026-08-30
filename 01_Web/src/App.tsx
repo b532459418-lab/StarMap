@@ -20,8 +20,9 @@ import { JourneyYearCards } from './components/JourneyYearCards'
 import type { DroneMediaItem } from './data/droneMedia'
 import { hasDroneMedia } from './data/droneMedia'
 import { localEditorAvailable } from './data/editorState'
-import { getInitialMapSource, rememberMapSource } from './data/mapSources'
-import type { MapSourceId } from './data/mapSources'
+import { City3DToggle } from './extensions/City3DToggle'
+import { getInitialMapSource, rememberMapSource } from './extensions/mapSources'
+import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
 import { cities, cityById, countries, getCitiesForCountry, journeyDays, travelAtlasMeta } from './data/travelAtlas'
 import type { CityId, CountryId, JourneyDay, SelectionMode } from './types/travel'
@@ -72,6 +73,7 @@ function App() {
   const [pageBeforeUpdate, setPageBeforeUpdate] = useState<Exclude<AtlasPage, 'about'>>('map')
   const [imageryTuningByTheme, setImageryTuningByTheme] = useState(imageryTuningDefaults)
   const [mapSource, setMapSource] = useState<MapSourceId>(getInitialMapSource)
+  const [city3DEnabled, setCity3DEnabled] = useState(false)
   const [journeyViewMode, setJourneyViewMode] = useState<JourneyViewMode>('timeline')
   const [activeDroneMediaCityId, setActiveDroneMediaCityId] = useState<CityId>()
   const [activeDroneMediaItemId, setActiveDroneMediaItemId] = useState<string>()
@@ -296,6 +298,7 @@ function App() {
               imageryContrast={imageryTuning.contrast}
               imagerySaturation={imageryTuning.saturation}
               mapSource={mapSource}
+              showCity3DTiles={city3DEnabled}
               selectedCountryId={selectedCountryId}
               selectedCityId={selectedCityId}
               selectionMode={selectionMode}
@@ -396,6 +399,7 @@ function App() {
                 rememberMapSource(source)
               }}
             />
+            <City3DToggle enabled={city3DEnabled} onChange={setCity3DEnabled} />
             <MeteorShowerButton />
             <ReleaseUpdateButton
               active={activePage === 'about'}

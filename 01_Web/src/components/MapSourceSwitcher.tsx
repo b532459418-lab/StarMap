@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, Layers3 } from 'lucide-react'
-import { mapSourceOptions } from '../data/mapSources'
-import type { MapSourceId } from '../data/mapSources'
+import { mapSourceOptions } from '../extensions/mapSources'
+import type { MapSourceId } from '../extensions/mapSources'
 
 type MapSourceSwitcherProps = {
   value: MapSourceId

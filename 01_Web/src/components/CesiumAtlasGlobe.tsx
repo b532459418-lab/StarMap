@@ -28,8 +28,9 @@ import {
 import type { CesiumComponentRef } from 'resium'
 import { droneMediaById, droneMediaItems } from '../data/droneMedia'
 import type { DroneMediaItem } from '../data/droneMedia'
-import { createMapSourceLayers } from '../data/mapSources'
-import type { MapSourceId } from '../data/mapSources'
+import { GooglePhotorealisticTiles } from '../extensions/GooglePhotorealisticTiles'
+import { createMapSourceLayers } from '../extensions/mapSources'
+import type { MapSourceId } from '../extensions/mapSources'
 import { cities, cityById, countries, countryById, journeyDays, routes, travelAtlasDisplay } from '../data/travelAtlas'
 import type { City, CityId, CountryId, SelectionMode } from '../types/travel'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
@@ -43,6 +44,7 @@ type CesiumAtlasGlobeProps = {
   imageryContrast: number
   imagerySaturation: number
   mapSource: MapSourceId
+  showCity3DTiles?: boolean
   selectedCountryId?: CountryId
   selectedCityId?: CityId
   selectionMode: SelectionMode
@@ -497,6 +499,7 @@ export function CesiumAtlasGlobe({
   imageryContrast,
   imagerySaturation,
   mapSource,
+  showCity3DTiles = false,
   selectedCountryId,
   selectedCityId,
   selectionMode,
@@ -1525,6 +1528,7 @@ export function CesiumAtlasGlobe({
             show={showMapContent}
           />
         ) : null}
+        <GooglePhotorealisticTiles show={showCity3DTiles && showMapContent} />
         <Scene backgroundColor={Color.fromCssColorString(isNight ? '#010409' : '#dbeafe')} />
         <CesiumGlobe
           baseColor={Color.fromCssColorString(isNight ? '#07111f' : '#cbd5e1')}
