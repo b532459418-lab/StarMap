@@ -1,18 +1,38 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import cesium from 'vite-plugin-cesium'
 // @ts-expect-error Node-only Vite plugin is intentionally kept outside the browser TypeScript project.
 import { travelAtlasLocalEditor } from './scripts/local-editor-plugin.mjs'
+// @ts-expect-error Node-only profile helper is intentionally kept outside the browser TypeScript project.
+import { getPrivatePaths } from './scripts/private-profile.mjs'
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [travelAtlasLocalEditor(), react(), tailwindcss(), cesium()],
-  server: {
-    watch: {
-      ignored: [
-        '**/public/media/user/**',
-      ],
+export default defineConfig(({ mode }) => {
+  const profile = mode === 'personal' ? 'personal' : 'public'
+  const privatePaths = getPrivatePaths()
+  const envDir = profile === 'personal' ? privatePaths.configRoot : false
+  const personalEnv = profile === 'personal' ? loadEnv(mode, envDir, '') : {}
+
+  return {
+    // Public mode never reads repository-local .env files. Hosting variables from process.env still work.
+    envDir,
+    plugins: [
+      travelAtlasLocalEditor({
+        profile,
+        privateRoot: privatePaths.root,
+        cesiumAccessToken: personalEnv.VITE_CESIUM_ION_TOKEN,
+      }),
+      react(),
+      tailwindcss(),
+      cesium(),
+    ],
+    server: {
+      watch: {
+        ignored: [
+          '**/public/media/user/**',
+        ],
+      },
     },
-  },
+  }
 })

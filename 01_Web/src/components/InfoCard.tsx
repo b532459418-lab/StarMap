@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource } from '../data/mediaCatalog'
-import { addLocalTravelRecord, importLocalMedia, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState, uploadLocalMedia } from '../data/localEditorApi'
+import { addLocalTravelRecord, deleteHiddenLocalMedia, importLocalMedia, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState, uploadLocalMedia } from '../data/localEditorApi'
 import type { CitySearchOption } from '../data/localEditorApi'
 import { cityById, countryById, getCitiesForCountry } from '../data/travelAtlas'
 import type { CityId, Country, CountryId, SelectionMode } from '../types/travel'
@@ -66,6 +66,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   const [draftHiddenPhotoIds, setDraftHiddenPhotoIds] = useState<string[]>(travelAtlasEditorState.hiddenMediaIds)
   const [draftCoverPhotoId, setDraftCoverPhotoId] = useState<string | undefined>(cityCoverPhoto?.id)
   const [selectedCityOption, setSelectedCityOption] = useState<CitySearchOption>()
+  const [isManualCityEntry, setIsManualCityEntry] = useState(false)
+  const [manualCity, setManualCity] = useState({ nameZh: '', nameEn: '', lat: '', lng: '' })
   const [cityVisitDates, setCityVisitDates] = useState({ startDate: '', endDate: '' })
   const cityByDraftId = new Map(memoryCities.map((item) => [item.id, item]))
   const photoByDraftId = new Map(cityPhotos.map((item) => [item.id, item]))
@@ -130,8 +132,36 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   const addCity = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!country) return
-    if (!selectedCityOption) {
+    if (!selectedCityOption && !isManualCityEntry) {
       setEditorNotice('请先从候选列表中选择一个城市。')
+      return
+    }
+    const manualLat = Number(manualCity.lat)
+    const manualLng = Number(manualCity.lng)
+    const cityOption: CitySearchOption | undefined = isManualCityEntry
+      ? {
+          id: `manual-${manualCity.nameEn || manualCity.nameZh}`,
+          nameZh: manualCity.nameZh.trim(),
+          nameEn: (manualCity.nameEn || manualCity.nameZh).trim(),
+          countryCode: country.flagCode ?? '',
+          lat: manualLat,
+          lng: manualLng,
+          detail: '手动坐标',
+          provider: 'manual',
+        }
+      : selectedCityOption
+    if (
+      !cityOption?.nameZh
+      || !cityOption.nameEn
+      || (isManualCityEntry && (!manualCity.lat.trim() || !manualCity.lng.trim()))
+      || !Number.isFinite(cityOption.lat)
+      || !Number.isFinite(cityOption.lng)
+      || cityOption.lat < -90
+      || cityOption.lat > 90
+      || cityOption.lng < -180
+      || cityOption.lng > 180
+    ) {
+      setEditorNotice('请填写城市名称及有效经纬度。')
       return
     }
     setEditorBusy(true)
@@ -141,12 +171,12 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
         country: country.nameZh,
         country_en: country.nameEn,
         country_code: country.flagCode,
-        city: selectedCityOption.nameZh,
-        city_en: selectedCityOption.nameEn,
+        city: cityOption.nameZh,
+        city_en: cityOption.nameEn,
         start_date: cityVisitDates.startDate,
         end_date: cityVisitDates.endDate || undefined,
-        lat: selectedCityOption.lat,
-        lng: selectedCityOption.lng,
+        lat: cityOption.lat,
+        lng: cityOption.lng,
       })
       reloadAfterLocalSave()
     } catch (error) {
@@ -371,6 +401,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       setDraftHiddenCityIds(travelAtlasEditorState.hiddenCityIds)
                       setShowAddCity(false)
                       setSelectedCityOption(undefined)
+                      setIsManualCityEntry(false)
+                      setManualCity({ nameZh: '', nameEn: '', lat: '', lng: '' })
                       setCityVisitDates({ startDate: '', endDate: '' })
                       setEditorNotice('')
                     }}
@@ -391,17 +423,48 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
 
             {isCountryGrid && cityEditing && showAddCity ? (
               <form className="atlas-local-editor-form atlas-local-editor-form-dark" onSubmit={addCity} onClick={(event) => event.stopPropagation()}>
-                <p>添加到 {country?.nameZh}；选择结果后会自动带入中英文名与坐标。</p>
-                <LocationSearchField
-                  label="城市名称"
-                  placeholder="输入中文或 English，至少 2 个字…"
-                  selected={selectedCityOption}
-                  search={searchCityOptions}
-                  onSelect={setSelectedCityOption}
-                  minQueryLength={2}
-                  searchOnSubmit
-                  getMeta={(option) => option.detail}
-                />
+                {isManualCityEntry ? (
+                  <div className="atlas-local-editor-form-grid">
+                    <label className="atlas-local-editor-date-field">
+                      <span>城市名称</span>
+                      <input required value={manualCity.nameZh} onChange={(event) => setManualCity((value) => ({ ...value, nameZh: event.target.value }))} />
+                    </label>
+                    <label className="atlas-local-editor-date-field">
+                      <span>英文名（可选）</span>
+                      <input value={manualCity.nameEn} onChange={(event) => setManualCity((value) => ({ ...value, nameEn: event.target.value }))} />
+                    </label>
+                    <label className="atlas-local-editor-date-field">
+                      <span>纬度（-90～90）</span>
+                      <input required type="number" min="-90" max="90" step="any" value={manualCity.lat} onChange={(event) => setManualCity((value) => ({ ...value, lat: event.target.value }))} />
+                    </label>
+                    <label className="atlas-local-editor-date-field">
+                      <span>经度（-180～180）</span>
+                      <input required type="number" min="-180" max="180" step="any" value={manualCity.lng} onChange={(event) => setManualCity((value) => ({ ...value, lng: event.target.value }))} />
+                    </label>
+                  </div>
+                ) : (
+                  <LocationSearchField
+                    label="城市名称"
+                    placeholder="输入中文或 English，至少 2 个字…"
+                    selected={selectedCityOption}
+                    search={searchCityOptions}
+                    onSelect={setSelectedCityOption}
+                    minQueryLength={2}
+                    searchOnSubmit
+                    getMeta={(option) => option.detail}
+                  />
+                )}
+                <button
+                  type="button"
+                  className="atlas-local-editor-mode-toggle"
+                  onClick={() => {
+                    setIsManualCityEntry((value) => !value)
+                    setSelectedCityOption(undefined)
+                    setEditorNotice('')
+                  }}
+                >
+                  {isManualCityEntry ? '返回在线检索' : '搜索不到？手动填写坐标'}
+                </button>
                 <div className="atlas-local-editor-form-grid">
                   <label className="atlas-local-editor-date-field">
                     <span>到访日期</span>
@@ -412,11 +475,13 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     <input type="date" min={cityVisitDates.startDate || undefined} value={cityVisitDates.endDate} onChange={(event) => setCityVisitDates((dates) => ({ ...dates, endDate: event.target.value }))} />
                   </label>
                 </div>
-                <p className="atlas-local-editor-attribution">
-                  城市检索需要联网，数据来自{' '}
-                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>
-                </p>
-                <button type="submit" disabled={editorBusy || !selectedCityOption}>确认添加城市</button>
+                {!isManualCityEntry ? (
+                  <p className="atlas-local-editor-attribution">
+                    城市检索需要联网：优先使用 Cesium ion geocode；无权限、无结果或超时后回退{' '}
+                    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>。
+                  </p>
+                ) : null}
+                <button type="submit" disabled={editorBusy || (!isManualCityEntry && !selectedCityOption)}>确认添加城市</button>
               </form>
             ) : null}
 
@@ -444,24 +509,50 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
             ) : null}
 
             {isCityMode && photoEditing && hiddenPhotoIdsForCity.length > 0 ? (
-              <button
-                type="button"
-                className="atlas-local-editor-restore"
-                disabled={editorBusy}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  setEditorBusy(true)
-                  void updateLocalEditorState((current) => ({
-                    ...current,
-                    hiddenMediaIds: current.hiddenMediaIds.filter((id) => !hiddenPhotoIdsForCity.includes(id)),
-                  })).then(reloadAfterLocalSave).catch((error: unknown) => {
-                    setEditorNotice(error instanceof Error ? error.message : '恢复失败。')
-                    setEditorBusy(false)
-                  })
-                }}
-              >
-                恢复本城已隐藏照片（{hiddenPhotoIdsForCity.length}）
-              </button>
+              <div className="atlas-local-editor-hidden-actions">
+                <button
+                  type="button"
+                  className="atlas-local-editor-restore"
+                  disabled={editorBusy}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setEditorBusy(true)
+                    void updateLocalEditorState((current) => ({
+                      ...current,
+                      hiddenMediaIds: current.hiddenMediaIds.filter((id) => !hiddenPhotoIdsForCity.includes(id)),
+                    })).then(reloadAfterLocalSave).catch((error: unknown) => {
+                      setEditorNotice(error instanceof Error ? error.message : '恢复失败。')
+                      setEditorBusy(false)
+                    })
+                  }}
+                >
+                  恢复本城隐藏照片（{hiddenPhotoIdsForCity.length}）
+                </button>
+                <button
+                  type="button"
+                  className="atlas-local-editor-delete"
+                  disabled={editorBusy}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    const confirmed = window.confirm(`确定永久删除本城已隐藏的 ${hiddenPhotoIdsForCity.length} 张照片吗？\n\n这会同时删除投递箱原图、生成后的网页文件和目录记录，无法恢复。`)
+                    if (!confirmed) return
+                    setEditorBusy(true)
+                    setEditorNotice('正在彻底删除已隐藏照片…')
+                    void updateLocalEditorState((current) => ({
+                      ...current,
+                      hiddenMediaIds: [...new Set([...current.hiddenMediaIds, ...hiddenPhotoIdsForCity])],
+                    }))
+                      .then(() => deleteHiddenLocalMedia(city.id, hiddenPhotoIdsForCity))
+                      .then(reloadAfterLocalSave)
+                      .catch((error: unknown) => {
+                        setEditorNotice(error instanceof Error ? error.message : '彻底删除失败。')
+                        setEditorBusy(false)
+                      })
+                  }}
+                >
+                  彻底删除隐藏照片
+                </button>
+              </div>
             ) : null}
 
             {isCityMode && displayedCityPhotos.length === 0 ? (

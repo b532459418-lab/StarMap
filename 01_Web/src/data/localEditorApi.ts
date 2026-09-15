@@ -37,6 +37,7 @@ export type CitySearchOption = {
   lat: number
   lng: number
   detail: string
+  provider: 'cesium' | 'openstreetmap' | 'manual'
 }
 
 export const searchLocalCountries = async (query: string, signal?: AbortSignal) => {
@@ -143,6 +144,18 @@ export const deleteHiddenLocalMedia = async (cityId: string, ids: string[]) => {
     body: JSON.stringify({ cityId, ids }),
   })
   return parseResponse<{ deletedIds: string[]; deletedSourceFiles: number; output: string }>(response)
+}
+
+export const deleteHiddenLocalCountries = async (ids: string[]) => {
+  const response = await fetch('/__travelatlas/editor/countries/delete', {
+    method: 'POST',
+    headers: editorHeaders,
+    body: JSON.stringify({ ids }),
+  })
+  return parseResponse<{
+    deletedCountryIds: string[]
+    deletedRecordCount: number
+  }>(response)
 }
 
 export type LocalTravelRecordInput = {
