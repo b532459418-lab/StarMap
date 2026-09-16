@@ -45,6 +45,7 @@ type CesiumAtlasGlobeProps = {
   imagerySaturation: number
   mapSource: MapSourceId
   showCity3DTiles?: boolean
+  showLabelsOverlay?: boolean
   selectedCountryId?: CountryId
   selectedCityId?: CityId
   selectionMode: SelectionMode
@@ -500,6 +501,7 @@ export function CesiumAtlasGlobe({
   imagerySaturation,
   mapSource,
   showCity3DTiles = false,
+  showLabelsOverlay = true,
   selectedCountryId,
   selectedCityId,
   selectionMode,
@@ -1525,7 +1527,7 @@ export function CesiumAtlasGlobe({
             brightness={imageryBrightness}
             contrast={imageryContrast}
             saturation={imagerySaturation}
-            show={showMapContent}
+            show={showMapContent && showLabelsOverlay}
           />
         ) : null}
         <GooglePhotorealisticTiles show={showCity3DTiles && showMapContent} />

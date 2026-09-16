@@ -75,6 +75,10 @@ export const rememberMapSource = (source: MapSourceId) => {
   }
 }
 
+export const mapSourceHasLabelOverlay = (source: MapSourceId): boolean => (
+  source === 'google' || source === 'tianditu'
+)
+
 /**
  * Providers are reused across switches so that returning to a source does not open a second Google
  * session. Cesium's ImageryLayer.destroy() leaves the provider intact, so a cached provider stays
