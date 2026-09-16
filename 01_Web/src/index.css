@@ -3269,6 +3269,21 @@ button {
   stroke-width: 0.6;
 }
 
+.cesium-lab-page .atlas-mouse-control-modifier {
+  fill: rgba(125, 211, 252, 0.94);
+  stroke: rgba(224, 242, 254, 0.88);
+  stroke-width: 0.7;
+  filter: drop-shadow(0 0 4px rgba(56, 189, 248, 0.72));
+}
+
+.cesium-lab-page .atlas-mouse-control-modifier-label {
+  fill: rgba(2, 8, 16, 0.86);
+  font-size: 4.6px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  stroke: none;
+}
+
 .cesium-lab-page .atlas-mouse-control-motion {
   fill: none;
   stroke: rgba(125, 211, 252, 0.8);

@@ -5,6 +5,7 @@ import type { AtlasPage } from './components/AtlasHeader'
 import { CesiumAtlasGlobe } from './components/CesiumAtlasGlobe'
 import { CountrySelector } from './components/CountrySelector'
 import type { ThemeMode } from './components/DayNightToggle'
+import { CompassButton } from './components/CompassButton'
 import { MeteorShowerButton } from './components/MeteorShowerButton'
 import { MapSourceSwitcher } from './components/MapSourceSwitcher'
 import { MouseControlGuide } from './components/MouseControlGuide'
@@ -22,7 +23,9 @@ import { droneMediaById, hasDroneMedia } from './data/droneMedia'
 import { localEditorAvailable } from './data/editorState'
 import { City3DToggle } from './extensions/City3DToggle'
 import { getInitialCity3DEnabled, rememberCity3DEnabled } from './extensions/city3dPreference'
-import { getInitialMapSource, rememberMapSource } from './extensions/mapSources'
+import { LabelsToggle } from './extensions/LabelsToggle'
+import { getInitialMapLabelsEnabled, rememberMapLabelsEnabled } from './extensions/labelsPreference'
+import { getInitialMapSource, mapSourceHasLabelOverlay, rememberMapSource } from './extensions/mapSources'
 import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
 import { cities, cityById, countries, countryById, getCitiesForCountry, journeyDays, travelAtlasMeta } from './data/travelAtlas'
@@ -120,6 +123,7 @@ function App() {
   const [imageryTuningByTheme, setImageryTuningByTheme] = useState(imageryTuningDefaults)
   const [mapSource, setMapSource] = useState<MapSourceId>(getInitialMapSource)
   const [city3DEnabled, setCity3DEnabled] = useState(getInitialCity3DEnabled)
+  const [mapLabelsEnabled, setMapLabelsEnabled] = useState(getInitialMapLabelsEnabled)
   const [journeyViewMode, setJourneyViewMode] = useState<JourneyViewMode>(restoredJourneyViewMode)
   const [activeDroneMediaCityId, setActiveDroneMediaCityId] = useState<CityId | undefined>(restoredDroneCityId)
   const [activeDroneMediaItemId, setActiveDroneMediaItemId] = useState<string | undefined>(restoredDroneItemId)
@@ -373,6 +377,7 @@ function App() {
               imagerySaturation={imageryTuning.saturation}
               mapSource={mapSource}
               showCity3DTiles={city3DEnabled}
+              showLabelsOverlay={mapLabelsEnabled}
               selectedCountryId={selectedCountryId}
               selectedCityId={selectedCityId}
               selectionMode={selectionMode}
@@ -466,11 +471,20 @@ function App() {
                 )}
               </span>
             </button>
+            <CompassButton />
             <MapSourceSwitcher
               value={mapSource}
               onChange={(source) => {
                 setMapSource(source)
                 rememberMapSource(source)
+              }}
+            />
+            <LabelsToggle
+              available={mapSourceHasLabelOverlay(mapSource)}
+              enabled={mapLabelsEnabled}
+              onChange={(enabled) => {
+                setMapLabelsEnabled(enabled)
+                rememberMapLabelsEnabled(enabled)
               }}
             />
             <City3DToggle
