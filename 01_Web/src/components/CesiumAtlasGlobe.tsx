@@ -34,6 +34,13 @@ import type { MapSourceId } from '../extensions/mapSources'
 import { cities, cityById, countries, countryById, journeyDays, routes, travelAtlasDisplay } from '../data/travelAtlas'
 import type { City, CityId, CountryId, SelectionMode } from '../types/travel'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
+import {
+  bindTrackpadOrbit,
+  globeLookEventTypes,
+  globeRotateEventTypes,
+  globeTiltEventTypes,
+  globeZoomEventTypes,
+} from './cameraInput'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
 const maxCesiumDevicePixelRatio = 2
@@ -1103,6 +1110,15 @@ export function CesiumAtlasGlobe({
   }, [viewerReadyVersion])
 
   useEffect(() => {
+    if (!showMapContent) return undefined
+
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer) return undefined
+
+    return bindTrackpadOrbit(viewer.scene.canvas, () => viewerRef.current?.cesiumElement)
+  }, [showMapContent, viewerReadyVersion])
+
+  useEffect(() => {
     if (cameraScale !== 'world') return undefined
 
     const viewer = viewerRef.current?.cesiumElement
@@ -1549,7 +1565,11 @@ export function CesiumAtlasGlobe({
           enableTilt
           enableTranslate={cameraScale !== 'world'}
           enableZoom
-          inertiaZoom={0.72}
+          inertiaZoom={0.46}
+          lookEventTypes={globeLookEventTypes}
+          rotateEventTypes={globeRotateEventTypes}
+          tiltEventTypes={globeTiltEventTypes}
+          zoomEventTypes={globeZoomEventTypes}
         />
         <CesiumConstellationSky
           occludeMoonWithEarth={showMapContent}

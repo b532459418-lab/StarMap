@@ -4,60 +4,63 @@ type MouseControlGuideProps = {
   language: InterfaceLanguage
 }
 
-type MouseAction = 'left' | 'middle' | 'wheel'
+type GestureAction = 'drag' | 'scroll' | 'tilt'
 
-const controlCopy: Record<InterfaceLanguage, Array<{ action: MouseAction; key: string; label: string }>> = {
+const controlCopy: Record<InterfaceLanguage, Array<{ action: GestureAction; key: string; label: string }>> = {
   zh: [
-    { action: 'left', key: '左键', label: '拖动' },
-    { action: 'middle', key: '中键', label: '旋转' },
-    { action: 'wheel', key: '滚轮', label: '缩放' },
+    { action: 'drag', key: '单指拖动', label: '旋转地球' },
+    { action: 'scroll', key: '双指滑动', label: '缩放' },
+    { action: 'tilt', key: 'Ctrl+拖动', label: '俯仰' },
   ],
   en: [
-    { action: 'left', key: 'Left', label: 'Drag' },
-    { action: 'middle', key: 'Middle', label: 'Rotate' },
-    { action: 'wheel', key: 'Wheel', label: 'Zoom' },
+    { action: 'drag', key: 'One-finger drag', label: 'Orbit' },
+    { action: 'scroll', key: 'Two-finger scroll', label: 'Zoom' },
+    { action: 'tilt', key: 'Ctrl-drag', label: 'Tilt' },
   ],
 }
 
-function MouseIcon({ action }: { action: MouseAction }) {
+function GestureIcon({ action }: { action: GestureAction }) {
   return (
     <svg
       aria-hidden="true"
       className="atlas-mouse-control-icon"
       viewBox="0 0 28 36"
     >
-      <path
+      <rect
         className="atlas-mouse-control-shell"
-        d="M14 2.5c-5.1 0-9 3.9-9 9v10.8c0 6.1 3.3 10.9 9 10.9s9-4.8 9-10.9V11.5c0-5.1-3.9-9-9-9Z"
+        x="4.2"
+        y="3.2"
+        width="19.6"
+        height="29.6"
+        rx="4.8"
       />
-      <path className="atlas-mouse-control-divider" d="M5.4 11.6h17.2M14 2.9v8.7" />
-      {action === 'left' ? (
-        <path
-          className="atlas-mouse-control-active"
-          d="M13.1 4.3v6H6.7c.5-3.3 3.1-5.6 6.4-6Z"
-        />
+      {action === 'drag' ? (
+        <>
+          <circle className="atlas-mouse-control-active" cx="14" cy="16.2" r="2.3" />
+          <path className="atlas-mouse-control-motion" d="M8.2 16.2H6.1m15.8 0h-2.1M14 10.4V8.3m0 15.8v-2.1" />
+        </>
       ) : null}
-      {action === 'middle' ? (
-        <rect
-          className="atlas-mouse-control-active atlas-mouse-control-wheel"
-          x="12"
-          y="5"
-          width="4"
-          height="7.5"
-          rx="2"
-        />
+      {action === 'scroll' ? (
+        <>
+          <circle className="atlas-mouse-control-active" cx="11.1" cy="17" r="2.05" />
+          <circle className="atlas-mouse-control-active" cx="16.9" cy="17" r="2.05" />
+          <path className="atlas-mouse-control-motion" d="m14 8.2-2 2.4h4Zm0 19.6 2-2.4h-4Z" />
+        </>
       ) : null}
-      {action === 'wheel' ? (
+      {action === 'tilt' ? (
         <>
           <rect
-            className="atlas-mouse-control-active atlas-mouse-control-wheel"
-            x="12"
-            y="5"
-            width="4"
-            height="7.5"
-            rx="2"
+            className="atlas-mouse-control-modifier"
+            x="6.6"
+            y="9.4"
+            width="14.8"
+            height="8"
+            rx="1.7"
           />
-          <path className="atlas-mouse-control-motion" d="m25 8 1.5-1.8L28 8M26.5 6.4v4.2m-1.5 2.1 1.5 1.8 1.5-1.8" />
+          <text className="atlas-mouse-control-modifier-label" x="14" y="15.1" textAnchor="middle">
+            Ctrl
+          </text>
+          <path className="atlas-mouse-control-motion" d="M8.8 25.2h10.4m-2-2 2 2-2 2" />
         </>
       ) : null}
     </svg>
@@ -69,17 +72,17 @@ export function MouseControlGuide({ language }: MouseControlGuideProps) {
 
   return (
     <footer
-      aria-label={language === 'zh' ? '地图鼠标操作说明' : 'Map mouse controls'}
+      aria-label={language === 'zh' ? '地图触控板与鼠标操作说明' : 'Map trackpad and mouse controls'}
       className="atlas-mouse-guide"
     >
       <div className="atlas-mouse-guide-heading" aria-hidden="true">
-        <span>{language === 'zh' ? '鼠标操作' : 'Mouse controls'}</span>
+        <span>{language === 'zh' ? '触控板操作' : 'Trackpad controls'}</span>
         <span className="atlas-mouse-guide-line" />
       </div>
       <div className="atlas-mouse-guide-grid">
         {controls.map((control) => (
           <div className="atlas-mouse-guide-item" key={control.action}>
-            <MouseIcon action={control.action} />
+            <GestureIcon action={control.action} />
             <span className="atlas-mouse-guide-copy">
               <span>{control.key}</span>
               <strong>{control.label}</strong>
