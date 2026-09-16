@@ -1,0 +1,42 @@
+.atlas-compass-button {
+  border-radius: 999px;
+}
+
+.atlas-compass-icon {
+  width: 22px;
+  height: 22px;
+  overflow: visible;
+}
+
+.atlas-compass-ring {
+  fill: rgba(8, 16, 28, 0.35);
+  stroke: currentColor;
+  stroke-opacity: 0.42;
+  stroke-width: 1.4;
+}
+
+.atlas-compass-north {
+  fill: #7dd3fc;
+  filter: drop-shadow(0 0 4px rgba(56, 189, 248, 0.45));
+}
+
+.atlas-compass-south {
+  fill: rgba(148, 163, 184, 0.55);
+}
+
+.atlas-compass-label {
+  fill: #f8fafc;
+  font-size: 5.4px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.atlas-compass-button[data-aligned='false'] {
+  background: rgba(125, 211, 252, 0.11);
+  color: #7dd3fc;
+}
+
+.atlas-compass-button[data-aligned='true'] .atlas-compass-north {
+  fill: currentColor;
+  filter: none;
+}

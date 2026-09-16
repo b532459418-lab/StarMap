@@ -10,6 +10,7 @@ import {
   HeadingPitchRange,
   LabelStyle,
   Math as CesiumMath,
+  Matrix4,
   PolylineOutlineMaterialProperty,
   SceneTransforms,
   Viewer as CesiumViewer,
@@ -31,6 +32,7 @@ import type { DroneMediaItem } from '../data/droneMedia'
 import { GooglePhotorealisticTiles } from '../extensions/GooglePhotorealisticTiles'
 import { createMapSourceLayers } from '../extensions/mapSources'
 import type { MapSourceId } from '../extensions/mapSources'
+import { publishCameraAttitude, registerOrientationResetHandler, wrapHeadingDegrees } from '../data/cameraOrientation'
 import { cities, cityById, countries, countryById, journeyDays, routes, travelAtlasDisplay } from '../data/travelAtlas'
 import type { City, CityId, CountryId, SelectionMode } from '../types/travel'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
@@ -246,6 +248,29 @@ const cameraScaleForGlobeScale = (scale: number): CameraScale => {
   return 'world'
 }
 
+const viewCenterScratch = new Cartesian2()
+
+const pickViewTarget = (viewer: CesiumViewer) => {
+  const canvas = viewer.scene.canvas
+  viewCenterScratch.x = canvas.clientWidth / 2
+  viewCenterScratch.y = canvas.clientHeight / 2
+  const ray = viewer.camera.getPickRay(viewCenterScratch)
+  if (ray) {
+    const globeHit = viewer.scene.globe.pick(ray, viewer.scene)
+    if (globeHit) return globeHit
+  }
+  if (viewer.scene.pickPositionSupported) {
+    return viewer.scene.pickPosition(viewCenterScratch)
+  }
+  return undefined
+}
+
+const orientationResetDuration = () => (
+  typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ? 0
+    : 0.72
+)
+
 const createRoutePositions = (
   startLng: number,
   startLat: number,
@@ -370,6 +395,7 @@ type CameraCommandSource =
   | 'city'
   | 'country'
   | 'overview'
+  | 'orientation-reset'
 
 type CameraCommandRequest = {
   details: Record<string, unknown>
@@ -384,6 +410,7 @@ const droneLockAllowedCameraSources = new Set<CameraCommandSource>([
   'debug-direct-drone',
   'drone-item',
   'drone-group',
+  'orientation-reset',
 ])
 
 type TravelAtlasDebugCamera = {
@@ -532,6 +559,7 @@ export function CesiumAtlasGlobe({
   const cursorTrailNeedsResetRef = useRef(true)
   const lastCursorPointRef = useRef<{ x: number; y: number; time: number } | null>(null)
   const lastCameraFocusKeyRef = useRef<string | undefined>(undefined)
+  const worldCenterLockSuspendedRef = useRef(false)
   const cameraCommandCountRef = useRef(0)
   const debugDroneCameraLockUntilRef = useRef(0)
   const [viewerReadyVersion, setViewerReadyVersion] = useState(0)
@@ -1119,6 +1147,145 @@ export function CesiumAtlasGlobe({
   }, [showMapContent, viewerReadyVersion])
 
   useEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer) return undefined
+
+    const publishAttitudeFromViewer = (currentViewer: CesiumViewer) => {
+      if (currentViewer.isDestroyed()) return
+
+      const camera = currentViewer.camera
+      const cameraScale = cameraRuntimeRef.current.cameraScale
+      publishCameraAttitude({
+        defaultPitchDeg: cameraScaleStates[cameraScale].pitch,
+        headingDeg: wrapHeadingDegrees(CesiumMath.toDegrees(camera.heading)),
+        pitchDeg: CesiumMath.toDegrees(camera.pitch),
+        rollDeg: wrapHeadingDegrees(CesiumMath.toDegrees(camera.roll)),
+      })
+    }
+
+    const applyOrientationReset = () => {
+      if (viewer.isDestroyed()) return
+
+      executeCameraCommand({
+        details: { scale: cameraRuntimeRef.current.cameraScale },
+        reason: 'compass north-up',
+        run: (currentViewer) => {
+          const cameraScale = cameraRuntimeRef.current.cameraScale
+          const cameraState = cameraScaleStates[cameraScale]
+          const pitch = CesiumMath.toRadians(cameraState.pitch)
+          const duration = orientationResetDuration()
+          worldCenterLockSuspendedRef.current = true
+          const finishReset = () => {
+            worldCenterLockSuspendedRef.current = false
+            updateVisibleHemisphereRef.current()
+            publishAttitudeFromViewer(currentViewer)
+            currentViewer.scene.requestRender()
+          }
+
+          const flyOrSet = (
+            destination: Cartesian3,
+            orientation: {
+              direction?: Cartesian3
+              heading?: number
+              pitch?: number
+              roll?: number
+              up?: Cartesian3
+            },
+          ) => {
+            if (duration <= 0) {
+              currentViewer.camera.setView({ destination, orientation })
+              finishReset()
+              return
+            }
+            currentViewer.camera.flyTo({
+              complete: finishReset,
+              destination,
+              duration,
+              orientation,
+            })
+            currentViewer.scene.requestRender()
+          }
+
+          if (cameraScale === 'world') {
+            const destination = Cartesian3.clone(
+              currentViewer.camera.positionWC,
+              new Cartesian3(),
+            )
+            const direction = Cartesian3.normalize(
+              Cartesian3.negate(destination, new Cartesian3()),
+              new Cartesian3(),
+            )
+            const right = Cartesian3.normalize(
+              Cartesian3.cross(direction, Cartesian3.UNIT_Z, new Cartesian3()),
+              new Cartesian3(),
+            )
+            const up = Cartesian3.normalize(
+              Cartesian3.cross(right, direction, new Cartesian3()),
+              new Cartesian3(),
+            )
+            flyOrSet(destination, { direction, up })
+            return
+          }
+
+          const target = pickViewTarget(currentViewer)
+          if (target) {
+            const range = Math.min(
+              maximumZoomDistance,
+              Math.max(
+                currentViewer.scene.screenSpaceCameraController.minimumZoomDistance,
+                Cartesian3.distance(currentViewer.camera.positionWC, target),
+              ),
+            )
+            const offset = new HeadingPitchRange(0, pitch, range)
+            if (duration <= 0) {
+              currentViewer.camera.lookAt(target, offset)
+              currentViewer.camera.lookAtTransform(Matrix4.IDENTITY)
+              finishReset()
+              return
+            }
+            currentViewer.camera.flyToBoundingSphere(new BoundingSphere(target, 1), {
+              complete: finishReset,
+              duration,
+              offset,
+            })
+            currentViewer.scene.requestRender()
+            return
+          }
+
+          const cartographic = currentViewer.camera.positionCartographic
+          flyOrSet(
+            Cartesian3.fromRadians(
+              cartographic.longitude,
+              cartographic.latitude,
+              cartographic.height,
+            ),
+            {
+              heading: 0,
+              pitch,
+              roll: 0,
+            },
+          )
+        },
+        source: 'orientation-reset',
+      })
+    }
+
+    const syncAttitude = () => publishAttitudeFromViewer(viewer)
+
+    viewer.camera.changed.addEventListener(syncAttitude)
+    viewer.scene.postRender.addEventListener(syncAttitude)
+    const unregisterReset = registerOrientationResetHandler(applyOrientationReset)
+    syncAttitude()
+    return () => {
+      unregisterReset()
+      if (!viewer.isDestroyed()) {
+        viewer.camera.changed.removeEventListener(syncAttitude)
+        viewer.scene.postRender.removeEventListener(syncAttitude)
+      }
+    }
+  }, [executeCameraCommand, viewerReadyVersion])
+
+  useEffect(() => {
     if (cameraScale !== 'world') return undefined
 
     const viewer = viewerRef.current?.cesiumElement
@@ -1149,7 +1316,7 @@ export function CesiumAtlasGlobe({
     }
 
     const lockWorldCenter = () => {
-      if (viewer.isDestroyed()) return
+      if (viewer.isDestroyed() || worldCenterLockSuspendedRef.current) return
 
       Cartesian3.clone(viewer.camera.positionWC, lockedPosition)
       Cartesian3.normalize(viewer.camera.positionWC, positionDirection)
