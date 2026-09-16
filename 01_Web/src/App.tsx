@@ -5,6 +5,7 @@ import type { AtlasPage } from './components/AtlasHeader'
 import { CesiumAtlasGlobe } from './components/CesiumAtlasGlobe'
 import { CountrySelector } from './components/CountrySelector'
 import type { ThemeMode } from './components/DayNightToggle'
+import { CompassButton } from './components/CompassButton'
 import { MeteorShowerButton } from './components/MeteorShowerButton'
 import { MapSourceSwitcher } from './components/MapSourceSwitcher'
 import { MouseControlGuide } from './components/MouseControlGuide'
@@ -470,6 +471,7 @@ function App() {
                 )}
               </span>
             </button>
+            <CompassButton />
             <MapSourceSwitcher
               value={mapSource}
               onChange={(source) => {
