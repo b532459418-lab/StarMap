@@ -62,6 +62,8 @@ type CesiumAtlasGlobeProps = {
   resetVersion: number
   isNight: boolean
   showMapContent?: boolean
+  /** 足迹图层（PRD v0.4 FR-LP）。只门控城市标记与路线，不影响底图、相机与媒体标记。 */
+  showTravelLayer?: boolean
   activeDroneMediaCityId?: CityId
   activeDroneMediaItemId?: string
   onSelectCity: (cityId: CityId) => void
@@ -543,6 +545,7 @@ export function CesiumAtlasGlobe({
   resetVersion,
   isNight,
   showMapContent = true,
+  showTravelLayer = true,
   activeDroneMediaCityId,
   activeDroneMediaItemId,
   onSelectCity,
@@ -1773,7 +1776,7 @@ export function CesiumAtlasGlobe({
             <Entity
               key={route.id}
               name={`${route.journeyId}: ${route.fromCityId} to ${route.toCityId}`}
-              show={showMapContent && isVisible}
+              show={showMapContent && showTravelLayer && isVisible}
               polyline={{
                 arcType: ArcType.NONE,
                 clampToGround: false,
@@ -1807,7 +1810,7 @@ export function CesiumAtlasGlobe({
             <Entity
               key={city.id}
               name={`${city.nameEn ?? city.nameZh ?? city.id} · ${visitCount} visit records`}
-              show={showMapContent && (visibleCityIds?.has(city.id) ?? true)}
+              show={showMapContent && showTravelLayer && (visibleCityIds?.has(city.id) ?? true)}
               position={cityPosition(city.lng, city.lat)}
               onClick={() => onSelectCity(city.id)}
               billboard={showHoverGlow ? {

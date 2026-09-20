@@ -7,6 +7,7 @@ import { CountrySelector } from './components/CountrySelector'
 import type { ThemeMode } from './components/DayNightToggle'
 import { CompassButton } from './components/CompassButton'
 import { MeteorShowerButton } from './components/MeteorShowerButton'
+import { LayerPanel } from './components/LayerPanel'
 import { MapSourceSwitcher } from './components/MapSourceSwitcher'
 import { MouseControlGuide } from './components/MouseControlGuide'
 import { DroneMediaCard } from './components/DroneMediaCard'
@@ -21,6 +22,7 @@ import { JourneyYearCards } from './components/JourneyYearCards'
 import type { DroneMediaItem } from './data/droneMedia'
 import { droneMediaById, hasDroneMedia } from './data/droneMedia'
 import { localEditorAvailable } from './data/editorState'
+import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
 import { City3DToggle } from './extensions/City3DToggle'
 import { getInitialCity3DEnabled, rememberCity3DEnabled } from './extensions/city3dPreference'
 import { LabelsToggle } from './extensions/LabelsToggle'
@@ -124,6 +126,7 @@ function App() {
   const [mapSource, setMapSource] = useState<MapSourceId>(getInitialMapSource)
   const [city3DEnabled, setCity3DEnabled] = useState(getInitialCity3DEnabled)
   const [mapLabelsEnabled, setMapLabelsEnabled] = useState(getInitialMapLabelsEnabled)
+  const [layerVisibility, setLayerVisibility] = useState(getInitialLayerVisibility)
   const [journeyViewMode, setJourneyViewMode] = useState<JourneyViewMode>(restoredJourneyViewMode)
   const [activeDroneMediaCityId, setActiveDroneMediaCityId] = useState<CityId | undefined>(restoredDroneCityId)
   const [activeDroneMediaItemId, setActiveDroneMediaItemId] = useState<string | undefined>(restoredDroneItemId)
@@ -385,6 +388,7 @@ function App() {
               resetVersion={globeResetVersion}
               isNight={activeTheme === 'night'}
               showMapContent={activePage === 'map'}
+              showTravelLayer={layerVisibility.travel !== false}
               activeDroneMediaCityId={activeDroneMediaCityId}
               activeDroneMediaItemId={activeDroneMediaItemId}
               onSelectCity={selectCity}
@@ -472,6 +476,14 @@ function App() {
               </span>
             </button>
             <CompassButton />
+            <LayerPanel
+              visibility={layerVisibility}
+              onToggle={(layerId, visible) => {
+                const next = { ...layerVisibility, [layerId]: visible }
+                setLayerVisibility(next)
+                rememberLayerVisibility(next)
+              }}
+            />
             <MapSourceSwitcher
               value={mapSource}
               onChange={(source) => {
