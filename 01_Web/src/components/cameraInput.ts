@@ -28,10 +28,12 @@ export const globeTiltEventTypes = [
   { eventType: CameraEventType.WHEEL, modifier: KeyboardEventModifier.ALT },
 ]
 
-export const globeLookEventTypes = {
-  eventType: CameraEventType.LEFT_DRAG,
-  modifier: KeyboardEventModifier.SHIFT,
-}
+// 必须是数组：resium 的 ScreenSpaceCameraController.lookEventTypes 只接受
+// any[] | CameraEventType | undefined，裸的 { eventType, modifier } 对象过不了 tsc。
+// Cesium 运行时两种写法等价，所以包一层数组不改变行为。
+export const globeLookEventTypes = [
+  { eventType: CameraEventType.LEFT_DRAG, modifier: KeyboardEventModifier.SHIFT },
+]
 
 const wheelDeltaToPixels = (delta: number, deltaMode: number) => {
   if (deltaMode === WheelEvent.DOM_DELTA_LINE) return delta * lineDeltaToPixels
