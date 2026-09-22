@@ -127,6 +127,14 @@ const cityKeyForRecord = (record: TravelMapRecord) =>
   `${countryKeyForRecord(record)}__${slugify(record.city_en || record.city || record.id)}`
 
 const rawRecords = exportData.records.filter((record) => record.status !== 'planned')
+
+// FR-TA-5：上面那条 `planned` 过滤【保持不变】。planned 记录由
+// src/worldgraph/adapters/plannedRecords.ts 消费（FR-WTG-7），所以这里额外导出
+// 未经过滤的原始 planned 记录与国家代码表，供调用方传给那个纯函数 Adapter。
+// Core 不能 import 本文件，因此这两份数据只能由调用方以参数传入。
+export const plannedRecords: TravelMapRecord[] = exportData.records.filter((record) => record.status === 'planned')
+export const travelAtlasCountryCodes: Record<string, string> = display.countryCodes ?? {}
+
 const allRecords = rawRecords.map(normalizeRecordCountry).map(withDisplayCategory)
 const hiddenEditorCountryIds = new Set(travelAtlasEditorState.hiddenCountryIds)
 const hiddenEditorCityIds = new Set(travelAtlasEditorState.hiddenCityIds)

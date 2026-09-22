@@ -1,4 +1,5 @@
 import type { TravelAtlasEditorState } from './editorState'
+import type { WantToGoItem } from '../worldgraph/adapters/wantToGo.ts'
 
 type EditorResponse<T> = {
   ok: boolean
@@ -178,6 +179,52 @@ export const addLocalTravelRecord = async (input: LocalTravelRecordInput) => {
     body: JSON.stringify(input),
   })
   return parseResponse<{ id: string; countryId: string; cityId: string }>(response)
+}
+
+// ---- Want to Go（FR-WTG-6 / D26）----
+// 写入路径的唯一出口就是本文件：组件里不得出现任何 fetch。
+
+export type LocalWantToGoInput = {
+  place: {
+    kind: 'city' | 'country'
+    nameZh?: string
+    nameEn: string
+    countryCode: string
+    lat?: number
+    lng?: number
+  }
+  note?: string
+  addedAt?: string
+}
+
+export const addLocalWantToGo = async (input: LocalWantToGoInput) => {
+  const response = await fetch('/__travelatlas/editor/wanttogo', {
+    method: 'POST',
+    headers: editorHeaders,
+    body: JSON.stringify(input),
+  })
+  return parseResponse<{ id: string; item: WantToGoItem }>(response)
+}
+
+export const updateLocalWantToGo = async (
+  id: string,
+  patch: { hidden?: boolean; note?: string },
+) => {
+  const response = await fetch('/__travelatlas/editor/wanttogo/update', {
+    method: 'POST',
+    headers: editorHeaders,
+    body: JSON.stringify({ id, ...patch }),
+  })
+  return parseResponse<{ item: WantToGoItem }>(response)
+}
+
+export const deleteHiddenLocalWantToGo = async (ids: string[]) => {
+  const response = await fetch('/__travelatlas/editor/wanttogo/delete', {
+    method: 'POST',
+    headers: editorHeaders,
+    body: JSON.stringify({ ids }),
+  })
+  return parseResponse<{ deletedIds: string[] }>(response)
 }
 
 export const reloadAfterLocalSave = () => window.location.reload()
