@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { access, copyFile, cp, mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import sharp from 'sharp'
 import { EnvHttpProxyAgent, fetch as proxyAwareFetch } from 'undici'
 import worldCountries from 'world-countries'
+import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -65,16 +66,6 @@ const emptyState = {
   coverMediaByCity: {},
   droneOrderByCity: {},
   hiddenDroneMediaIds: [],
-}
-
-const exists = async (target) => access(target).then(() => true, () => false)
-const readJson = async (target, fallback) => {
-  try {
-    return JSON.parse(await readFile(target, 'utf8'))
-  } catch (error) {
-    if (error?.code === 'ENOENT') return fallback
-    throw error
-  }
 }
 
 const sendJson = (response, status, body) => {
@@ -143,14 +134,6 @@ const normalizeState = (value) => {
     hiddenDroneMediaIds: isStringArray(value.hiddenDroneMediaIds) ? value.hiddenDroneMediaIds : [],
     updatedAt: new Date().toISOString(),
   }
-}
-
-const atomicJsonWrite = async (target, value) => {
-  await mkdir(path.dirname(target), { recursive: true })
-  if (await exists(target)) await copyFile(target, target.replace(/\.json$/i, '.bak'))
-  const temporaryPath = `${target}.${process.pid}.tmp`
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  await rename(temporaryPath, target)
 }
 
 const slugify = (value) => value

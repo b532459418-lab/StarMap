@@ -29,5 +29,6 @@ export function getPrivatePaths(environment = process.env) {
     localTravelMapPath: path.join(dataRoot, 'travel-map.local.json'),
     mediaCatalogPath: path.join(dataRoot, 'user-media.local.json'),
     mediaSourceIndexPath: path.join(dataRoot, 'media-source-index.local.json'),
+    wantToGoPath: path.join(dataRoot, 'want-to-go.local.json'),
   }
 }
