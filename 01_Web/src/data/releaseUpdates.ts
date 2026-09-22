@@ -16,7 +16,7 @@ type UpdateCache = {
   release: GitHubRelease | null
 }
 
-const repository = import.meta.env.VITE_GITHUB_REPOSITORY?.trim() || 'Aisland-SJL/StarMap'
+const repository = import.meta.env.VITE_GITHUB_REPOSITORY?.trim() || 'b532459418-lab/StarMap'
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const repositoryConfigured = repositoryPattern.test(repository)
 const currentVersion = packageJson.version
@@ -45,7 +45,7 @@ const isNewerVersion = (candidate: string, current: string) => {
 
 const updatePrompt = (release: GitHubRelease) => `请帮我安全更新 StarMap 到 ${release.tag_name}。
 
-开始前先读取项目中的 AGENTS.md、README 和 Handoff（如果存在），检查我当前的 Git 状态、本地修改和私有数据边界。请从上游 Release ${release.html_url} 获取变更，先解释哪些文件会受影响，再以合并方式更新；不要覆盖我的 .env.local、私有旅行数据、个人媒体或未提交修改。若出现冲突，保留我的内容并逐项说明。完成后运行项目规定的 lint、build、privacy:check 和 media:check，并报告仍需我决定的事项。`
+开始前先读取项目中的 AGENTS.md、README 和 Handoff（如果存在），检查我当前的 Git 状态、本地修改和私有数据边界。请从 StarMap 官方 Release ${release.html_url} 获取变更，先解释哪些文件会受影响，再以合并方式更新；不要覆盖我的 .env.local、私有旅行数据、个人媒体或未提交修改。若出现冲突，保留我的内容并逐项说明。完成后运行项目规定的 lint、build、privacy:check 和 media:check，并报告仍需我决定的事项。`
 
 export function useReleaseUpdates() {
   const [status, setStatus] = useState<UpdateStatus>(repositoryConfigured ? 'idle' : 'unconfigured')

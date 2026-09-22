@@ -117,7 +117,7 @@ npm run media:check
 
 ## Updates
 
-The bottom-right version button checks the latest [GitHub Release](https://github.com/Aisland-SJL/StarMap/releases) at most once every 12 hours. A newer unseen version activates a breathing light and shows release notes plus a guarded AI-update prompt. It never overwrites your project automatically.
+The bottom-right version button checks the latest [GitHub Release](https://github.com/b532459418-lab/StarMap/releases) at most once every 12 hours. A newer unseen version activates a breathing light and shows release notes plus a guarded AI-update prompt. It never overwrites your project automatically.
 
 The button is reversible: click once to open the update page, then click it again to return to the Map or Journey view you were using.
 
