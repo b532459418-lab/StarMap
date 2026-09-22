@@ -71,7 +71,7 @@ Codex 固定使用端口 5173，DSH 固定使用端口 5174。启用 strict port
 - Personal countries, cities, routes, coordinates, and display rules belong only in external `06_private/data/travel-map.local.json` (or the standalone clone's configured private root).
 - Do not add built-in personal items to `droneMedia.ts`, personal coordinate tables, or tracked public media paths.
 - Run `npm run release:check` before any public-release preparation. It audits privacy and rebuilds from a clean archive containing only Git-tracked files.
-- Never publish this repository's existing `.git` history. Create the eventual public repository from the documented allowlist with a fresh history.
+- This repository is public. Every commit is published, so private data must never enter the working tree in the first place; `.gitignore` and `npm run release:check` are backstops, not the boundary.
 
 ## Documentation
 

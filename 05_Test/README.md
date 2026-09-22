@@ -5,15 +5,19 @@
 Run from `../01_Web/`:
 
 ```powershell
+npm run lint
+npm test
+npm run build:public
 npm run privacy:check
 npm run media:check
-npm run lint
-npm run build
 ```
+
+Before a public release also run `npm run release:check` from PowerShell or cmd (not Git Bash; its GNU `tar` misreads Windows drive letters).
 
 ## Manual Smoke Test
 
 - Map opens with Cesium imagery or the configured fallback.
+- The dock Layers button opens the layer panel; toggling Travel hides and restores country and city markers without reloading the globe, and the choice survives a page reload.
 - Country and city selectors update camera focus and InfoCard content.
 - Map and Journey navigation works; the bottom version button opens the update page and a second click returns to the previously active Map or Journey view.
 - Journey Year Cards and Timeline switch correctly.

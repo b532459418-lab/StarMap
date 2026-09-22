@@ -61,7 +61,8 @@ GitHub 不包含个人照片和旅行数据。若个人网站本身部署到公�
 
 公共 GitHub 只维护源码仓库中的已跟踪文件。允许范围包括：
 
-- 根目录 `README.md`、`README.zh.md`、`LICENSE`、`AGENTS.md` 与 `.gitignore`。
+- 根目录 `README.md`、`README.zh.md`、`LICENSE`、`NOTICE.md`、`THIRD_PARTY_NOTICES.md`、`CONTRIBUTING.md`、`SECURITY.md`、`TRADEMARK.md`、`AGENTS.md`、`.gitignore` 与 `.github/`。
+- `docs/`：版本与许可说明（`editions.md`）、发布说明与产品图片。
 - `01_Web/` 中的源码、测试、脚本与 `.env.example`，不含任何私有层内容、构建输出和本地缓存。
 - `02_Assets/MediaInbox/README.md` 与 `_country-template/`。
 - `02_Assets/README.md`、媒体与旅行数据 Schema、导入协议、开源隐私边界、公开安装说明和明确授权的示例资产。
