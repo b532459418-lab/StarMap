@@ -151,6 +151,7 @@ StarMap 是一条产品线，分为三部分，本仓库只包含第一部分。
 功能归属的判断标准：如果用户不注册、不联网，就能靠本地 StarMap 完成自己的完整个人世界图谱，那这项能力就属于本 MIT 仓库。详见 [docs/editions.md](docs/editions.md)。
 
 - 本仓库的所有版本（包括全部历史发布）都是 MIT，不会追溯更改许可。
+- StarMap Core（World Graph 模型与 Layer Registry）位于 [`01_Web/src/worldgraph/`](01_Web/src/worldgraph/README.md)。
 - 上游署名与 fork 历史：[NOTICE.md](NOTICE.md)
 - 第三方软件、数据与服务条款：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 - StarMap 名称与 Logo 不在代码许可范围内：[TRADEMARK.md](TRADEMARK.md)
