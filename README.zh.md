@@ -115,7 +115,7 @@ npm run media:check
 
 ## 后续更新
 
-底部右侧的版本按钮最多每 12 小时检查一次最新 [GitHub Release](https://github.com/Aisland-SJL/StarMap/releases)。发现未读新版本后，按钮会显示呼吸灯；更新页会展示公告、版本说明和一段安全的 AI 更新指令。网站不会自动覆盖你的项目。
+底部右侧的版本按钮最多每 12 小时检查一次最新 [GitHub Release](https://github.com/b532459418-lab/StarMap/releases)。发现未读新版本后，按钮会显示呼吸灯；更新页会展示公告、版本说明和一段安全的 AI 更新指令。网站不会自动覆盖你的项目。
 
 该按钮支持反选：第一次点击进入更新页，再次点击会回到此前使用的 Map 或 Journey 页面。
 

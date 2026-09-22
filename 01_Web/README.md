@@ -89,7 +89,7 @@ The public interface deliberately uses neutral copy that a new user can replace 
 
 ## GitHub Release Updates
 
-The official build checks `Aisland-SJL/StarMap` by default. A fork can override the source with:
+The official build checks `b532459418-lab/StarMap` by default. A fork can override the source with:
 
 ```text
 VITE_GITHUB_REPOSITORY=your-name/your-fork
