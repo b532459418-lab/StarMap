@@ -17,7 +17,6 @@ import {
   buildModuleUrl,
 } from 'cesium'
 import { useCesium } from 'resium'
-import { consumeMeteorShower } from '../data/meteorShower'
 
 type StarDefinition = {
   longitude: number
@@ -49,8 +48,6 @@ const galaxyLatitudeShift = -7
 const auroraDistanceFromCamera = 77_000_000
 const auroraDriftRadiansPerSecond = 0.42
 const auroraBankCount = 6
-const meteorDistanceFromCamera = 9_000_000
-const meteorTrailSegmentCount = 9
 
 // Simplified bright-star topology based on the IAU / Sky & Telescope
 // constellation-figure convention. Each zodiac constellation deliberately
@@ -429,10 +426,6 @@ export function CesiumConstellationSky({
     const galaxyGlowCollection = viewer.scene.primitives.add(new PolylineCollection())
     const auroraGlowCollection = viewer.scene.primitives.add(new PolylineCollection())
     const lineCollection = viewer.scene.primitives.add(new PolylineCollection())
-    const meteorPointCollection = viewer.scene.primitives.add(
-      new PointPrimitiveCollection({ blendOption: BlendOption.TRANSLUCENT }),
-    )
-    const meteorTrailCollection = viewer.scene.primitives.add(new PolylineCollection())
 
     galaxyGlowLayers.forEach((layer, layerIndex) => {
       galaxyGlowCollection.add({
@@ -469,51 +462,6 @@ export function CesiumConstellationSky({
       })
     })
 
-    // 原版流星雨使用 34 个槽位：日常最多少量同屏，3 秒召唤窗口可拉满密度。
-    const meteorSlots = Array.from({ length: 34 }, () => {
-      const trailMaterials = Array.from(
-        { length: meteorTrailSegmentCount },
-        (_, segmentIndex) => Material.fromType('Color', {
-          color: Color.fromCssColorString(segmentIndex > 5 ? '#f0f9ff' : '#67e8f9').withAlpha(0),
-        }),
-      )
-      return {
-        active: false,
-        duration: 1.8,
-        end: new Cartesian3(),
-        headCore: meteorPointCollection.add({
-          color: Color.WHITE.withAlpha(0),
-          disableDepthTestDistance: 0,
-          outlineColor: Color.fromCssColorString('#a5f3fc').withAlpha(0),
-          outlineWidth: 1.5,
-          pixelSize: 4.6,
-          position: Cartesian3.ZERO,
-          show: false,
-        }),
-        headGlow: meteorPointCollection.add({
-          color: Color.fromCssColorString('#67e8f9').withAlpha(0),
-          disableDepthTestDistance: 0,
-          outlineColor: Color.fromCssColorString('#e0f2fe').withAlpha(0),
-          outlineWidth: 2,
-          pixelSize: 11,
-          position: Cartesian3.ZERO,
-          show: false,
-        }),
-        startedAt: 0,
-        start: new Cartesian3(),
-        tailLength: 0.12,
-        trailMaterials,
-        trailSegments: trailMaterials.map((material, segmentIndex) => (
-          meteorTrailCollection.add({
-            material,
-            positions: [new Cartesian3(), new Cartesian3()],
-            show: false,
-            width: 0.7 + ((segmentIndex + 1) / meteorTrailSegmentCount) * 2.1,
-          })
-        )),
-      }
-    })
-
     const rotation = new Matrix3()
     const modelMatrix = new Matrix4()
     const moonModelMatrix = new Matrix4()
@@ -525,44 +473,6 @@ export function CesiumConstellationSky({
     const auroraMaterials: Material[] = []
     const startTime = performance.now()
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    let meteorSeed = 0x1c0ffee
-    const meteorRandom = () => {
-      meteorSeed = (meteorSeed * 1_664_525 + 1_013_904_223) >>> 0
-      return meteorSeed / 4_294_967_296
-    }
-    // 原版 24 条轨道，覆盖中央、左右与地球上方的完整天空区域。
-    const meteorTracks = [
-      { down: 0.82, right: 0.3, startRight: -0.56, startUp: 0.75 },
-      { down: 1.0, right: 0.36, startRight: -0.32, startUp: 0.82 },
-      { down: 0.84, right: 0.3, startRight: -0.05, startUp: 0.7 },
-      { down: 0.95, right: 0.28, startRight: 0.18, startUp: 0.78 },
-      { down: 0.78, right: 0.24, startRight: 0.38, startUp: 0.62 },
-      { down: 0.9, right: 0.32, startRight: -0.68, startUp: 0.88 },
-      { down: 0.86, right: 0.26, startRight: -0.6, startUp: 0.52 },
-      { down: 0.98, right: 0.34, startRight: 0.02, startUp: 0.92 },
-      { down: 0.8, right: 0.28, startRight: 0.52, startUp: 0.72 },
-      { down: 0.92, right: 0.3, startRight: 0.58, startUp: 0.58 },
-      { down: 0.88, right: 0.31, startRight: -0.74, startUp: 0.64 },
-      { down: 0.94, right: 0.27, startRight: -0.42, startUp: 0.96 },
-      { down: 0.76, right: 0.3, startRight: 0.34, startUp: 0.86 },
-      { down: 0.9, right: 0.29, startRight: 0.7, startUp: 0.66 },
-      { down: 0.96, right: 0.33, startRight: -0.82, startUp: 0.8 },
-      { down: 0.82, right: 0.28, startRight: 0.62, startUp: 0.5 },
-      { down: 0.84, right: 0.3, startRight: -0.9, startUp: 0.42 },
-      { down: 0.9, right: 0.32, startRight: -0.14, startUp: 1.0 },
-      { down: 0.78, right: 0.26, startRight: 0.8, startUp: 0.78 },
-      { down: 0.86, right: 0.29, startRight: 0.46, startUp: 0.4 },
-      { down: 0.92, right: 0.31, startRight: -0.98, startUp: 0.7 },
-      { down: 0.8, right: 0.27, startRight: -0.26, startUp: 0.34 },
-      { down: 0.88, right: 0.33, startRight: 0.9, startUp: 0.9 },
-      { down: 0.76, right: 0.28, startRight: 0.28, startUp: 0.26 },
-    ]
-    let previousMeteorTrack = -1
-    let nextMeteorAt = reduceMotion ? Number.POSITIVE_INFINITY : 1.8 + meteorRandom() * 1.6
-    // 按钮触发：保持单颗速度不变，在 3 秒内提高发射数量。
-    let showerActive = false
-    let showerEndAt = 0
-    let nextShowerSpawnAt = 0
 
     const cameraRelativeDirection = (rightOffset: number, upOffset: number) => (
       Cartesian3.normalize(
@@ -793,164 +703,6 @@ export function CesiumConstellationSky({
 
     const celestialPlacementTimer = window.setTimeout(placeCelestialBodies, 360)
 
-    type MeteorSlot = (typeof meteorSlots)[number]
-
-    const hideMeteor = (meteor: MeteorSlot) => {
-      meteor.headGlow.show = false
-      meteor.headCore.show = false
-      meteor.trailSegments.forEach((segment) => {
-        segment.show = false
-      })
-    }
-
-    const beginMeteor = (meteor: MeteorSlot, elapsedSeconds: number) => {
-      const trackOffset = 1 + Math.floor(meteorRandom() * (meteorTracks.length - 1))
-      const trackIndex = (previousMeteorTrack + trackOffset) % meteorTracks.length
-      const track = meteorTracks[trackIndex]
-      const startRight = track.startRight + (meteorRandom() - 0.5) * 0.1
-      const startUp = track.startUp + (meteorRandom() - 0.5) * 0.12
-      const endRight = startRight + track.right + (meteorRandom() - 0.5) * 0.06
-      const endUp = startUp - track.down + (meteorRandom() - 0.5) * 0.1
-      const pathSpan = Math.hypot(endRight - startRight, endUp - startUp)
-      const cameraPosition = viewer.camera.positionWC
-      const startDirection = cameraRelativeDirection(startRight, startUp)
-      const endDirection = cameraRelativeDirection(endRight, endUp)
-
-      meteor.start = Cartesian3.add(
-        cameraPosition,
-        Cartesian3.multiplyByScalar(
-          startDirection,
-          meteorDistanceFromCamera,
-          new Cartesian3(),
-        ),
-        meteor.start,
-      )
-      meteor.end = Cartesian3.add(
-        cameraPosition,
-        Cartesian3.multiplyByScalar(
-          endDirection,
-          meteorDistanceFromCamera,
-          new Cartesian3(),
-        ),
-        meteor.end,
-      )
-      const visualScale = 0.88 + meteorRandom() * 0.24
-      meteor.startedAt = elapsedSeconds
-      meteor.duration = Math.min(2.8, Math.max(1.55, pathSpan / (0.43 + meteorRandom() * 0.05)))
-      meteor.tailLength = Math.min(0.27, Math.max(0.12, 0.19 / pathSpan))
-      meteor.headGlow.pixelSize = 11 * visualScale
-      meteor.headCore.pixelSize = 4.6 * visualScale
-      meteor.trailSegments.forEach((segment, segmentIndex) => {
-        segment.width = (0.85 + ((segmentIndex + 1) / meteorTrailSegmentCount) * 2.45) * visualScale
-      })
-      meteor.active = true
-      previousMeteorTrack = trackIndex
-    }
-
-    const smoothstep = (start: number, end: number, value: number) => {
-      const progress = Math.min(1, Math.max(0, (value - start) / (end - start)))
-      return progress * progress * (3 - 2 * progress)
-    }
-
-    const updateMeteor = (elapsedSeconds: number) => {
-      if (reduceMotion) return
-
-      if (!showerActive && consumeMeteorShower()) {
-        showerActive = true
-        showerEndAt = elapsedSeconds + 3
-        nextShowerSpawnAt = elapsedSeconds
-      }
-
-      if (showerActive) {
-        if (elapsedSeconds >= showerEndAt) {
-          showerActive = false
-          nextMeteorAt = elapsedSeconds + 1.8 + meteorRandom() * 1.6
-        } else {
-          while (elapsedSeconds >= nextShowerSpawnAt) {
-            const showerMeteor = meteorSlots.find((meteor) => !meteor.active)
-            if (!showerMeteor) {
-              nextShowerSpawnAt = elapsedSeconds + 0.06
-              break
-            }
-            beginMeteor(showerMeteor, elapsedSeconds)
-            nextShowerSpawnAt = elapsedSeconds + 0.015 + meteorRandom() * 0.025
-          }
-        }
-      } else if (elapsedSeconds >= nextMeteorAt) {
-        const availableMeteor = meteorSlots.find((meteor) => !meteor.active)
-        if (availableMeteor) {
-          beginMeteor(availableMeteor, elapsedSeconds)
-          const isBurstFollowUp = meteorRandom() < 0.46
-          nextMeteorAt = elapsedSeconds + (isBurstFollowUp
-            ? 0.55 + meteorRandom() * 0.75
-            : 1.8 + meteorRandom() * 3.2)
-        } else {
-          nextMeteorAt = elapsedSeconds + 0.3
-        }
-      }
-
-      meteorSlots.forEach((meteor) => {
-        if (!meteor.active) return
-
-        const progress = (elapsedSeconds - meteor.startedAt) / meteor.duration
-        if (progress >= 1) {
-          meteor.active = false
-          hideMeteor(meteor)
-          return
-        }
-
-        const fade = smoothstep(0, 0.08, progress) * (1 - smoothstep(0.72, 1, progress))
-        const headPosition = Cartesian3.lerp(
-          meteor.start,
-          meteor.end,
-          progress,
-          new Cartesian3(),
-        )
-
-        meteor.headGlow.position = headPosition
-        meteor.headGlow.color = Color.fromCssColorString('#67e8f9').withAlpha(0.27 * fade)
-        meteor.headGlow.outlineColor = Color.fromCssColorString('#e0f2fe').withAlpha(0.2 * fade)
-        meteor.headGlow.show = true
-        meteor.headCore.position = headPosition
-        meteor.headCore.color = Color.WHITE.withAlpha(0.98 * fade)
-        meteor.headCore.outlineColor = Color.fromCssColorString('#a5f3fc').withAlpha(0.74 * fade)
-        meteor.headCore.show = true
-
-        meteor.trailSegments.forEach((segment, segmentIndex) => {
-          const segmentStrength = (segmentIndex + 1) / meteorTrailSegmentCount
-          const segmentEnd = progress
-            - meteor.tailLength * (meteorTrailSegmentCount - 1 - segmentIndex) / meteorTrailSegmentCount
-          const segmentStart = progress
-            - meteor.tailLength * (meteorTrailSegmentCount - segmentIndex) / meteorTrailSegmentCount
-
-          if (segmentEnd <= 0) {
-            segment.show = false
-            return
-          }
-
-          const startPosition = Cartesian3.lerp(
-            meteor.start,
-            meteor.end,
-            Math.max(0, segmentStart),
-            new Cartesian3(),
-          )
-          const endPosition = Cartesian3.lerp(
-            meteor.start,
-            meteor.end,
-            Math.min(1, segmentEnd),
-            new Cartesian3(),
-          )
-          const trailAlpha = fade * (0.068 + Math.pow(segmentStrength, 2.15) * 0.95)
-
-          segment.positions = [startPosition, endPosition]
-          meteor.trailMaterials[segmentIndex].uniforms.color = Color.fromCssColorString(
-            segmentIndex > 5 ? '#f0f9ff' : '#67e8f9',
-          ).withAlpha(trailAlpha)
-          segment.show = true
-        })
-      })
-    }
-
     const updateRotation = () => {
       const elapsedSeconds = (performance.now() - startTime) / 1000
       const angle = reduceMotion ? 0 : elapsedSeconds * idleRotationRadiansPerSecond
@@ -991,7 +743,6 @@ export function CesiumConstellationSky({
         Matrix4.multiply(modelMatrix, moonBaseModelMatrix, moonModelMatrix)
         moonPrimitive.modelMatrix = Matrix4.clone(moonModelMatrix, moonPrimitive.modelMatrix)
       }
-      updateMeteor(elapsedSeconds)
     }
 
     viewer.scene.preRender.addEventListener(updateRotation)
@@ -1013,12 +764,6 @@ export function CesiumConstellationSky({
       }
       if (viewer.scene.primitives.contains(lineCollection)) {
         viewer.scene.primitives.remove(lineCollection)
-      }
-      if (viewer.scene.primitives.contains(meteorPointCollection)) {
-        viewer.scene.primitives.remove(meteorPointCollection)
-      }
-      if (viewer.scene.primitives.contains(meteorTrailCollection)) {
-        viewer.scene.primitives.remove(meteorTrailCollection)
       }
       if (moonPrimitive && viewer.scene.primitives.contains(moonPrimitive)) {
         viewer.scene.primitives.remove(moonPrimitive)

@@ -14,8 +14,8 @@ StarMap is built with React, TypeScript, Vite, and Cesium. A clean clone opens w
     <td width="32%"><strong>Explore the whole globe</strong><br><br>Start from a complete world view and travel to any corner of the Earth. Visited countries, cities, and journey routes remain visible on the globe.</td>
   </tr>
   <tr>
-    <td width="68%"><img src="docs/images/02-meteor-galaxy-closeup.webp" alt="Meteor shower, Milky Way, and close globe view"></td>
-    <td width="32%"><strong>From the Milky Way to ground tiles</strong><br><br>Move closer to see the meteor shower and Milky Way, then continue zooming toward detailed terrain and imagery tiles on the surface.</td>
+    <td width="68%"><img src="docs/images/02-meteor-galaxy-closeup.webp" alt="Milky Way and close globe view"></td>
+    <td width="32%"><strong>From the Milky Way to ground tiles</strong><br><br>Move closer to see the night sky and Milky Way, then continue zooming toward detailed terrain and imagery tiles on the surface.</td>
   </tr>
   <tr>
     <td width="68%"><img src="docs/images/03-city-location-and-altitude.webp" alt="City panel with precise photo and drone positions"></td>
@@ -37,7 +37,7 @@ StarMap is built with React, TypeScript, Vite, and Cesium. A clean clone opens w
 - Missing metadata is requested only when needed. The date is required; coordinates and altitude remain optional.
 - Aspect-ratio-safe photo gallery for both landscape and portrait images.
 - Three-tier private media pipeline: lightweight thumbnails, viewer previews, and preserved originals.
-- One-click meteor shower and an in-app GitHub Release update guide.
+- An in-app GitHub Release update guide.
 - Privacy audit and public/private data separation designed for open-source reuse.
 
 ## Quick start

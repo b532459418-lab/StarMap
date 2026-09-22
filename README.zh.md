@@ -14,8 +14,8 @@ StarMap 使用 React、TypeScript、Vite 与 Cesium 构建。全新下载的仓�
     <td width="32%"><strong>浏览地球上的任何角落</strong><br><br>从完整的世界视角出发，前往地球上的任意地点；已经访问的国家、城市和旅程路线都会显示在地球上。</td>
   </tr>
   <tr>
-    <td width="68%"><img src="docs/images/02-meteor-galaxy-closeup.webp" alt="流星雨、银河和地球近景"></td>
-    <td width="32%"><strong>从银河一直看到地面瓦片</strong><br><br>拉近镜头可以观察流星雨和银河，并继续靠近地表，查看每一处地形与影像瓦片的细节。</td>
+    <td width="68%"><img src="docs/images/02-meteor-galaxy-closeup.webp" alt="银河和地球近景"></td>
+    <td width="32%"><strong>从银河一直看到地面瓦片</strong><br><br>拉近镜头可以观察夜空和银河，并继续靠近地表，查看每一处地形与影像瓦片的细节。</td>
   </tr>
   <tr>
     <td width="68%"><img src="docs/images/03-city-location-and-altitude.webp" alt="城市面板与照片无人机坐标"></td>
@@ -37,7 +37,7 @@ StarMap 使用 React、TypeScript、Vite 与 Cesium 构建。全新下载的仓�
 - 只有读取不到的字段才需要用户填写；日期必填，坐标与高度均可留空。
 - 横图、竖图都能完整适配的大图相册。
 - 私有媒体三级管线：轻量缩略图、预览图与保留的原始文件。
-- 单击召唤流星雨，以及基于 GitHub Release 的站内更新指南。
+- 基于 GitHub Release 的站内更新指南。
 - 面向开源复用设计的隐私检查与公私数据分层。
 
 ## 快速开始

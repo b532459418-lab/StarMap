@@ -43,7 +43,7 @@ export function ReleaseUpdatePage({ state }: ReleaseUpdatePageProps) {
           : state.message || '等待检查版本状态'
 
   const announcement = state.release?.body?.trim()
-    || `StarMap v${state.currentVersion}\n\n当前公共版包含 Map、Journey 与版本更新中心；默认中文，支持本地数据与媒体边界，并恢复了单次点击召唤的 3 秒高密度流星雨。`
+    || `StarMap v${state.currentVersion}\n\n当前公共版包含 Map、Journey 与版本更新中心；默认中文，支持本地数据与媒体边界。`
 
   return (
     <div className="atlas-update-scroll selector-scrollbar h-full overflow-y-auto overscroll-contain">
