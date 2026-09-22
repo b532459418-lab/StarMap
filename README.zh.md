@@ -2,9 +2,11 @@
 
 # StarMap
 
-一个开源、本地优先的 3D 旅行地图，用交互式地球展示地点、旅程、照片与无人机影像，也可以作为个人作品集中的旅行项目。
+一个开源、本地优先的个人世界图谱与 3D 世界地图。StarMap 把地点、旅程、照片、无人机影像以及你在意的事物，放进一张属于你自己的交互式地图。
 
 StarMap 使用 React、TypeScript、Vite 与 Cesium 构建。全新下载的仓库只包含中性的示例数据；你的旅行记录、媒体、编辑状态与环境配置默认都保存在被 Git 忽略的本地文件中。
+
+本仓库是 **StarMap Core / 社区版**，采用 [MIT](LICENSE) 许可。它本身就是一个完整的产品，并会持续获得真正的功能更新。StarMap 最初 fork 自 [Aisland-SJL/StarMap](https://github.com/Aisland-SJL/StarMap)，现已独立开发；上游项目的署名见 [NOTICE.md](NOTICE.md)。相关版本及其许可见 [docs/editions.md](docs/editions.md)。
 
 ## 产品预览
 
@@ -45,7 +47,7 @@ StarMap 使用 React、TypeScript、Vite 与 Cesium 构建。全新下载的仓�
 需要 Git，以及与 Vite 8 兼容的当前 Node.js LTS 版本。
 
 ```powershell
-git clone https://github.com/Aisland-SJL/StarMap.git
+git clone https://github.com/b532459418-lab/StarMap.git
 cd StarMap/01_Web
 npm ci
 npm run dev:public
@@ -127,6 +129,7 @@ Fork 用户可以通过 `VITE_GITHUB_REPOSITORY=owner/repository` 改为检查�
 | `02_Assets/MediaInbox/` | 外置私人投递箱的中性目录模板 |
 | `03_Reference/` | 架构、隐私与媒体工作流说明 |
 | `05_Test/` | 验证说明 |
+| `docs/` | 版本与许可说明、发布说明、图片 |
 
 ## 隐私与安全
 
@@ -135,6 +138,20 @@ Fork 用户可以通过 `VITE_GITHUB_REPOSITORY=owner/repository` 改为检查�
 - `.gitignore` 是第二道保险，不是唯一的隔离手段。
 - 每次公开发布前运行 `npm run release:check`；不要上传 `.env.local`、私人媒体、个人数据目录或任何凭据。
 
-## 许可证
+## 版本与许可证
 
-[MIT](LICENSE)
+StarMap 是一条产品线，分为三部分，本仓库只包含第一部分。
+
+| 版本 | 许可 | 位置 |
+| --- | --- | --- |
+| **StarMap**（Core / 社区版） | [MIT](LICENSE) | 本仓库。真正开源、本地优先、单独可用的完整产品。 |
+| **StarMap Plus** | [PolyForm Perimeter 1.0.1](https://polyformproject.org/licenses/perimeter/1.0.1)，另提供商业许可 | [b532459418-lab/StarMap-Plus](https://github.com/b532459418-lab/StarMap-Plus)。源码可见的高级本地能力。 |
+| **StarMap Cloud** | 私有 | 可选的云同步、分享与社交服务。 |
+
+功能归属的判断标准：如果用户不注册、不联网，就能靠本地 StarMap 完成自己的完整个人世界图谱，那这项能力就属于本 MIT 仓库。详见 [docs/editions.md](docs/editions.md)。
+
+- 本仓库的所有版本（包括全部历史发布）都是 MIT，不会追溯更改许可。
+- 上游署名与 fork 历史：[NOTICE.md](NOTICE.md)
+- 第三方软件、数据与服务条款：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- StarMap 名称与 Logo 不在代码许可范围内：[TRADEMARK.md](TRADEMARK.md)
+- 参与贡献：[CONTRIBUTING.md](CONTRIBUTING.md)
