@@ -2,9 +2,11 @@
 
 # StarMap
 
-An open-source, local-first 3D travel atlas for turning places, journeys, photographs, and aerial media into an interactive personal map.
+An open-source, local-first personal world graph and 3D world atlas. StarMap turns places, journeys, photographs, aerial media, and the things you care about into an interactive map of your own world.
 
 StarMap is built with React, TypeScript, Vite, and Cesium. A clean clone opens with neutral sample data. Your own journeys, media, editor state, and environment values stay in Git-ignored local files by default.
+
+This repository is the **StarMap Core / Community Edition**, licensed under [MIT](LICENSE). It is a complete product on its own and keeps receiving real features. StarMap began as a fork of [Aisland-SJL/StarMap](https://github.com/Aisland-SJL/StarMap) and is now developed independently; the upstream project is credited in [NOTICE.md](NOTICE.md). Related editions and their licenses are listed in [docs/editions.md](docs/editions.md).
 
 ## Product preview
 
@@ -45,7 +47,7 @@ StarMap is built with React, TypeScript, Vite, and Cesium. A clean clone opens w
 Requirements: Git and a current Node.js LTS release compatible with Vite 8.
 
 ```powershell
-git clone https://github.com/Aisland-SJL/StarMap.git
+git clone https://github.com/b532459418-lab/StarMap.git
 cd StarMap/01_Web
 npm ci
 npm run dev:public
@@ -129,6 +131,7 @@ Forks can point the checker at their own Releases by setting `VITE_GITHUB_REPOSI
 | `02_Assets/MediaInbox/` | Tracked neutral template for the external private Inbox |
 | `03_Reference/` | Architecture, privacy, and media workflow references |
 | `05_Test/` | Verification guidance |
+| `docs/` | Editions and licenses, release notes, and images |
 
 ## Privacy and security
 
@@ -137,6 +140,20 @@ Forks can point the checker at their own Releases by setting `VITE_GITHUB_REPOSI
 - `.gitignore` is a second safety net, not the primary separation mechanism.
 - Run `npm run release:check` before every public release; never push `.env.local`, private media, personal catalogs, or credentials.
 
-## License
+## Editions and license
 
-[MIT](LICENSE)
+StarMap is one product line with three parts. Only the first one lives in this repository.
+
+| Edition | License | Where |
+| --- | --- | --- |
+| **StarMap** (Core / Community Edition) | [MIT](LICENSE) | This repository. Genuinely open source, local-first, and complete on its own. |
+| **StarMap Plus** | [PolyForm Perimeter 1.0.1](https://polyformproject.org/licenses/perimeter/1.0.1) plus a separate commercial license | [b532459418-lab/StarMap-Plus](https://github.com/b532459418-lab/StarMap-Plus). Source-available advanced local features. |
+| **StarMap Cloud** | Proprietary | Optional hosted sync, sharing, and social services. |
+
+The rule for where a feature goes: if a user can complete their whole personal world graph locally, without an account or a network connection, that capability belongs in this MIT repository. See [docs/editions.md](docs/editions.md).
+
+- Every version of this repository, including all historical releases, is MIT. Nothing is relicensed retroactively.
+- Upstream attribution and fork history: [NOTICE.md](NOTICE.md)
+- Third-party software, data, and service terms: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- The StarMap name and logo are not covered by the code license: [TRADEMARK.md](TRADEMARK.md)
+- How to contribute: [CONTRIBUTING.md](CONTRIBUTING.md)
