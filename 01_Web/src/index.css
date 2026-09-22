@@ -5582,7 +5582,7 @@ button {
   }
 }
 
-/* Public-shell dock: icon buttons for sidebars, imagery source, meteor shower
+/* Public-shell dock: icon buttons for sidebars, imagery source,
    and release information. The original text label is deliberately removed. */
 .atlas-map-controls {
   pointer-events: auto;
@@ -5960,17 +5960,6 @@ button {
 .atlas-dock-button .atlas-sidebars-toggle-icons svg {
   width: 15px;
   height: 15px;
-}
-
-.atlas-meteor-shower-toggle[data-triggered='true'] {
-  background: rgba(125, 211, 252, 0.11);
-  color: #7dd3fc;
-  text-shadow: 0 0 10px rgba(125, 211, 252, 0.55);
-}
-
-.atlas-meteor-shower-toggle:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
 }
 
 .atlas-release-button[aria-current='page'] {

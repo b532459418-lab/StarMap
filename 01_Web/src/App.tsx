@@ -6,7 +6,6 @@ import { CesiumAtlasGlobe } from './components/CesiumAtlasGlobe'
 import { CountrySelector } from './components/CountrySelector'
 import type { ThemeMode } from './components/DayNightToggle'
 import { CompassButton } from './components/CompassButton'
-import { MeteorShowerButton } from './components/MeteorShowerButton'
 import { LayerPanel } from './components/LayerPanel'
 import { MapSourceSwitcher } from './components/MapSourceSwitcher'
 import { MouseControlGuide } from './components/MouseControlGuide'
@@ -506,7 +505,6 @@ function App() {
                 rememberCity3DEnabled(enabled)
               }}
             />
-            <MeteorShowerButton />
             <ReleaseUpdateButton
               active={activePage === 'about'}
               state={releaseUpdates}

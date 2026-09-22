@@ -83,7 +83,7 @@ Tianditu is integrated through Cesium's WMTS imagery provider as an imagery base
 
 ## Public Interface Defaults
 
-The public template uses the neutral `StarMap` identity. Its enlarged primary navigation contains only Map and Journey. The document language defaults to `zh-CN`; no Chinese/English selector is rendered. The center-bottom dock contains icon buttons for hide/show sidebars, map-source selection, summon a meteor shower, and version updates. The meteor button is a single-click action rather than a toggle: it directly reuses the previously approved implementation to summon a dense three-second shower with its original trajectories, luminous heads, fading tails, timing, and density.
+The public template uses the neutral `StarMap` identity. Its enlarged primary navigation contains only Map and Journey. The document language defaults to `zh-CN`; no Chinese/English selector is rendered. The center-bottom dock contains icon buttons for hide/show sidebars, map-source selection, and version updates.
 
 The public interface deliberately uses neutral copy that a new user can replace with their own identity.
 
