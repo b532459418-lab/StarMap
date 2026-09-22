@@ -1,6 +1,6 @@
 # StarMap 本地扩展
 
-本目录是相对上游 StarMap 的薄包装层，用来接入 Google 图源和城市 Photorealistic 3D，尽量少改官方文件。
+本目录集中放置 Google 图源与城市 Photorealistic 3D 的接入代码。它最初是相对上游 Aisland-SJL/StarMap 的"薄包装层"，目的是少改上游文件、便于合并；自 2026-09 起本仓库已永久分叉、不再合并上游（战略 v0.2 D13），这层的"合并安全边界"职责终止。现在它只是一个模块边界：Google 专有的图源、注记、3D Tiles 逻辑放在这里，核心文件可以按需修改。
 
 ## 凭据
 
@@ -10,7 +10,7 @@
 VITE_GOOGLE_MAPS_TILES_KEY=
 ```
 
-该文件是 `06_private/config/.env.local`。上游 v0.3.0 把个人配置移出了源码仓库，路径由 `scripts/private-profile.mjs` 解析，顺序为 `$STARMAP_PRIVATE_ROOT` → 源码根目录上一级的 `06_private` → 源码根目录内的 `06_private`。写在 `01_Web/.env.local` 已经不再生效。
+该文件是 `06_private/config/.env.local`。v0.3.0 起个人配置已移出源码仓库，路径由 `scripts/private-profile.mjs` 解析，顺序为 `$STARMAP_PRIVATE_ROOT` → 源码根目录上一级的 `06_private` → 源码根目录内的 `06_private`。写在 `01_Web/.env.local` 已经不再生效。
 
 需要启用 Google Cloud 的 [Map Tiles API](https://developers.google.com/maps/documentation/tile/2d-tiles-overview)，并开通计费。同一把 Key 同时用于：
 
@@ -32,9 +32,9 @@ Key 会出现在浏览器的网络请求里，这是 Map Tiles API 的固有特�
 - 开启城市 3D 时会隐藏 Cesium 地球底图。Photorealistic 3D Tiles 自带全球地形与地表，隐藏底图可避免地形穿插与闪烁。
 - 图源 provider 按图源缓存复用，来回切换不会重复创建 Google session。地名/路网开关只切换 ImageryLayer 的显示，不新建 session。
 
-## 上游挂钩
+## 与核心文件的接缝
 
-下列官方文件只改了 import 路径和最小 props，便于以后 `git merge upstream`：
+下列核心文件通过 import 路径和少量 props 接入本目录（历史上为了便于合并上游而保持最小改动；现已不再合并上游，这里只作为查找接缝的索引）：
 
 - `src/App.tsx`
 - `src/components/CesiumAtlasGlobe.tsx`

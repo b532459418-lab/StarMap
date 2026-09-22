@@ -33,11 +33,14 @@ Online city lookup is explicit rather than autocomplete-on-every-keystroke. Each
 ## Verification
 
 ```powershell
-npm run privacy:check
 npm run lint
+npm test
 npm run build:public
+npm run privacy:check
 npm run release:check
 ```
+
+`npm test` runs the World Graph Core unit tests with plain `node --test`; no bundler is involved. See [`src/worldgraph/README.md`](src/worldgraph/README.md).
 
 ## Public Sample and Private Data
 
@@ -48,7 +51,7 @@ StarMap has two data layers:
 
 The private overlay is considered only in the explicit personal profile. Public preview and public build ignore it even when it exists. New users can copy the sample shape into their private data path and replace its records with their own; navigation is generated from that data.
 
-Run `npm run privacy:check` before preparing any public repository. See the [open-source privacy boundary](../03_Reference/TravelAtlas_open_source_privacy_boundary.md) for the clean-history rule and deployment options.
+Run `npm run privacy:check` before every public release. See the [open-source privacy boundary](../03_Reference/TravelAtlas_open_source_privacy_boundary.md) for the boundary table and deployment options.
 
 ## Import Personal Media
 
@@ -83,7 +86,7 @@ Tianditu is integrated through Cesium's WMTS imagery provider as an imagery base
 
 ## Public Interface Defaults
 
-The public template uses the neutral `StarMap` identity. Its enlarged primary navigation contains only Map and Journey. The document language defaults to `zh-CN`; no Chinese/English selector is rendered. The center-bottom dock contains icon buttons for hide/show sidebars, map-source selection, and version updates.
+The public template uses the neutral `StarMap` identity. Its enlarged primary navigation contains only Map and Journey. The document language defaults to `zh-CN`; no Chinese/English selector is rendered. The center-bottom dock contains icon buttons for the compass, map layers, map-source selection, the labels overlay, City 3D, and version updates; the sidebar toggles sit outside the dock.
 
 The public interface deliberately uses neutral copy that a new user can replace with their own identity.
 
@@ -103,14 +106,16 @@ For each public update, bump the package version, create a matching semantic-ver
 
 ## Architecture
 
+- `src/worldgraph/` is StarMap Core: the World Graph model, Layer Registry, and adapters. It is environment-independent and lint-enforced; see [`src/worldgraph/README.md`](src/worldgraph/README.md).
 - `src/components/CesiumAtlasGlobe.tsx` is the primary map implementation.
+- `src/extensions/` holds the Google imagery, labels, and Photorealistic 3D Tiles integrations; see [`src/extensions/README.md`](src/extensions/README.md).
 - `src/components/AtlasGlobe.tsx` is the frozen legacy react-globe implementation.
 - `src/data/travelAtlas.ts` selects private data only from the profile-specific virtual module and otherwise loads the tracked public sample.
 - `src/data/mediaCatalog.ts` receives personal media only in personal mode; `src/data/droneMedia.ts` contains no built-in user media.
 - `scripts/private-profile.mjs` resolves the external private root without reading or printing secrets.
 - `scripts/local-editor-plugin.mjs` provides the loopback-only editor in personal development and injects no private data in public mode.
 - `scripts/public-release-check.mjs` rebuilds a clean Git archive in the OS temporary directory, so public-release verification cannot see the private layer.
-- Project-level context and handoff live one directory above this web workspace.
+- Project-level rules, contribution guide, and edition boundaries live one directory above this web workspace (`AGENTS.md`, `CONTRIBUTING.md`, `docs/editions.md`).
 
 ## Documentation
 
