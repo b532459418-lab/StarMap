@@ -153,6 +153,7 @@ StarMap is one product line with three parts. Only the first one lives in this r
 The rule for where a feature goes: if a user can complete their whole personal world graph locally, without an account or a network connection, that capability belongs in this MIT repository. See [docs/editions.md](docs/editions.md).
 
 - Every version of this repository, including all historical releases, is MIT. Nothing is relicensed retroactively.
+- StarMap Core, the World Graph model and Layer Registry, lives in [`01_Web/src/worldgraph/`](01_Web/src/worldgraph/README.md).
 - Upstream attribution and fork history: [NOTICE.md](NOTICE.md)
 - Third-party software, data, and service terms: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 - The StarMap name and logo are not covered by the code license: [TRADEMARK.md](TRADEMARK.md)

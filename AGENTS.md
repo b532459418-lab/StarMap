@@ -51,6 +51,14 @@ When a user mentions uploading, importing, organizing, or adding travel photos o
 - `01_Web/src/components/AtlasGlobe.tsx` is legacy/frozen react-globe code. Keep it for rollback reference and change it only when explicitly requested.
 - Preserve the existing Map / Journey / About structure and shared theme state unless the user asks for a structural change.
 
+## StarMap Core Boundary
+
+- `01_Web/src/worldgraph/**` is StarMap Core: the environment-independent World Graph model, Layer Registry, and adapters. Read [`01_Web/src/worldgraph/README.md`](01_Web/src/worldgraph/README.md) before touching it.
+- Core must not import `src/components/**` or `src/data/travelAtlas.ts`, and must not use `import.meta`. ESLint enforces this; do not relax the rules.
+- Core files are erasable-only TypeScript and pure functions so `npm test` can run them with plain `node --test`. Every Core change needs a test.
+- The World Graph RFC is not final. Do not extract `packages/core` or publish these types before it is.
+- Feature placement across editions (this MIT repository, StarMap Plus, StarMap Cloud) follows [`docs/editions.md`](docs/editions.md): if a user can complete their personal world graph locally without an account or network, the capability belongs here.
+
 ## Working Method
 
 1. Read the current README and, when present, the private workspace Handoff; choose one bounded task.
@@ -93,6 +101,9 @@ npm run dev:personal
 ## Documentation
 
 - Public guide: [`README.md`](README.md)
+- StarMap Core: [`01_Web/src/worldgraph/README.md`](01_Web/src/worldgraph/README.md)
+- Editions and licenses: [`docs/editions.md`](docs/editions.md)
+- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Chinese guide: [`README.zh.md`](README.zh.md)
 - Web workspace: [`01_Web/README.md`](01_Web/README.md)
 - Media workflow: [`02_Assets/MediaInbox/README.md`](02_Assets/MediaInbox/README.md)
