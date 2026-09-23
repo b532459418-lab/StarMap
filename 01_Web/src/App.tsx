@@ -15,6 +15,8 @@ import { CityPhotoGalleryModal } from './components/CityPhotoGalleryModal'
 import type { CityPhotoGalleryRequest } from './components/CityPhotoGalleryModal'
 import { Timeline } from './components/Timeline'
 import { ReleaseUpdateButton, ReleaseUpdatePage } from './components/UpdateChecker'
+import { WantToGoAddDialog } from './components/WantToGoAddDialog'
+import { WantToGoCard } from './components/WantToGoCard'
 import { JourneyViewToggle } from './components/JourneyViewToggle'
 import type { JourneyViewMode } from './components/JourneyViewToggle'
 import { JourneyYearCards } from './components/JourneyYearCards'
@@ -30,10 +32,12 @@ import { getInitialMapSource, mapSourceHasLabelOverlay, rememberMapSource } from
 import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
 import { cities, cityById, countries, countryById, getCitiesForCountry, journeyDays, travelAtlasMeta } from './data/travelAtlas'
-import { travelSnapshot } from './data/worldGraph'
+import { worldGraphSnapshot } from './data/worldGraph'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
+import { hiddenWantToGoItems } from './data/wantToGo'
 import { officialLayers } from './worldgraph/layers'
 import { queryVisiblePlaces } from './worldgraph/query'
+import type { EntityId } from './worldgraph/types'
 import type { CityId, CountryId, JourneyDay, SelectionMode } from './types/travel'
 
 const DronePanoramaModal = lazy(() =>
@@ -134,6 +138,9 @@ function App() {
   const [activeDroneMediaItemId, setActiveDroneMediaItemId] = useState<string | undefined>(restoredDroneItemId)
   const [panoramaModalItem, setPanoramaModalItem] = useState<DroneMediaItem>()
   const [cityPhotoGallery, setCityPhotoGallery] = useState<CityPhotoGalleryRequest>()
+  // 想去详情卡（FR-WTG-4）与添加对话框（FR-WTG-3）。都不进 viewState：保存后整页刷新即关闭（规格 §2 第 7 条）。
+  const [selectedWantToGoEntityId, setSelectedWantToGoEntityId] = useState<EntityId>()
+  const [isAddWantToGoOpen, setIsAddWantToGoOpen] = useState(false)
   const [sidebarsOpen, setSidebarsOpen] = useState(() => typeof restoredViewState.sidebarsOpen === 'boolean'
     ? restoredViewState.sidebarsOpen
     : typeof window === 'undefined' || window.matchMedia(sidebarMediaQuery).matches)
@@ -228,7 +235,18 @@ function App() {
     () => officialLayers.filter((layer) => layerVisibility[layer.id] !== false).map((layer) => layer.id),
     [layerVisibility],
   )
-  const layerData = useMemo(() => queryVisiblePlaces(travelSnapshot, visibleLayerIds), [visibleLayerIds])
+  const layerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds), [visibleLayerIds])
+
+  // 详情卡对应的地点已不在地图上（图层被关掉、条目被隐藏）时关闭它。
+  // 被 FR-MR-5 并进足迹地点的想去条目仍算在图上。按 React 文档"渲染期间根据新数据调整 state"的写法，
+  // 不用 effect，避免先画出一帧过期的卡片。
+  const selectedWantToGoIsMapped = selectedWantToGoEntityId !== undefined && layerData.places.some(
+    (place) => place.entityId === selectedWantToGoEntityId
+      || (place.mergedEntityIds?.includes(selectedWantToGoEntityId) ?? false),
+  )
+  if (selectedWantToGoEntityId !== undefined && !selectedWantToGoIsMapped) {
+    setSelectedWantToGoEntityId(undefined)
+  }
 
   const atlasStats = useMemo(
     () => [
@@ -241,6 +259,7 @@ function App() {
   )
 
   const resetOverview = () => {
+    setSelectedWantToGoEntityId(undefined)
     setSelectedCountryId(undefined)
     setSelectedCityId(undefined)
     setActiveDroneMediaCityId(undefined)
@@ -251,6 +270,7 @@ function App() {
   }
 
   const selectCountry = (countryId: CountryId) => {
+    setSelectedWantToGoEntityId(undefined)
     if (selectedCountryId === countryId && selectionMode !== 'overview') {
       resetOverview()
       return
@@ -265,6 +285,7 @@ function App() {
   }
 
   const selectCity = (cityId: CityId) => {
+    setSelectedWantToGoEntityId(undefined)
     if (selectedCityId === cityId) {
       setSelectedCityId(undefined)
       setActiveDroneMediaCityId(undefined)
@@ -281,6 +302,13 @@ function App() {
     setActiveDroneMediaItemId(undefined)
     setSelectionMode('city')
     setGlobeDistance(cityDistance)
+  }
+
+  // FR-WTG-4：只打开右侧详情卡，不改 selectionMode、不飞相机。详情卡在右侧栏里，
+  // 侧栏收起时点了会"没反应"，所以同时展开侧栏。
+  const selectWantToGoPlace = (entityId: EntityId) => {
+    setSelectedWantToGoEntityId(entityId)
+    setSidebarsOpen(true)
   }
 
   const selectDroneMedia = (cityId: CityId) => {
@@ -402,6 +430,7 @@ function App() {
               activeDroneMediaCityId={activeDroneMediaCityId}
               activeDroneMediaItemId={activeDroneMediaItemId}
               onSelectCity={selectCity}
+              onSelectWantToGoPlace={selectWantToGoPlace}
               onSelectDroneMediaItem={selectDroneMediaItem}
             />
           </div>
@@ -437,6 +466,14 @@ function App() {
                   shouldShowDronePanel ? 'atlas-right-stack-with-drone' : ''
                 }`}
               >
+                {selectedWantToGoEntityId ? (
+                  <WantToGoCard
+                    key={`want-to-go-${selectedWantToGoEntityId}`}
+                    entityId={selectedWantToGoEntityId}
+                    onClose={() => setSelectedWantToGoEntityId(undefined)}
+                  />
+                ) : null}
+
                 <InfoCard
                   key={`info-${selectionMode}-${selectedCountryId ?? 'none'}-${selectedCityId ?? 'none'}`}
                   mode={selectionMode}
@@ -493,6 +530,8 @@ function App() {
                 setLayerVisibility(next)
                 rememberLayerVisibility(next)
               }}
+              hiddenWantToGoItems={hiddenWantToGoItems}
+              onAddWantToGo={() => setIsAddWantToGoOpen(true)}
             />
             <MapSourceSwitcher
               value={mapSource}
@@ -586,6 +625,14 @@ function App() {
         <CityPhotoGalleryModal
           {...cityPhotoGallery}
           onClose={() => setCityPhotoGallery(undefined)}
+        />
+      ) : null}
+
+      {/* FR-PUB-2 / AC-10：公开构建不挂载添加对话框。 */}
+      {localEditorAvailable ? (
+        <WantToGoAddDialog
+          open={isAddWantToGoOpen}
+          onClose={() => setIsAddWantToGoOpen(false)}
         />
       ) : null}
     </main>

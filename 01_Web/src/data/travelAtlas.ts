@@ -132,7 +132,11 @@ const rawRecords = exportData.records.filter((record) => record.status !== 'plan
 // src/worldgraph/adapters/plannedRecords.ts 消费（FR-WTG-7），所以这里额外导出
 // 未经过滤的原始 planned 记录与国家代码表，供调用方传给那个纯函数 Adapter。
 // Core 不能 import 本文件，因此这两份数据只能由调用方以参数传入。
-export const plannedRecords: TravelMapRecord[] = exportData.records.filter((record) => record.status === 'planned')
+// planned 记录与 rawRecords 走同一道国家别名归一：否则 country_en 仍是别名前的写法，
+// 在 display.countryCodes 里查不到代码，planned 条目就没有 countryCode 可用。
+export const plannedRecords: TravelMapRecord[] = exportData.records
+  .filter((record) => record.status === 'planned')
+  .map(normalizeRecordCountry)
 export const travelAtlasCountryCodes: Record<string, string> = display.countryCodes ?? {}
 
 const allRecords = rawRecords.map(normalizeRecordCountry).map(withDisplayCategory)

@@ -37,7 +37,9 @@ import { publishCameraAttitude, registerOrientationResetHandler, wrapHeadingDegr
 // selectedCountry / selectedCity / overviewTarget，FR-MR-3 明确相机不随图层开关改变。
 import { cityById, countryById, travelAtlasDisplay } from '../data/travelAtlas'
 import type { CityId, CountryId, SelectionMode } from '../types/travel'
+import { officialLayers, TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import type { LayerPlace, LayerQueryResult } from '../worldgraph/query'
+import type { EntityId } from '../worldgraph/types'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
 import {
   bindTrackpadOrbit,
@@ -73,6 +75,11 @@ type CesiumAtlasGlobeProps = {
   activeDroneMediaCityId?: CityId
   activeDroneMediaItemId?: string
   onSelectCity: (cityId: CityId) => void
+  /**
+   * 点击【纯想去】地点（不含足迹）时调用（FR-WTG-4）：只打开详情卡，
+   * 不改 selectionMode、不飞相机。含足迹的地点仍走 onSelectCity。
+   */
+  onSelectWantToGoPlace?: (entityId: EntityId) => void
   onSelectDroneMediaItem: (item: DroneMediaItem) => void
 }
 
@@ -227,6 +234,37 @@ const cityHoverMarkerImage = (accent: string, corePixelSize: number) => {
   `)}`
 
   cityHoverMarkerImageCache.set(cacheKey, image)
+  return image
+}
+
+/** 想去标记的主色来自 Layer Registry（PRD §9.3 / Q1），不在组件里另写一份。 */
+const wantToGoAccent = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)?.accent ?? '#F0647A'
+
+const wantToGoBadgeImageCache = new Map<string, string>()
+
+/**
+ * FR-MR-5 的心形徽标：足迹 + 想去同一地点时叠在足迹标记右上角。
+ * 生成与缓存方式同 cityHoverMarkerImage（SVG data URI + 按颜色缓存），
+ * 白色细描边让它在任何国家配色的足迹标记旁都看得清。
+ */
+const wantToGoBadgeImage = (accent: string) => {
+  const cachedImage = wantToGoBadgeImageCache.get(accent)
+  if (cachedImage) return cachedImage
+
+  const image = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+      <path
+        d="M16 28.2C16 28.2 3.2 20.3 3.2 11.6C3.2 7.4 6.4 4.2 10.4 4.2C12.8 4.2 14.8 5.5 16 7.5C17.2 5.5 19.2 4.2 21.6 4.2C25.6 4.2 28.8 7.4 28.8 11.6C28.8 20.3 16 28.2 16 28.2Z"
+        fill="${accent}"
+        stroke="#ffffff"
+        stroke-opacity="0.94"
+        stroke-width="2.6"
+        stroke-linejoin="round"
+      />
+    </svg>
+  `)}`
+
+  wantToGoBadgeImageCache.set(accent, image)
   return image
 }
 
@@ -550,6 +588,7 @@ export function CesiumAtlasGlobe({
   activeDroneMediaCityId,
   activeDroneMediaItemId,
   onSelectCity,
+  onSelectWantToGoPlace,
   onSelectDroneMediaItem,
 }: CesiumAtlasGlobeProps) {
   const viewerRef = useRef<CesiumComponentRef<CesiumViewer>>(null)
@@ -830,6 +869,15 @@ export function CesiumAtlasGlobe({
   // 所以这两个 useMemo 的依赖不会每次渲染都变，下游的 useEffect 也不会被反复重建（AC-8）。
   // 访问次数原来是本地 journeyVisitCounts，现在是 LayerPlace.visitCount。
   const mappedCities = useMemo<LayerPlace[]>(() => layerData.places, [layerData])
+  // 状态药丸：足迹数字只数足迹地点，与 PR3 口径一致；想去数含 FR-MR-5 合并后的足迹地点。
+  const travelPlaceCount = useMemo(
+    () => mappedCities.filter((city) => city.layerIds.includes(TRAVEL_LAYER_ID)).length,
+    [mappedCities],
+  )
+  const wantToGoPlaceCount = useMemo(
+    () => mappedCities.filter((city) => city.layerIds.includes(WANT_TO_GO_LAYER_ID)).length,
+    [mappedCities],
+  )
 
   const mappedRoutes = useMemo(
     () =>
@@ -1722,6 +1770,45 @@ export function CesiumAtlasGlobe({
         })}
 
         {mappedCities.map((city) => {
+          // 纯想去地点（FR-MR-4 / PRD §9.3）：与足迹城市同尺寸的空心圆，想去 accent 描边。
+          // 不参与国家高亮、悬停光晕与 isCountryCity 放大；非总览时与其他非本国城市一样变淡。
+          // 点击只打开详情卡（FR-WTG-4），sourceId 就是它的 entityId，半球裁剪照常生效。
+          if (!city.layerIds.includes(TRAVEL_LAYER_ID)) {
+            const isMuted = selectionMode !== 'overview'
+            const title = city.title.en ?? city.title.zh ?? city.sourceId
+
+            return (
+              <Entity
+                key={city.sourceId}
+                name={`${title} · want to go`}
+                show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
+                position={cityPosition(city.lng, city.lat)}
+                onClick={() => onSelectWantToGoPlace?.(city.entityId)}
+                point={{
+                  color: Color.fromCssColorString(wantToGoAccent).withAlpha(isMuted ? 0.05 : 0.18),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                  outlineColor: Color.fromCssColorString(wantToGoAccent).withAlpha(isMuted ? 0.36 : 1),
+                  outlineWidth: 2,
+                  pixelSize: 7,
+                }}
+                label={{
+                  backgroundColor: Color.fromCssColorString('#0f172a').withAlpha(0.72),
+                  fillColor: Color.WHITE,
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                  font: '600 13px Inter, sans-serif',
+                  outlineColor: Color.BLACK,
+                  outlineWidth: 2,
+                  pixelOffset: new Cartesian2(0, -28),
+                  // 足迹的标签只在"选中城市 / 当前国家的城市"上显示；纯想去地点两者都不是。
+                  show: false,
+                  showBackground: true,
+                  style: LabelStyle.FILL_AND_OUTLINE,
+                  text: title,
+                }}
+              />
+            )
+          }
+
           const isSelected = city.sourceId === selectedCityId
           const isHoveredCountryCity =
             hoveredCountryId !== undefined && city.countryId === hoveredCountryId
@@ -1779,6 +1866,47 @@ export function CesiumAtlasGlobe({
                 semiMajorAxis: 42_000,
                 semiMinorAxis: 42_000,
               } : undefined}
+            />
+          )
+        })}
+
+        {mappedCities.map((city) => {
+          // FR-MR-5：足迹 + 想去同一地点。足迹标记（上面那个 Entity）一字不改，
+          // 另起一个独立 Entity 在右上角叠心形徽标；显隐条件与所属标记相同。
+          // 已知限制：Cesium 把"关闭深度测试"实现为把顶点推到近平面，point 用 LEQUAL、
+          // billboard 用 LESS，所以徽标与【相邻城市】的点重叠时总在点的下面（世界视角下的冰岛）。
+          if (!city.layerIds.includes(TRAVEL_LAYER_ID) || !city.layerIds.includes(WANT_TO_GO_LAYER_ID)) {
+            return null
+          }
+          const isSelected = city.sourceId === selectedCityId
+          const isCountryCity =
+            selectedCountryId !== undefined && city.countryId === selectedCountryId
+          const isMuted =
+            selectionMode !== 'overview' && !isSelected && !isCountryCity
+          // 默认（7px、无标签）偏移 (9, -9)。标记放大且显示城市名时（选中 / 当前国家的城市），
+          // 标签底边约在 -15px，徽标改贴标记右侧、略高于中心，免得被标签盖住（同上面的深度限制）。
+          const hasLabel = isSelected || isCountryCity
+          const markerPixelSize = isSelected ? 18 : isCountryCity ? 12 : 7
+          const badgeOffset = hasLabel
+            ? new Cartesian2(markerPixelSize / 2 + 7, -6)
+            : new Cartesian2(9, -9)
+
+          return (
+            <Entity
+              key={`${city.sourceId}__want-to-go-badge`}
+              name={`${city.title.en ?? city.title.zh ?? city.sourceId} · want to go`}
+              show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
+              position={cityPosition(city.lng, city.lat)}
+              // 徽标属于足迹地点：点它与点足迹标记一样进入城市。
+              onClick={() => onSelectCity(city.sourceId)}
+              billboard={{
+                color: Color.WHITE.withAlpha(isMuted ? 0.36 : 1),
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                height: 14,
+                image: wantToGoBadgeImage(wantToGoAccent),
+                pixelOffset: badgeOffset,
+                width: 14,
+              }}
             />
           )
         })}
@@ -1841,7 +1969,8 @@ export function CesiumAtlasGlobe({
       />
 
       <div className="cesium-map-status pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full border border-white/14 bg-slate-950/62 px-4 py-2 text-xs font-semibold text-slate-200 shadow-lg backdrop-blur-2xl">
-        {mappedCities.length} mapped cities · {mappedRoutes.length} journey route segments
+        {travelPlaceCount} mapped cities · {mappedRoutes.length} journey route segments
+        {wantToGoPlaceCount > 0 ? ` · ${wantToGoPlaceCount} want-to-go` : null}
       </div>
     </div>
   )
