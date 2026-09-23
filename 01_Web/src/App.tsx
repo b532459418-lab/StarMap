@@ -304,6 +304,13 @@ function App() {
     setGlobeDistance(cityDistance)
   }
 
+  // FR-WTG-4：只打开右侧详情卡，不改 selectionMode、不飞相机。详情卡在右侧栏里，
+  // 侧栏收起时点了会"没反应"，所以同时展开侧栏。
+  const selectWantToGoPlace = (entityId: EntityId) => {
+    setSelectedWantToGoEntityId(entityId)
+    setSidebarsOpen(true)
+  }
+
   const selectDroneMedia = (cityId: CityId) => {
     const city = cityById[cityId]
     if (!city || !hasDroneMedia(cityId)) return
@@ -423,7 +430,7 @@ function App() {
               activeDroneMediaCityId={activeDroneMediaCityId}
               activeDroneMediaItemId={activeDroneMediaItemId}
               onSelectCity={selectCity}
-              onSelectWantToGoPlace={setSelectedWantToGoEntityId}
+              onSelectWantToGoPlace={selectWantToGoPlace}
               onSelectDroneMediaItem={selectDroneMediaItem}
             />
           </div>
