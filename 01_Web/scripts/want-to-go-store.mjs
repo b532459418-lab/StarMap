@@ -200,5 +200,17 @@ export function createWantToGoStore({ filePath, now = () => new Date() }) {
     return { deletedIds: ids }
   }
 
-  return { read, add, update, deleteHidden }
+  /**
+   * 转为足迹后移除一条想去条目（PR9 规格 §3.2）。与 deleteHidden 不同，【不】要求已隐藏：
+   * 它只供 /__travelatlas/editor/wanttogo/convert 在足迹写入成功之后调用，不单独暴露为端点。
+   */
+  const remove = async (input = {}) => {
+    const id = requireText(input.id, '想去记录 id')
+    const file = await readFile()
+    if (!file.items.some((item) => item?.id === id)) throw new Error('找不到这条想去记录。')
+    await writeFile({ ...file, items: file.items.filter((item) => item?.id !== id) })
+    return { removedId: id }
+  }
+
+  return { read, add, update, deleteHidden, remove }
 }
