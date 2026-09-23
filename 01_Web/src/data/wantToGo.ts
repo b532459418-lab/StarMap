@@ -82,3 +82,18 @@ for (const record of plannedRecords) {
   const entityId = plannedEntityId(record.id)
   if (!plannedRecordByEntityId.has(entityId)) plannedRecordByEntityId.set(entityId, record)
 }
+
+// ---- 想去 → 足迹（PR9）的前置条件 ----
+// 与转换端点（scripts/convert-to-travel.mjs）同一套判断与文案：Collection 与详情卡据此把
+// 「标记为去过」显示为禁用并说明原因；端点仍会再校验一次。返回 undefined 表示可以转换。
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+
+export const wantToGoConvertBlockReason = (item: WantToGoItem): string | undefined => {
+  if (item.place.kind !== 'city') return '整个国家的想去需要先具体到城市，暂不支持直接转为足迹。'
+  if (!isFiniteNumber(item.place.lat) || !isFiniteNumber(item.place.lng)) return '这个地点没有坐标，无法转为足迹。'
+  return undefined
+}
+
+export const plannedConvertBlockReason = (record: TravelMapRecord): string | undefined =>
+  isFiniteNumber(record.lat) && isFiniteNumber(record.lng) ? undefined : '这条旅行计划没有坐标，无法转为足迹。'

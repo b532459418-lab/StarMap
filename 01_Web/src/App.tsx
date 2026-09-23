@@ -7,6 +7,8 @@ import { CollectionPage } from './components/CollectionPage'
 import { CountrySelector } from './components/CountrySelector'
 import type { ThemeMode } from './components/DayNightToggle'
 import { CompassButton } from './components/CompassButton'
+import { ConvertToTravelDialog } from './components/ConvertToTravelDialog'
+import type { ConvertToTravelTarget } from './components/ConvertToTravelDialog'
 import { LayerPanel } from './components/LayerPanel'
 import { MapSourceSwitcher } from './components/MapSourceSwitcher'
 import { MouseControlGuide } from './components/MouseControlGuide'
@@ -24,6 +26,7 @@ import { JourneyYearCards } from './components/JourneyYearCards'
 import type { DroneMediaItem } from './data/droneMedia'
 import { droneMediaById, hasDroneMedia } from './data/droneMedia'
 import { localEditorAvailable } from './data/editorState'
+import type { LocalConvertToTravelResult } from './data/localEditorApi'
 import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
 import { City3DToggle } from './extensions/City3DToggle'
 import { getInitialCity3DEnabled, rememberCity3DEnabled } from './extensions/city3dPreference'
@@ -147,6 +150,8 @@ function App() {
   // 想去详情卡（FR-WTG-4）与添加对话框（FR-WTG-3）。都不进 viewState：保存后整页刷新即关闭（规格 §2 第 7 条）。
   const [selectedWantToGoEntityId, setSelectedWantToGoEntityId] = useState<EntityId>()
   const [isAddWantToGoOpen, setIsAddWantToGoOpen] = useState(false)
+  // 「标记为去过」对话框（PR9）：Collection 卡片与想去详情卡共用这一份，同样不进 viewState。
+  const [convertTarget, setConvertTarget] = useState<ConvertToTravelTarget>()
   // Collection「在地图上查看」的镜头目标（PR7）。选城市 / 选国家 / 回到总览时清空；
   // 关闭详情卡【不】清空，否则焦点回落到总览，镜头会跳回去。不进 viewState。
   // requestId 每次「在地图上查看」递增：同一地点再点一次，镜头也会重新飞过去。
@@ -378,6 +383,25 @@ function App() {
     changePrimaryPage('map')
   }
 
+  // 转换成功、刷新之前（PR9 规格 §2 第 8 条）：把视图状态写成 Map 页并选中新国家与新城市，
+  // 刷新后直接落在这座城市上。刷新时的视图恢复会校验这些 id（cityById / countryById / journeyDays），
+  // 万一某个 id 在新数据里不存在，就回落到总览，不会选中一个不存在的地点。
+  const rememberConvertedPlace = (result: LocalConvertToTravelResult) => {
+    rememberAtlasViewState({
+      selectedCountryId: result.countryId,
+      selectedCityId: result.cityId,
+      selectedDayId: result.travelRecordId,
+      selectionMode: 'city',
+      globeDistance: cityDistance,
+      activePage: 'map',
+      pageBeforeUpdate: 'map',
+      journeyViewMode,
+      activeDroneMediaCityId: undefined,
+      activeDroneMediaItemId: undefined,
+      sidebarsOpen: true,
+    })
+  }
+
   const selectDroneMedia = (cityId: CityId) => {
     const city = cityById[cityId]
     if (!city || !hasDroneMedia(cityId)) return
@@ -546,6 +570,7 @@ function App() {
                     key={`want-to-go-${selectedWantToGoEntityId}`}
                     entityId={selectedWantToGoEntityId}
                     onClose={() => setSelectedWantToGoEntityId(undefined)}
+                    onConvertToTravel={setConvertTarget}
                   />
                 ) : null}
 
@@ -687,6 +712,7 @@ function App() {
               entries={collectionEntries}
               onViewOnMap={viewOnMap}
               onAddWantToGo={() => setIsAddWantToGoOpen(true)}
+              onConvertToTravel={setConvertTarget}
             />
           </div>
 
@@ -714,11 +740,18 @@ function App() {
         />
       ) : null}
 
-      {/* FR-PUB-2 / AC-10：公开构建不挂载添加对话框。 */}
+      {/* FR-PUB-2 / AC-10：公开构建不挂载添加对话框与转换对话框。 */}
       {localEditorAvailable ? (
         <WantToGoAddDialog
           open={isAddWantToGoOpen}
           onClose={() => setIsAddWantToGoOpen(false)}
+        />
+      ) : null}
+      {localEditorAvailable ? (
+        <ConvertToTravelDialog
+          target={convertTarget}
+          onClose={() => setConvertTarget(undefined)}
+          onConverted={rememberConvertedPlace}
         />
       ) : null}
     </main>

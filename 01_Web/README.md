@@ -124,6 +124,7 @@ For each public update, bump the package version, create a matching semantic-ver
 - `scripts/local-editor-plugin.mjs` provides the loopback-only editor in personal development and injects no private data in public mode.
 - `scripts/want-to-go-store.mjs` validates and writes `want-to-go.local.json` behind the editor's Want to Go endpoints; `scripts/want-to-go-store.test.mjs` covers it.
 - `scripts/json-file.mjs` holds the JSON read, backup, and atomic-write helpers shared by the editor and the Want to Go store.
+- `scripts/convert-to-travel.mjs` holds the pure rules behind Mark as visited (the travel country name for a code, the travel record built from a want-to-go city, and a planned record turned visited); the editor's `/__travelatlas/editor/wanttogo/convert` endpoint uses it, and `scripts/convert-to-travel.test.mjs` covers it.
 - `scripts/public-release-check.mjs` rebuilds a clean Git archive in the OS temporary directory, so public-release verification cannot see the private layer.
 - Project-level rules, contribution guide, and edition boundaries live one directory above this web workspace (`AGENTS.md`, `CONTRIBUTING.md`, `docs/editions.md`).
 
