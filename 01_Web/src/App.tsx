@@ -30,7 +30,10 @@ import { getInitialMapSource, mapSourceHasLabelOverlay, rememberMapSource } from
 import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
 import { cities, cityById, countries, countryById, getCitiesForCountry, journeyDays, travelAtlasMeta } from './data/travelAtlas'
+import { travelSnapshot } from './data/worldGraph'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
+import { officialLayers } from './worldgraph/layers'
+import { queryVisiblePlaces } from './worldgraph/query'
 import type { CityId, CountryId, JourneyDay, SelectionMode } from './types/travel'
 
 const DronePanoramaModal = lazy(() =>
@@ -219,6 +222,14 @@ function App() {
     sidebarsOpen,
   ])
 
+  // 图层可见性 → 可见图层 id → 地图要渲染的地点与路线（PRD FR-MR-1 / FR-LR-3）。
+  // 两层 useMemo 都只依赖 layerVisibility：引用稳定，地图侧才不会被无谓重算连累（AC-8）。
+  const visibleLayerIds = useMemo(
+    () => officialLayers.filter((layer) => layerVisibility[layer.id] !== false).map((layer) => layer.id),
+    [layerVisibility],
+  )
+  const layerData = useMemo(() => queryVisiblePlaces(travelSnapshot, visibleLayerIds), [visibleLayerIds])
+
   const atlasStats = useMemo(
     () => [
       { value: `${countries.length}`, label: 'Countries / 国家' },
@@ -387,7 +398,7 @@ function App() {
               resetVersion={globeResetVersion}
               isNight={activeTheme === 'night'}
               showMapContent={activePage === 'map'}
-              showTravelLayer={layerVisibility.travel !== false}
+              layerData={layerData}
               activeDroneMediaCityId={activeDroneMediaCityId}
               activeDroneMediaItemId={activeDroneMediaItemId}
               onSelectCity={selectCity}

@@ -33,8 +33,11 @@ import { GooglePhotorealisticTiles } from '../extensions/GooglePhotorealisticTil
 import { createMapSourceLayers } from '../extensions/mapSources'
 import type { MapSourceId } from '../extensions/mapSources'
 import { publishCameraAttitude, registerOrientationResetHandler, wrapHeadingDegrees } from '../data/cameraOrientation'
-import { cities, cityById, countries, countryById, journeyDays, routes, travelAtlasDisplay } from '../data/travelAtlas'
-import type { City, CityId, CountryId, SelectionMode } from '../types/travel'
+// 可渲染集合改由 layerData prop 提供（PR3 / FR-MR-1）。这里只剩下【选中项与相机】要用的查表：
+// selectedCountry / selectedCity / overviewTarget，FR-MR-3 明确相机不随图层开关改变。
+import { cityById, countryById, travelAtlasDisplay } from '../data/travelAtlas'
+import type { CityId, CountryId, SelectionMode } from '../types/travel'
+import type { LayerPlace, LayerQueryResult } from '../worldgraph/query'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
 import {
   bindTrackpadOrbit,
@@ -62,17 +65,15 @@ type CesiumAtlasGlobeProps = {
   resetVersion: number
   isNight: boolean
   showMapContent?: boolean
-  /** 足迹图层（PRD v0.4 FR-LP）。只门控城市标记与路线，不影响底图、相机与媒体标记。 */
-  showTravelLayer?: boolean
+  /**
+   * 可见图层查询结果（PRD v0.4 FR-MR-1）。城市标记与路线【只】来自这里；
+   * 图层被关掉时它自然为空，Entity 不再渲染。底图、相机与媒体标记不受它影响。
+   */
+  layerData: LayerQueryResult
   activeDroneMediaCityId?: CityId
   activeDroneMediaItemId?: string
   onSelectCity: (cityId: CityId) => void
   onSelectDroneMediaItem: (item: DroneMediaItem) => void
-}
-
-type MappedCity = City & {
-  lat: number
-  lng: number
 }
 
 type CursorTrailPoint = {
@@ -545,7 +546,7 @@ export function CesiumAtlasGlobe({
   resetVersion,
   isNight,
   showMapContent = true,
-  showTravelLayer = true,
+  layerData,
   activeDroneMediaCityId,
   activeDroneMediaItemId,
   onSelectCity,
@@ -825,99 +826,27 @@ export function CesiumAtlasGlobe({
     [],
   )
 
-  const mappedCities = useMemo<MappedCity[]>(
-    () =>
-      cities.filter(
-        (city): city is MappedCity =>
-          typeof city.lat === 'number' && typeof city.lng === 'number',
-      ),
-    [],
-  )
-
-  const journeyVisitCounts = useMemo(
-    () =>
-      journeyDays.reduce(
-        (counts, day) => {
-          counts[day.cityId] = (counts[day.cityId] ?? 0) + 1
-          return counts
-        },
-        {} as Record<CityId, number>,
-      ),
-    [],
-  )
+  // PR3：可渲染集合只来自 layerData（FR-MR-1）。layerData 的引用由 App 的 useMemo 稳住，
+  // 所以这两个 useMemo 的依赖不会每次渲染都变，下游的 useEffect 也不会被反复重建（AC-8）。
+  // 访问次数原来是本地 journeyVisitCounts，现在是 LayerPlace.visitCount。
+  const mappedCities = useMemo<LayerPlace[]>(() => layerData.places, [layerData])
 
   const mappedRoutes = useMemo(
-    () => {
-      const orderedCountryRoutes = countries.flatMap((country) =>
-        country.cityIds.slice(1).flatMap((toCityId, index) => {
-          const fromCityId = country.cityIds[index]
-          const from = cityById[fromCityId]
-          const to = cityById[toCityId]
-
-          if (!from || !to) return []
-
-          const existingRoute = routes.find(
-            (route) =>
-              route.fromCityId === fromCityId &&
-              route.toCityId === toCityId,
-          )
-          const fromJourneyIds = new Set(
-            from.records?.map((record) => record.journeyId).filter(Boolean),
-          )
-          const sharedJourneyId = to.records
-            ?.map((record) => record.journeyId)
-            .find((journeyId) => journeyId && fromJourneyIds.has(journeyId))
-
-          return [{
-            id: existingRoute?.id ?? `country-order__${country.id}__${fromCityId}__${toCityId}`,
-            fromCityId,
-            toCityId,
-            journeyId: existingRoute?.journeyId ?? sharedJourneyId,
-            type: existingRoute?.type ?? 'main' as const,
-          }]
-        }),
-      )
-      const crossCountryRoutes = routes.filter((route) => {
-        const from = cityById[route.fromCityId]
-        const to = cityById[route.toCityId]
-        return from?.countryId && to?.countryId && from.countryId !== to.countryId
-      })
-
-      return [...orderedCountryRoutes, ...crossCountryRoutes].flatMap((route) => {
-        const from = cityById[route.fromCityId]
-        const to = cityById[route.toCityId]
-
-        if (
-          !route.journeyId ||
-          !from ||
-          !to ||
-          typeof from.lat !== 'number' ||
-          typeof from.lng !== 'number' ||
-          typeof to.lat !== 'number' ||
-          typeof to.lng !== 'number'
-        ) {
-          return []
-        }
-
-        return [{
-          ...route,
-          fromLat: from.lat,
-          fromLng: from.lng,
-          toLat: to.lat,
-          toLng: to.lng,
-          fromCountryId: from.countryId,
-          toCountryId: to.countryId,
-          positions: createRoutePositions(
-            from.lng,
-            from.lat,
-            to.lng,
-            to.lat,
-            route.type,
-          ),
-        }]
-      })
-    },
-    [],
+    () =>
+      layerData.routes.map((route) => ({
+        ...route,
+        fromCityId: route.fromSourceId,
+        toCityId: route.toSourceId,
+        type: route.kind,
+        positions: createRoutePositions(
+          route.fromLng,
+          route.fromLat,
+          route.toLng,
+          route.toLat,
+          route.kind,
+        ),
+      })),
+    [layerData],
   )
   const activeCityRouteIds = useMemo(
     () =>
@@ -1384,7 +1313,7 @@ export function CesiumAtlasGlobe({
               cameraPosition,
             ),
           )
-          .map((city) => city.id),
+          .map((city) => city.sourceId),
       )
       const nextRouteIds = new Set(
         mappedRoutes
@@ -1776,7 +1705,7 @@ export function CesiumAtlasGlobe({
             <Entity
               key={route.id}
               name={`${route.journeyId}: ${route.fromCityId} to ${route.toCityId}`}
-              show={showMapContent && showTravelLayer && isVisible}
+              show={showMapContent && isVisible}
               polyline={{
                 arcType: ArcType.NONE,
                 clampToGround: false,
@@ -1793,14 +1722,14 @@ export function CesiumAtlasGlobe({
         })}
 
         {mappedCities.map((city) => {
-          const isSelected = city.id === selectedCityId
+          const isSelected = city.sourceId === selectedCityId
           const isHoveredCountryCity =
             hoveredCountryId !== undefined && city.countryId === hoveredCountryId
           const isCountryCity =
             selectedCountryId !== undefined && city.countryId === selectedCountryId
-          const country = city.countryId ? countryById[city.countryId] : undefined
-          const accent = country?.accent ?? '#38bdf8'
-          const visitCount = journeyVisitCounts[city.id] ?? 1
+          const accent = city.accent ?? '#38bdf8'
+          // 保持原 `?? 1` 的显示语义：没有到访记录时也显示 1（对等测试按此约定）。
+          const visitCount = city.visitCount || 1
           const isMuted =
             selectionMode !== 'overview' && !isSelected && !isCountryCity
           const corePixelSize = isCountryCity ? 12 : 7
@@ -1808,11 +1737,11 @@ export function CesiumAtlasGlobe({
 
           return (
             <Entity
-              key={city.id}
-              name={`${city.nameEn ?? city.nameZh ?? city.id} · ${visitCount} visit records`}
-              show={showMapContent && showTravelLayer && (visibleCityIds?.has(city.id) ?? true)}
+              key={city.sourceId}
+              name={`${city.title.en ?? city.title.zh ?? city.sourceId} · ${visitCount} visit records`}
+              show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
               position={cityPosition(city.lng, city.lat)}
-              onClick={() => onSelectCity(city.id)}
+              onClick={() => onSelectCity(city.sourceId)}
               billboard={showHoverGlow ? {
                 color: Color.WHITE,
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -1840,7 +1769,7 @@ export function CesiumAtlasGlobe({
                 show: isSelected || isCountryCity,
                 showBackground: true,
                 style: LabelStyle.FILL_AND_OUTLINE,
-                text: city.nameEn ?? city.nameZh ?? city.id,
+                text: city.title.en ?? city.title.zh ?? city.sourceId,
               }}
               ellipse={isSelected ? {
                 height: 300,
