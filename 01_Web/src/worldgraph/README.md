@@ -15,6 +15,7 @@ The product editions that build on it are described in
 | `slug.ts` | `slugify()`, the single slug rule shared by want-to-go entity ids and the same-place merge key in `query.ts`. The `.mjs` copies in `scripts/want-to-go-store.mjs` and `scripts/local-editor-plugin.mjs` must stay identical. |
 | `snapshot.ts` | `mergeWorldGraphSnapshots()` combines several adapter outputs into one snapshot (first one wins on duplicate ids; memberships are keyed by `(entityId, layerId)`), plus `emptyWorldGraphSnapshot()`. |
 | `query.ts` | Layer query: `queryVisiblePlaces()` turns a snapshot and the visible layer ids into the places and route segments the map renders. Each layer decides which place subtypes it draws, and a non-travel city that matches a visible travel city is merged into it (the heart badge). |
+| `collection.ts` | Collection query: `queryCollection()` lists every member of one layer (hidden and coordinate-less entries included, layer visibility ignored, no same-place merging) for the Collection view; `filterCollection()` applies the text search, visible / hidden filter, and recent / name / country sort. |
 | `adapters/travel.ts` | Travel adapter: `travelToWorldGraph()` projects already-loaded travel domain objects (countries, cities, journey days, routes) into a `WorldGraphSnapshot`, plus the id helpers `countryEntityId`, `cityEntityId`, `journeyEntityId`, `relationId`, `sourcedRelationId`, `anchorId`. Pure and deterministic; `options.now` is required. |
 | `adapters/wantToGo.ts` | Want to Go adapter: `parseWantToGoFile()` turns the contents of `want-to-go.local.json` (or the tracked sample) into items without throwing, dropping bad entries with a readable problem; `wantToGoToWorldGraph()` projects the items into a snapshot; `wantToGoEntityId()` builds `place:wtg:<CC>:<slug>` ids. Hidden items stay in the snapshot, marked on their membership. |
 | `adapters/plannedRecords.ts` | Planned records adapter: `plannedRecordsToWorldGraph()` projects travel records with `status: planned` into read-only Want to Go entries; `plannedEntityId()` builds their ids. |
@@ -25,6 +26,7 @@ The product editions that build on it are described in
 | `snapshot.test.ts` | Unit tests for snapshot merging. |
 | `query.test.ts` | Unit tests for the layer query rules on small hand-written snapshots, including same-place merging. |
 | `query.parity.test.ts` | Parity test: on the sample data, `queryVisiblePlaces()` produces exactly what the map computed before the layer query existed (a verbatim copy of that legacy logic lives only in this file). |
+| `collection.test.ts` | Unit tests for the Collection query, search, filters, and sorts, plus one integration case over the want-to-go and planned adapters. |
 | `slug.test.ts` | Unit tests for `slugify()`. |
 
 Run the tests with `npm test` from `01_Web/` (plain `node --test`, no bundler).
@@ -81,6 +83,8 @@ stabilize:
 4. `snapshot.ts` — `mergeWorldGraphSnapshots`, the way adapter outputs are
    combined.
 5. `query.ts` — `queryVisiblePlaces`, the layer query every renderer reads.
+   `collection.ts` — `queryCollection` / `filterCollection`, the list-view
+   counterpart that ignores layer visibility.
 6. The adapter interface itself (Local adapter here, Cloud adapter elsewhere),
    once it exists as code rather than as a diagram.
 
