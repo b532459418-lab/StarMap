@@ -3394,8 +3394,8 @@ button {
   will-change: transform;
 }
 
-.atlas-experience:is([data-page='journey'], [data-page='about']) .atlas-overlay-frame .atlas-left-panel,
-.atlas-experience:is([data-page='journey'], [data-page='about']) .atlas-overlay-frame::before {
+.atlas-experience:is([data-page='journey'], [data-page='collection'], [data-page='about']) .atlas-overlay-frame .atlas-left-panel,
+.atlas-experience:is([data-page='journey'], [data-page='collection'], [data-page='about']) .atlas-overlay-frame::before {
   transform: translateX(-100%);
   visibility: hidden;
   pointer-events: none;
@@ -3404,8 +3404,8 @@ button {
     visibility 0s linear 460ms;
 }
 
-.atlas-experience:is([data-page='journey'], [data-page='about']) .atlas-overlay-frame .atlas-right-stack,
-.atlas-experience:is([data-page='journey'], [data-page='about']) .atlas-overlay-frame::after {
+.atlas-experience:is([data-page='journey'], [data-page='collection'], [data-page='about']) .atlas-overlay-frame .atlas-right-stack,
+.atlas-experience:is([data-page='journey'], [data-page='collection'], [data-page='about']) .atlas-overlay-frame::after {
   transform: translateX(100%);
   visibility: hidden;
   pointer-events: none;
@@ -3421,11 +3421,12 @@ button {
     visibility 0s linear;
 }
 
-.atlas-experience:is([data-page='journey'], [data-page='about']) .cesium-widget-credits {
+.atlas-experience:is([data-page='journey'], [data-page='collection'], [data-page='about']) .cesium-widget-credits {
   opacity: 0;
 }
 
-.atlas-journey-stage {
+.atlas-journey-stage,
+.atlas-collection-stage {
   opacity: 0;
   transform: translateY(52px);
   visibility: hidden;
@@ -3437,7 +3438,8 @@ button {
   will-change: transform, opacity;
 }
 
-.atlas-experience[data-page='journey'] .atlas-journey-stage {
+.atlas-experience[data-page='journey'] .atlas-journey-stage,
+.atlas-experience[data-page='collection'] .atlas-collection-stage {
   opacity: 1;
   transform: translateY(0);
   visibility: visible;
@@ -4093,7 +4095,8 @@ button {
   .atlas-experience .atlas-overlay-frame::before,
   .atlas-experience .atlas-overlay-frame::after,
   .atlas-experience .atlas-map-controls,
-  .atlas-journey-stage {
+  .atlas-journey-stage,
+  .atlas-collection-stage {
     transition: none;
   }
 }

@@ -1,4 +1,4 @@
-export type AtlasPage = 'map' | 'journey' | 'about'
+export type AtlasPage = 'map' | 'journey' | 'collection' | 'about'
 
 type AtlasHeaderProps = {
   activePage: AtlasPage
@@ -8,6 +8,7 @@ type AtlasHeaderProps = {
 const navItems: { id: AtlasPage; label: string }[] = [
   { id: 'map', label: 'Map' },
   { id: 'journey', label: 'Journey' },
+  { id: 'collection', label: 'Collection' },
 ]
 
 export function AtlasHeader({ activePage, onPageChange }: AtlasHeaderProps) {

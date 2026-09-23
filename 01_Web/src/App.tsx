@@ -100,11 +100,12 @@ function App() {
     && journeyDays.some((day) => day.id === restoredViewState.selectedDayId)
     ? restoredViewState.selectedDayId
     : defaultSelectedDayId
-  const restoredActivePage: AtlasPage = ['map', 'journey', 'about'].includes(restoredViewState.activePage ?? '')
+  const restoredActivePage: AtlasPage = ['map', 'journey', 'collection', 'about'].includes(restoredViewState.activePage ?? '')
     ? restoredViewState.activePage as AtlasPage
     : 'map'
   const restoredPageBeforeUpdate: Exclude<AtlasPage, 'about'> = restoredViewState.pageBeforeUpdate === 'journey'
-    ? 'journey'
+    || restoredViewState.pageBeforeUpdate === 'collection'
+    ? restoredViewState.pageBeforeUpdate
     : 'map'
   const restoredJourneyViewMode: JourneyViewMode = restoredViewState.journeyViewMode === 'yearCards'
     ? 'yearCards'
@@ -141,6 +142,9 @@ function App() {
   // 想去详情卡（FR-WTG-4）与添加对话框（FR-WTG-3）。都不进 viewState：保存后整页刷新即关闭（规格 §2 第 7 条）。
   const [selectedWantToGoEntityId, setSelectedWantToGoEntityId] = useState<EntityId>()
   const [isAddWantToGoOpen, setIsAddWantToGoOpen] = useState(false)
+  // Collection「在地图上查看」的镜头目标（PR7）。选城市 / 选国家 / 回到总览时清空；
+  // 关闭详情卡【不】清空，否则焦点回落到总览，镜头会跳回去。不进 viewState。
+  const [mapFocusPlace, setMapFocusPlace] = useState<{ entityId: EntityId; lat: number; lng: number }>()
   const [sidebarsOpen, setSidebarsOpen] = useState(() => typeof restoredViewState.sidebarsOpen === 'boolean'
     ? restoredViewState.sidebarsOpen
     : typeof window === 'undefined' || window.matchMedia(sidebarMediaQuery).matches)
@@ -260,6 +264,7 @@ function App() {
 
   const resetOverview = () => {
     setSelectedWantToGoEntityId(undefined)
+    setMapFocusPlace(undefined)
     setSelectedCountryId(undefined)
     setSelectedCityId(undefined)
     setActiveDroneMediaCityId(undefined)
@@ -271,6 +276,7 @@ function App() {
 
   const selectCountry = (countryId: CountryId) => {
     setSelectedWantToGoEntityId(undefined)
+    setMapFocusPlace(undefined)
     if (selectedCountryId === countryId && selectionMode !== 'overview') {
       resetOverview()
       return
@@ -286,6 +292,7 @@ function App() {
 
   const selectCity = (cityId: CityId) => {
     setSelectedWantToGoEntityId(undefined)
+    setMapFocusPlace(undefined)
     if (selectedCityId === cityId) {
       setSelectedCityId(undefined)
       setActiveDroneMediaCityId(undefined)
@@ -321,6 +328,7 @@ function App() {
       return
     }
 
+    setMapFocusPlace(undefined)
     if (city.countryId) setSelectedCountryId(city.countryId)
     setSelectedCityId(cityId)
     setActiveDroneMediaCityId(cityId)
@@ -337,6 +345,7 @@ function App() {
       return
     }
 
+    setMapFocusPlace(undefined)
     const city = cityById[item.cityId]
     if (city?.countryId && selectedCountryId !== city.countryId) {
       setSelectedCountryId(city.countryId)
@@ -390,6 +399,8 @@ function App() {
   }
 
   const selectDay = (day: JourneyDay) => {
+    // 城市焦点的优先级低于 place 焦点：凡是"选中一个城市"的入口都要清掉 Collection 的镜头目标。
+    setMapFocusPlace(undefined)
     setSelectedDayId(day.id)
     if (day.countryId) setSelectedCountryId(day.countryId)
     setSelectedCityId(day.cityId)
@@ -432,6 +443,7 @@ function App() {
               onSelectCity={selectCity}
               onSelectWantToGoPlace={selectWantToGoPlace}
               onSelectDroneMediaItem={selectDroneMediaItem}
+              focusPlace={mapFocusPlace}
             />
           </div>
 
@@ -603,6 +615,11 @@ function App() {
               </div>
             </div>
           </div>
+
+          <div
+            className="atlas-collection-stage absolute inset-0 z-30"
+            aria-hidden={activePage !== 'collection'}
+          />
 
           <div
             className="atlas-update-stage absolute inset-0 z-30"
