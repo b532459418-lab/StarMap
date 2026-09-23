@@ -5797,7 +5797,14 @@ button {
   letter-spacing: 0.12em;
 }
 
-.atlas-layer-menu > button {
+/* role="menu" 只包住图层开关（PR5）：弹层里的「已隐藏」「添加」是普通按钮，不能做 menu 的子元素。
+   间距与弹层本身的 3px 网格一致，所以视觉上与 PR2 完全相同。 */
+.atlas-layer-menu-items {
+  display: grid;
+  gap: 3px;
+}
+
+.atlas-layer-menu-items > button {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) 15px;
   min-height: 48px;
@@ -5816,18 +5823,18 @@ button {
     transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.atlas-layer-menu > button[data-active='true'] {
+.atlas-layer-menu-items > button[data-active='true'] {
   border-color: rgba(125, 211, 252, 0.2);
   background: rgba(125, 211, 252, 0.08);
   color: #f8fafc;
 }
 
-.atlas-layer-menu > button:active {
+.atlas-layer-menu-items > button:active {
   transform: scale(0.97);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .atlas-layer-menu > button:hover {
+  .atlas-layer-menu-items > button:hover {
     border-color: rgba(255, 255, 255, 0.1);
     background: rgba(255, 255, 255, 0.055);
     color: #f8fafc;
@@ -5846,7 +5853,7 @@ button {
 }
 
 /* 隐藏的图层把它的 accent 调暗，让"关掉了"在扫一眼时也成立。 */
-.atlas-layer-menu > button[data-active='false'] .atlas-layer-icon {
+.atlas-layer-menu-items > button[data-active='false'] .atlas-layer-icon {
   opacity: 0.45;
 }
 
@@ -5870,7 +5877,7 @@ button {
   height: 16px;
 }
 
-.atlas-layer-menu > button > svg {
+.atlas-layer-menu-items > button > svg {
   width: 15px;
   height: 15px;
   justify-self: end;
@@ -5886,18 +5893,451 @@ button {
     0 16px 40px rgba(15, 23, 42, 0.12);
 }
 
-.theme-day .atlas-layer-menu > button {
+.theme-day .atlas-layer-menu-items > button {
   color: #334155;
 }
 
-.theme-day .atlas-layer-menu > button:hover,
-.theme-day .atlas-layer-menu > button[data-active='true'] {
+.theme-day .atlas-layer-menu-items > button:hover,
+.theme-day .atlas-layer-menu-items > button[data-active='true'] {
   color: #0f172a;
 }
 
 .atlas-layer-button[aria-expanded='true'] {
   background: rgba(125, 211, 252, 0.08);
   color: #dff6ff;
+}
+
+/* PR5：想去图层的「已隐藏 N 项」与「＋ 添加想去的地方」（FR-WTG-5 / FR-LP-3，仅私人模式渲染）。
+   沿用上面图层行的圆角、字号与配色；左缩进 25px 让文字与图层名对齐（9px 内边距 + 16px 图标 + 9px 间距）。 */
+.atlas-layer-hidden {
+  display: grid;
+  gap: 5px;
+  margin-left: 25px;
+}
+
+.atlas-layer-hidden-toggle,
+.atlas-layer-add {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(203, 213, 225, 0.78);
+  text-align: left;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.atlas-layer-hidden-toggle {
+  min-height: 30px;
+  justify-content: space-between;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.atlas-layer-hidden-toggle svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.atlas-layer-hidden-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.atlas-layer-hidden-list {
+  display: grid;
+  max-height: 232px;
+  gap: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.atlas-layer-hidden-item {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 7px 8px;
+}
+
+.atlas-layer-hidden-label {
+  color: rgba(226, 232, 240, 0.86);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* 日期整体换行，不在连字符处断开。 */
+.atlas-layer-hidden-date {
+  color: rgba(148, 163, 184, 0.78);
+  white-space: nowrap;
+}
+
+.atlas-layer-hidden-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.atlas-layer-hidden-actions button {
+  min-height: 26px;
+  border: 1px solid rgba(103, 232, 249, 0.34);
+  border-radius: 7px;
+  background: rgba(8, 145, 178, 0.2);
+  color: #cffafe;
+  font-size: 10px;
+  font-weight: 650;
+  transition: background-color 140ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.atlas-layer-hidden-actions .atlas-layer-hidden-delete {
+  border-color: rgba(248, 113, 113, 0.48);
+  background: rgba(185, 28, 28, 0.3);
+  color: #fee2e2;
+}
+
+.atlas-layer-hidden-actions button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.atlas-layer-status {
+  margin: 0;
+  border-radius: 8px;
+  background: rgba(185, 28, 28, 0.18);
+  padding: 6px 8px;
+  color: #fecaca;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.atlas-layer-divider {
+  margin: 3px 2px;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.atlas-layer-add {
+  min-height: 40px;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.atlas-layer-add svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: #f0647a;
+}
+
+.atlas-layer-hidden-toggle:active,
+.atlas-layer-add:active,
+.atlas-layer-hidden-actions button:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .atlas-layer-hidden-toggle:hover,
+  .atlas-layer-add:hover {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.055);
+    color: #f8fafc;
+  }
+
+  .atlas-layer-hidden-actions button:not(:disabled):hover {
+    background: rgba(8, 145, 178, 0.32);
+  }
+
+  .atlas-layer-hidden-actions .atlas-layer-hidden-delete:not(:disabled):hover {
+    background: rgba(220, 38, 38, 0.46);
+  }
+}
+
+/* PR5：想去详情卡（FR-WTG-4 / PRD §9.4），右侧栏最上方，与 InfoCard 共用字体类。 */
+.cesium-lab-page .atlas-right-stack > .atlas-wtg-card {
+  position: relative;
+  z-index: 11;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 10px;
+  border: 0;
+  border-bottom: 1px solid var(--atlas-ui-hairline);
+  border-radius: 0;
+  box-shadow: inset 3px 0 0 #f0647a;
+  padding: 18px;
+  text-align: left;
+}
+
+.atlas-wtg-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cesium-lab-page .atlas-wtg-card .atlas-card-eyebrow {
+  color: rgba(253, 164, 175, 0.86);
+}
+
+.atlas-wtg-card-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--atlas-ui-hairline);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--atlas-ui-muted);
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.atlas-wtg-card-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.atlas-wtg-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--atlas-ui-body);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.atlas-wtg-card-meta svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: #f0647a;
+}
+
+.atlas-wtg-card-note {
+  margin: 0;
+  color: var(--atlas-ui-ink);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.atlas-wtg-card-readonly {
+  margin: 0;
+  color: var(--atlas-ui-muted);
+  font-size: 11px;
+}
+
+.atlas-wtg-card-hide {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(240, 100, 122, 0.42);
+  border-radius: 9px;
+  background: rgba(240, 100, 122, 0.12);
+  padding: 0 12px;
+  color: #ffe4e6;
+  font-size: 12px;
+  font-weight: 650;
+  transition: background-color 140ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.atlas-wtg-card-hide svg {
+  width: 14px;
+  height: 14px;
+}
+
+.atlas-wtg-card-hide:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.atlas-wtg-card-hide:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.atlas-wtg-card-notice {
+  margin: 0;
+  border-radius: 8px;
+  background: rgba(185, 28, 28, 0.18);
+  padding: 7px 9px;
+  color: #fecaca;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .atlas-wtg-card-close:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--atlas-ui-ink);
+  }
+
+  .atlas-wtg-card-hide:not(:disabled):hover {
+    background: rgba(240, 100, 122, 0.22);
+  }
+}
+
+/* PR5：添加想去对话框（FR-WTG-3）。遮罩同城市相册弹窗，表单沿用 .atlas-local-editor-form 深色样式。 */
+.atlas-wtg-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(240, 100, 122, 0.07), transparent 45%),
+    rgba(0, 4, 9, 0.62);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
+  backdrop-filter: blur(10px) saturate(1.1);
+}
+
+.atlas-wtg-dialog {
+  display: grid;
+  width: min(92vw, 400px);
+  max-height: calc(100dvh - 48px);
+  gap: 12px;
+  overflow-y: auto;
+  border: 1px solid rgba(226, 232, 240, 0.14);
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(18, 30, 44, 0.8), rgba(3, 9, 17, 0.92)),
+    rgba(3, 9, 17, 0.88);
+  padding: 16px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 34px 110px rgba(0, 0, 0, 0.58);
+  color: #f8fafc;
+}
+
+.atlas-wtg-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.atlas-wtg-dialog-header p {
+  margin: 0;
+  color: rgba(253, 164, 175, 0.86);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.22em;
+}
+
+.atlas-wtg-dialog-header h2 {
+  margin: 6px 0 0;
+  color: #f8fafc;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.atlas-wtg-dialog-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(226, 232, 240, 0.14);
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(203, 213, 225, 0.8);
+}
+
+.atlas-wtg-dialog-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.atlas-wtg-dialog-close:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.atlas-wtg-dialog .atlas-wtg-dialog-form {
+  margin: 0;
+}
+
+.atlas-wtg-kind {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(2, 8, 16, 0.5);
+  padding: 3px;
+}
+
+.atlas-local-editor-form > .atlas-wtg-kind > button {
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(203, 213, 225, 0.72);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.atlas-local-editor-form > .atlas-wtg-kind > button[aria-checked='true'] {
+  border-color: rgba(103, 232, 249, 0.34);
+  background: rgba(8, 145, 178, 0.24);
+  color: #ecfeff;
+}
+
+.atlas-wtg-dialog-form input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.atlas-wtg-hint {
+  margin: -4px 0 0;
+  color: rgba(148, 163, 184, 0.72);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.atlas-wtg-note textarea {
+  min-width: 0;
+  min-height: 64px;
+  resize: vertical;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 9px;
+  background: rgba(2, 8, 16, 0.66);
+  padding: 8px 9px;
+  color: #e2e8f0;
+  font-size: 11px;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.atlas-wtg-note textarea:focus {
+  border-color: rgba(103, 232, 249, 0.62);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.1);
+}
+
+.atlas-wtg-note small {
+  justify-self: end;
+  color: rgba(148, 163, 184, 0.64);
+  font-size: 10px;
+}
+
+.atlas-wtg-dialog-form > .atlas-wtg-dialog-notice {
+  margin: 0;
 }
 
 .atlas-dock-button,
