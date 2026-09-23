@@ -43,9 +43,10 @@ async function main() {
     await run('tar', ['-xf', archivePath, '-C', checkoutRoot], sourceRoot)
     await runNpm(['ci', '--no-audit', '--no-fund'], checkoutWebRoot)
     await runNpm(['run', 'lint'], checkoutWebRoot)
+    await runNpm(['test'], checkoutWebRoot)
     await runNpm(['run', 'build:public'], checkoutWebRoot)
     console.log('StarMap clean-room public release check passed.')
-    console.log('The build used only files tracked by Git; 06_private was not available to the build.')
+    console.log('The lint, test and build used only files tracked by Git; 06_private was not available to them.')
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true })
   }

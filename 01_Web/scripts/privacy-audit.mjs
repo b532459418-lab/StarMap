@@ -27,6 +27,21 @@ const existingViolations = publicFiles.filter((filePath) =>
   isPrivateTrackedPath(filePath) && existsSync(path.join(projectRoot, filePath)),
 )
 
+// Only these tracked files may be named want-to-go*. Anything else, such as a renamed
+// copy of the private want-to-go.local.json, is a violation even without `.local.`.
+const allowedWantToGoPaths = new Set([
+  '01_Web/src/data/want-to-go.sample.json',
+  '03_Reference/want-to-go.schema.json',
+  '01_Web/scripts/want-to-go-store.mjs',
+  '01_Web/scripts/want-to-go-store.test.mjs',
+])
+const unexpectedWantToGoFiles = publicFiles.filter((filePath) => {
+  const normalized = filePath.replaceAll('\\', '/')
+  return path.posix.basename(normalized).toLowerCase().startsWith('want-to-go')
+    && !allowedWantToGoPaths.has(normalized)
+    && existsSync(path.join(projectRoot, filePath))
+})
+
 const samplePath = path.join(webRoot, 'src', 'data', 'travel-map.sample.json')
 const sampleData = JSON.parse(readFileSync(samplePath, 'utf8'))
 const errors = []
@@ -59,6 +74,42 @@ if (!Array.isArray(sampleData.records) || sampleData.records.length === 0) {
   errors.push('travel-map.sample.json needs at least one runnable sample record.')
 }
 
+if (unexpectedWantToGoFiles.length > 0) {
+  errors.push(`Only the neutral want-to-go sample, its schema, and the store scripts may be tracked:\n${unexpectedWantToGoFiles.map((filePath) => `  - ${filePath}`).join('\n')}`)
+}
+
+const wantToGoSamplePath = path.join(webRoot, 'src', 'data', 'want-to-go.sample.json')
+let wantToGoSample
+try {
+  wantToGoSample = JSON.parse(readFileSync(wantToGoSamplePath, 'utf8'))
+} catch (error) {
+  errors.push(`want-to-go.sample.json must exist and be valid JSON: ${error.message}`)
+}
+const wantToGoSampleItems = Array.isArray(wantToGoSample?.items) ? wantToGoSample.items : []
+if (wantToGoSample !== undefined) {
+  const describeItem = (item, index) => (typeof item?.id === 'string' ? item.id : `item ${index + 1}`)
+  const listItems = (predicate) => wantToGoSampleItems
+    .map((item, index) => (predicate(item) ? `  - ${describeItem(item, index)}` : undefined))
+    .filter(Boolean)
+    .join('\n')
+
+  if (wantToGoSample?.schema_version !== 1) {
+    errors.push('want-to-go.sample.json must declare schema_version = 1.')
+  }
+  if (wantToGoSample?.privacy_level !== 'public-sample') {
+    errors.push('want-to-go.sample.json must declare privacy_level = public-sample.')
+  }
+  if (wantToGoSampleItems.length === 0) {
+    errors.push('want-to-go.sample.json needs a non-empty items array.')
+  }
+  const badIds = listItems((item) => typeof item?.id !== 'string' || !item.id.startsWith('wtg_'))
+  if (badIds) errors.push(`want-to-go.sample.json item ids must start with wtg_:\n${badIds}`)
+  const hiddenItems = listItems((item) => item?.hidden === true)
+  if (hiddenItems) errors.push(`want-to-go.sample.json must not contain hidden items:\n${hiddenItems}`)
+  const editorItems = listItems((item) => item?.source === 'local-editor')
+  if (editorItems) errors.push(`want-to-go.sample.json must not contain items written by the local editor (source = local-editor):\n${editorItems}`)
+}
+
 const droneSource = readFileSync(path.join(webRoot, 'src', 'data', 'droneMedia.ts'), 'utf8')
 if (droneSource.includes('builtInDroneMediaItems') || /src:\s*['"]\/media\//.test(droneSource)) {
   errors.push('droneMedia.ts still contains built-in media instead of the private local catalog.')
@@ -72,6 +123,7 @@ if (errors.length > 0) {
   console.log('StarMap privacy audit passed.')
   console.log(`Tracked and unignored public files checked: ${publicFiles.length}`)
   console.log(`Neutral sample records: ${sampleData.records.length}`)
+  console.log(`Neutral want-to-go sample items: ${wantToGoSampleItems.length}`)
   console.log('Required .gitignore safeguards are present.')
   console.log('Private Inbox, generated media, local catalogs, local travel data, and environment files are outside the tracked public boundary.')
   console.log('Note: this checks the current tree. Publish from a clean repository so earlier private Git history is not inherited.')
