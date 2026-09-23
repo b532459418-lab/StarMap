@@ -227,4 +227,35 @@ export const deleteHiddenLocalWantToGo = async (ids: string[]) => {
   return parseResponse<{ deletedIds: string[] }>(response)
 }
 
+// ---- 想去 → 足迹（PR9，PRD S5 / R13）----
+// 一个端点完成整件事：新增足迹城市（或把 planned 改为已去过）、按需更新国家排序、默认移除想去条目。
+// 日期一律由用户填写，这里原样转发，不补默认值。
+
+export type LocalConvertToTravelInput =
+  | {
+      source: 'want-to-go'
+      id: string
+      startDate: string
+      endDate?: string
+      tripTitle?: string
+      keepWantToGo?: boolean
+    }
+  | { source: 'planned'; recordId: string; startDate: string; endDate?: string }
+
+export type LocalConvertToTravelResult = {
+  travelRecordId: string
+  countryId: string
+  cityId: string
+  wantToGoRemoved: boolean
+}
+
+export const convertLocalWantToGoToTravel = async (input: LocalConvertToTravelInput) => {
+  const response = await fetch('/__travelatlas/editor/wanttogo/convert', {
+    method: 'POST',
+    headers: editorHeaders,
+    body: JSON.stringify(input),
+  })
+  return parseResponse<LocalConvertToTravelResult>(response)
+}
+
 export const reloadAfterLocalSave = () => window.location.reload()

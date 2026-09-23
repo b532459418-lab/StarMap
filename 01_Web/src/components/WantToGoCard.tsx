@@ -1,13 +1,23 @@
-import { useState } from 'react'
-import { EyeOff, Heart, X } from 'lucide-react'
+import { useId, useState } from 'react'
+import { EyeOff, Footprints, Heart, X } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
 import { reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorApi'
-import { plannedRecordByEntityId, wantToGoDataSource, wantToGoItemByEntityId } from '../data/wantToGo'
+import { travelAtlasDataSource } from '../data/travelAtlas'
+import {
+  plannedConvertBlockReason,
+  plannedRecordByEntityId,
+  wantToGoConvertBlockReason,
+  wantToGoDataSource,
+  wantToGoItemByEntityId,
+} from '../data/wantToGo'
 import type { EntityId } from '../worldgraph/types'
+import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
 
 type WantToGoCardProps = {
   entityId: EntityId
   onClose: () => void
+  /** 「标记为去过」（PR9）：打开 App 里唯一的转换对话框。 */
+  onConvertToTravel?: (target: ConvertToTravelTarget) => void
 }
 
 let regionNames: Intl.DisplayNames | undefined | null
@@ -32,17 +42,29 @@ const regionNameZh = (countryCode: string) => {
  * 想去详情卡（PRD FR-WTG-4 / §9.4），放在右侧栏最上方，与 InfoCard 并存。
  *
  * 数据只来自 wantToGoItemByEntityId（想去条目）或 plannedRecordByEntityId（planned 旅行记录）；
- * 两边都查不到时不渲染。planned 条目只读（FR-WTG-7）：没有任何操作按钮。
+ * 两边都查不到时不渲染。planned 条目只读（FR-WTG-7），唯一的写入操作是「标记为去过」（PR9）。
  * 「隐藏」只在私人模式、且条目来自私有文件（wantToGoDataSource === 'local'）时渲染（FR-PUB-2）：
  * 样例条目不在私有文件里，隐藏请求必然失败。写入只走 localEditorApi（D26）。
+ * 「标记为去过」的门控：想去条目同「隐藏」；planned 条目写的是旅行记录，看 travelAtlasDataSource。
  */
-export function WantToGoCard({ entityId, onClose }: WantToGoCardProps) {
+export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoCardProps) {
+  const convertHintId = useId()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const item = wantToGoItemByEntityId.get(entityId)
   const planned = item ? undefined : plannedRecordByEntityId.get(entityId)
 
   if (!item && !planned) return null
+
+  const canWriteItem = Boolean(item) && localEditorAvailable && wantToGoDataSource === 'local'
+  const convertSource: ConvertToTravelTarget['source'] | undefined = onConvertToTravel === undefined
+    ? undefined
+    : item
+      ? canWriteItem ? 'want-to-go' : undefined
+      : planned && localEditorAvailable && travelAtlasDataSource === 'local' ? 'planned' : undefined
+  const convertBlockReason = convertSource === 'want-to-go' && item
+    ? wantToGoConvertBlockReason(item)
+    : convertSource === 'planned' && planned ? plannedConvertBlockReason(planned) : undefined
 
   const nameZh = item ? item.place.nameZh : planned?.city || planned?.city_en || ''
   const nameEn = item ? item.place.nameEn : planned?.city_en || ''
@@ -96,17 +118,36 @@ export function WantToGoCard({ entityId, onClose }: WantToGoCardProps) {
 
       {planned ? <p className="atlas-wtg-card-readonly">来自旅行记录（只读）</p> : null}
 
-      {item && localEditorAvailable && wantToGoDataSource === 'local' ? (
-        <button
-          type="button"
-          className="atlas-wtg-card-hide"
-          disabled={busy}
-          onClick={hideItem}
-        >
-          <EyeOff aria-hidden="true" />
-          <span>{busy ? '正在隐藏…' : '隐藏'}</span>
-        </button>
+      {canWriteItem || convertSource ? (
+        <div className="atlas-wtg-card-actions">
+          {canWriteItem ? (
+            <button
+              type="button"
+              className="atlas-wtg-card-hide"
+              disabled={busy}
+              onClick={hideItem}
+            >
+              <EyeOff aria-hidden="true" />
+              <span>{busy ? '正在隐藏…' : '隐藏'}</span>
+            </button>
+          ) : null}
+          {convertSource ? (
+            <button
+              type="button"
+              className="atlas-wtg-card-convert"
+              disabled={busy || convertBlockReason !== undefined}
+              title={convertBlockReason}
+              aria-describedby={convertBlockReason ? convertHintId : undefined}
+              onClick={() => onConvertToTravel?.({ source: convertSource, entityId })}
+            >
+              <Footprints aria-hidden="true" />
+              <span>标记为去过</span>
+            </button>
+          ) : null}
+        </div>
       ) : null}
+
+      {convertBlockReason ? <p id={convertHintId} className="atlas-wtg-card-hint">{convertBlockReason}</p> : null}
 
       {notice ? <p className="atlas-wtg-card-notice" role="status">{notice}</p> : null}
     </aside>

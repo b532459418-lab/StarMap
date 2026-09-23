@@ -271,6 +271,37 @@ test('deleteHidden 成功删除已隐藏的记录', () => withStore(async ({ sto
 }))
 
 // ---------------------------------------------------------------------------
+// remove()（PR9：转为足迹后移除）
+// ---------------------------------------------------------------------------
+
+test('remove 删除一条未隐藏的记录，其余记录不动', () => withStore(async ({ store, filePath }) => {
+  const first = await store.add(nuuk())
+  const second = await store.add({ place: { kind: 'city', nameEn: 'Ilulissat', countryCode: 'GL' } })
+
+  assert.deepEqual(await store.remove({ id: first.id }), { removedId: first.id })
+  const file = await readRaw(filePath)
+  assert.deepEqual(file.items.map((item) => item.id), [second.id])
+  assert.equal(file.generated_at, FIXED_NOW.toISOString())
+  // 原子写：上一版留在 .bak 里。
+  assert.equal(JSON.parse(await readFile(backupPath(filePath), 'utf8')).items.length, 2)
+}))
+
+test('remove 同样可以删除已隐藏的记录', () => withStore(async ({ store, filePath }) => {
+  const { id } = await store.add(nuuk())
+  await store.update({ id, hidden: true })
+  await store.remove({ id })
+  assert.deepEqual((await readRaw(filePath)).items, [])
+}))
+
+test('remove 未知 id 时报错且不写文件', () => withStore(async ({ store, filePath }) => {
+  await store.add(nuuk())
+  const before = await readFile(filePath, 'utf8')
+  await assert.rejects(store.remove({ id: 'wtg_missing' }), /找不到这条想去记录。/)
+  await assert.rejects(store.remove({}), /请填写想去记录 id。/)
+  assert.equal(await readFile(filePath, 'utf8'), before)
+}))
+
+// ---------------------------------------------------------------------------
 // 原子写行为
 // ---------------------------------------------------------------------------
 

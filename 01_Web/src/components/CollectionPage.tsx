@@ -1,12 +1,20 @@
 import { useId, useMemo, useState } from 'react'
-import { Eye, EyeOff, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
 import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorApi'
-import { wantToGoDataSource, wantToGoItemByEntityId } from '../data/wantToGo'
+import { travelAtlasDataSource } from '../data/travelAtlas'
+import {
+  plannedConvertBlockReason,
+  plannedRecordByEntityId,
+  wantToGoConvertBlockReason,
+  wantToGoDataSource,
+  wantToGoItemByEntityId,
+} from '../data/wantToGo'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
 import { filterCollection } from '../worldgraph/collection'
 import type { CollectionEntry, CollectionSort, CollectionStatusFilter } from '../worldgraph/collection'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
+import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
 
 type CollectionPageProps = {
   /** 想去图层的全部条目（App 用 queryCollection 算好，含已隐藏与无坐标）。 */
@@ -15,6 +23,8 @@ type CollectionPageProps = {
   onViewOnMap: (entry: CollectionEntry) => void
   /** 「＋ 添加想去的地方」：打开与图层面板同一个对话框。 */
   onAddWantToGo?: () => void
+  /** 「标记为去过」（PR9）：打开 App 里唯一的转换对话框。 */
+  onConvertToTravel?: (target: ConvertToTravelTarget) => void
 }
 
 const noteMaxLength = 200
@@ -30,6 +40,12 @@ const writeAvailable = localEditorAvailable && wantToGoDataSource === 'local'
  * 也要能添加，否则第一次使用的人在 Collection 里加不进第一条。其余写入仍用上面更严的 writeAvailable。
  */
 const addAvailable = localEditorAvailable && wantToGoDataSource !== 'sample'
+
+/**
+ * planned 条目「标记为去过」的门控（PR9 规格 §3.6）：写的是旅行记录，所以看足迹的数据来源，
+ * 而不是想去的。强制样例模式下 travelAtlasDataSource 恒为 'sample'。
+ */
+const plannedConvertAvailable = localEditorAvailable && travelAtlasDataSource === 'local'
 
 const wantToGoLayer = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)
 
@@ -72,7 +88,7 @@ const isFromTravelLog = (entry: CollectionEntry) => entry.readOnly && entry.sour
  * 页面按"图层分节"设计，V0.4 只渲染想去一节。搜索、筛选、排序只存在组件 state 里，不持久化。
  * 写入只走 localEditorApi（D26）；成功后整页刷新，失败把错误留在卡片里。
  */
-export function CollectionPage({ entries, onViewOnMap, onAddWantToGo }: CollectionPageProps) {
+export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertToTravel }: CollectionPageProps) {
   const searchId = useId()
   const sortId = useId()
   const sectionTitleId = useId()
@@ -200,7 +216,12 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo }: Collecti
           ) : (
             <ul className="collection-grid">
               {visibleEntries.map((entry) => (
-                <CollectionCard key={entry.entityId} entry={entry} onViewOnMap={onViewOnMap} />
+                <CollectionCard
+                  key={entry.entityId}
+                  entry={entry}
+                  onViewOnMap={onViewOnMap}
+                  onConvertToTravel={onConvertToTravel}
+                />
               ))}
             </ul>
           )}
@@ -213,10 +234,12 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo }: Collecti
 type CollectionCardProps = {
   entry: CollectionEntry
   onViewOnMap: (entry: CollectionEntry) => void
+  onConvertToTravel?: (target: ConvertToTravelTarget) => void
 }
 
-function CollectionCard({ entry, onViewOnMap }: CollectionCardProps) {
+function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCardProps) {
   const noteId = useId()
+  const convertHintId = useId()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [editingNote, setEditingNote] = useState(false)
@@ -230,6 +253,19 @@ function CollectionCard({ entry, onViewOnMap }: CollectionCardProps) {
   // 写入 id 只能来自私有想去文件里的条目；planned 记录查不到，就不渲染任何写入按钮。
   const writableId = writeAvailable && !entry.readOnly ? item?.id : undefined
   const canViewOnMap = entry.location !== undefined && !entry.hidden
+
+  // 「标记为去过」（PR9 规格 §3.6）：未隐藏的想去条目看想去的写入门控，planned 条目看足迹的写入门控。
+  // 整个国家 / 无坐标的条目仍显示按钮，但禁用并写明原因。
+  const planned = fromTravelLog ? plannedRecordByEntityId.get(entry.entityId) : undefined
+  const convertSource: ConvertToTravelTarget['source'] | undefined = onConvertToTravel === undefined
+    ? undefined
+    : writableId && item && !entry.hidden
+      ? 'want-to-go'
+      : planned && plannedConvertAvailable ? 'planned' : undefined
+  const convertBlockReason = convertSource === 'want-to-go' && item
+    ? wantToGoConvertBlockReason(item)
+    : convertSource === 'planned' && planned ? plannedConvertBlockReason(planned) : undefined
+  const showConvert = convertSource !== undefined && !editingNote
 
   const countryName = entry.countryCode ? regionNameZh(entry.countryCode) : ''
   // planned 记录的日期是计划出发日，不是加入日期（与 WantToGoCard 的写法一致）。
@@ -339,7 +375,7 @@ function CollectionCard({ entry, onViewOnMap }: CollectionCardProps) {
         <p className="collection-card-note">“{entry.note}”</p>
       ) : null}
 
-      {canViewOnMap || (writableId && !editingNote) ? (
+      {canViewOnMap || showConvert || (writableId && !editingNote) ? (
         <div className="collection-card-actions">
           {canViewOnMap ? (
             <button
@@ -351,6 +387,22 @@ function CollectionCard({ entry, onViewOnMap }: CollectionCardProps) {
             >
               <LocateFixed aria-hidden="true" />
               <span>在地图上查看</span>
+            </button>
+          ) : null}
+
+          {showConvert && convertSource ? (
+            <button
+              type="button"
+              className="collection-action"
+              data-blocked={convertBlockReason ? 'true' : undefined}
+              disabled={busy || convertBlockReason !== undefined}
+              title={convertBlockReason}
+              aria-label={`标记为去过：${nameZh}`}
+              aria-describedby={convertBlockReason ? convertHintId : undefined}
+              onClick={() => onConvertToTravel?.({ source: convertSource, entityId: entry.entityId })}
+            >
+              <Footprints aria-hidden="true" />
+              <span>标记为去过</span>
             </button>
           ) : null}
 
@@ -404,6 +456,10 @@ function CollectionCard({ entry, onViewOnMap }: CollectionCardProps) {
             </>
           ) : null}
         </div>
+      ) : null}
+
+      {showConvert && convertBlockReason ? (
+        <p id={convertHintId} className="collection-card-hint">{convertBlockReason}</p>
       ) : null}
 
       {notice ? <p className="collection-card-notice" role="status">{notice}</p> : null}

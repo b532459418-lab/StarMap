@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import sharp from 'sharp'
 import { EnvHttpProxyAgent, fetch as proxyAwareFetch } from 'undici'
 import worldCountries from 'world-countries'
+import { buildTravelRecordInput, convertPlannedRecord, resolveTravelCountry } from './convert-to-travel.mjs'
 import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { createWantToGoStore } from './want-to-go-store.mjs'
@@ -951,6 +952,130 @@ const isLoopbackRequest = (request) => {
 /** 每次调用都按当前私有资料层路径新建一个 store，避免缓存过期的 wantToGoPath。 */
 const wantToGoStore = () => createWantToGoStore({ filePath: wantToGoPath })
 
+// ---- 想去 → 足迹（PR9，PRD S5 / R13）----
+// 判断与构造都在 convert-to-travel.mjs（有单测）；这里只负责读文件、按顺序写入和出错时的说明。
+// 纪律：先全部校验，再按「足迹 → 编辑状态 → 想去」的顺序写。足迹已写入而后续步骤失败时，
+// 错误以「足迹已创建，但」开头，让用户知道磁盘上的现状。
+
+/**
+ * 校验用的只读读取：本地旅行记录还不存在时按样例判断（与 addCountry / getLocation 相同），
+ * 不在校验阶段创建文件；真正写入时由 addTravelRecord 的 ensureLocalTravelMap 创建。
+ */
+const readTravelMapForValidation = async () => {
+  const sourcePath = await exists(localTravelMapPath) ? localTravelMapPath : sampleTravelMapPath
+  return readJson(sourcePath, { schema_version: 1, records: [] })
+}
+
+/** 足迹写入之后的失败原因，放进括号里：去掉末尾句号，避免与外层句子叠成「。）。」。 */
+const conversionFailureReason = (error) => (error instanceof Error ? error.message : '未知错误').replace(/[。.]$/, '')
+
+/** 转换前这个国家是否已在足迹里：有已去过的记录，或是手动添加的国家。只有 planned 记录的国家不算。 */
+const isCountryInFootprint = (countryId, records, addedCountries) => (
+  records.some((record) => record?.status !== 'planned' && countryIdForRecord(record) === countryId)
+  || addedCountries.some((country) => country.id === countryId)
+)
+
+/**
+ * 新国家按最近到访日期排进 countryOrder（与 addCountry 同一个 sortCountryIdsByLatestVisit）。
+ * 只在足迹写入之后调用。planned 记录的日期是计划日期而不是到访日期，这里不参与排序，
+ * 否则同一国家还剩一条未来的 planned 时，它会被排到最前面。
+ */
+const reorderCountriesAfterConversion = async () => {
+  try {
+    const travelMap = await readJson(localTravelMapPath, { records: [] })
+    const state = normalizeState(await readJson(editorStatePath, emptyState))
+    const visitedRecords = (Array.isArray(travelMap.records) ? travelMap.records : [])
+      .filter((record) => record?.status !== 'planned')
+    state.countryOrder = sortCountryIdsByLatestVisit(
+      visitedRecords,
+      state.addedCountries,
+      state.countryOrder,
+    )
+    await atomicJsonWrite(editorStatePath, normalizeState(state))
+  } catch (error) {
+    throw new Error(`足迹已创建，但国家列表的排序没有更新（${conversionFailureReason(error)}）。`, { cause: error })
+  }
+}
+
+const convertWantToGoItem = async (input) => {
+  const id = requireText(input.id, '想去记录 id')
+  if (input.keepWantToGo !== undefined && typeof input.keepWantToGo !== 'boolean') {
+    throw new Error('保留想去条目只能是 true 或 false。')
+  }
+  const store = wantToGoStore()
+  // 想去文件不存在时条目必然不存在；先判断，避免 store.read() 为了这次校验去创建空文件。
+  const item = await exists(wantToGoPath)
+    ? (await store.read()).items.find((candidate) => candidate?.id === id)
+    : undefined
+  if (!item) throw new Error('找不到这条想去记录。')
+
+  const travelMap = await readTravelMapForValidation()
+  const records = Array.isArray(travelMap.records) ? travelMap.records : []
+  const state = normalizeState(await readJson(editorStatePath, emptyState))
+  const country = resolveTravelCountry(item.place?.countryCode, {
+    records,
+    countryCodes: travelMap.display?.countryCodes,
+    addedCountries: state.addedCountries,
+    catalogByCode: countryCatalogByCode,
+  })
+  const recordInput = buildTravelRecordInput(item, {
+    country,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    tripTitle: input.tripTitle,
+  })
+  // 与 addTravelRecord 相同的 cityId 规则，但在任何写入之前判断，并给出转换场景的说明（规格 §2 第 3 条）。
+  const countryId = slugify(recordInput.country_en)
+  const cityId = `${countryId}__${slugify(recordInput.city_en)}`
+  if (records.some((record) => cityIdForRecord(record) === cityId)) {
+    throw new Error('这个城市已经在足迹里了。如果只是想从想去列表移除，请使用隐藏或彻底删除。')
+  }
+  const isNewCountry = !isCountryInFootprint(countryId, records, state.addedCountries)
+
+  // 以上全部通过才开始写：足迹 → 编辑状态 → 想去。
+  const created = await addTravelRecord(recordInput)
+  if (isNewCountry) await reorderCountriesAfterConversion()
+  let wantToGoRemoved = false
+  if (input.keepWantToGo !== true) {
+    try {
+      await store.remove({ id })
+      wantToGoRemoved = true
+    } catch (error) {
+      throw new Error(
+        `足迹已创建，但想去条目没有移除（${conversionFailureReason(error)}）。可以在想去列表里隐藏或彻底删除它。`,
+        { cause: error },
+      )
+    }
+  }
+  return { travelRecordId: created.id, countryId: created.countryId, cityId: created.cityId, wantToGoRemoved }
+}
+
+const convertPlannedTravelRecord = async (input) => {
+  const recordId = requireText(input.recordId, '旅行计划 id')
+  // planned 只存在于个人旅行记录（样例里没有）。文件不存在就无从转换，也不为此创建它。
+  if (!await exists(localTravelMapPath)) throw new Error('找不到这条旅行计划。')
+  const travelMap = await readJson(localTravelMapPath, { schema_version: 1, records: [] })
+  const { travelMap: nextTravelMap, record } = convertPlannedRecord(travelMap, recordId, {
+    startDate: input.startDate,
+    endDate: input.endDate,
+  })
+  const records = Array.isArray(travelMap.records) ? travelMap.records : []
+  const state = normalizeState(await readJson(editorStatePath, emptyState))
+  const countryId = countryIdForRecord(record)
+  const isNewCountry = !isCountryInFootprint(countryId, records, state.addedCountries)
+
+  await atomicJsonWrite(localTravelMapPath, { ...nextTravelMap, generated_at: new Date().toISOString() })
+  if (isNewCountry) await reorderCountriesAfterConversion()
+  return { travelRecordId: record.id, countryId, cityId: cityIdForRecord(record), wantToGoRemoved: false }
+}
+
+/** POST /__travelatlas/editor/wanttogo/convert 的请求体二选一：想去条目，或 planned 旅行计划。 */
+const convertToTravel = async (input) => {
+  if (input?.source === 'want-to-go') return convertWantToGoItem(input)
+  if (input?.source === 'planned') return convertPlannedTravelRecord(input)
+  throw new Error('转换来源只能是 want-to-go 或 planned。')
+}
+
 const authorizeWrite = (request) => (
   isLoopbackRequest(request)
   && request.headers[editorHeader] === '1'
@@ -1077,6 +1202,12 @@ export function travelAtlasLocalEditor(options = {}) {
 
             if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/wanttogo/delete') {
               const result = await wantToGoStore().deleteHidden(await readJsonBody(request))
+              return sendJson(response, 200, { ok: true, ...result })
+            }
+
+            // PR9：想去 / planned → 足迹。一个端点完成整件事，先全部校验再写（见 convertToTravel）。
+            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/wanttogo/convert') {
+              const result = await convertToTravel(await readJsonBody(request))
               return sendJson(response, 200, { ok: true, ...result })
             }
 
