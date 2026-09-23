@@ -33,9 +33,9 @@ import { GooglePhotorealisticTiles } from '../extensions/GooglePhotorealisticTil
 import { createMapSourceLayers } from '../extensions/mapSources'
 import type { MapSourceId } from '../extensions/mapSources'
 import { publishCameraAttitude, registerOrientationResetHandler, wrapHeadingDegrees } from '../data/cameraOrientation'
-// 可渲染集合改由 layerData prop 提供（PR3 / FR-MR-1）。这里只剩下【选中项与相机】要用的查表：
-// selectedCountry / selectedCity / overviewTarget，FR-MR-3 明确相机不随图层开关改变。
-import { cityById, countryById, travelAtlasDisplay } from '../data/travelAtlas'
+// 可渲染集合由 layerData prop 提供（PR3 / FR-MR-1）；选中项与相机的数据来源
+// （selectedCountry / selectedCity / overviewTarget）也由 App 解析后经 prop 传入（PR3c）。
+// FR-MR-3 明确相机不随图层开关改变。
 import type { CityId, CountryId, SelectionMode } from '../types/travel'
 import { officialLayers, TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import type { LayerPlace, LayerQueryResult } from '../worldgraph/query'
@@ -62,6 +62,12 @@ type CesiumAtlasGlobeProps = {
   showLabelsOverlay?: boolean
   selectedCountryId?: CountryId
   selectedCityId?: CityId
+  /** 概览视角的目标点（PR3c）。原先读 travelAtlasDisplay.overviewTarget。 */
+  overviewTarget: { lat: number; lng: number }
+  /** App 侧解析好的选中城市（PR3c）。字段名与原 City 保持一致，使下游逻辑零改动。 */
+  selectedCity?: { id: CityId; lat: number | null; lng: number | null }
+  /** App 侧解析好的选中国家（PR3c）。字段名与原 Country 保持一致，使下游逻辑零改动。 */
+  selectedCountry?: { id: CountryId; centerLat: number | null; centerLng: number | null; accent: string }
   selectionMode: SelectionMode
   globeScale: number
   resetVersion: number
@@ -164,8 +170,6 @@ const smoothCursorTrailPoints = (points: CursorTrailPoint[]) => {
   smoothed.push(points[points.length - 1])
   return smoothed
 }
-
-const overviewTarget = travelAtlasDisplay.overviewTarget
 
 const cityMarkerHeight = 600
 
@@ -587,6 +591,9 @@ export function CesiumAtlasGlobe({
   showLabelsOverlay = true,
   selectedCountryId,
   selectedCityId,
+  overviewTarget,
+  selectedCity,
+  selectedCountry,
   selectionMode,
   globeScale,
   resetVersion,
@@ -619,8 +626,6 @@ export function CesiumAtlasGlobe({
   const [focusOffset, setFocusOffset] = useState({ x: 0, y: 0 })
   const [visibleCityIds, setVisibleCityIds] = useState<Set<CityId> | null>(null)
   const [visibleRouteIds, setVisibleRouteIds] = useState<Set<string> | null>(null)
-  const selectedCountry = selectedCountryId ? countryById[selectedCountryId] : undefined
-  const selectedCity = selectedCityId ? cityById[selectedCityId] : undefined
   const selectedAccent = selectedCountry?.accent ?? '#38bdf8'
   const mapSourceLayers = useMemo(() => createMapSourceLayers(mapSource), [mapSource])
 
@@ -987,6 +992,8 @@ export function CesiumAtlasGlobe({
     activeDroneMediaItems,
     activeDroneMediaCityId,
     focusPlace,
+    overviewTarget.lat,
+    overviewTarget.lng,
     selectedCity,
     selectedCountry,
     selectedDroneMediaItem,

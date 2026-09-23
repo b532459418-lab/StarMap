@@ -32,7 +32,7 @@ import { getInitialMapLabelsEnabled, rememberMapLabelsEnabled } from './extensio
 import { getInitialMapSource, mapSourceHasLabelOverlay, rememberMapSource } from './extensions/mapSources'
 import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
-import { cities, cityById, countries, countryById, getCitiesForCountry, journeyDays, travelAtlasMeta } from './data/travelAtlas'
+import { cities, cityById, countries, countryById, getCitiesForCountry, journeyDays, travelAtlasDisplay, travelAtlasMeta } from './data/travelAtlas'
 import { worldGraphSnapshot } from './data/worldGraph'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
 import { hiddenWantToGoItems } from './data/wantToGo'
@@ -53,6 +53,8 @@ const overviewDistance = 3.25
 const countryDistance = 1.95
 const cityDistance = 1.38
 const sidebarMediaQuery = '(min-width: 1100px)'
+// 概览视角目标点（PR3c）：模块级数据，引用恒定，由这里传给地图，地图不再自己读 travelAtlas。
+const overviewTarget = travelAtlasDisplay.overviewTarget
 
 type CameraScale = 'city' | 'country' | 'world'
 type ImageryTuning = {
@@ -242,6 +244,20 @@ function App() {
     selectionMode,
     sidebarsOpen,
   ])
+
+  // 地图相机要用的选中项（PR3c）：在 App 侧查表后经 prop 传给地图。字段名与原 City / Country 一致。
+  // 必须 useMemo：地图的相机焦点 useMemo 依赖这两个对象，每次渲染传新对象会让焦点被反复重算。
+  const selectedCityFocus = useMemo(() => {
+    const city = selectedCityId ? cityById[selectedCityId] : undefined
+    return city ? { id: city.id, lat: city.lat, lng: city.lng } : undefined
+  }, [selectedCityId])
+
+  const selectedCountryFocus = useMemo(() => {
+    const country = selectedCountryId ? countryById[selectedCountryId] : undefined
+    return country
+      ? { id: country.id, centerLat: country.centerLat, centerLng: country.centerLng, accent: country.accent }
+      : undefined
+  }, [selectedCountryId])
 
   // 图层可见性 → 可见图层 id → 地图要渲染的地点与路线（PRD FR-MR-1 / FR-LR-3）。
   // 两层 useMemo 都只依赖 layerVisibility：引用稳定，地图侧才不会被无谓重算连累（AC-8）。
@@ -476,6 +492,9 @@ function App() {
               showLabelsOverlay={mapLabelsEnabled}
               selectedCountryId={selectedCountryId}
               selectedCityId={selectedCityId}
+              overviewTarget={overviewTarget}
+              selectedCity={selectedCityFocus}
+              selectedCountry={selectedCountryFocus}
               selectionMode={selectionMode}
               globeScale={globeDistance}
               resetVersion={globeResetVersion}
