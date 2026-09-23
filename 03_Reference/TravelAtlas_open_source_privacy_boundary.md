@@ -18,14 +18,17 @@ StarMap 是一个产品、一套代码和一套数据模型，不维护两份代
 ```text
 dev:personal / build:personal
         ↓
-加载 <private-root>/config、data 与 media
+加载 <private-root>/config/.env.local，
+以及私有层的旅行记录、想去、编辑状态与媒体文件
+（data/ 下的 travel-map / want-to-go / editor-state / user-media 四个 .local.json，与 media/user/）
 
 dev:public / build:public
         ↓
-只加载 src/data/travel-map.sample.json
+只加载 Git 跟踪的中性示例
+（src/data/travel-map.sample.json 与 src/data/want-to-go.sample.json）
 ```
 
-公共模式从不自动发现个人数据，即使私有层存在也不会读取。`npm run release:check` 还会只归档 Git 已跟踪文件，在系统临时目录中重新安装、Lint 和公共构建，确保检查过程看不到私有层。
+公共模式从不自动发现个人数据，即使私有层存在也不会读取。`npm run release:check` 还会只归档 Git 已跟踪文件，在系统临时目录中重新安装、Lint、运行测试和公共构建，确保检查过程看不到私有层。
 
 ## 边界表
 
@@ -81,7 +84,7 @@ GitHub 不包含个人照片和旅行数据。若个人网站本身部署到公�
 npm run release:check
 ```
 
-`release:check` 要求源码工作区干净，检查 Git 跟踪清单与关键 `.gitignore` 防线，并在只含 Git 跟踪文件的系统临时目录中执行 `npm ci`、Lint 与 `build:public`。它不能清洗旧历史，也不替代发布授权。
+`release:check` 要求源码工作区干净，检查 Git 跟踪清单与关键 `.gitignore` 防线，并在只含 Git 跟踪文件的系统临时目录中执行 `npm ci`、Lint、`npm test` 与 `build:public`。它不能清洗旧历史，也不替代发布授权。
 
 ## 相关文档
 

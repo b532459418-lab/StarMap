@@ -129,7 +129,7 @@ npm run privacy:check
 npm run media:check
 ```
 
-`npm run build:public` 会在 `01_Web/dist/` 生成不带本地编辑能力的静态公开站点。`npm run release:check` 还会要求工作区干净，只把 Git 已跟踪文件归档到系统临时目录，在这个“无私有层”的洁净环境里重新安装、检查和构建，从机制上证明私人内容无法混入公开发布。`build:personal` 只用于你自己控制的私人部署。
+`npm run build:public` 会在 `01_Web/dist/` 生成不带本地编辑能力的静态公开站点。`npm run release:check` 还会要求工作区干净，只把 Git 已跟踪文件归档到系统临时目录，在这个“无私有层”的洁净环境里重新安装依赖，并运行 Lint、测试和公开构建，从机制上证明私人内容无法混入公开发布。`build:personal` 只用于你自己控制的私人部署。
 
 ## 后续更新
 

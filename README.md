@@ -131,7 +131,7 @@ npm run privacy:check
 npm run media:check
 ```
 
-`npm run build:public` creates a static public-display build in `01_Web/dist/`. `npm run release:check` goes further: it requires a clean worktree, archives only Git-tracked files into a temporary clean room, installs dependencies, lints, and rebuilds there. This proves an external private layer cannot leak into a public release. Use `build:personal` only for a private deployment you control.
+`npm run build:public` creates a static public-display build in `01_Web/dist/`. `npm run release:check` goes further: it requires a clean worktree, archives only Git-tracked files into a temporary clean room, installs dependencies, and runs lint, the tests, and the public build there. This proves an external private layer cannot leak into a public release. Use `build:personal` only for a private deployment you control.
 
 ## Updates
 
