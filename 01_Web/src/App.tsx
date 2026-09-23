@@ -30,7 +30,7 @@ import { getInitialMapSource, mapSourceHasLabelOverlay, rememberMapSource } from
 import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
 import { cities, cityById, countries, countryById, getCitiesForCountry, journeyDays, travelAtlasMeta } from './data/travelAtlas'
-import { travelSnapshot } from './data/worldGraph'
+import { worldGraphSnapshot } from './data/worldGraph'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
 import { officialLayers } from './worldgraph/layers'
 import { queryVisiblePlaces } from './worldgraph/query'
@@ -228,7 +228,7 @@ function App() {
     () => officialLayers.filter((layer) => layerVisibility[layer.id] !== false).map((layer) => layer.id),
     [layerVisibility],
   )
-  const layerData = useMemo(() => queryVisiblePlaces(travelSnapshot, visibleLayerIds), [visibleLayerIds])
+  const layerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds), [visibleLayerIds])
 
   const atlasStats = useMemo(
     () => [
