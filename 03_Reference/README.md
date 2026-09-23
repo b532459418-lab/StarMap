@@ -12,6 +12,7 @@ Current implementation dependencies include Cesium, Resium, React, Vite, Tailwin
 | `media-catalog.schema.json` | Machine-readable schema for the generated local media catalog |
 | [Open-source privacy boundary](TravelAtlas_open_source_privacy_boundary.md) | Public template, local data overlay, clean-repository, and deployment boundary |
 | `travel-map.schema.json` | Machine-readable schema shared by public sample and private travel data |
+| `want-to-go.schema.json` | Machine-readable schema shared by the public Want to Go sample and private Want to Go data |
 
 ## Documentation
 

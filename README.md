@@ -34,6 +34,8 @@ This repository is the **StarMap Core / Community Edition**, licensed under [MIT
 
 - Interactive Cesium globe with country, city, route, and camera navigation.
 - Map and Journey views with responsive glass UI.
+- Map layer panel: switch the Travel and Want to Go layers on or off independently; the choice is remembered across sessions.
+- Places you want to go: add a city or a whole country with a note, hide, restore, or permanently delete it, and see a heart badge where it overlaps a city you have already visited.
 - Local editor for countries, cities, ordering, visibility, city photos, and drone media.
 - EXIF-first drone import: selected files are inspected immediately for date, GPS coordinates, absolute altitude, relative altitude, and camera information.
 - Missing metadata is requested only when needed. The date is required; coordinates and altitude remain optional.
@@ -101,6 +103,22 @@ npm run media:import
 ```
 
 The importer never rewrites Inbox originals. Personal source media, generated derivatives, local travel records, editor state, and `.env.local` stay in the external private layer and never enter the source repository.
+
+## Places you want to go
+
+The Want to Go layer marks places you have not been to yet. The map layers button in the bottom dock (地图图层, a separate button from the imagery-source menu) opens the layer panel, where the Travel and Want to Go layers can be shown or hidden independently. The browser remembers the choice across sessions.
+
+In the personal profile (`npm run dev:personal`):
+
+- **Add**: the layer panel ends with **+ Add a place you want to go** (添加想去的地方). Choose a country first, then search for a city online (the same Cesium ion / OpenStreetMap lookup used for city creation) or enter its name and coordinates manually; you can also add the whole country. An optional note records why you want to go. Adding the same place twice is refused with a notice that it is already on the list.
+- **Hide**: click a want-to-go marker to open its detail card, then choose **Hide** (隐藏). Hiding removes the marker from the map but keeps the entry.
+- **Restore or delete**: hidden places are listed under **Hidden N items** (已隐藏 N 项) below the Want to Go toggle in the layer panel. Each one can be restored (恢复) or permanently deleted (彻底删除). Only hidden places can be deleted, and deletion cannot be undone.
+
+When a place you want to go is also a city you have visited, the city keeps its travel marker and gains a heart badge. Hide the Travel layer and the same place appears as a hollow want-to-go marker.
+
+Your places are saved in `<private-root>/data/want-to-go.local.json`, outside the source repository like the rest of your private data. If that file does not exist yet, the personal profile starts with an empty Want to Go layer rather than the sample. Travel records with `status: planned` in your travel data also appear on the Want to Go layer; they are read-only there, so change them in the travel data itself.
+
+Public builds and `dev:public` show a neutral three-place sample instead (Nuuk, Tromsø, and Akureyri, which overlaps the sample journey to demonstrate the heart badge) and contain no add, hide, or delete controls. Forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`) shows the same sample, with no Want to Go write controls.
 
 ## Build and verify
 

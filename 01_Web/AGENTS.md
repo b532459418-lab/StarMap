@@ -69,6 +69,7 @@ Codex 固定使用端口 5173，DSH 固定使用端口 5174。启用 strict port
 - Read `../03_Reference/TravelAtlas_open_source_privacy_boundary.md` before changing travel data, publication structure, or deployment.
 - The tracked `src/data/travel-map.sample.json` must remain neutral, runnable, and free of owner data.
 - Personal countries, cities, routes, coordinates, and display rules belong only in external `06_private/data/travel-map.local.json` (or the standalone clone's configured private root).
+- Personal Want to Go items belong only in external `06_private/data/want-to-go.local.json` (or the standalone clone's configured private root). The tracked `src/data/want-to-go.sample.json` must remain neutral.
 - Do not add built-in personal items to `droneMedia.ts`, personal coordinate tables, or tracked public media paths.
 - Run `npm run release:check` before any public-release preparation. It audits privacy and rebuilds from a clean archive containing only Git-tracked files.
 - This repository is public. Every commit is published, so private data must never enter the working tree in the first place; `.gitignore` and `npm run release:check` are backstops, not the boundary.

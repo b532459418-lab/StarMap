@@ -47,9 +47,13 @@ npm run release:check
 StarMap has two data layers:
 
 - `src/data/travel-map.sample.json` is a tracked neutral North Atlantic demonstration used by a clean open-source clone.
+- `src/data/want-to-go.sample.json` is a tracked neutral Want to Go sample with three places (Nuuk, Tromsø, Akureyri). Akureyri matches the travel sample so the public map shows the heart badge for a place that is in both layers.
 - `<private-root>/data/travel-map.local.json` is the external private overlay containing the owner's countries, cities, routes, coordinates, and display rules.
+- `<private-root>/data/want-to-go.local.json` is the external private list of places the owner wants to go, written by the loopback editor.
 
 The private overlay is considered only in the explicit personal profile. Public preview and public build ignore it even when it exists. New users can copy the sample shape into their private data path and replace its records with their own; navigation is generated from that data.
+
+Want to Go chooses its source in `src/data/wantToGo.ts`, in this order: forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development) uses the sample; otherwise the personal profile uses `want-to-go.local.json`, and an empty list when that file does not exist yet; every other profile uses the sample. Unlike travel data, the personal profile never falls back to the Want to Go sample: sample items are not in the private file, so the editor could not hide them. The add entry and the Hide button are rendered only for private data, in addition to the existing development-only editor gate.
 
 Run `npm run privacy:check` before every public release. See the [open-source privacy boundary](../03_Reference/TravelAtlas_open_source_privacy_boundary.md) for the boundary table and deployment options.
 
@@ -111,9 +115,13 @@ For each public update, bump the package version, create a matching semantic-ver
 - `src/extensions/` holds the Google imagery, labels, and Photorealistic 3D Tiles integrations; see [`src/extensions/README.md`](src/extensions/README.md).
 - `src/components/AtlasGlobe.tsx` is the frozen legacy react-globe implementation.
 - `src/data/travelAtlas.ts` selects private data only from the profile-specific virtual module and otherwise loads the tracked public sample.
+- `src/data/wantToGo.ts` chooses the Want to Go source (tracked sample, private file, or none) and parses it through the Core adapter.
+- `src/data/worldGraph.ts` merges the travel, want-to-go, and planned-record snapshots into the single World Graph snapshot that the map queries.
 - `src/data/mediaCatalog.ts` receives personal media only in personal mode; `src/data/droneMedia.ts` contains no built-in user media.
 - `scripts/private-profile.mjs` resolves the external private root without reading or printing secrets.
 - `scripts/local-editor-plugin.mjs` provides the loopback-only editor in personal development and injects no private data in public mode.
+- `scripts/want-to-go-store.mjs` validates and writes `want-to-go.local.json` behind the editor's Want to Go endpoints; `scripts/want-to-go-store.test.mjs` covers it.
+- `scripts/json-file.mjs` holds the JSON read, backup, and atomic-write helpers shared by the editor and the Want to Go store.
 - `scripts/public-release-check.mjs` rebuilds a clean Git archive in the OS temporary directory, so public-release verification cannot see the private layer.
 - Project-level rules, contribution guide, and edition boundaries live one directory above this web workspace (`AGENTS.md`, `CONTRIBUTING.md`, `docs/editions.md`).
 

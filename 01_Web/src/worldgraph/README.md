@@ -12,8 +12,22 @@ The product editions that build on it are described in
 | --- | --- |
 | `types.ts` | World Graph Core Model: `Entity`, `LayerMembership`, `Anchor`, `Relation`, `WorldGraphSnapshot`, and the id / enum-like string types (`LayerId`, `EntityType`, `RelationType`, `AnchorPrecision`, `Visibility`, `RelationProvenance`). |
 | `layers.ts` | Layer Registry: `LayerDefinition` and the read-only `officialLayers` list (`travel`, `want_to_go`). Icons are stored as lucide icon *names*, not components, so Core never depends on React. |
+| `slug.ts` | `slugify()`, the single slug rule shared by want-to-go entity ids and the same-place merge key in `query.ts`. The `.mjs` copies in `scripts/want-to-go-store.mjs` and `scripts/local-editor-plugin.mjs` must stay identical. |
+| `snapshot.ts` | `mergeWorldGraphSnapshots()` combines several adapter outputs into one snapshot (first one wins on duplicate ids; memberships are keyed by `(entityId, layerId)`), plus `emptyWorldGraphSnapshot()`. |
+| `query.ts` | Layer query: `queryVisiblePlaces()` turns a snapshot and the visible layer ids into the places and route segments the map renders. Each layer decides which place subtypes it draws, and a non-travel city that matches a visible travel city is merged into it (the heart badge). |
 | `adapters/travel.ts` | Travel adapter: `travelToWorldGraph()` projects already-loaded travel domain objects (countries, cities, journey days, routes) into a `WorldGraphSnapshot`, plus the id helpers `countryEntityId`, `cityEntityId`, `journeyEntityId`, `relationId`, `sourcedRelationId`, `anchorId`. Pure and deterministic; `options.now` is required. |
-| `adapters/travel.test.ts` | Unit tests. Run with `npm test` from `01_Web/` (plain `node --test`, no bundler). |
+| `adapters/wantToGo.ts` | Want to Go adapter: `parseWantToGoFile()` turns the contents of `want-to-go.local.json` (or the tracked sample) into items without throwing, dropping bad entries with a readable problem; `wantToGoToWorldGraph()` projects the items into a snapshot; `wantToGoEntityId()` builds `place:wtg:<CC>:<slug>` ids. Hidden items stay in the snapshot, marked on their membership. |
+| `adapters/plannedRecords.ts` | Planned records adapter: `plannedRecordsToWorldGraph()` projects travel records with `status: planned` into read-only Want to Go entries; `plannedEntityId()` builds their ids. |
+| `adapters/travel.fixture.ts` | Hand-written fixture: the known output of `travelAtlas.ts` for the tracked `travel-map.sample.json`, shared by `adapters/travel.test.ts` and `query.parity.test.ts`. Not a test file and never imported by application code. |
+| `adapters/travel.test.ts` | Unit tests for the travel adapter, including the test that pins `travel.fixture.ts` back to the tracked sample JSON. |
+| `adapters/wantToGo.test.ts` | Unit tests for want-to-go parsing, ids, and projection. |
+| `adapters/plannedRecords.test.ts` | Unit tests for the planned records adapter. |
+| `snapshot.test.ts` | Unit tests for snapshot merging. |
+| `query.test.ts` | Unit tests for the layer query rules on small hand-written snapshots, including same-place merging. |
+| `query.parity.test.ts` | Parity test: on the sample data, `queryVisiblePlaces()` produces exactly what the map computed before the layer query existed (a verbatim copy of that legacy logic lives only in this file). |
+| `slug.test.ts` | Unit tests for `slugify()`. |
+
+Run the tests with `npm test` from `01_Web/` (plain `node --test`, no bundler).
 
 ## The boundary, and why it is enforced
 
@@ -64,7 +78,10 @@ stabilize:
 1. `types.ts` — the five core objects and their id / enum types.
 2. `layers.ts` — `LayerDefinition` and the official layer registry.
 3. `adapters/travel.ts` — `travelToWorldGraph` and the id helpers.
-4. The adapter interface itself (Local adapter here, Cloud adapter elsewhere),
+4. `snapshot.ts` — `mergeWorldGraphSnapshots`, the way adapter outputs are
+   combined.
+5. `query.ts` — `queryVisiblePlaces`, the layer query every renderer reads.
+6. The adapter interface itself (Local adapter here, Cloud adapter elsewhere),
    once it exists as code rather than as a diagram.
 
 ## What does *not* belong here

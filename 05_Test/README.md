@@ -18,6 +18,9 @@ Before a public release also run `npm run release:check` from PowerShell or cmd 
 
 - Map opens with Cesium imagery or the configured fallback.
 - The dock Layers button opens the layer panel; toggling Travel hides and restores country and city markers without reloading the globe, and the choice survives a page reload.
+- Public profile (`npm run dev:public`): the layer panel lists Travel and Want to Go and each toggles independently. Nuuk and Tromsø show hollow want-to-go markers, Akureyri shows its travel marker with a heart badge, and the status pill reads `5 mapped cities · 4 journey route segments · 3 want-to-go`. Clicking a want-to-go marker opens its detail card with no Hide button; the panel has no add entry and no hidden-items row.
+- With Travel hidden, Akureyri becomes a hollow want-to-go marker and the status pill reads `0 mapped cities · 0 journey route segments · 3 want-to-go`.
+- Personal profile (`npm run dev:personal`): **Add a place you want to go** adds a city (online search or manual coordinates) or a whole country, and its marker appears; adding the same place again shows the already-on-the-list error. The detail card shows the note and a Hide button; a hidden place moves to the panel's hidden-items list, where Restore brings it back and Permanently delete removes it after confirmation.
 - Country and city selectors update camera focus and InfoCard content.
 - Map and Journey navigation works; the bottom version button opens the update page and a second click returns to the previously active Map or Journey view.
 - Journey Year Cards and Timeline switch correctly.

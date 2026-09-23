@@ -33,7 +33,9 @@ dev:public / build:public
 | --- | --- | --- | --- |
 | React / Cesium / UI 源码 | 保留 | 保留 | 产品主体 |
 | `travel-map.sample.json` | 保留 | 保留 | 中性可运行示例 |
+| `want-to-go.sample.json` | 保留 | 保留 | 中性可运行示例 |
 | `<private-root>/data/travel-map.local.json` | 外置私有层 | 不包含 | 个人国家、城市、路线和显示规则 |
+| `<private-root>/data/want-to-go.local.json` | 外置私有层 | 不包含 | 个人想去的城市、国家与备注 |
 | `<private-root>/data/editor-state.local.json` | 外置私有层 | 不包含 | 排序、隐藏、封面和媒体布局等本地编辑状态 |
 | `<private-root>/MediaInbox/<真实国家>/` | 外置私有层 | 不包含 | 原始媒体与私有旁车 |
 | `<private-root>/media/user/` | 外置私有层 | 不包含 | 网页使用的个人媒体副本 |
