@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { access, copyFile, cp, mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { cp, mkdir, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -9,7 +9,9 @@ import { promisify } from 'node:util'
 import sharp from 'sharp'
 import { EnvHttpProxyAgent, fetch as proxyAwareFetch } from 'undici'
 import worldCountries from 'world-countries'
+import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
+import { createWantToGoStore } from './want-to-go-store.mjs'
 
 const execFileAsync = promisify(execFile)
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -22,6 +24,7 @@ let editorStatePath
 let localTravelMapPath
 let mediaCatalogPath
 let mediaSourceIndexPath
+let wantToGoPath
 let inboxRoot
 let userMediaRoot
 let cesiumAccessToken = ''
@@ -37,6 +40,7 @@ const configurePrivatePaths = (requestedRoot) => {
   localTravelMapPath = paths.localTravelMapPath
   mediaCatalogPath = paths.mediaCatalogPath
   mediaSourceIndexPath = paths.mediaSourceIndexPath
+  wantToGoPath = paths.wantToGoPath
   inboxRoot = paths.inboxRoot
   userMediaRoot = paths.userMediaRoot
 }
@@ -65,16 +69,6 @@ const emptyState = {
   coverMediaByCity: {},
   droneOrderByCity: {},
   hiddenDroneMediaIds: [],
-}
-
-const exists = async (target) => access(target).then(() => true, () => false)
-const readJson = async (target, fallback) => {
-  try {
-    return JSON.parse(await readFile(target, 'utf8'))
-  } catch (error) {
-    if (error?.code === 'ENOENT') return fallback
-    throw error
-  }
 }
 
 const sendJson = (response, status, body) => {
@@ -143,14 +137,6 @@ const normalizeState = (value) => {
     hiddenDroneMediaIds: isStringArray(value.hiddenDroneMediaIds) ? value.hiddenDroneMediaIds : [],
     updatedAt: new Date().toISOString(),
   }
-}
-
-const atomicJsonWrite = async (target, value) => {
-  await mkdir(path.dirname(target), { recursive: true })
-  if (await exists(target)) await copyFile(target, target.replace(/\.json$/i, '.bak'))
-  const temporaryPath = `${target}.${process.pid}.tmp`
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  await rename(temporaryPath, target)
 }
 
 const slugify = (value) => value
@@ -962,6 +948,9 @@ const isLoopbackRequest = (request) => {
   return address === '::1' || address === '127.0.0.1' || address.startsWith('::ffff:127.')
 }
 
+/** 每次调用都按当前私有资料层路径新建一个 store，避免缓存过期的 wantToGoPath。 */
+const wantToGoStore = () => createWantToGoStore({ filePath: wantToGoPath })
+
 const authorizeWrite = (request) => (
   isLoopbackRequest(request)
   && request.headers[editorHeader] === '1'
@@ -987,11 +976,13 @@ export function travelAtlasLocalEditor(options = {}) {
             privateEditorState: await readJson(editorStatePath, undefined),
             privateMediaCatalog: await readJson(mediaCatalogPath, undefined),
             privateTravelMap: await readJson(localTravelMapPath, undefined),
+            privateWantToGo: await readJson(wantToGoPath, undefined),
           }
         : {
             privateEditorState: undefined,
             privateMediaCatalog: undefined,
             privateTravelMap: undefined,
+            privateWantToGo: undefined,
           }
       return Object.entries(privateData)
         .map(([name, value]) => `export const ${name} = ${JSON.stringify(value)};`)
@@ -1069,6 +1060,23 @@ export function travelAtlasLocalEditor(options = {}) {
 
             if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/countries/delete') {
               const result = await deleteHiddenCountries(await readJsonBody(request))
+              return sendJson(response, 200, { ok: true, ...result })
+            }
+
+            // ---- Want to Go（FR-WTG-6）----
+            // 校验全部在 want-to-go-store.mjs 里，这里只负责转发与响应码。
+            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/wanttogo') {
+              const result = await wantToGoStore().add(await readJsonBody(request))
+              return sendJson(response, 201, { ok: true, ...result })
+            }
+
+            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/wanttogo/update') {
+              const result = await wantToGoStore().update(await readJsonBody(request))
+              return sendJson(response, 200, { ok: true, ...result })
+            }
+
+            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/wanttogo/delete') {
+              const result = await wantToGoStore().deleteHidden(await readJsonBody(request))
               return sendJson(response, 200, { ok: true, ...result })
             }
 
