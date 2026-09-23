@@ -3,6 +3,7 @@ import { Check, ChevronDown, Footprints, Heart, Layers, Plus } from 'lucide-reac
 import type { LucideIcon } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
 import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorApi'
+import { wantToGoDataSource } from '../data/wantToGo'
 import type { WantToGoItem } from '../worldgraph/adapters/wantToGo'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import type { LayerId } from '../worldgraph/types'
@@ -25,7 +26,7 @@ type LayerPanelProps = {
   onToggle: (layerId: LayerId, visible: boolean) => void
   /** FR-WTG-5：被隐藏的想去条目。只在私人模式（localEditorAvailable）下渲染。 */
   hiddenWantToGoItems?: readonly WantToGoItem[]
-  /** FR-LP-3：面板底部「＋ 添加想去的地方」。只在私人模式下渲染。 */
+  /** FR-LP-3：面板底部「＋ 添加想去的地方」。只在私人模式、且想去数据不是公开样例时渲染。 */
   onAddWantToGo?: () => void
 }
 
@@ -63,8 +64,10 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
 
   const visibleCount = panelLayers.filter((layer) => visibility[layer.id] !== false).length
   // FR-PUB-2 / AC-10：写入控件以 localEditorAvailable 门控，公开构建里根本不渲染，不靠 CSS 隐藏。
+  // 添加入口另有一层数据来源门控：显示样例时（含个人模式下的 ?data=sample）不给写入入口。
+  // 私有文件还不存在（'none'）时仍要显示，否则第一条想去永远加不进去。
   const showHiddenItems = localEditorAvailable && hiddenWantToGoItems.length > 0
-  const showAddEntry = localEditorAvailable && onAddWantToGo !== undefined
+  const showAddEntry = localEditorAvailable && wantToGoDataSource !== 'sample' && onAddWantToGo !== undefined
 
   const runHiddenItemAction = (action: () => Promise<unknown>, failureMessage: string) => {
     setBusy(true)

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { EyeOff, Heart, X } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
 import { reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorApi'
-import { plannedRecordByEntityId, wantToGoItemByEntityId } from '../data/wantToGo'
+import { plannedRecordByEntityId, wantToGoDataSource, wantToGoItemByEntityId } from '../data/wantToGo'
 import type { EntityId } from '../worldgraph/types'
 
 type WantToGoCardProps = {
@@ -33,7 +33,8 @@ const regionNameZh = (countryCode: string) => {
  *
  * 数据只来自 wantToGoItemByEntityId（想去条目）或 plannedRecordByEntityId（planned 旅行记录）；
  * 两边都查不到时不渲染。planned 条目只读（FR-WTG-7）：没有任何操作按钮。
- * 「隐藏」只在私人模式下渲染（FR-PUB-2），写入只走 localEditorApi（D26）。
+ * 「隐藏」只在私人模式、且条目来自私有文件（wantToGoDataSource === 'local'）时渲染（FR-PUB-2）：
+ * 样例条目不在私有文件里，隐藏请求必然失败。写入只走 localEditorApi（D26）。
  */
 export function WantToGoCard({ entityId, onClose }: WantToGoCardProps) {
   const [busy, setBusy] = useState(false)
@@ -95,7 +96,7 @@ export function WantToGoCard({ entityId, onClose }: WantToGoCardProps) {
 
       {planned ? <p className="atlas-wtg-card-readonly">来自旅行记录（只读）</p> : null}
 
-      {item && localEditorAvailable ? (
+      {item && localEditorAvailable && wantToGoDataSource === 'local' ? (
         <button
           type="button"
           className="atlas-wtg-card-hide"
