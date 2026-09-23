@@ -3,6 +3,7 @@ import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from '
 import { AtlasHeader } from './components/AtlasHeader'
 import type { AtlasPage } from './components/AtlasHeader'
 import { CesiumAtlasGlobe } from './components/CesiumAtlasGlobe'
+import { CollectionPage } from './components/CollectionPage'
 import { CountrySelector } from './components/CountrySelector'
 import type { ThemeMode } from './components/DayNightToggle'
 import { CompassButton } from './components/CompassButton'
@@ -35,7 +36,9 @@ import { cities, cityById, countries, countryById, getCitiesForCountry, journeyD
 import { worldGraphSnapshot } from './data/worldGraph'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
 import { hiddenWantToGoItems } from './data/wantToGo'
-import { officialLayers } from './worldgraph/layers'
+import { queryCollection } from './worldgraph/collection'
+import type { CollectionEntry } from './worldgraph/collection'
+import { officialLayers, WANT_TO_GO_LAYER_ID } from './worldgraph/layers'
 import { queryVisiblePlaces } from './worldgraph/query'
 import type { EntityId } from './worldgraph/types'
 import type { CityId, CountryId, JourneyDay, SelectionMode } from './types/travel'
@@ -252,6 +255,10 @@ function App() {
     setSelectedWantToGoEntityId(undefined)
   }
 
+  // Collection 列表（PR7）：想去图层的全部条目，含已隐藏与无坐标，不受图层可见性影响（FR-LP-6）。
+  // 快照是模块级常量，算一次即可；写入后整页刷新，自然拿到新数据。
+  const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID), [])
+
   const atlasStats = useMemo(
     () => [
       { value: `${countries.length}`, label: 'Countries / 国家' },
@@ -316,6 +323,30 @@ function App() {
   const selectWantToGoPlace = (entityId: EntityId) => {
     setSelectedWantToGoEntityId(entityId)
     setSidebarsOpen(true)
+  }
+
+  // Collection「在地图上查看」（PR7 规格 §3.3 第 4 条）：切回地图、镜头飞到该地点、打开详情卡。
+  // 只对有坐标且未隐藏的条目可用。选中状态的清理与 resetOverview 一致，但不递增 globeResetVersion。
+  const viewOnMap = (entry: CollectionEntry) => {
+    if (!entry.location || entry.hidden) return
+
+    // 想去图层被关掉时地图上没有这个点：打开它并记住（与图层面板的开关同一条路径）。
+    if (layerVisibility[WANT_TO_GO_LAYER_ID] === false) {
+      const next = { ...layerVisibility, [WANT_TO_GO_LAYER_ID]: true }
+      setLayerVisibility(next)
+      rememberLayerVisibility(next)
+    }
+
+    setSelectedCountryId(undefined)
+    setSelectedCityId(undefined)
+    setActiveDroneMediaCityId(undefined)
+    setActiveDroneMediaItemId(undefined)
+    setSelectionMode('overview')
+    setGlobeDistance(countryDistance)
+    setMapFocusPlace({ entityId: entry.entityId, lat: entry.location.lat, lng: entry.location.lng })
+    setSelectedWantToGoEntityId(entry.entityId)
+    setSidebarsOpen(true)
+    changePrimaryPage('map')
   }
 
   const selectDroneMedia = (cityId: CityId) => {
@@ -619,7 +650,13 @@ function App() {
           <div
             className="atlas-collection-stage absolute inset-0 z-30"
             aria-hidden={activePage !== 'collection'}
-          />
+          >
+            <CollectionPage
+              entries={collectionEntries}
+              onViewOnMap={viewOnMap}
+              onAddWantToGo={() => setIsAddWantToGoOpen(true)}
+            />
+          </div>
 
           <div
             className="atlas-update-stage absolute inset-0 z-30"

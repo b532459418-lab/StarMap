@@ -116,6 +116,8 @@ In the personal profile (`npm run dev:personal`):
 
 When a place you want to go is also a city you have visited, the city keeps its travel marker and gains a heart badge. Hide the Travel layer and the same place appears as a hollow want-to-go marker.
 
+The **Collection** tab in the top navigation lists every place on the Want to Go layer, including hidden places, places without coordinates, and places that the map merges into a visited city. Search by name, country code, or note, filter by shown or hidden, and sort by date added, name, or country. **View on map** (在地图上查看) switches to the map, flies the camera to the place, and opens its detail card, turning the Want to Go layer back on if it was off. In the personal profile each card can also edit its note, hide, restore, or permanently delete the place; planned travel records and the public sample are read-only there.
+
 Your places are saved in `<private-root>/data/want-to-go.local.json`, outside the source repository like the rest of your private data. If that file does not exist yet, the personal profile starts with an empty Want to Go layer rather than the sample. Travel records with `status: planned` in your travel data also appear on the Want to Go layer; they are read-only there, so change them in the travel data itself.
 
 Public builds and `dev:public` show a neutral three-place sample instead (Nuuk, Tromsø, and Akureyri, which overlaps the sample journey to demonstrate the heart badge) and contain no add, hide, or delete controls. Forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`) shows the same sample, with no Want to Go write controls.
