@@ -83,9 +83,10 @@ type CesiumAtlasGlobeProps = {
   onSelectDroneMediaItem: (item: DroneMediaItem) => void
   /**
    * Collection 页「在地图上查看」要求镜头飞到的地点（PR7）。优先级低于无人机、高于城市 / 国家；
-   * 飞行方式与城市焦点完全相同，只是目标坐标不同。
+   * 飞行方式与城市焦点完全相同，只是目标坐标不同。requestId 每次「在地图上查看」都递增，
+   * 同一地点再点一次也会重新飞过去。
    */
-  focusPlace?: { entityId: EntityId; lat: number; lng: number }
+  focusPlace?: { entityId: EntityId; lat: number; lng: number; requestId: number }
 }
 
 type CursorTrailPoint = {
@@ -430,7 +431,7 @@ const debugCameraBlockedByDroneLock = (details: Record<string, unknown>) => {
 type CameraFocus =
   | { type: 'droneItem'; id: string; item: PositionedDroneMediaItem }
   | { type: 'droneGroup'; id?: CityId; items: PositionedDroneMediaItem[] }
-  | { type: 'place'; id: EntityId; lat: number; lng: number }
+  | { type: 'place'; id: EntityId; lat: number; lng: number; requestId: number }
   | { type: 'city'; id?: CityId; lat: number; lng: number }
   | { type: 'country'; id?: CountryId; lat: number; lng: number }
   | { type: 'overview'; id: 'overview'; lat: number; lng: number }
@@ -949,7 +950,13 @@ export function CesiumAtlasGlobe({
     }
 
     if (focusPlace) {
-      return { type: 'place', id: focusPlace.entityId, lat: focusPlace.lat, lng: focusPlace.lng }
+      return {
+        type: 'place',
+        id: focusPlace.entityId,
+        lat: focusPlace.lat,
+        lng: focusPlace.lng,
+        requestId: focusPlace.requestId,
+      }
     }
 
     if (
@@ -996,7 +1003,7 @@ export function CesiumAtlasGlobe({
       return `drone-group:${activeDroneMediaCityId}:${cameraFocus.items.map((item) => item.id).join('|')}:${cameraScale}`
     }
     if (cameraFocus.type === 'place') {
-      return `place:${cameraFocus.id}:${cameraScale}`
+      return `place:${cameraFocus.id}:${cameraFocus.requestId}:${cameraScale}`
     }
     if (cameraFocus.type === 'city') {
       return `city:${selectedCityId}:${cameraScale}`

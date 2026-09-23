@@ -25,6 +25,12 @@ const noteMaxLength = 200
  */
 const writeAvailable = localEditorAvailable && wantToGoDataSource === 'local'
 
+/**
+ * 添加是否可用：与图层面板的添加入口同一规则（只排除样例）。私有想去文件还不存在（'none'）时
+ * 也要能添加，否则第一次使用的人在 Collection 里加不进第一条。其余写入仍用上面更严的 writeAvailable。
+ */
+const addAvailable = localEditorAvailable && wantToGoDataSource !== 'sample'
+
 const wantToGoLayer = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)
 
 const statusOptions: { id: CollectionStatusFilter; label: string }[] = [
@@ -73,7 +79,7 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo }: Collecti
   const [text, setText] = useState('')
   const [status, setStatus] = useState<CollectionStatusFilter>('all')
   const [sort, setSort] = useState<CollectionSort>('recent')
-  const showAdd = writeAvailable && onAddWantToGo !== undefined
+  const showAdd = addAvailable && onAddWantToGo !== undefined
 
   const visibleEntries = useMemo(
     () => filterCollection(entries, { text, status, sort }),
@@ -183,7 +189,7 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo }: Collecti
 
           {entries.length === 0 ? (
             <div className="collection-empty">
-              <p>{writeAvailable ? '还没有想去的地方。' : '暂时没有想去的地方。'}</p>
+              <p>{showAdd ? '还没有想去的地方。' : '暂时没有想去的地方。'}</p>
               {addButton}
             </div>
           ) : visibleEntries.length === 0 ? (

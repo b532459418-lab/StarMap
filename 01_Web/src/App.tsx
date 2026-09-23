@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { AtlasHeader } from './components/AtlasHeader'
 import type { AtlasPage } from './components/AtlasHeader'
@@ -147,7 +147,14 @@ function App() {
   const [isAddWantToGoOpen, setIsAddWantToGoOpen] = useState(false)
   // Collection「在地图上查看」的镜头目标（PR7）。选城市 / 选国家 / 回到总览时清空；
   // 关闭详情卡【不】清空，否则焦点回落到总览，镜头会跳回去。不进 viewState。
-  const [mapFocusPlace, setMapFocusPlace] = useState<{ entityId: EntityId; lat: number; lng: number }>()
+  // requestId 每次「在地图上查看」递增：同一地点再点一次，镜头也会重新飞过去。
+  const [mapFocusPlace, setMapFocusPlace] = useState<{
+    entityId: EntityId
+    lat: number
+    lng: number
+    requestId: number
+  }>()
+  const viewOnMapRequestIdRef = useRef(0)
   const [sidebarsOpen, setSidebarsOpen] = useState(() => typeof restoredViewState.sidebarsOpen === 'boolean'
     ? restoredViewState.sidebarsOpen
     : typeof window === 'undefined' || window.matchMedia(sidebarMediaQuery).matches)
@@ -343,7 +350,13 @@ function App() {
     setActiveDroneMediaItemId(undefined)
     setSelectionMode('overview')
     setGlobeDistance(countryDistance)
-    setMapFocusPlace({ entityId: entry.entityId, lat: entry.location.lat, lng: entry.location.lng })
+    viewOnMapRequestIdRef.current += 1
+    setMapFocusPlace({
+      entityId: entry.entityId,
+      lat: entry.location.lat,
+      lng: entry.location.lng,
+      requestId: viewOnMapRequestIdRef.current,
+    })
     setSelectedWantToGoEntityId(entry.entityId)
     setSidebarsOpen(true)
     changePrimaryPage('map')
