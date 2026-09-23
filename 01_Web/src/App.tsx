@@ -41,7 +41,7 @@ import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
 import { hiddenWantToGoItems } from './data/wantToGo'
 import { queryCollection } from './worldgraph/collection'
 import type { CollectionEntry } from './worldgraph/collection'
-import { officialLayers, WANT_TO_GO_LAYER_ID } from './worldgraph/layers'
+import { officialLayers, TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from './worldgraph/layers'
 import { queryVisiblePlaces } from './worldgraph/query'
 import type { EntityId } from './worldgraph/types'
 import type { CityId, CountryId, JourneyDay, SelectionMode } from './types/travel'
@@ -386,7 +386,12 @@ function App() {
   // 转换成功、刷新之前（PR9 规格 §2 第 8 条）：把视图状态写成 Map 页并选中新国家与新城市，
   // 刷新后直接落在这座城市上。刷新时的视图恢复会校验这些 id（cityById / countryById / journeyDays），
   // 万一某个 id 在新数据里不存在，就回落到总览，不会选中一个不存在的地点。
+  // 足迹图层被关掉时一并打开，否则选中的新城市在地图上没有标记（与「在地图上查看」打开想去图层同理）。
   const rememberConvertedPlace = (result: LocalConvertToTravelResult) => {
+    const savedLayerVisibility = getInitialLayerVisibility()
+    if (savedLayerVisibility[TRAVEL_LAYER_ID] === false) {
+      rememberLayerVisibility({ ...savedLayerVisibility, [TRAVEL_LAYER_ID]: true })
+    }
     rememberAtlasViewState({
       selectedCountryId: result.countryId,
       selectedCityId: result.cityId,

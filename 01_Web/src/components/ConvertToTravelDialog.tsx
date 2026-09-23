@@ -46,6 +46,8 @@ const regionNameZh = (countryCode: string) => {
  *
  * 日期一律由用户填写，不预填今天。关闭时整个内容卸载，下次打开是一张干净的表单；
  * 成功后整页刷新，失败把服务端的 error 留在对话框里，不关闭（与 WantToGoAddDialog 相同）。
+ * 例外：错误以「足迹已创建，但」开头时足迹已经写入，页面数据已过期，提交按钮换成「刷新页面」，
+ * 不允许在过期数据上再次提交。
  */
 export function ConvertToTravelDialog({ target, onClose, onConverted }: ConvertToTravelDialogProps) {
   return target ? (
@@ -72,6 +74,7 @@ function ConvertToTravelDialogContent({
   const [keepWantToGo, setKeepWantToGo] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
+  const [needsReload, setNeedsReload] = useState(false)
 
   const item = target.source === 'want-to-go' ? wantToGoItemByEntityId.get(target.entityId) : undefined
   const planned = target.source === 'planned' ? plannedRecordByEntityId.get(target.entityId) : undefined
@@ -108,7 +111,8 @@ function ConvertToTravelDialogContent({
       ? '会在足迹中新增这座城市，想去条目会保留。'
       : '会在足迹中新增这座城市，并从想去列表移除。'
     : '这条旅行计划会改为已去过，日期以你填写的为准。'
-  const canSubmit = !busy && Boolean(startDate)
+  const fieldsDisabled = busy || needsReload
+  const canSubmit = !fieldsDisabled && Boolean(startDate)
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -142,7 +146,10 @@ function ConvertToTravelDialogContent({
       reloadAfterLocalSave()
     } catch (error) {
       // 例如城市已在足迹里时服务端返回「这个城市已经在足迹里了……」，不写任何文件（规格 §2 第 3 条）。
-      setNotice(error instanceof Error ? error.message : '标记为去过失败。')
+      const message = error instanceof Error ? error.message : '标记为去过失败。'
+      setNotice(message)
+      // 足迹已写入、后续步骤失败（规格 §2 第 1 条）：只能刷新，不能在过期数据上重试。
+      setNeedsReload(message.startsWith('足迹已创建，但'))
       setBusy(false)
     }
   }
@@ -187,7 +194,7 @@ function ConvertToTravelDialogContent({
               <input
                 required
                 type="date"
-                disabled={busy}
+                disabled={fieldsDisabled}
                 value={startDate}
                 onChange={(event) => {
                   setStartDate(event.target.value)
@@ -199,7 +206,7 @@ function ConvertToTravelDialogContent({
               <span>结束日期（可选）</span>
               <input
                 type="date"
-                disabled={busy}
+                disabled={fieldsDisabled}
                 min={startDate || undefined}
                 value={endDate}
                 onChange={(event) => {
@@ -215,7 +222,7 @@ function ConvertToTravelDialogContent({
               <label className="atlas-local-editor-date-field">
                 <span>行程标题（可选）</span>
                 <input
-                  disabled={busy}
+                  disabled={fieldsDisabled}
                   value={tripTitle}
                   placeholder={[countryName, nameZh].filter(Boolean).join(' · ')}
                   onChange={(event) => setTripTitle(event.target.value)}
@@ -224,7 +231,7 @@ function ConvertToTravelDialogContent({
               <label className="atlas-convert-keep">
                 <input
                   type="checkbox"
-                  disabled={busy}
+                  disabled={fieldsDisabled}
                   checked={keepWantToGo}
                   onChange={(event) => setKeepWantToGo(event.target.checked)}
                 />
@@ -235,7 +242,13 @@ function ConvertToTravelDialogContent({
 
           {notice ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{notice}</p> : null}
 
-          <button type="submit" disabled={!canSubmit}>标记为去过</button>
+          {needsReload ? (
+            // 被点击的提交按钮已经消失，焦点移到替代它的按钮上，键盘用户不会落到页面顶部。
+            // 两个分支都是 <button>，不给不同的 key 时 React 会复用同一个元素，autoFocus 就不会生效。
+            <button key="reload" type="button" autoFocus onClick={() => reloadAfterLocalSave()}>刷新页面</button>
+          ) : (
+            <button key="submit" type="submit" disabled={!canSubmit}>标记为去过</button>
+          )}
         </form>
       </section>
     </div>

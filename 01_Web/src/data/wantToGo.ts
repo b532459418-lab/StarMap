@@ -22,9 +22,10 @@
 
 import wantToGoSample from './want-to-go.sample.json'
 import { privateWantToGo } from 'virtual:starmap-private-data'
-import { plannedRecords } from './travelAtlas'
+import { cities, countryById, plannedRecords } from './travelAtlas'
 import { plannedEntityId } from '../worldgraph/adapters/plannedRecords.ts'
 import { parseWantToGoFile, wantToGoEntityId, type WantToGoItem } from '../worldgraph/adapters/wantToGo.ts'
+import { slugify } from '../worldgraph/slug.ts'
 import type { EntityId } from '../worldgraph/types.ts'
 import type { TravelMapRecord } from '../types/travel'
 
@@ -89,9 +90,24 @@ for (const record of plannedRecords) {
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
+/**
+ * 足迹城市的比较键：国家代码（足迹国家的 flagCode，大写）+ Core slugify(英文城市名)。
+ * 只用来提前禁用按钮，免得用户填完日期才被拒绝；端点按 country_en 的 cityId 规则判断重复，仍是最终权威。
+ * 没有国家代码的足迹国家无法比较，跳过（交给端点）。
+ */
+const footprintCityKey = (countryCode: string, nameEn: string) => `${countryCode.toUpperCase()}:${slugify(nameEn)}`
+
+const footprintCityKeys = new Set(cities.flatMap((city) => {
+  const countryCode = city.countryId ? countryById[city.countryId]?.flagCode : undefined
+  return countryCode && city.nameEn ? [footprintCityKey(countryCode, city.nameEn)] : []
+}))
+
 export const wantToGoConvertBlockReason = (item: WantToGoItem): string | undefined => {
   if (item.place.kind !== 'city') return '整个国家的想去需要先具体到城市，暂不支持直接转为足迹。'
   if (!isFiniteNumber(item.place.lat) || !isFiniteNumber(item.place.lng)) return '这个地点没有坐标，无法转为足迹。'
+  if (footprintCityKeys.has(footprintCityKey(item.place.countryCode, item.place.nameEn))) {
+    return '这个城市已经在足迹里了。如果只是想从想去列表移除，请使用隐藏或彻底删除。'
+  }
   return undefined
 }
 
