@@ -112,6 +112,8 @@ For each public update, bump the package version, create a matching semantic-ver
 
 - `src/worldgraph/` is StarMap Core: the World Graph model, Layer Registry, and adapters. It is environment-independent and lint-enforced; see [`src/worldgraph/README.md`](src/worldgraph/README.md).
 - `src/components/CesiumAtlasGlobe.tsx` is the primary map implementation.
+- `src/components/CollectionPage.tsx` is the Collection view: every Want to Go entry, including hidden and coordinate-less ones, with search, filters, sorting, note editing, hide / restore / delete, and View on map.
+- `src/worldgraph/collection.ts` is the Core list query behind it (`queryCollection` / `filterCollection`); unlike the map query it ignores layer visibility and keeps hidden entries.
 - `src/extensions/` holds the Google imagery, labels, and Photorealistic 3D Tiles integrations; see [`src/extensions/README.md`](src/extensions/README.md).
 - `src/components/AtlasGlobe.tsx` is the frozen legacy react-globe implementation.
 - `src/data/travelAtlas.ts` selects private data only from the profile-specific virtual module and otherwise loads the tracked public sample.
