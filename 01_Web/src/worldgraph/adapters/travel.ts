@@ -41,16 +41,14 @@ import type {
   Entity,
   EntityId,
   EntityMetadata,
-  LayerId,
   LayerMembership,
   Relation,
   RelationMetadata,
   RelationType,
   WorldGraphSnapshot,
 } from '../types.ts'
-
-/** Travel 官方图层的 id。PR2 的 Layer Registry 落地后应改为从那里引用。 */
-export const TRAVEL_LAYER_ID: LayerId = 'travel'
+// Travel 官方图层的 id 只在 Layer Registry 里声明一次。
+import { TRAVEL_LAYER_ID } from '../layers.ts'
 
 export interface TravelWorldGraphInput {
   countries?: readonly Country[]

@@ -264,7 +264,7 @@ test('经纬度恰好为 0 是合法坐标', () => {
   assert.equal(result.places[0].lng, 0)
 })
 
-test('country / region 的 place 不进 places（V0.4 只画城市标记）', () => {
+test('足迹图层里 country / region 的 place 不进 places（足迹只画城市标记）', () => {
   const snapshot = demoSnapshot()
   snapshot.entities.push(place('place:region:r1', 'region', { zh: '某区' }, { sourceId: 'r1' }))
   snapshot.memberships.push(member('place:region:r1', 'travel'))
@@ -560,4 +560,217 @@ test('visibleLayerIds 是副本，改结果不会回写调用方的数组', () =
   const result = queryVisiblePlaces(demoSnapshot(), visible)
   result.visibleLayerIds.push('want_to_go')
   assert.deepEqual(visible, ['travel'])
+})
+
+// ---------------------------------------------------------------------------
+// 6. PR5：mapSubtypes、countryCode 与 FR-MR-5 合并
+// ---------------------------------------------------------------------------
+
+const wtgRvk = 'place:wtg:IS:reykjavik'
+const wtgNuuk = 'place:wtg:GL:nuuk'
+const wtgNorway = 'place:wtg:NO:norway'
+const plannedNuuk = 'place:planned:p-nuuk'
+
+/**
+ * 按 app 的真实合并顺序（travel → want-to-go → planned）手写的一份小快照：
+ * - 足迹：国家 is（flagCode 'is'）+ 城市 rvk（Reykjavik）
+ * - 想去：城市 Reykjavik（IS，与足迹同键）、城市 Nuuk（GL）、国家 Norway（NO）
+ * - planned：城市 Nuuk（GL，与想去同键）
+ */
+const layeredSnapshot = (): WorldGraphSnapshot => ({
+  entities: [
+    place(countryEntityId('is'), 'country', { zh: '冰岛', en: 'Iceland' }, { sourceId: 'is', accent: '#66c7a8', flagCode: 'is', cityIds: ['rvk'] }),
+    place(cityEntityId('rvk'), 'city', { zh: '雷克雅未克', en: 'Reykjavik' }, { sourceId: 'rvk', countryId: 'is' }),
+    place(wtgRvk, 'city', { zh: '雷克雅未克', en: 'Reykjavik' }, { countryCode: 'IS', source: 'want-to-go' }),
+    place(wtgNuuk, 'city', { zh: '努克', en: 'Nuuk' }, { countryCode: 'GL', source: 'want-to-go' }),
+    place(wtgNorway, 'country', { zh: '挪威', en: 'Norway' }, { countryCode: 'NO', source: 'want-to-go' }),
+    place(plannedNuuk, 'city', { zh: '努克', en: 'Nuuk' }, { countryCode: 'gl', source: 'travel-map:planned', readOnly: true }),
+  ],
+  memberships: [
+    member(countryEntityId('is'), 'travel'),
+    member(cityEntityId('rvk'), 'travel'),
+    member(wtgRvk, 'want_to_go', { hidden: false, source: 'want-to-go', note: '再去一次' }),
+    member(wtgNuuk, 'want_to_go', { hidden: false, source: 'want-to-go', note: '格陵兰首府' }),
+    member(wtgNorway, 'want_to_go', { hidden: false, source: 'want-to-go' }),
+    member(plannedNuuk, 'want_to_go', { source: 'travel-map:planned', readOnly: true }),
+  ],
+  anchors: [
+    location(countryEntityId('is'), 64.9, -18.6),
+    location(cityEntityId('rvk'), 64.1466, -21.9426),
+    location(wtgRvk, 64.1466, -21.9426),
+    location(wtgNuuk, 64.18, -51.72),
+    location(wtgNorway, 62, 10),
+    location(plannedNuuk, 64.2, -51.7),
+  ],
+  relations: [
+    relation('rel:part_of:rvk', 'part_of', cityEntityId('rvk'), countryEntityId('is')),
+  ],
+})
+
+const entityIds = (result: { places: { entityId: EntityId }[] }): EntityId[] =>
+  result.places.map((item) => item.entityId)
+
+const placeByEntityId = (result: ReturnType<typeof queryVisiblePlaces>, entityId: EntityId) =>
+  result.places.find((item) => item.entityId === entityId)
+
+test('mapSubtypes：想去的国家地点进入 places，足迹的国家地点仍被排除', () => {
+  const result = queryVisiblePlaces(layeredSnapshot(), ['travel', 'want_to_go'])
+  assert.ok(entityIds(result).includes(wtgNorway), '想去允许 country（PRD Q5）')
+  assert.equal(placeByEntityId(result, wtgNorway)?.subtype, 'country')
+  assert.deepEqual(placeByEntityId(result, wtgNorway)?.layerIds, ['want_to_go'])
+  assert.ok(!entityIds(result).includes(countryEntityId('is')), '足迹只画城市，国家中心点不画')
+})
+
+test('mapSubtypes：layerIds 只保留允许该 subtype 的图层', () => {
+  // 一个同时在两层的国家 Entity：足迹不画国家，所以 layerIds 里只剩 want_to_go。
+  const snapshot = layeredSnapshot()
+  snapshot.memberships.push(member(countryEntityId('is'), 'want_to_go', { note: '整个冰岛' }))
+  const result = queryVisiblePlaces(snapshot, ['travel', 'want_to_go'])
+  const iceland = placeByEntityId(result, countryEntityId('is'))
+  assert.deepEqual(iceland?.layerIds, ['want_to_go'])
+  assert.deepEqual(iceland?.membershipMetadata, { want_to_go: { note: '整个冰岛' } })
+  assert.equal(queryVisiblePlaces(snapshot, ['travel']).places.some((item) => item.subtype === 'country'), false)
+})
+
+test('countryCode：足迹城市取所属国家的 flagCode，其他地点取自身 countryCode，都转大写', () => {
+  const result = queryVisiblePlaces(layeredSnapshot(), ['travel', 'want_to_go'])
+  assert.equal(placeByEntityId(result, cityEntityId('rvk'))?.countryCode, 'IS', '来自国家 Entity 的 flagCode "is"')
+  assert.equal(placeByEntityId(result, wtgNuuk)?.countryCode, 'GL', '来自自身 metadata.countryCode')
+  assert.equal(placeByEntityId(result, wtgNorway)?.countryCode, 'NO')
+
+  // planned 的 'gl' 被转大写后与想去 Nuuk 同键，已被合并掉；只开 planned 的来源时单独看它。
+  const snapshot = layeredSnapshot()
+  snapshot.memberships = snapshot.memberships.filter((item) => item.entityId !== wtgNuuk)
+  assert.equal(placeByEntityId(queryVisiblePlaces(snapshot, ['want_to_go']), plannedNuuk)?.countryCode, 'GL')
+})
+
+test('countryCode：不是两位字母时不产出该键', () => {
+  const snapshot = layeredSnapshot()
+  snapshot.entities = snapshot.entities.map((entity) =>
+    entity.id === wtgNuuk ? { ...entity, metadata: { ...entity.metadata, countryCode: 'GRL' } } : entity,
+  )
+  const result = queryVisiblePlaces(snapshot, ['want_to_go'])
+  assert.equal(placeByEntityId(result, wtgNuuk)?.countryCode, undefined)
+  assert.equal('countryCode' in (placeByEntityId(result, wtgNuuk) ?? {}), false)
+})
+
+test('FR-MR-5：足迹可见时，同键的想去城市并入足迹地点', () => {
+  const result = queryVisiblePlaces(layeredSnapshot(), ['travel', 'want_to_go'])
+  assert.ok(!entityIds(result).includes(wtgRvk), '想去 Reykjavik 不再单独出现')
+
+  const rvk = placeByEntityId(result, cityEntityId('rvk'))
+  assert.deepEqual(rvk?.layerIds, ['travel', 'want_to_go'])
+  assert.deepEqual(rvk?.mergedEntityIds, [wtgRvk])
+  assert.deepEqual(rvk?.membershipMetadata, {
+    want_to_go: { hidden: false, source: 'want-to-go', note: '再去一次' },
+  })
+  // 足迹那一侧的字段不变：sourceId 仍是城市 id（点击仍进入城市）、主色仍来自国家。
+  assert.equal(rvk?.sourceId, 'rvk')
+  assert.equal(rvk?.accent, '#66c7a8')
+})
+
+test('FR-MR-5：两层都有 membershipMetadata 时逐层合并，足迹已有的层不被覆盖', () => {
+  const snapshot = layeredSnapshot()
+  snapshot.memberships = snapshot.memberships.map((item) =>
+    item.entityId === cityEntityId('rvk') ? { ...item, metadata: { hidden: false, source: 'travel' } } : item,
+  )
+  const rvk = placeByEntityId(queryVisiblePlaces(snapshot, ['travel', 'want_to_go']), cityEntityId('rvk'))
+  assert.deepEqual(rvk?.membershipMetadata, {
+    travel: { hidden: false, source: 'travel' },
+    want_to_go: { hidden: false, source: 'want-to-go', note: '再去一次' },
+  })
+})
+
+test('FR-MR-5：足迹不可见时不合并，想去地点单独出现且只有 want_to_go', () => {
+  const result = queryVisiblePlaces(layeredSnapshot(), ['want_to_go'])
+  const rvk = placeByEntityId(result, wtgRvk)
+  assert.ok(rvk, '想去 Reykjavik 单独出现')
+  assert.deepEqual(rvk?.layerIds, ['want_to_go'])
+  assert.equal(rvk?.sourceId, wtgRvk, '没有 metadata.sourceId，sourceId 回落到 entityId')
+  assert.equal(rvk?.mergedEntityIds, undefined)
+  assert.ok(!entityIds(result).includes(cityEntityId('rvk')))
+})
+
+test('FR-MR-5：想去与 planned 同键时只留想去，planned 记进 mergedEntityIds', () => {
+  const result = queryVisiblePlaces(layeredSnapshot(), ['travel', 'want_to_go'])
+  assert.ok(!entityIds(result).includes(plannedNuuk))
+  const nuuk = placeByEntityId(result, wtgNuuk)
+  assert.deepEqual(nuuk?.mergedEntityIds, [plannedNuuk])
+  assert.deepEqual(nuuk?.layerIds, ['want_to_go'])
+  assert.deepEqual(
+    entityIds(result),
+    [cityEntityId('rvk'), wtgNuuk, wtgNorway],
+    '合并后其余地点保持快照顺序',
+  )
+})
+
+test('FR-MR-5：没有 countryCode 的地点不参与合并', () => {
+  const snapshot = layeredSnapshot()
+  snapshot.entities = snapshot.entities.map((entity) =>
+    entity.id === wtgRvk || entity.id === plannedNuuk
+      ? { ...entity, metadata: { source: 'want-to-go' } }
+      : entity,
+  )
+  const result = queryVisiblePlaces(snapshot, ['travel', 'want_to_go'])
+  assert.ok(entityIds(result).includes(wtgRvk), '缺 countryCode 的想去 Reykjavik 仍单独出现')
+  assert.ok(entityIds(result).includes(plannedNuuk), '缺 countryCode 的 planned Nuuk 仍单独出现')
+  assert.deepEqual(placeByEntityId(result, cityEntityId('rvk'))?.layerIds, ['travel'])
+  assert.equal(placeByEntityId(result, cityEntityId('rvk'))?.mergedEntityIds, undefined)
+})
+
+test('FR-MR-5：足迹城市的国家没有 flagCode 时也不合并', () => {
+  const snapshot = layeredSnapshot()
+  snapshot.entities = snapshot.entities.map((entity) =>
+    entity.id === countryEntityId('is')
+      ? { ...entity, metadata: { sourceId: 'is', accent: '#66c7a8', cityIds: ['rvk'] } }
+      : entity,
+  )
+  const result = queryVisiblePlaces(snapshot, ['travel', 'want_to_go'])
+  assert.ok(entityIds(result).includes(wtgRvk))
+  assert.deepEqual(placeByEntityId(result, cityEntityId('rvk'))?.layerIds, ['travel'])
+})
+
+test('FR-MR-5：隐藏的想去 membership 不进结果，也不参与合并', () => {
+  const snapshot = layeredSnapshot()
+  snapshot.memberships = snapshot.memberships.map((item) =>
+    item.entityId === wtgRvk || item.entityId === wtgNuuk
+      ? { ...item, metadata: { ...item.metadata, hidden: true } }
+      : item,
+  )
+  const result = queryVisiblePlaces(snapshot, ['travel', 'want_to_go'])
+  assert.ok(!entityIds(result).includes(wtgRvk))
+  const rvk = placeByEntityId(result, cityEntityId('rvk'))
+  assert.deepEqual(rvk?.layerIds, ['travel'], '隐藏的想去不会给足迹地点带上徽标')
+  assert.equal(rvk?.mergedEntityIds, undefined)
+  // 想去 Nuuk 隐藏后，同键的 planned Nuuk 不再被它吞掉，自己出现。
+  assert.ok(!entityIds(result).includes(wtgNuuk))
+  assert.ok(entityIds(result).includes(plannedNuuk))
+})
+
+test('FR-MR-5：国家地点不参与合并', () => {
+  const snapshot = layeredSnapshot()
+  // 一个与想去 Norway 同键的 planned 国家级地点：国家不合并，两个都在。
+  snapshot.entities.push(place('place:planned:p-norway', 'country', { zh: '挪威', en: 'Norway' }, { countryCode: 'NO' }))
+  snapshot.memberships.push(member('place:planned:p-norway', 'want_to_go', { readOnly: true }))
+  snapshot.anchors.push(location('place:planned:p-norway', 61, 9))
+  const result = queryVisiblePlaces(snapshot, ['want_to_go'])
+  assert.ok(entityIds(result).includes(wtgNorway))
+  assert.ok(entityIds(result).includes('place:planned:p-norway'))
+})
+
+test('FR-MR-5：合并不修改输入快照，两次调用结果 deepEqual', () => {
+  const snapshot = deepFreeze(layeredSnapshot())
+  assert.doesNotThrow(() => queryVisiblePlaces(snapshot, ['travel', 'want_to_go']))
+  assert.deepEqual(
+    queryVisiblePlaces(snapshot, ['travel', 'want_to_go']),
+    queryVisiblePlaces(layeredSnapshot(), ['travel', 'want_to_go']),
+  )
+})
+
+test('FR-MR-5：合并不影响路线（路线只来自足迹）', () => {
+  const snapshot = layeredSnapshot()
+  assert.deepEqual(
+    queryVisiblePlaces(snapshot, ['travel', 'want_to_go']).routes,
+    queryVisiblePlaces(snapshot, ['travel']).routes,
+  )
 })

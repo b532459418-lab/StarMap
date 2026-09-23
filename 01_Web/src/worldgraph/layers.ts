@@ -16,6 +16,12 @@
 
 import type { LayerId, RelationType } from './types.ts'
 
+/** Travel 官方图层的 id。全仓库只在这里声明一次，适配器与查询都从这里引用。 */
+export const TRAVEL_LAYER_ID: LayerId = 'travel'
+
+/** Want to Go 官方图层的 id。想去条目与 planned 记录共用这一个图层，只是来源不同。 */
+export const WANT_TO_GO_LAYER_ID: LayerId = 'want_to_go'
+
 export interface LayerDefinition {
   id: LayerId
   label: { zh: string; en: string }
@@ -26,6 +32,8 @@ export interface LayerDefinition {
   defaultVisible: boolean
   /** FR-LP-5：V0.4 的面板顺序固定按它排；拖动排序是 R12。 */
   order: number
+  /** 该图层在地图上画哪些 place subtype。足迹只画城市（国家没有标记）；想去画城市与国家（PRD Q5）。 */
+  mapSubtypes: readonly ('city' | 'country' | 'region')[]
   /**
    * D21：地图归属的默认规则。'self' 表示"地点自身即归属"。
    * V0.4 两层都是 'self' 且不可按条目覆盖，归属编辑 UI 归 0.5（PRD §1.3）。
@@ -47,6 +55,8 @@ export const officialLayers: readonly LayerDefinition[] = [
     accent: '#38bdf8',
     defaultVisible: true,
     order: 0,
+    // 现有地球只给城市画标记；国家 Entity 的中心点从来不画（PR3 对等测试钉住了这一点）。
+    mapSubtypes: ['city'],
     projection: { default: 'self', editablePerEntity: false },
   },
   {
@@ -57,6 +67,8 @@ export const officialLayers: readonly LayerDefinition[] = [
     accent: '#F0647A',
     defaultVisible: true,
     order: 1,
+    // PRD Q5：想去支持「整个国家」条目，它们的代表点也要上图。
+    mapSubtypes: ['city', 'country'],
     projection: { default: 'self', editablePerEntity: false },
   },
 ]

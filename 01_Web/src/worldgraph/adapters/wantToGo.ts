@@ -25,14 +25,12 @@ import type {
   Anchor,
   Entity,
   EntityId,
-  LayerId,
   LayerMembership,
   WorldGraphSnapshot,
 } from '../types.ts'
+import { WANT_TO_GO_LAYER_ID } from '../layers.ts'
+import { slugify } from '../slug.ts'
 import { anchorId } from './travel.ts'
-
-/** Want to Go 官方图层的 id。 */
-export const WANT_TO_GO_LAYER_ID: LayerId = 'want_to_go'
 
 /** membership.metadata.source 与 entity.metadata.source 的取值，用来区分条目来源。 */
 export const WANT_TO_GO_SOURCE = 'want-to-go'
@@ -68,17 +66,6 @@ export interface WantToGoWorldGraphOptions {
    */
   now: string
 }
-
-/**
- * 与 scripts/want-to-go-store.mjs 和 local-editor-plugin.mjs 的 slugify 规则一致。
- * Core 不能 import 脚本层，所以这里必须有自己的一份；三处必须同时改。
- */
-const slugify = (value: string): string => value
-  .toLowerCase()
-  .normalize('NFKC')
-  .trim()
-  .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
-  .replace(/^-|-$/g, '')
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/
 

@@ -31,6 +31,7 @@ import {
 } from './adapters/travel.fixture.ts'
 import { travelToWorldGraph } from './adapters/travel.ts'
 import { queryVisiblePlaces } from './query.ts'
+import { emptyWorldGraphSnapshot, mergeWorldGraphSnapshots } from './snapshot.ts'
 
 const NOW = '2026-09-20T00:00:00.000Z'
 
@@ -351,4 +352,21 @@ test('travel 关掉时 places 与 routes 都为空，等价于 PR2 的 showTrave
     shown.routes.length,
     legacyMappedRoutes(sampleCountries(), sampleCities(), sampleRoutes()).length,
   )
+})
+
+// ---------------------------------------------------------------------------
+// 4. PR5：App 改为查询 travel → want-to-go → planned 的合并快照
+// ---------------------------------------------------------------------------
+
+test('对等：travel 快照与两份空快照合并后，查询结果与只用 travel 快照完全相同', () => {
+  const travelSnapshot = travelToWorldGraph(sampleInput(), { now: NOW })
+  const merged = mergeWorldGraphSnapshots(travelSnapshot, emptyWorldGraphSnapshot(), emptyWorldGraphSnapshot())
+
+  for (const visible of [['travel'], ['travel', 'want_to_go'], ['want_to_go'], []] as const) {
+    assert.deepEqual(
+      queryVisiblePlaces(merged, visible),
+      queryVisiblePlaces(travelSnapshot, visible),
+      `可见图层 ${JSON.stringify(visible)} 时结果不一致`,
+    )
+  }
 })

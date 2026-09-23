@@ -15,16 +15,24 @@
  *    弧线采样、颜色对象）一律留在 CesiumAtlasGlobe 里。所以这里只给经纬度，
  *    不给 positions。
  *
- * 3. V0.4 只画 `subtype === 'city'` 的地点 —— 现有地球只渲染城市标记，国家没有标记。
- *    country / region 的 place 不进 places（PR5 的"想去 country 条目"届时再放开）。
+ * 3. 画哪些 subtype 由图层自己声明（`LayerDefinition.mapSubtypes`），查询里不写死 `city`：
+ *    一个地点至少在一个【可见且允许它的 subtype】的图层里才进 places，`layerIds` 也只保留
+ *    这些图层。足迹只画城市（国家中心点从来不画，与 PR3 一致）；想去画城市与国家（PRD Q5）。
  *
  * 4. 路线只在 travel 图层可见时才计算（FR-LR-3）。计算规则逐条复刻 PR3 之前
  *    CesiumAtlasGlobe 里 `mappedRoutes` 的行为，只是把数据源从领域对象换成快照；
  *    `src/worldgraph/query.parity.test.ts` 用逐字复制的 legacy 逻辑把这件事钉死。
+ *
+ * 5. FR-MR-5「同一地点在两层」在这里合并，而不是在 Globe 里：非足迹的城市地点，若
+ *    `(countryCode, slug(英文名))` 与一个【可见的】足迹城市相同，就并进那个足迹地点
+ *    （`layerIds` 追加、`membershipMetadata` 合并、`mergedEntityIds` 记下来源），自身不再输出。
+ *    足迹不可见时不合并，想去地点按自己的样式单独出现。剩下的非足迹地点之间同键只留第一个
+ *    （快照合并顺序是 travel → want-to-go → planned，所以想去先于 planned）。国家地点不参与合并。
  */
 
 import { cityEntityId } from './adapters/travel.ts'
-import { officialLayers } from './layers.ts'
+import { officialLayers, TRAVEL_LAYER_ID } from './layers.ts'
+import { slugify } from './slug.ts'
 import type { Anchor, Entity, EntityId, LayerId, Relation, WorldGraphSnapshot } from './types.ts'
 
 /** 地图渲染一个地点标记需要的最小信息。字段能一一对应到 CesiumAtlasGlobe 的用法。 */
@@ -41,6 +49,13 @@ export interface LayerPlace {
   /** travel：所属国家的 Entity id 与领域 id（metadata.countryId） */
   countryEntityId?: EntityId
   countryId?: string
+  /**
+   * 两位大写国家代码，FR-MR-5 合并键的一半。足迹城市取 part_of 目标国家 Entity 的
+   * metadata.flagCode；想去 / planned 地点取自身 metadata.countryCode。拿不到时不产出该键。
+   */
+  countryCode?: string
+  /** FR-MR-5：被并入本地点的其他 Entity（例如同一城市的想去条目），按并入顺序。没有合并时不产出该键。 */
+  mergedEntityIds?: EntityId[]
   /** 标记主色：优先自身 metadata.accent，其次所属国家 Entity 的 metadata.accent */
   accent?: string
   /** 指向本地点的 visited Relation 数量（journey → place）；没有则 0 */
@@ -76,9 +91,6 @@ type RouteKind = LayerRouteSegment['kind']
 
 const routeKinds: readonly RouteKind[] = ['main', 'dayTrip', 'flight', 'ferry', 'drive']
 
-/** travel 图层 id。路线只在它可见时才计算（FR-LR-3）。 */
-const travelLayerId: LayerId = 'travel'
-
 /** 默认路线种类。与 PR3 之前 `mappedRoutes` 里的 `existingRoute?.type ?? 'main'` 一致。 */
 const defaultRouteKind: RouteKind = 'main'
 
@@ -98,10 +110,81 @@ const isFiniteCoordinate = (anchor: Anchor): boolean =>
 /** 领域 id：Entity.metadata.sourceId，没有则回落到 EntityId 本身。 */
 const sourceIdOf = (entity: Entity): string => asString(entity.metadata.sourceId) ?? entity.id
 
+/** 两位字母才算国家代码，统一大写；其它形状一律视为没有（这样的地点不参与 FR-MR-5 合并）。 */
+const asCountryCode = (value: unknown): string | undefined => {
+  const code = asString(value)?.trim().toUpperCase()
+  return code !== undefined && /^[A-Z]{2}$/.test(code) ? code : undefined
+}
+
+/** 按 Registry 的 order 排序；不在 Registry 里的图层排最后。 */
+const sortByLayerOrder = (layerIds: readonly LayerId[], layerOrder: Map<LayerId, number>): LayerId[] =>
+  [...layerIds].sort(
+    (a, b) => (layerOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (layerOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
+  )
+
+/** FR-MR-5 合并键：`<countryCode>:<slug(英文名，没有则中文名)>`。只有城市参与；拿不到国家代码或 slug 为空时不合并。 */
+const mergeKeyOf = (place: LayerPlace): string | undefined => {
+  if (place.subtype !== 'city' || place.countryCode === undefined) return undefined
+  const slug = slugify(place.title.en ?? place.title.zh)
+  return slug === '' ? undefined : `${place.countryCode}:${slug}`
+}
+
+/**
+ * FR-MR-5：把"同一地点在多层"的重复标记合并掉（规则见文件头第 5 条）。
+ * 入参 places 是本次查询新造的对象，可以就地改；输入快照里的对象一个也不碰。
+ */
+const mergeSamePlaces = (places: LayerPlace[], layerOrder: Map<LayerId, number>): LayerPlace[] => {
+  const travelPlaceByKey = new Map<string, LayerPlace>()
+  for (const place of places) {
+    if (!place.layerIds.includes(TRAVEL_LAYER_ID)) continue
+    const key = mergeKeyOf(place)
+    if (key !== undefined && !travelPlaceByKey.has(key)) travelPlaceByKey.set(key, place)
+  }
+
+  const keptOtherPlaceByKey = new Map<string, LayerPlace>()
+  const merged: LayerPlace[] = []
+  for (const place of places) {
+    const key = place.layerIds.includes(TRAVEL_LAYER_ID) ? undefined : mergeKeyOf(place)
+    if (key === undefined) {
+      merged.push(place)
+      continue
+    }
+
+    const travelPlace = travelPlaceByKey.get(key)
+    if (travelPlace) {
+      travelPlace.layerIds = sortByLayerOrder(
+        [...new Set([...travelPlace.layerIds, ...place.layerIds])],
+        layerOrder,
+      )
+      // 逐层合并，足迹地点已有的层不覆盖；复制一份，免得改到别处共享的对象。
+      const membershipMetadata = { ...travelPlace.membershipMetadata }
+      for (const layerId of Object.keys(place.membershipMetadata) as LayerId[]) {
+        if (membershipMetadata[layerId] === undefined) {
+          membershipMetadata[layerId] = place.membershipMetadata[layerId]
+        }
+      }
+      travelPlace.membershipMetadata = membershipMetadata
+      travelPlace.mergedEntityIds = [...(travelPlace.mergedEntityIds ?? []), place.entityId]
+      continue
+    }
+
+    const keptPlace = keptOtherPlaceByKey.get(key)
+    if (keptPlace) {
+      keptPlace.mergedEntityIds = [...(keptPlace.mergedEntityIds ?? []), place.entityId]
+      continue
+    }
+
+    keptOtherPlaceByKey.set(key, place)
+    merged.push(place)
+  }
+  return merged
+}
+
 /**
  * 把一份快照 + 一组可见图层，投影成地图要渲染的地点与路线。
  *
- * places 的顺序 = Entity 在 `snapshot.entities` 里的顺序（稳定，便于逐条对比）；
+ * places 的顺序 = Entity 在 `snapshot.entities` 里的顺序（稳定，便于逐条对比），
+ * 被 FR-MR-5 并入别处的地点从中删去，其余相对顺序不变；
  * routes 的顺序 = 先国家内顺序段、后跨国段，各自保持遍历顺序。
  */
 export const queryVisiblePlaces = (
@@ -110,7 +193,12 @@ export const queryVisiblePlaces = (
 ): LayerQueryResult => {
   const visible = new Set<LayerId>(visibleLayerIds)
   const layerOrder = new Map<LayerId, number>()
-  for (const layer of officialLayers) layerOrder.set(layer.id, layer.order)
+  /** LayerId → 该图层在地图上画的 subtype（Registry 的 mapSubtypes）。 */
+  const mapSubtypesByLayerId = new Map<LayerId, Set<string>>()
+  for (const layer of officialLayers) {
+    layerOrder.set(layer.id, layer.order)
+    mapSubtypesByLayerId.set(layer.id, new Set(layer.mapSubtypes))
+  }
 
   const entityById = new Map<EntityId, Entity>()
   for (const entity of snapshot.entities) {
@@ -186,11 +274,14 @@ export const queryVisiblePlaces = (
   for (const entity of snapshot.entities) {
     if (entityById.get(entity.id) !== entity) continue
     if (entity.type !== 'place') continue
-    // FR-MR：V0.4 只画城市标记，国家/地区没有标记。
-    if (entity.subtype !== 'city') continue
 
-    const layerIds = layerIdsByEntityId.get(entity.id)
-    if (!layerIds || layerIds.length === 0) continue
+    // 只保留"允许这个 subtype 上图"的可见图层：足迹的国家 Entity 在这里被排除，
+    // 想去的国家条目则留下（文件头第 3 条）。
+    const subtype = entity.subtype
+    const layerIds = (layerIdsByEntityId.get(entity.id) ?? []).filter(
+      (layerId) => subtype !== undefined && (mapSubtypesByLayerId.get(layerId)?.has(subtype) ?? false),
+    )
+    if (layerIds.length === 0) continue
 
     // 没有坐标的 Entity 是合法的（D06 / FR-TA-3），只是地图画不出来。
     const anchor = locationByEntityId.get(entity.id)
@@ -208,11 +299,15 @@ export const queryVisiblePlaces = (
         : { zh: entity.title.zh, en: entity.title.en },
       lat: anchor.lat as number,
       lng: anchor.lng as number,
-      layerIds: [...layerIds].sort(
-        (a, b) => (layerOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (layerOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
-      ),
+      layerIds: sortByLayerOrder(layerIds, layerOrder),
       visitCount: visitCountByEntityId.get(entity.id) ?? 0,
-      membershipMetadata: membershipMetadataByEntityId.get(entity.id) ?? {},
+      membershipMetadata: {},
+    }
+    // 只带出留在 layerIds 里的那些图层的 metadata，与 layerIds 保持同一口径。
+    const metadataByLayer = membershipMetadataByEntityId.get(entity.id) ?? {}
+    for (const layerId of place.layerIds) {
+      const metadata = metadataByLayer[layerId]
+      if (metadata !== undefined) place.membershipMetadata[layerId] = metadata
     }
     if (country) {
       place.countryEntityId = country.id
@@ -220,14 +315,19 @@ export const queryVisiblePlaces = (
       if (countryId !== undefined) place.countryId = countryId
     }
     if (accent !== undefined) place.accent = accent
+    // 足迹城市的国家代码在所属国家 Entity 上（flagCode）；想去 / planned 地点自己带 countryCode。
+    const countryCode = country
+      ? asCountryCode(country.metadata.flagCode)
+      : asCountryCode(entity.metadata.countryCode)
+    if (countryCode !== undefined) place.countryCode = countryCode
 
     places.push(place)
   }
 
   return {
     visibleLayerIds: [...visibleLayerIds],
-    places,
-    routes: visible.has(travelLayerId) ? buildRoutes(snapshot, entityById, locationByEntityId, {
+    places: mergeSamePlaces(places, layerOrder),
+    routes: visible.has(TRAVEL_LAYER_ID) ? buildRoutes(snapshot, entityById, locationByEntityId, {
       relatedToRelations,
       visitJourneyIdsByEntityId,
       countryIdOf,

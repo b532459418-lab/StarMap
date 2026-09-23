@@ -20,14 +20,12 @@ import type {
   Entity,
   EntityId,
   EntityMetadata,
-  LayerId,
   LayerMembership,
   WorldGraphSnapshot,
 } from '../types.ts'
+// 与 wantToGo.ts 同一个图层，只是来源不同；图层 id 只在 Layer Registry 里声明一次。
+import { WANT_TO_GO_LAYER_ID } from '../layers.ts'
 import { anchorId } from './travel.ts'
-
-/** 与 wantToGo.ts 同一个图层，只是来源不同。 */
-export const WANT_TO_GO_LAYER_ID: LayerId = 'want_to_go'
 
 /** membership.metadata.source 与 entity.metadata.source 的取值（FR-WTG-7）。 */
 export const PLANNED_SOURCE = 'travel-map:planned'
