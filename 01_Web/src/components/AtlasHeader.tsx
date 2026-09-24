@@ -3,6 +3,10 @@ export type AtlasPage = 'map' | 'journey' | 'collection' | 'about'
 type AtlasHeaderProps = {
   activePage: AtlasPage
   onPageChange: (page: AtlasPage) => void
+  /** 当前页面已滚离顶部：标题换上玻璃背景，避免与下面滚过的内容叠在一起。 */
+  scrolled?: boolean
+  /** 当前页面滚动条的宽度（px）：玻璃背景右侧让出这一段，不压暗经典滚动条。 */
+  scrollbarWidth?: number
 }
 
 const navItems: { id: AtlasPage; label: string }[] = [
@@ -11,12 +15,14 @@ const navItems: { id: AtlasPage; label: string }[] = [
   { id: 'collection', label: 'Collection' },
 ]
 
-export function AtlasHeader({ activePage, onPageChange }: AtlasHeaderProps) {
+export function AtlasHeader({ activePage, onPageChange, scrolled, scrollbarWidth = 0 }: AtlasHeaderProps) {
   return (
     <header
       className="atlas-app-header cesium-lab-title hero-glass-layer absolute left-[50vw] top-4 z-50 w-[min(760px,calc(100vw-32px))] -translate-x-1/2 px-6 py-4 text-center sm:px-8"
       data-page="map"
       data-active-page={activePage}
+      data-scrolled={scrolled ? 'true' : 'false'}
+      style={{ '--atlas-page-scrollbar': `${scrollbarWidth}px` } as React.CSSProperties}
     >
       <h1 className="text-4xl font-semibold tracking-normal text-slate-950 sm:text-5xl">
         StarMap
