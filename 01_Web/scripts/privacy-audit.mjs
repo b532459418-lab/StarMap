@@ -110,9 +110,13 @@ if (wantToGoSample !== undefined) {
   if (editorItems) errors.push(`want-to-go.sample.json must not contain items written by the local editor (source = local-editor):\n${editorItems}`)
 }
 
-const droneSource = readFileSync(path.join(webRoot, 'src', 'data', 'droneMedia.ts'), 'utf8')
-if (droneSource.includes('builtInDroneMediaItems') || /src:\s*['"]\/media\//.test(droneSource)) {
-  errors.push('droneMedia.ts still contains built-in media instead of the private local catalog.')
+// The drone media derivation lives in src/data/derive/droneMedia.ts (RFC-LOC-1 PR1);
+// src/data/droneMedia.ts only re-exports it. Both files get the same check.
+for (const droneFile of ['src/data/droneMedia.ts', 'src/data/derive/droneMedia.ts']) {
+  const droneSource = readFileSync(path.join(webRoot, ...droneFile.split('/')), 'utf8')
+  if (droneSource.includes('builtInDroneMediaItems') || /src:\s*['"]\/media\//.test(droneSource)) {
+    errors.push(`01_Web/${droneFile} still contains built-in media instead of the private local catalog.`)
+  }
 }
 
 if (errors.length > 0) {
