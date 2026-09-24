@@ -3,8 +3,8 @@
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
- * 这里的输入是手写的「六个模块导出」形状（travel 部分复用 Core 的 travel.fixture.ts，
- * 快照用 Core 适配器现算），不依赖派生层，所以本文件可以早于派生层存在。
+ * 前面几节的输入是手写的「六个模块导出」形状（travel 部分复用 Core 的 travel.fixture.ts，
+ * 快照用 Core 适配器现算），不依赖派生层；最后一节用 deriveAppData 核对基线覆盖了全部导出。
  *
  * 下面这行 reference 不能删，理由见 src/worldgraph/adapters/travel.test.ts 文件头。
  */
@@ -13,6 +13,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import type { City, TravelMapRecord } from '../../types/travel.ts'
 import { plannedRecordsToWorldGraph } from '../../worldgraph/adapters/plannedRecords.ts'
@@ -20,6 +21,8 @@ import { sampleCities, sampleCountries, sampleJourneyDays, sampleRoutes } from '
 import { travelToWorldGraph } from '../../worldgraph/adapters/travel.ts'
 import { wantToGoToWorldGraph, type WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
 import { mergeWorldGraphSnapshots } from '../../worldgraph/snapshot.ts'
+import { deriveAppData, type RawAppInputs } from './appData.ts'
+import type { TravelMapExport } from './travelAtlas.ts'
 import {
   baselineExportNames,
   buildBaseline,
@@ -291,4 +294,57 @@ test('stableStringify：对象键排序、数组保序、两空格缩进，与 J
 test('stableStringify 拒绝没转换的 Map / Set', () => {
   assert.throws(() => stableStringify({ table: new Map() }), /Map \/ Set/)
   assert.throws(() => stableStringify([new Set()]), /Map \/ Set/)
+})
+
+// ---------------------------------------------------------------------------
+// 与 deriveAppData 的对接（派生层存在之后）
+// ---------------------------------------------------------------------------
+
+const readSample = (name: string): unknown =>
+  JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'))
+
+/** 公开模式语义：足迹样例、想去样例、editor-state 与媒体为空。 */
+const publicRaw = (): RawAppInputs => ({
+  travelMap: readSample('travel-map.sample.json') as TravelMapExport,
+  travelAtlasDataSource: 'sample',
+  editorState: undefined,
+  mediaCatalog: undefined,
+  wantToGo: { source: 'sample', value: readSample('want-to-go.sample.json') },
+  now: NOW,
+})
+
+test('deriveAppData 的每个导出都被基线覆盖，基线覆盖的每个名字 deriveAppData 都有', () => {
+  const appData = deriveAppData(publicRaw()) as unknown as Record<string, Record<string, unknown>>
+  assert.deepEqual(Object.keys(appData).sort(), Object.keys(baselineExportNames).sort())
+  for (const [moduleName, names] of Object.entries(baselineExportNames)) {
+    const actual = Object.keys(appData[moduleName])
+    const captured: readonly string[] = [...names.data, ...names.evaluated]
+    const known = new Set([...captured, ...names.notCaptured])
+    assert.deepEqual(actual.filter((name) => !known.has(name)), [], `${moduleName} 有导出没进基线`)
+    assert.deepEqual(captured.filter((name) => !actual.includes(name)), [], `${moduleName} 缺少基线要的导出`)
+    for (const name of names.evaluated) assert.equal(typeof appData[moduleName][name], 'function', `${moduleName}.${name}`)
+  }
+})
+
+test('公开样例经 deriveAppData 的基线：两次字节相同，关键数量与来源正确', () => {
+  const first = stableStringify(buildBaseline(deriveAppData(publicRaw()), { now: NOW }))
+  const second = stableStringify(buildBaseline(deriveAppData(publicRaw()), { now: NOW }))
+  assert.equal(first, second)
+  assert.equal(first.includes(NOW), false)
+
+  const { modules, queries } = JSON.parse(first)
+  assert.equal(modules.travelAtlas.travelAtlasDataSource, 'sample')
+  assert.equal(modules.wantToGo.wantToGoDataSource, 'sample')
+  assert.equal(modules.worldGraph.worldGraphSessionNow, NOW_PLACEHOLDER)
+  assert.deepEqual(
+    [modules.travelAtlas.countries.length, modules.travelAtlas.cities.length, modules.travelAtlas.journeyDays.length, modules.travelAtlas.routes.length],
+    [2, 5, 5, 4],
+  )
+  assert.equal(modules.wantToGo.wantToGoItems.length, 3)
+  assert.deepEqual(modules.mediaCatalog.allImportedMediaItems, [])
+  // 样例里想去的 Akureyri 与足迹的 Akureyri 同键：足迹可见时并进足迹城市（FR-MR-5）。
+  const both = queries.visiblePlaces.find(({ name }: { name: string }) => name === 'travel+want_to_go').result
+  const akureyri = both.places.find((place: { entityId: string }) => place.entityId === 'place:city:iceland__akureyri')
+  assert.deepEqual(akureyri.layerIds, ['travel', 'want_to_go'])
+  assert.equal(queries.collection.want_to_go.length, 3)
 })
