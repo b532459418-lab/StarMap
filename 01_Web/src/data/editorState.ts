@@ -1,107 +1,11 @@
-import type { CityId, CountryId } from '../types/travel'
 import { privateEditorState } from 'virtual:starmap-private-data'
+import { deriveEditorState } from './derive/editorState.ts'
 
-export type LocalEditorCountry = {
-  id: CountryId
-  nameZh: string
-  nameEn: string
-  countryCode: string
-  centerLat: number
-  centerLng: number
-  region?: string
-  visitedDate?: string
-}
+// 解析、空状态与 orderBySavedIds 在纯派生层（./derive/editorState.ts，RFC-LOC-1 PR1）；
+// 本文件只负责选出数据来源（虚拟模块）并以原名导出。
+export type { LocalEditorCountry, TravelAtlasEditorState } from './derive/editorState.ts'
+export { orderBySavedIds } from './derive/editorState.ts'
 
-export type TravelAtlasEditorState = {
-  schemaVersion: 1
-  addedCountries: LocalEditorCountry[]
-  countryOrder: CountryId[]
-  hiddenCountryIds: CountryId[]
-  cityOrderByCountry: Record<CountryId, CityId[]>
-  hiddenCityIds: CityId[]
-  mediaOrderByCity: Record<CityId, string[]>
-  hiddenMediaIds: string[]
-  coverMediaByCity: Record<CityId, string>
-  droneOrderByCity: Record<CityId, string[]>
-  hiddenDroneMediaIds: string[]
-  updatedAt?: string
-}
-
-const emptyEditorState: TravelAtlasEditorState = {
-  schemaVersion: 1,
-  addedCountries: [],
-  countryOrder: [],
-  hiddenCountryIds: [],
-  cityOrderByCountry: {},
-  hiddenCityIds: [],
-  mediaOrderByCity: {},
-  hiddenMediaIds: [],
-  coverMediaByCity: {},
-  droneOrderByCity: {},
-  hiddenDroneMediaIds: [],
-}
-
-const isStringArray = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.every((item) => typeof item === 'string')
-
-const isStringArrayRecord = (value: unknown): value is Record<string, string[]> =>
-  Boolean(value)
-  && typeof value === 'object'
-  && Object.values(value as Record<string, unknown>).every(isStringArray)
-
-const isStringRecord = (value: unknown): value is Record<string, string> =>
-  Boolean(value)
-  && typeof value === 'object'
-  && Object.values(value as Record<string, unknown>).every((item) => typeof item === 'string')
-
-const isLocalEditorCountry = (value: unknown): value is LocalEditorCountry => {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<LocalEditorCountry>
-  return typeof candidate.id === 'string'
-    && typeof candidate.nameZh === 'string'
-    && typeof candidate.nameEn === 'string'
-    && typeof candidate.countryCode === 'string'
-    && typeof candidate.centerLat === 'number'
-    && typeof candidate.centerLng === 'number'
-}
-
-const parseEditorState = (value: unknown): TravelAtlasEditorState | undefined => {
-  if (!value || typeof value !== 'object') return undefined
-  const candidate = value as Partial<TravelAtlasEditorState>
-  if (candidate.schemaVersion !== 1) return undefined
-
-  return {
-    schemaVersion: 1,
-    addedCountries: Array.isArray(candidate.addedCountries)
-      ? candidate.addedCountries.filter(isLocalEditorCountry)
-      : [],
-    countryOrder: isStringArray(candidate.countryOrder) ? candidate.countryOrder : [],
-    hiddenCountryIds: isStringArray(candidate.hiddenCountryIds) ? candidate.hiddenCountryIds : [],
-    cityOrderByCountry: isStringArrayRecord(candidate.cityOrderByCountry) ? candidate.cityOrderByCountry : {},
-    hiddenCityIds: isStringArray(candidate.hiddenCityIds) ? candidate.hiddenCityIds : [],
-    mediaOrderByCity: isStringArrayRecord(candidate.mediaOrderByCity) ? candidate.mediaOrderByCity : {},
-    hiddenMediaIds: isStringArray(candidate.hiddenMediaIds) ? candidate.hiddenMediaIds : [],
-    coverMediaByCity: isStringRecord(candidate.coverMediaByCity) ? candidate.coverMediaByCity : {},
-    droneOrderByCity: isStringArrayRecord(candidate.droneOrderByCity) ? candidate.droneOrderByCity : {},
-    hiddenDroneMediaIds: isStringArray(candidate.hiddenDroneMediaIds) ? candidate.hiddenDroneMediaIds : [],
-    updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : undefined,
-  }
-}
-
-export const travelAtlasEditorState = parseEditorState(privateEditorState) ?? emptyEditorState
-
-export const orderBySavedIds = <T extends { id: string }>(items: T[], savedOrder?: string[]) => {
-  if (!savedOrder?.length) return items
-  const rank = new Map(savedOrder.map((id, index) => [id, index]))
-
-  return [...items].sort((left, right) => {
-    const leftRank = rank.get(left.id)
-    const rightRank = rank.get(right.id)
-    if (leftRank === undefined && rightRank === undefined) return 0
-    if (leftRank === undefined) return 1
-    if (rightRank === undefined) return -1
-    return leftRank - rightRank
-  })
-}
+export const travelAtlasEditorState = deriveEditorState(privateEditorState)
 
 export const localEditorAvailable = import.meta.env.DEV && import.meta.env.MODE === 'personal'

@@ -2,9 +2,10 @@
  * Want to Go 应用数据层（PRD FR-WTG-2 / FR-PUB-1）。
  *
  * 这里【不是】 StarMap Core：它 import 了 Vite 虚拟模块与 import.meta.env，
- * 只能在 Vite 里跑。解析与投影的纯逻辑都在 src/worldgraph/adapters/wantToGo.ts，
- * 本文件只负责选出数据来源、把那份 JSON 交给它；另外给界面提供按 EntityId 反查条目的
- * 两张表（想去条目与 planned 记录）。
+ * 只能在 Vite 里跑。解析与投影的纯逻辑都在 src/worldgraph/adapters/wantToGo.ts；
+ * 解析之后的应用侧派生（隐藏条目、按 EntityId 反查条目的两张表、「想去 → 足迹」的禁用原因）
+ * 在纯派生层 ./derive/wantToGo.ts（RFC-LOC-1 PR1）。本文件只负责选出数据来源、把那份 JSON
+ * 交给派生层，并在开发时报告被跳过的坏数据。
  *
  * 数据来源规则（FR-PUB-1），按顺序判定：
  *
@@ -23,11 +24,8 @@
 import wantToGoSample from './want-to-go.sample.json'
 import { privateWantToGo } from 'virtual:starmap-private-data'
 import { cities, countryById, plannedRecords } from './travelAtlas'
-import { plannedEntityId } from '../worldgraph/adapters/plannedRecords.ts'
-import { parseWantToGoFile, wantToGoEntityId, type WantToGoItem } from '../worldgraph/adapters/wantToGo.ts'
-import { slugify } from '../worldgraph/slug.ts'
-import type { EntityId } from '../worldgraph/types.ts'
-import type { TravelMapRecord } from '../types/travel'
+import { deriveWantToGo } from './derive/wantToGo.ts'
+import type { WantToGoItem } from '../worldgraph/adapters/wantToGo.ts'
 
 // 与 travelAtlas.ts 完全一致的样例模式判定：环境变量或 ?data=sample。
 const forceSampleData = import.meta.env.VITE_TRAVEL_ATLAS_DATA_MODE === 'sample'
@@ -42,17 +40,22 @@ export const wantToGoDataSource: 'local' | 'sample' | 'none' = useSampleData
   ? 'sample'
   : hasLocalWantToGo ? 'local' : 'none'
 
-// 私有文件不存在是正常状态（还没添加过想去的地方），不该报成 problem。
-const parsed = wantToGoDataSource === 'sample'
-  ? parseWantToGoFile(wantToGoSample)
+// 各来源对应的原始值；'none'（私有文件不存在）时派生层直接给空列表，不解析、不报 problem。
+const wantToGoValue = wantToGoDataSource === 'sample'
+  ? wantToGoSample
   : wantToGoDataSource === 'local'
-    ? parseWantToGoFile(privateWantToGo)
-    : { items: [] as WantToGoItem[], problems: [] as string[] }
+    ? privateWantToGo
+    : undefined
 
-export const wantToGoItems: WantToGoItem[] = parsed.items
+const derived = deriveWantToGo(
+  { source: wantToGoDataSource, value: wantToGoValue },
+  { cities, countryById, plannedRecords },
+)
+
+export const wantToGoItems: WantToGoItem[] = derived.wantToGoItems
 
 /** 被丢弃的坏数据说明。非空不代表出错，只代表有条目没能进入图层。 */
-export const wantToGoProblems: string[] = parsed.problems
+export const wantToGoProblems: string[] = derived.wantToGoProblems
 
 if (import.meta.env.DEV && wantToGoProblems.length > 0) {
   // 样例出现 problem 是构建缺陷：tracked 的样例由 npm run privacy:check 兜底，不该带坏数据。
@@ -63,53 +66,16 @@ if (import.meta.env.DEV && wantToGoProblems.length > 0) {
 }
 
 /** 图层面板「已隐藏 N 项」列出的条目（FR-WTG-5），最近加入的在前。planned 记录只读，不会出现在这里。 */
-export const hiddenWantToGoItems: WantToGoItem[] = wantToGoItems
-  .filter((item) => item.hidden)
-  .sort((left, right) => right.addedAt.localeCompare(left.addedAt))
+export const hiddenWantToGoItems: WantToGoItem[] = derived.hiddenWantToGoItems
 
-/**
- * EntityId → 想去条目，给详情卡用。键与适配器产出 Entity 的规则相同；
- * 同一 EntityId 出现两次时第一条胜出，与 wantToGoToWorldGraph 的去重一致。
- */
-export const wantToGoItemByEntityId = new Map<EntityId, WantToGoItem>()
-for (const item of wantToGoItems) {
-  const entityId = wantToGoEntityId(item.place.countryCode, item.place.nameEn)
-  if (!wantToGoItemByEntityId.has(entityId)) wantToGoItemByEntityId.set(entityId, item)
-}
+/** EntityId → 想去条目，给详情卡用（同一 EntityId 第一条胜出）。 */
+export const wantToGoItemByEntityId = derived.wantToGoItemByEntityId
 
-/** EntityId → planned 旅行记录（FR-WTG-7，只读），给详情卡用。去重规则同 plannedRecordsToWorldGraph。 */
-export const plannedRecordByEntityId = new Map<EntityId, TravelMapRecord>()
-for (const record of plannedRecords) {
-  const entityId = plannedEntityId(record.id)
-  if (!plannedRecordByEntityId.has(entityId)) plannedRecordByEntityId.set(entityId, record)
-}
+/** EntityId → planned 旅行记录（FR-WTG-7，只读），给详情卡用。 */
+export const plannedRecordByEntityId = derived.plannedRecordByEntityId
 
-// ---- 想去 → 足迹（PR9）的前置条件 ----
-// 与转换端点（scripts/convert-to-travel.mjs）同一套判断与文案：Collection 与详情卡据此把
-// 「标记为去过」显示为禁用并说明原因；端点仍会再校验一次。返回 undefined 表示可以转换。
+// ---- 想去 → 足迹（PR9）的前置条件：返回 undefined 表示可以转换，规则见 ./derive/wantToGo.ts ----
 
-const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
+export const wantToGoConvertBlockReason = derived.wantToGoConvertBlockReason
 
-/**
- * 足迹城市的比较键：国家代码（足迹国家的 flagCode，大写）+ Core slugify(英文城市名)。
- * 只用来提前禁用按钮，免得用户填完日期才被拒绝；端点按 country_en 的 cityId 规则判断重复，仍是最终权威。
- * 没有国家代码的足迹国家无法比较，跳过（交给端点）。
- */
-const footprintCityKey = (countryCode: string, nameEn: string) => `${countryCode.toUpperCase()}:${slugify(nameEn)}`
-
-const footprintCityKeys = new Set(cities.flatMap((city) => {
-  const countryCode = city.countryId ? countryById[city.countryId]?.flagCode : undefined
-  return countryCode && city.nameEn ? [footprintCityKey(countryCode, city.nameEn)] : []
-}))
-
-export const wantToGoConvertBlockReason = (item: WantToGoItem): string | undefined => {
-  if (item.place.kind !== 'city') return '整个国家的想去需要先具体到城市，暂不支持直接转为足迹。'
-  if (!isFiniteNumber(item.place.lat) || !isFiniteNumber(item.place.lng)) return '这个地点没有坐标，无法转为足迹。'
-  if (footprintCityKeys.has(footprintCityKey(item.place.countryCode, item.place.nameEn))) {
-    return '这个城市已经在足迹里了。如果只是想从想去列表移除，请使用隐藏或彻底删除。'
-  }
-  return undefined
-}
-
-export const plannedConvertBlockReason = (record: TravelMapRecord): string | undefined =>
-  isFiniteNumber(record.lat) && isFiniteNumber(record.lng) ? undefined : '这条旅行计划没有坐标，无法转为足迹。'
+export const plannedConvertBlockReason = derived.plannedConvertBlockReason
