@@ -70,4 +70,28 @@ export default defineConfig([
       ],
     },
   },
+  // RFC-LOC-1 PR1：src/data/derive/travelAtlas.ts 里的这四个函数是「按名字推导身份的旧规则」
+  // （RFC-LOC-1 §1.1），PR5 删除。只允许派生层内部（src/data/derive/**，含其测试）引用；
+  // PR2 的 Legacy Adapter 届时加进 ignores。
+  // 用 @typescript-eslint 版的规则而不是核心 no-restricted-imports：同名规则在后面的块里会整体
+  // 覆盖前面块的选项，那样会替换掉上面 FR-MOD 对 src/worldgraph/** 的限制。
+  {
+    files: ['**/*.{ts,tsx,mjs}'],
+    ignores: ['src/data/derive/**'],
+    plugins: { '@typescript-eslint': tseslint.plugin },
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/derive/travelAtlas', '**/derive/travelAtlas.ts'],
+              importNames: ['countryKeyForRecord', 'cityKeyForRecord', 'getJourneyId', 'slugify'],
+              message: 'RFC-LOC-1：按名字推导身份的旧规则只允许派生层内部使用（PR5 删除）。',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ])
