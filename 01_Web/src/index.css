@@ -2004,50 +2004,61 @@ button {
   background: rgba(3, 5, 9, 0.94);
 }
 
-/* Scroll backdrop: the header stays transparent at rest and gains glass only
-   after Journey, Collection, or About scrolls away from the top, so content
-   passing underneath no longer collides with the title and tabs. The theme
-   selectors carry the extra specificity needed to beat the later container-less
-   header reset. The hairline is an inset ring so border widths, and with them
-   the header's content box, stay exactly as they are at rest. */
-.atlas-app-header[data-page='map'] {
-  transition:
-    background-color 220ms ease,
-    -webkit-backdrop-filter 220ms ease,
-    backdrop-filter 220ms ease,
-    border-color 220ms ease,
-    box-shadow 220ms ease;
-}
-
-.atlas-app-header[data-page='map'][data-scrolled='true'],
-.theme-night .atlas-app-header[data-page='map'][data-scrolled='true'],
-.theme-day .atlas-app-header[data-page='map'][data-scrolled='true'] {
-  border-radius: 16px;
-  background-color: rgba(3, 5, 9, 0.78);
-  box-shadow:
-    inset 0 0 0 1px rgba(186, 230, 253, 0.14),
-    0 16px 40px rgba(0, 0, 0, 0.28);
+/* Scroll backdrop: once Journey, Collection, or About scrolls away from the
+   top, a flush glass app bar fades in behind the title and tabs so passing
+   content no longer collides with them. The header element itself stays
+   transparent; the bar is its ::before, which the container-less reset below
+   hides at rest in every theme, and these selectors out-rank that reset.
+   top: -24px mirrors the header's `translate: 0 24px` in that reset, so the
+   bar starts at the top of the viewport; bottom: -1px reaches past the
+   header's 1px transparent bottom border to its bottom edge. The right inset
+   leaves the page's classic scrollbar uncovered (0 for overlay scrollbars).
+   The spread equals the blur so the shadow falls only downward and never
+   dims the scrollbar. */
+.atlas-app-header[data-page='map'][data-scrolled]::before,
+.theme-night .atlas-app-header[data-page='map'][data-scrolled]::before,
+.theme-day .atlas-app-header[data-page='map'][data-scrolled]::before {
+  position: absolute;
+  top: -24px;
+  right: var(--atlas-page-scrollbar, 0px);
+  bottom: -1px;
+  left: 0;
+  z-index: -1;
+  display: block;
+  border-bottom: 1px solid rgba(186, 230, 253, 0.14);
+  background: rgba(3, 5, 9, 0.78);
+  box-shadow: 0 20px 20px -20px rgba(0, 0, 0, 0.6);
+  content: '';
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
   -webkit-backdrop-filter: blur(20px) saturate(1.1);
   backdrop-filter: blur(20px) saturate(1.1);
+  transition:
+    opacity 220ms ease,
+    visibility 0s linear 220ms;
 }
 
-.theme-day .atlas-app-header[data-page='map'][data-scrolled='true'] {
-  background-color: rgba(236, 247, 253, 0.78);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.62),
-    0 16px 40px rgba(15, 23, 42, 0.12);
+.atlas-app-header[data-page='map'][data-scrolled='true']::before,
+.theme-night .atlas-app-header[data-page='map'][data-scrolled='true']::before,
+.theme-day .atlas-app-header[data-page='map'][data-scrolled='true']::before {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 220ms ease,
+    visibility 0s linear;
 }
 
-@media (max-width: 560px) {
-  .atlas-app-header[data-page='map'][data-scrolled='true'],
-  .theme-night .atlas-app-header[data-page='map'][data-scrolled='true'],
-  .theme-day .atlas-app-header[data-page='map'][data-scrolled='true'] {
-    border-radius: 12px;
-  }
+.theme-day .atlas-app-header[data-page='map'][data-scrolled]::before {
+  border-bottom-color: rgba(14, 165, 233, 0.14);
+  background: rgba(236, 247, 253, 0.78);
+  box-shadow: 0 20px 20px -20px rgba(15, 23, 42, 0.18);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .atlas-app-header[data-page='map'] {
+  .atlas-app-header[data-page='map'][data-scrolled]::before,
+  .theme-night .atlas-app-header[data-page='map'][data-scrolled]::before,
+  .theme-day .atlas-app-header[data-page='map'][data-scrolled]::before {
     transition: none;
   }
 }

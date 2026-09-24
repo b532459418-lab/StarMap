@@ -141,6 +141,8 @@ function App() {
   const [activePage, setActivePage] = useState<AtlasPage>(restoredActivePage)
   // 当前页面是否已滚离顶部，决定顶部标题的玻璃背景。页面的滚动位置不随刷新恢复，初值为 false。
   const [pageScrolled, setPageScrolled] = useState(false)
+  // 当前页面滚动条占的宽度（px）：玻璃背景右侧让出这一段，经典滚动条不被压暗；浮层滚动条为 0。
+  const [pageScrollbarWidth, setPageScrollbarWidth] = useState(0)
   const journeyStageRef = useRef<HTMLDivElement>(null)
   const collectionStageRef = useRef<HTMLDivElement>(null)
   const updateStageRef = useRef<HTMLDivElement>(null)
@@ -218,10 +220,16 @@ function App() {
   const isPastBackdropThreshold = (scroller: Element | null) =>
     (scroller?.scrollTop ?? 0) > headerBackdropScrollThreshold
 
+  const measureScrollbarWidth = (scroller: Element) =>
+    scroller instanceof HTMLElement ? scroller.offsetWidth - scroller.clientWidth : 0
+
   // 所有切页都经过这里。各页面保留自己的滚动位置，切页时按新页面的滚动容器重新算一次；地图页恒为 false。
+  // 地图页没有滚动容器，滚动条宽度保留上一次的值：此时玻璃背景正在淡出，右边缘不跟着跳。
   const showPage = (page: AtlasPage) => {
+    const scroller = getPageScroller(page)
     setActivePage(page)
-    setPageScrolled(isPastBackdropThreshold(getPageScroller(page)))
+    setPageScrolled(isPastBackdropThreshold(scroller))
+    if (scroller) setPageScrollbarWidth(measureScrollbarWidth(scroller))
   }
 
   const changePrimaryPage = (page: AtlasPage) => {
@@ -249,7 +257,9 @@ function App() {
     const scroller = getPageScroller(activePage)
     if (!scroller || event.target !== scroller) return
     const scrolled = isPastBackdropThreshold(scroller)
+    const scrollbarWidth = measureScrollbarWidth(scroller)
     if (scrolled !== pageScrolled) setPageScrolled(scrolled)
+    if (scrollbarWidth !== pageScrollbarWidth) setPageScrollbarWidth(scrollbarWidth)
   }
 
   useEffect(() => {
@@ -543,7 +553,12 @@ function App() {
       <div className="app-background fixed inset-0 -z-10" />
       <div className="app-grid fixed inset-0 -z-10" />
       <div className="star-field fixed inset-0 -z-10" />
-      <AtlasHeader activePage={activePage} onPageChange={changePrimaryPage} scrolled={pageScrolled} />
+      <AtlasHeader
+        activePage={activePage}
+        onPageChange={changePrimaryPage}
+        scrolled={pageScrolled}
+        scrollbarWidth={pageScrollbarWidth}
+      />
       <section
         className="atlas-experience cesium-lab-page relative h-[100dvh] w-screen overflow-hidden"
         data-page={activePage}
