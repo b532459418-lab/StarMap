@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import type { UIEvent } from 'react'
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { AtlasHeader } from './components/AtlasHeader'
 import type { AtlasPage } from './components/AtlasHeader'
@@ -56,6 +57,8 @@ const overviewDistance = 3.25
 const countryDistance = 1.95
 const cityDistance = 1.38
 const sidebarMediaQuery = '(min-width: 1100px)'
+// 可滚动页面滚离顶部超过这个距离（px），顶部标题才换上玻璃背景。
+const headerBackdropScrollThreshold = 12
 // 概览视角目标点（PR3c）：模块级数据，引用恒定，由这里传给地图，地图不再自己读 travelAtlas。
 const overviewTarget = travelAtlasDisplay.overviewTarget
 
@@ -136,6 +139,11 @@ function App() {
   const [globeDistance, setGlobeDistance] = useState(restoredGlobeDistance)
   const [globeResetVersion, setGlobeResetVersion] = useState(0)
   const [activePage, setActivePage] = useState<AtlasPage>(restoredActivePage)
+  // 当前页面是否已滚离顶部，决定顶部标题的玻璃背景。页面的滚动位置不随刷新恢复，初值为 false。
+  const [pageScrolled, setPageScrolled] = useState(false)
+  const journeyStageRef = useRef<HTMLDivElement>(null)
+  const collectionStageRef = useRef<HTMLDivElement>(null)
+  const updateStageRef = useRef<HTMLDivElement>(null)
   const [pageBeforeUpdate, setPageBeforeUpdate] = useState<Exclude<AtlasPage, 'about'>>(restoredPageBeforeUpdate)
   const [imageryTuningByTheme, setImageryTuningByTheme] = useState(imageryTuningDefaults)
   const [mapSource, setMapSource] = useState<MapSourceId>(getInitialMapSource)
@@ -195,22 +203,53 @@ function App() {
     }))
   }
 
+  // 页面的滚动容器：Journey、Collection、About 的舞台里都只有一个子元素，就是该页的滚动容器；地图页没有。
+  const getPageScroller = (page: AtlasPage) => {
+    const stage = page === 'journey'
+      ? journeyStageRef.current
+      : page === 'collection'
+        ? collectionStageRef.current
+        : page === 'about'
+          ? updateStageRef.current
+          : null
+    return stage?.firstElementChild ?? null
+  }
+
+  const isPastBackdropThreshold = (scroller: Element | null) =>
+    (scroller?.scrollTop ?? 0) > headerBackdropScrollThreshold
+
+  // 所有切页都经过这里。各页面保留自己的滚动位置，切页时按新页面的滚动容器重新算一次；地图页恒为 false。
+  const showPage = (page: AtlasPage) => {
+    setActivePage(page)
+    setPageScrolled(isPastBackdropThreshold(getPageScroller(page)))
+  }
+
   const changePrimaryPage = (page: AtlasPage) => {
     if (page !== 'about') {
       setPageBeforeUpdate(page)
     }
-    setActivePage(page)
+    showPage(page)
   }
 
   const toggleUpdatePage = () => {
     if (activePage === 'about') {
-      setActivePage(pageBeforeUpdate)
+      showPage(pageBeforeUpdate)
       return
     }
 
     releaseUpdates.markSeen()
     setPageBeforeUpdate(activePage)
-    setActivePage('about')
+    showPage('about')
+  }
+
+  // scroll 事件不冒泡，在三个舞台的共同父元素上用捕获阶段统一接收，只认当前页面的滚动容器：
+  // 页面里横向滚动的年份卡片行、更新公告的代码块也会触发 scroll，而它们的 scrollTop 恒为 0。
+  // 结果变化时才 setState，滚动过程中不会每帧重渲染。
+  const syncPageScrolled = (event: UIEvent<HTMLElement>) => {
+    const scroller = getPageScroller(activePage)
+    if (!scroller || event.target !== scroller) return
+    const scrolled = isPastBackdropThreshold(scroller)
+    if (scrolled !== pageScrolled) setPageScrolled(scrolled)
   }
 
   useEffect(() => {
@@ -504,11 +543,12 @@ function App() {
       <div className="app-background fixed inset-0 -z-10" />
       <div className="app-grid fixed inset-0 -z-10" />
       <div className="star-field fixed inset-0 -z-10" />
-      <AtlasHeader activePage={activePage} onPageChange={changePrimaryPage} />
+      <AtlasHeader activePage={activePage} onPageChange={changePrimaryPage} scrolled={pageScrolled} />
       <section
         className="atlas-experience cesium-lab-page relative h-[100dvh] w-screen overflow-hidden"
         data-page={activePage}
         data-sidebars-open={sidebarsOpen}
+        onScrollCapture={syncPageScrolled}
       >
           <div className="absolute inset-0 z-0">
             <CesiumAtlasGlobe
@@ -668,6 +708,7 @@ function App() {
           </div>
 
           <div
+            ref={journeyStageRef}
             className="atlas-journey-stage absolute inset-0 z-30"
             aria-hidden={activePage !== 'journey'}
           >
@@ -710,6 +751,7 @@ function App() {
           </div>
 
           <div
+            ref={collectionStageRef}
             className="atlas-collection-stage absolute inset-0 z-30"
             aria-hidden={activePage !== 'collection'}
           >
@@ -722,6 +764,7 @@ function App() {
           </div>
 
           <div
+            ref={updateStageRef}
             className="atlas-update-stage absolute inset-0 z-30"
             aria-hidden={activePage !== 'about'}
           >
