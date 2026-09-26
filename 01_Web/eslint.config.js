@@ -82,6 +82,8 @@ export default defineConfig([
       'src/data/canonical/legacyAdapter.ts',
       'src/data/canonical/legacyAdapter.test.ts',
       'src/data/canonical/representatives.ts',
+      'src/data/canonical/normalizeLegacy.ts',
+      'src/data/canonical/normalizeLegacy.test.ts',
     ],
     plugins: { '@typescript-eslint': tseslint.plugin },
     rules: {
