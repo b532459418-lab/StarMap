@@ -43,6 +43,20 @@ const withTemp = async (run) => {
   }
 }
 
+/**
+ * 私人根放在仓库里（模拟独立克隆的 06_private/）：建在已被 .gitignore 覆盖的 node_modules 下，
+ * 清理失败也不会弄脏工作区；绝不碰仓库里真实的 06_private/。
+ */
+const withPrivateRootInsideRepo = async (run) => {
+  const root = await mkdtemp(path.join(webRoot, 'node_modules', '.starmap-private-root-test-'))
+  try {
+    await mkdir(path.join(root, 'data'), { recursive: true })
+    await run({ root })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
 const runCli = (args, privateRoot) => spawnSync(process.execPath, [cliPath, ...args], {
   cwd: webRoot,
   env: { ...process.env, STARMAP_PRIVATE_ROOT: privateRoot },
@@ -281,6 +295,35 @@ test('隐私门：个人模式 --out-dir 或 --report 在仓库之内被拒（�
   assert.equal(existsSync(path.join(webRoot, 'migrate-identity-should-not-exist')), false)
   assert.equal(existsSync(path.join(webRoot, 'migrate-identity-should-not-exist.json')), false)
   assert.equal(existsSync(path.join(root, 'data', 'migration')), false)
+  assert.deepEqual(await legacySnapshot(root), before)
+}))
+
+test('隐私门：私人根在仓库内（独立克隆的 06_private）时，私人根之内的 --report 与默认 data/v2 放行；写到仓库内其他位置仍被拒（退出码 2）', () => withPrivateRootInsideRepo(async ({ root }) => {
+  await writeLegacyData(root)
+  const before = await legacySnapshot(root)
+  const reportPath = path.join(root, 'reports', 'migration.json')
+  const dryRun = runCli(['--report', reportPath], root)
+  assert.equal(dryRun.status, 0, dryRun.stderr)
+  assert.ok(existsSync(reportPath))
+  assert.ok(existsSync(manifestPath(root)))
+
+  const applied = runCli(['--apply'], root)
+  assert.equal(applied.status, 0, `${applied.stdout}
+${applied.stderr}`)
+  await assertV2Files(path.join(root, 'data', 'v2'))
+
+  for (const args of [
+    ['--out-dir', path.join(webRoot, 'migrate-identity-should-not-exist')],
+    ['--report', path.join(webRoot, '..', 'migrate-identity-should-not-exist.json')],
+    ['--apply', '--out-dir', path.join(webRoot, 'migrate-identity-should-not-exist')],
+  ]) {
+    const refused = runCli(args, root)
+    assert.equal(refused.status, 2, `${args.join(' ')}
+${refused.stderr}`)
+    assert.match(refused.stderr, /拒绝写入/)
+  }
+  assert.equal(existsSync(path.join(webRoot, 'migrate-identity-should-not-exist')), false)
+  assert.equal(existsSync(path.join(webRoot, '..', 'migrate-identity-should-not-exist.json')), false)
   assert.deepEqual(await legacySnapshot(root), before)
 }))
 

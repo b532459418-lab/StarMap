@@ -17,21 +17,22 @@
  * - dry-run（默认）：打印中文摘要。私人模式写回迁移清单（记录本次旧文件的哈希）；`--sample` 默认不写任何文件，
  *   给了 `--manifest` 才读写那个文件。
  * - `--apply`：canApply、迁移清单记录的哈希等于当前旧文件的哈希（`--sample` 且没给 `--manifest` 时清单只在内存里，
- *   不检查）、输出目录不存在或为空、输出目录不在本仓库之内——全部满足才写出五个 V2 文件（各自原子写入），
+ *   不检查）、输出目录不存在或为空、输出目录在私人根目录之内或本仓库之外——全部满足才写出五个 V2 文件（各自原子写入），
  *   否则拒绝（退出码 2）。新分配了 UUID 时同时写回迁移清单。不写数据模式标记文件，不动任何旧文件。
- * - 隐私门（同 legacy-baseline.mjs）：私人模式下 `--report` 与 `--out-dir` 不得位于仓库之内（退出码 2），
- *   在读取任何私人文件之前检查。摘要只打印计数、键、id 与 JSON 路径，不打印名称与坐标；名称写在 `--report` 里。
+ * - 隐私门（与 legacy-baseline.mjs 共用 private-output.mjs 的判断）：私人模式下 `--report` 与 `--out-dir`
+ *   只能在私人根目录之内（即使私人根在仓库里，例如独立克隆的 06_private/）或仓库之外（退出码 2），
+ *   在读取任何私人文件之前检查。`--apply` 的输出目录用同一个判断。摘要只打印计数、键、id 与 JSON 路径，不打印名称与坐标；名称写在 `--report` 里。
  *   读取失败只报路径与类别，不打印文件内容。
  *
  * 退出码：dry-run 完成为 0（即使 canApply 为 false）；参数或读取错误为 1；`--apply` 被拒与隐私门为 2。
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { atomicJsonWrite } from './json-file.mjs'
+import { isAllowedPrivateOutput } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot, webRoot } from './private-profile.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files } from '../src/data/canonical/v2Schema.ts'
@@ -76,31 +77,6 @@ const parseArgs = (argv) => {
     throw new UsageError('--sample --apply 必须用 --out-dir 指定输出目录。')
   }
   return options
-}
-
-// ---- 路径（与 legacy-baseline.mjs 相同的判断）----
-
-/** 最深的已存在祖先取真实路径（解开符号链接、目录联接与大小写），再接上不存在的部分。 */
-const canonicalPath = (target) => {
-  let existing = path.resolve(target)
-  const missing = []
-  while (!existsSync(existing)) {
-    const parent = path.dirname(existing)
-    if (parent === existing) break
-    missing.unshift(path.basename(existing))
-    existing = parent
-  }
-  try {
-    return path.join(realpathSync.native(existing), ...missing)
-  } catch {
-    return path.resolve(target)
-  }
-}
-
-/** 仓库根就是 private-profile.mjs 的 sourceRoot（01_Web 的上一级，Git 的根）。 */
-const isInsideRepository = (target) => {
-  const relative = path.relative(canonicalPath(sourceRoot), canonicalPath(target))
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
 // ---- 读取 ----
@@ -367,8 +343,8 @@ const run = async (options) => {
   if (mode === 'personal') {
     console.error(`[migrate-identity] 个人模式，私人根目录：${paths.root}`)
     for (const [flag, target] of [['--report', options.report], ['--out-dir', options.outDir]]) {
-      if (target !== undefined && isInsideRepository(target)) {
-        throw new PrivacyGateError(`拒绝写入：${flag} ${path.resolve(target)} 位于 Git 仓库 ${sourceRoot} 之内。私人数据的迁移结果与报告只能写到仓库之外。`)
+      if (target !== undefined && !isAllowedPrivateOutput(target)) {
+        throw new PrivacyGateError(`拒绝写入：${flag} ${path.resolve(target)} 位于 Git 仓库 ${sourceRoot} 之内（且不在私人根目录之内）。私人数据的迁移结果与报告只能写到私人根目录之内或仓库之外。`)
       }
     }
   }
@@ -426,7 +402,7 @@ const run = async (options) => {
     else if (manifest.sourceHash !== loaded.sourceHash) refusals.push('迁移清单记录的旧文件哈希与当前不同（数据在上次 dry-run 之后变过）：请先重新 dry-run。')
   }
   if (!(await isEmptyOrMissingDirectory(outDir))) refusals.push(`输出目录 ${path.resolve(outDir)} 不是空目录。`)
-  if (isInsideRepository(outDir)) refusals.push(`输出目录 ${path.resolve(outDir)} 位于 Git 仓库 ${sourceRoot} 之内。`)
+  if (!isAllowedPrivateOutput(outDir)) refusals.push(`输出目录 ${path.resolve(outDir)} 位于 Git 仓库 ${sourceRoot} 之内（且不在私人根目录之内）。`)
   if (refusals.length > 0) {
     console.log('拒绝写出（--apply）：')
     for (const reason of refusals) console.log(`  - ${reason}`)
