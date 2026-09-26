@@ -348,7 +348,8 @@ test('国家：想去国家并入同 ISO 的足迹国家（名称相同静默、
   const raw = personalRaw({
     records: [reykjavikRecord(), record({ id: 'r_torshavn', country: '法罗群岛', country_en: 'Faroe Islands', country_code: 'fo', city: '托尔斯港', city_en: 'Torshavn', start_date: '2025-06-06', lat: 62.0079, lng: -6.79 })],
     wantToGo: [
-      wantToGoItem('w_iceland', { kind: 'country', nameZh: '冰岛', nameEn: 'Iceland', countryCode: 'IS', lat: 65, lng: -18 }),
+      // 与足迹国家冰岛的中心（只有雷克雅未克一条记录，即它的坐标）相同 → 静默。
+      wantToGoItem('w_iceland', { kind: 'country', nameZh: '冰岛', nameEn: 'Iceland', countryCode: 'IS', ...REYKJAVIK }),
       wantToGoItem('w_faroes', { kind: 'country', nameZh: '法罗', nameEn: 'Faroes', countryCode: 'FO' }),
       wantToGoItem('w_norway', { kind: 'country', nameZh: '挪威', nameEn: 'Norway', countryCode: 'NO', lat: 64.5, lng: 11.5 }),
       wantToGoItem('w_tromso', { nameZh: '特罗姆瑟', nameEn: 'Tromsø', countryCode: 'NO', lat: 69.6492, lng: 18.9553 }),
@@ -376,6 +377,58 @@ test('国家：想去国家并入同 ISO 的足迹国家（名称相同静默、
   const accepted = plan(raw, { decisions: decisions({ nameDifferences: { 'wtg:w_faroes': 'accept', 'wtg:w_norway_again': 'accept' } }) })
   assert.equal(accepted.report.canApply, true)
   assertShadowPasses(accepted)
+})
+
+test('国家：想去国家并入时位置会变也需确认 coordinateDifference——相差 > 1 km、存活国家没有坐标；相差 ≤ 1 km 静默', () => {
+  const raw = personalRaw({
+    records: [
+      reykjavikRecord(),
+      record({ id: 'r_torshavn', country: '法罗群岛', country_en: 'Faroe Islands', country_code: 'fo', city: '托尔斯港', city_en: 'Torshavn', start_date: '2025-06-06', lat: null, lng: null }),
+      record({ id: 'r_bergen', country: '挪威', country_en: 'Norway', country_code: 'no', city: '卑尔根', city_en: 'Bergen', start_date: '2025-06-07', lat: 60.3913, lng: 5.3221 }),
+    ],
+    wantToGo: [
+      wantToGoItem('w_iceland', { kind: 'country', nameZh: '冰岛', nameEn: 'Iceland', countryCode: 'IS', lat: 65, lng: -18 }),
+      wantToGoItem('w_faroes', { kind: 'country', nameZh: '法罗群岛', nameEn: 'Faroe Islands', countryCode: 'FO', lat: 62, lng: -7 }),
+      wantToGoItem('w_norway', { kind: 'country', nameZh: '挪威', nameEn: 'Norway', countryCode: 'NO', lat: 60.395, lng: 5.325 }),
+    ],
+  })
+  const pending = plan(raw)
+  assert.deepEqual(pending.report.errors, [])
+  assert.deepEqual(pending.report.merges.map((merge) => [merge.from, merge.into, merge.status, merge.confirmations]), [
+    ['wtg:w_iceland', 'iceland', 'pending', ['coordinateDifference']],
+    ['wtg:w_faroes', 'faroe-islands', 'pending', ['coordinateDifference']],
+    ['wtg:w_norway', 'norway', 'silent', []],
+  ])
+  const [iceland, faroes] = pending.report.needsDecision
+  assert.deepEqual([iceland.kind, iceland.key, iceland.subtype, iceland.options], ['coordinateDifference', 'wtg:w_iceland', 'country', ['accept']])
+  assert.ok(iceland.distanceKm! > 100, String(iceland.distanceKm))
+  assert.deepEqual([faroes.key, faroes.intoHasLocation, faroes.fromHasLocation], ['wtg:w_faroes', false, true])
+  // 未确认：L′ 里照样合并，但不能 apply。
+  assert.equal(wantToGoPlaceOf(pending, 'w_iceland'), 'iceland')
+  assert.equal(pending.report.canApply, false)
+
+  const accepted = plan(raw, { decisions: decisions({ coordinateDifferences: { 'wtg:w_iceland': 'accept', 'wtg:w_faroes': 'accept' } }) })
+  assert.equal(accepted.report.canApply, true)
+  assertShadowPasses(accepted)
+  const applied = accepted.canonical.applied
+  // 存活国家有坐标就用自己的，没有就用想去国家的。
+  assert.deepEqual(applied.places.find((place) => place.id === 'iceland')!.location, { lat: REYKJAVIK.lat, lng: REYKJAVIK.lng })
+  assert.deepEqual(applied.places.find((place) => place.id === 'faroe-islands')!.location, { lat: 62, lng: -7 })
+  // 这就是 A 与 A′ 里想去标记的位置变化。
+  assert.ok(accepted.report.aVsAPrime.paths.includes('$.modules.wantToGo.wantToGoItems[0].place.lat'))
+})
+
+test('国家：iso:<CC> 并入存活国家时静默（它们没有坐标，今天也不显示）', () => {
+  const result = plan(personalRaw({
+    records: [reykjavikRecord()],
+    wantToGo: [
+      wantToGoItem('w_norway', { kind: 'country', nameZh: '挪威', nameEn: 'Norway', countryCode: 'NO', lat: 64.5, lng: 11.5 }),
+      wantToGoItem('w_tromso', { nameZh: '特罗姆瑟', nameEn: 'Tromsø', countryCode: 'NO', lat: 69.6492, lng: 18.9553 }),
+    ],
+  }))
+  assert.deepEqual(result.report.merges.map((merge) => [merge.from, merge.into, merge.status]), [['iso:NO', 'wtg:w_norway', 'silent']])
+  assert.deepEqual(result.report.needsDecision, [])
+  assert.equal(result.report.canApply, true)
 })
 
 // ---------------------------------------------------------------------------

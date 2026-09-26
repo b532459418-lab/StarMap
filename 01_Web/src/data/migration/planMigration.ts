@@ -6,7 +6,8 @@
  *
  *   1. 门槛检查（错误）：版本、想去与媒体的坏条目、悬空媒体、国家的 ISO 代码；
  *   2. `addedCountries` 条目保留的国家代码 / 中心坐标提升到地点上；
- *   3. 国家合并（以 ISO 为身份，全部自动）：`iso:<CC>` 地点、想去国家并入同 ISO 的国家；
+ *   3. 国家合并（以 ISO 为身份，全部自动）：`iso:<CC>` 地点、想去国家并入同 ISO 的国家
+ *      （想去国家的名称不同、或位置会变，需确认）；
  *   4. 城市合并：想去城市 W 与足迹城市 T 的 FR-MR-5 合并键相同 → 自动合并（名称或坐标不同需确认）；
  *      同国家内中文名相同或相距 ≤ 10 km → 疑似重复，由作者决定 merge / separate；
  *   5. apply：在旧 id 空间里完成合并，得到 L′；旧 `display.hiddenCityNames` 对【所有】城市地点重新匹配
@@ -222,6 +223,13 @@ export const distanceKm = (from: { lat: number; lng: number }, to: { lat: number
 export const SAME_PLACE_KM = 1
 /** 疑似重复的距离阈值。 */
 export const SUSPECTED_DUPLICATE_KM = 10
+
+/**
+ * 被并入的地点有坐标，而存活地点没有、或两者相差 > 1 km：合并会移动它的标记，需确认 coordinateDifference。
+ * 确认后存活地点用自己的坐标，没有时用被并入地点的（apply 步骤）。
+ */
+const locationNeedsConfirmation = (from: CanonicalPlace, into: CanonicalPlace): boolean =>
+  from.location !== undefined && (into.location === undefined || distanceKm(from.location, into.location) > SAME_PLACE_KM)
 
 // ---------------------------------------------------------------------------
 // FR-MR-5 合并键：与 src/worldgraph/query.ts 的 mergeKeyOf 逐字一致
@@ -536,8 +544,12 @@ export function planFromCanonical(input: PlanFromCanonicalInput): MigrationPlan 
     for (const place of group) {
       // 两个足迹国家同 ISO 是错误（上面已报），不合并。
       if (place === survivor || isFootprint(place)) continue
+      // 想去国家并入：名称不同需确认；位置变化（相差 > 1 km，或存活国家没有坐标）也需确认，与城市同一规则。
+      // iso:<CC> 地点并入时静默：它们今天不在任何界面显示。
       const wantToGo = isWantToGoPlace(place)
-      const confirmations: DecisionKind[] = wantToGo && !sameNames(place.names, survivor.names) ? ['nameDifference'] : []
+      const confirmations: DecisionKind[] = []
+      if (wantToGo && !sameNames(place.names, survivor.names)) confirmations.push('nameDifference')
+      if (wantToGo && locationNeedsConfirmation(place, survivor)) confirmations.push('coordinateDifference')
       merges.push({
         subtype: 'country',
         from: place.id,
@@ -567,9 +579,7 @@ export function planFromCanonical(input: PlanFromCanonicalInput): MigrationPlan 
     if (target) {
       const confirmations: DecisionKind[] = []
       if (!sameNames(wantToGo.names, target.names)) confirmations.push('nameDifference')
-      if (wantToGo.location && (!target.location || distanceKm(wantToGo.location, target.location) > SAME_PLACE_KM)) {
-        confirmations.push('coordinateDifference')
-      }
+      if (locationNeedsConfirmation(wantToGo, target)) confirmations.push('coordinateDifference')
       merges.push({
         subtype: 'city',
         from: wantToGo.id,
