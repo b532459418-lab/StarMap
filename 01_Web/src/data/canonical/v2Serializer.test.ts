@@ -3,8 +3,8 @@
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
- * 这里的 V2 数据由 `toV2Space`（./v2.fixture.ts）直接从 Legacy Adapter 的输出搬进 V2 id 空间，
- * 不做地点合并；迁移后的完整往返（L′ → M → 文件 → 读回）见 ../migration/planMigration.test.ts。
+ * 两种 V2 数据：`toV2Space`（./v2.fixture.ts）直接从 Legacy Adapter 的输出搬进 V2 id 空间、不做地点合并；
+ * 以及迁移规划（../migration/planMigration.ts）在合并与决定之后产出的 M。
  */
 
 /// <reference types="node" />
@@ -15,7 +15,8 @@ import assert from 'node:assert/strict'
 import { consistentPersonalRaw, nameInconsistencyRaw, rawInputs, record, sampleRaw } from './legacy.fixture.ts'
 import { legacyAdapter } from './legacyAdapter.ts'
 import type { CanonicalData } from './types.ts'
-import { toV2Space } from './v2.fixture.ts'
+import { fileMetaFromRaw, planMigration } from '../migration/planMigration.ts'
+import { sequentialUuids, toV2Space } from './v2.fixture.ts'
 import { readV2 } from './v2Reader.ts'
 import { validateV2Files, type V2Files } from './v2Schema.ts'
 import { serializeV2, type V2FileMeta } from './v2Serializer.ts'
@@ -40,6 +41,24 @@ test('三份 PR2 fixture：写成 V2 文件后通过校验，读回与原 Canoni
     const { data } = toV2Space(legacyAdapter(raw))
     const { read } = roundTrip(data)
     assert.deepStrictEqual(read, data, name)
+  }
+})
+
+test('三份 PR2 fixture 经迁移规划（合并之后的 L′ → M）：写出再读回与 M 深度相等', () => {
+  for (const [name, raw] of [
+    ['公开样例', sampleRaw()],
+    ['consistentPersonalRaw', consistentPersonalRaw()],
+    ['nameInconsistencyRaw', nameInconsistencyRaw()],
+  ] as const) {
+    const migrated = planMigration({
+      raw,
+      fileMeta: fileMetaFromRaw(raw),
+      sourceHash: 'x',
+      newId: sequentialUuids(),
+      now: '2026-09-26T00:00:00.000Z',
+    }).canonical.migrated!
+    const { read } = roundTrip(migrated, { placesGeneratedAt: 'x', ...fileMetaFromRaw(raw) })
+    assert.deepStrictEqual(read, migrated, name)
   }
 })
 
