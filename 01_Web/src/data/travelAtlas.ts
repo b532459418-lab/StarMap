@@ -1,24 +1,12 @@
-import travelMapSample from './travel-map.sample.json'
-import { privateTravelMap } from 'virtual:starmap-private-data'
-import { travelAtlasEditorState } from './editorState'
-import { deriveTravelAtlas, isTravelMapExport, type TravelMapExport } from './derive/travelAtlas.ts'
+import { appData } from './appData'
 import type { City, JourneyDay, Route, TravelMapRecord } from '../types/travel'
 
-// 派生逻辑（国家别名归一、分类、行程分组、国家 / 城市 / 行程日 / 路线）在纯派生层
-// ./derive/travelAtlas.ts（RFC-LOC-1 PR1）；本文件只负责选出数据来源并以原名导出。
+// 数据来源的选择在 ./rawInputs.ts，派生（Legacy Adapter → Canonical → 派生）在 ./appData.ts
+// （RFC-LOC-1 PR2）；本文件以原名导出。
+const derived = appData.travelAtlas
 
-const forceSampleData = import.meta.env.VITE_TRAVEL_ATLAS_DATA_MODE === 'sample'
-  || (import.meta.env.DEV
-    && typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('data') === 'sample')
-const localTravelMap = forceSampleData
-  ? undefined
-  : isTravelMapExport(privateTravelMap) ? privateTravelMap : undefined
-const exportData = localTravelMap ?? (travelMapSample as TravelMapExport)
-
-export const travelAtlasDataSource = localTravelMap ? 'local' : 'sample'
-
-const derived = deriveTravelAtlas(exportData, travelAtlasEditorState)
+// 声明成 string：与 PR1 之前的导出类型（`localTravelMap ? 'local' : 'sample'` 推断出的 string）保持一致。
+export const travelAtlasDataSource: string = derived.travelAtlasDataSource
 
 export const travelAtlasDisplay = derived.travelAtlasDisplay
 

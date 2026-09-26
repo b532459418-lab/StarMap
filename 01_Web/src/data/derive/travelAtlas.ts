@@ -70,7 +70,7 @@ export const normalizeRecordCountry = (record: TravelMapRecord, display: TravelM
   }
 }
 
-const homeVisibleCategories = new Set<TravelRecordCategory>(['destination', 'dayTrip', 'region'])
+export const homeVisibleCategories = new Set<TravelRecordCategory>(['destination', 'dayTrip', 'region'])
 
 export const classifyRecord = (record: TravelMapRecord, display: TravelMapDisplay): TravelRecordCategory => {
   const hiddenCountries = new Set(display.hiddenCountries ?? [])
@@ -125,7 +125,7 @@ export const countryKeyForRecord = (record: TravelMapRecord) =>
 export const cityKeyForRecord = (record: TravelMapRecord) =>
   `${countryKeyForRecord(record)}__${slugify(record.city_en || record.city || record.id)}`
 
-const formatDateRange = (items: TravelMapRecord[]) => {
+export const formatDateRange = (items: TravelMapRecord[]) => {
   const dates = items
     .flatMap((item) => [item.start_date, item.end_date])
     .filter((date): date is string => Boolean(date))
@@ -138,9 +138,9 @@ const formatDateRange = (items: TravelMapRecord[]) => {
   return first === last ? first : `${first} - ${last}`
 }
 
-const unique = <T,>(items: T[]) => [...new Set(items)]
+export const unique = <T,>(items: T[]) => [...new Set(items)]
 
-const hasCoordinates = (item: { lat: number | null; lng: number | null }) =>
+export const hasCoordinates = (item: { lat: number | null; lng: number | null }) =>
   typeof item.lat === 'number' && typeof item.lng === 'number'
 
 export const coordinateForRecord = (record: TravelMapRecord) => {
@@ -153,7 +153,7 @@ export const coordinateForRecord = (record: TravelMapRecord) => {
   )
 }
 
-const countryAccent = (index: number) => {
+export const countryAccent = (index: number) => {
   const accents = [
     '#66c7a8',
     '#f28b82',
@@ -178,7 +178,7 @@ const countryAccent = (index: number) => {
   return accents[index % accents.length]
 }
 
-const flagEmojiForCode = (code?: string) =>
+export const flagEmojiForCode = (code?: string) =>
   code?.length === 2
     ? [...code.toUpperCase()].map((character) => String.fromCodePoint(127397 + character.charCodeAt(0))).join('')
     : undefined

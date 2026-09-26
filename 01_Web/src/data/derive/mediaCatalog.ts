@@ -58,7 +58,7 @@ type LocalMediaCatalog = {
   items: ImportedMediaCatalogItem[]
 }
 
-const isCatalog = (value: unknown): value is LocalMediaCatalog => {
+export const isCatalog = (value: unknown): value is LocalMediaCatalog => {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<LocalMediaCatalog>
   return (candidate.schemaVersion === 1 || candidate.schemaVersion === 2) && Array.isArray(candidate.items)
