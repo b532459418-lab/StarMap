@@ -512,6 +512,39 @@ test('editor-state 里指向不存在地点的键与值被删除，记 I_STALE_E
   assert.deepEqual(validateV2Files(result.files!), [])
 })
 
+test('hiddenCityNames 对所有城市匹配：被 editor 隐藏的、只有 planned 的、想去的城市都写进 navigationHiddenCityIds；A 与 A′ 没有新增差异', () => {
+  const raw = personalRaw({
+    records: [
+      reykjavikRecord(),
+      vikRecord(),
+      husavikRecord({ id: 'r_husavik_planned', status: 'planned', start_date: '2026-07-01' }),
+    ],
+    display: { hiddenCityNames: ['Reykjavik', 'Vik', '胡萨维克', 'Nuuk', 'Atlantis'] },
+    editorState: { schemaVersion: 1, hiddenCityIds: ['iceland__vik'] },
+    wantToGo: [wantToGoItem('w_nuuk', { nameZh: '努克', nameEn: 'Nuuk', countryCode: 'GL', lat: 64.1814, lng: -51.6941 })],
+  })
+  // Legacy Adapter 只按当时显示中的城市转换：维克被 editor 隐藏，胡萨维克只有 planned 记录，努克是想去。
+  assert.deepEqual(legacyAdapter(raw).travel.display.navigationHiddenCityIds, ['iceland__reykjavik'])
+
+  const result = plan(raw)
+  assert.deepEqual(result.report.errors, [])
+  assert.deepEqual(result.canonical.applied.travel.display.navigationHiddenCityIds, [
+    'iceland__reykjavik', 'iceland__vik', 'iceland__husavik', 'wtg:w_nuuk',
+  ])
+  assert.deepEqual(result.report.info.find((entry) => entry.code === 'I_NAVIGATION_HIDDEN_EXTENDED')?.ids, [
+    'iceland__vik', 'iceland__husavik', 'wtg:w_nuuk',
+  ])
+  const uuid = (sourceKey: string) => result.manifest.sources[sourceKey]
+  assert.deepEqual(result.files!.travel.display.navigationHiddenCityIds, [
+    uuid('city:iceland__reykjavik'), uuid('city:iceland__vik'), uuid('city:iceland__husavik'), uuid('wtg:w_nuuk'),
+  ])
+  assert.deepEqual(validateV2Files(result.files!), [])
+  // 派生层只对显示中的城市求 shouldHideCityFromNavigation：A 与 A′ 仍只差 schemaVersion，A′ ≡ B。
+  assert.deepEqual(result.report.aVsAPrime, SCHEMA_VERSION_ONLY)
+  assertShadowPasses(result)
+  assert.equal(result.report.canApply, true)
+})
+
 // ---------------------------------------------------------------------------
 // 7. 迁移清单
 // ---------------------------------------------------------------------------

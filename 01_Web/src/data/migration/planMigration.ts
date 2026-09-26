@@ -9,7 +9,8 @@
  *   3. 国家合并（以 ISO 为身份，全部自动）：`iso:<CC>` 地点、想去国家并入同 ISO 的国家；
  *   4. 城市合并：想去城市 W 与足迹城市 T 的 FR-MR-5 合并键相同 → 自动合并（名称或坐标不同需确认）；
  *      同国家内中文名相同或相距 ≤ 10 km → 疑似重复，由作者决定 merge / separate；
- *   5. apply：在旧 id 空间里完成合并，得到 L′；
+ *   5. apply：在旧 id 空间里完成合并，得到 L′；旧 `display.hiddenCityNames` 对【所有】城市地点重新匹配
+ *      （Legacy Adapter 只按当时显示中的城市转换，PR3 总体方案 §5）；
  *   6. 每个 L′ 地点按稳定来源键向迁移清单要 UUID（没有就分配，清单只增不改）；
  *   7. 把 L′ 的地点 id 全部换成 UUID，得到 M；
  *   8. 写成 V2 文件，校验，再读回：必须与 M 相等；
@@ -31,7 +32,7 @@ import { legacyAdapter } from '../canonical/legacyAdapter.ts'
 import { normalizeLegacy } from '../canonical/normalizeLegacy.ts'
 import { editorStatePlaceRefs, mapPlaceIds } from '../canonical/placeIds.ts'
 import { EN, ZH, isoOf } from '../canonical/reconstruct.ts'
-import { isoFromCode } from '../canonical/representatives.ts'
+import { isoFromCode, ruleValues } from '../canonical/representatives.ts'
 import type { CanonicalData, CanonicalEditorState, CanonicalPlace, PlaceId } from '../canonical/types.ts'
 import { readV2 } from '../canonical/v2Reader.ts'
 import { validateV2Files, type V2Files } from '../canonical/v2Schema.ts'
@@ -390,6 +391,7 @@ export function planMigration(input: PlanMigrationInput): MigrationPlan {
   return planFromCanonical({
     ...rest,
     legacy: legacyAdapter(raw),
+    legacyHiddenCityNames: raw.travelMap.display?.hiddenCityNames,
     preErrors: versions ? [versions] : [],
     preInfo: normalizeInfo,
   })
@@ -402,6 +404,8 @@ export interface PlanFromCanonicalInput extends Omit<PlanMigrationInput, 'raw'> 
   preErrors?: MigrationIssue<MigrationErrorCode>[]
   /** 只能从原始文件得到的提示（normalizeLegacy 报告）。 */
   preInfo?: MigrationIssue[]
+  /** 旧足迹文件的 `display.hiddenCityNames` 原值：apply 时对所有城市地点重新匹配。 */
+  legacyHiddenCityNames?: unknown
 }
 
 /**
@@ -622,9 +626,36 @@ export function planFromCanonical(input: PlanFromCanonicalInput): MigrationPlan 
   const survivingIds = new Set(repointed.places.map((place) => place.id))
   const { state: editorState, stale } = dropStaleEditorRefs(repointed.editorState, (id) => survivingIds.has(id))
   if (stale.length > 0) addInfo('I_STALE_EDITOR_REF', `editor-state 里有 ${stale.length} 处引用了不存在的地点，已删除（今天也不起作用）。`, stale)
+
+  // hiddenCityNames：Legacy Adapter 只按当时显示中的城市转换（今天 shouldHideCityFromNavigation 也只对它们求值）。
+  // 写盘前对【所有】城市地点重新匹配（PR3 总体方案 §5），否则当时被隐藏的城市以后重新显示时就失去这条规则。
+  // 口径与 shouldHideCityFromNavigation 相同：中文名或英文名相等，英文名为空时取中文名。
+  // 新命中的只会是当时不显示的城市，派生结果不变（A 与 A′ 没有新增差异）。
+  const hiddenCityNames = new Set(ruleValues(input.legacyHiddenCityNames))
+  const navigationHiddenCityIds = [...repointed.travel.display.navigationHiddenCityIds]
+  const newlyHidden: PlaceId[] = []
+  if (hiddenCityNames.size > 0) {
+    for (const place of repointed.places) {
+      if (place.subtype !== 'city' || navigationHiddenCityIds.includes(place.id)) continue
+      const nameZh = place.names[ZH] ?? ''
+      const nameEn = (place.names[EN] ?? '') || nameZh
+      if (hiddenCityNames.has(nameEn) || hiddenCityNames.has(nameZh)) {
+        navigationHiddenCityIds.push(place.id)
+        newlyHidden.push(place.id)
+      }
+    }
+  }
+  if (newlyHidden.length > 0) {
+    addInfo('I_NAVIGATION_HIDDEN_EXTENDED', `${newlyHidden.length} 个当时不显示的城市命中 hiddenCityNames，已写进 navigationHiddenCityIds。`, newlyHidden)
+  }
+
   const applied: CanonicalData = jsonClone({
     ...repointed,
-    travel: { ...repointed.travel, meta: { ...repointed.travel.meta, schemaVersion: 2 } },
+    travel: {
+      ...repointed.travel,
+      meta: { ...repointed.travel.meta, schemaVersion: 2 },
+      display: { ...repointed.travel.display, navigationHiddenCityIds },
+    },
     editorState,
   })
 
