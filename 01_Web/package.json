@@ -13,6 +13,7 @@
     "lint": "eslint src scripts vite.config.ts",
     "test": "node --test \"src/**/*.test.ts\" \"scripts/**/*.test.mjs\"",
     "baseline": "node scripts/legacy-baseline.mjs",
+    "identity:check": "node scripts/migrate-identity.mjs",
     "media:check": "node scripts/import-media.mjs",
     "media:import": "node scripts/import-media.mjs --apply",
     "privacy:check": "git -C .. ls-files --cached --others --exclude-standard -z | node scripts/privacy-audit.mjs --manifest-stdin",
