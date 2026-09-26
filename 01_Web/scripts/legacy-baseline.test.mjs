@@ -43,6 +43,20 @@ const withTemp = async (run) => {
   }
 }
 
+/**
+ * 私人根放在仓库里（模拟独立克隆的 06_private/）：建在已被 .gitignore 覆盖的 node_modules 下，
+ * 清理失败也不会弄脏工作区；绝不碰仓库里真实的 06_private/。
+ */
+const withPrivateRootInsideRepo = async (run) => {
+  const root = await mkdtemp(path.join(webRoot, 'node_modules', '.starmap-private-root-test-'))
+  try {
+    await mkdir(path.join(root, 'data'), { recursive: true })
+    await run({ root })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
 const runCli = (args, privateRoot, nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, cliPath, ...args], {
   cwd: webRoot,
   env: { ...process.env, STARMAP_PRIVATE_ROOT: privateRoot },
@@ -169,6 +183,25 @@ test('隐私门：个人模式 --out 在仓库之内被拒（退出码 2），�
   }
   assert.equal(existsSync(inside[0]), false)
   assert.equal(existsSync(path.dirname(inside[1])), false)
+}))
+
+test('隐私门：私人根在仓库内（独立克隆的 06_private）时，写到私人根之内放行；写到仓库内其他位置仍被拒（退出码 2）', () => withPrivateRootInsideRepo(async ({ root }) => {
+  await writePrivate(root, 'travel-map.local.json', readSample('travel-map.sample.json'))
+  const inside = path.join(root, 'baseline', 'a.json')
+  const allowed = runCli(['--out', inside], root)
+  assert.equal(allowed.status, 0, allowed.stderr)
+  assert.ok(existsSync(inside))
+  const verify = runCli(['--verify', '--out-dir', path.join(root, 'verify')], root)
+  assert.equal(verify.status, 0, verify.stderr)
+  assert.ok(existsSync(path.join(root, 'verify', 'c.json')))
+
+  for (const target of [path.join(webRoot, 'legacy-baseline-should-not-exist.json'), path.join(webRoot, '..', 'legacy-baseline-should-not-exist.json')]) {
+    const refused = runCli(['--out', target], root)
+    assert.equal(refused.status, 2, `${target}
+${refused.stderr}`)
+    assert.match(refused.stderr, /拒绝写入/)
+    assert.equal(existsSync(target), false)
+  }
 }))
 
 test('个人模式：先报出实际使用的私人根目录', () => withTemp(async ({ root, out }) => {

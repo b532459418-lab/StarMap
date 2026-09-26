@@ -31,19 +31,20 @@
  *   文件或 URL，基线只描述两种默认模式。
  * - now 固定为 2000-01-01T00:00:00.000Z；基线里恰好等于 now 的字符串都会被替换成 "<now>"。
  *
- * 隐私门：个人模式的基线含地名与坐标。--out / --out-dir 解析后（含符号链接）若位于本 Git 仓库之内，
- * 拒绝并以退出码 2 结束，且不读取任何私有文件。--sample 不限制。
+ * 隐私门：个人模式的基线含地名与坐标。--out / --out-dir 解析后（含符号链接）只能在私人根目录之内
+ * （即使私人根在仓库里，例如独立克隆的 06_private/）或本 Git 仓库之外（判断见 private-output.mjs），
+ * 否则拒绝并以退出码 2 结束，且不读取任何私有文件。--sample 不限制。
  * 读取失败时只报文件路径与失败类别，不打印文件内容（JSON 解析错误的消息会带出原文片段）。
  *
  * 退出码：成功 0；--compare 有差异 1；--verify 时 B 与 C 不同 1；参数错误 / 读取失败 1；隐私门拒绝 2。
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { readJson } from './json-file.mjs'
+import { isAllowedPrivateOutput } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot, webRoot } from './private-profile.mjs'
 import { deriveAppData } from '../src/data/derive/appData.ts'
 import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
@@ -120,29 +121,6 @@ const parseArgs = (argv) => {
   if (out === undefined) throw new UsageError('缺少 --out <file>。')
   if (normalize && derivePath === 'canonical') throw new UsageError('--normalize 只用于 legacy 路径。')
   return { mode, action: 'generate', out, derivePath: derivePath ?? 'legacy', normalize }
-}
-
-/** 最深的已存在祖先取真实路径（解开符号链接、目录联接与大小写），再接上不存在的部分。 */
-const canonicalPath = (target) => {
-  let existing = path.resolve(target)
-  const missing = []
-  while (!existsSync(existing)) {
-    const parent = path.dirname(existing)
-    if (parent === existing) break
-    missing.unshift(path.basename(existing))
-    existing = parent
-  }
-  try {
-    return path.join(realpathSync.native(existing), ...missing)
-  } catch {
-    return path.resolve(target)
-  }
-}
-
-/** 仓库根就是 private-profile.mjs 的 sourceRoot（01_Web 的上一级，Git 的根）。 */
-const isInsideRepository = (target) => {
-  const relative = path.relative(canonicalPath(sourceRoot), canonicalPath(target))
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
 /** 读取失败只报路径与类别：JSON.parse 的错误消息会带出文件原文片段，私有文件不能这样泄露。 */
@@ -298,9 +276,9 @@ const compare = async (firstPath, secondPath) => {
 const checkPrivacyGate = (mode, target) => {
   if (mode !== 'personal') return
   console.error(`[legacy-baseline] 个人模式，私人根目录：${getPrivatePaths().root}`)
-  if (target !== undefined && isInsideRepository(target)) {
+  if (target !== undefined && !isAllowedPrivateOutput(target)) {
     throw new PrivacyGateError(
-      `拒绝写入：${path.resolve(target)} 位于 Git 仓库 ${sourceRoot} 之内。个人模式的基线含地名与坐标，只能写到仓库之外。`,
+      `拒绝写入：${path.resolve(target)} 位于 Git 仓库 ${sourceRoot} 之内（且不在私人根目录之内）。个人模式的基线含地名与坐标，只能写到私人根目录之内或仓库之外。`,
     )
   }
 }
