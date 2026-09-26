@@ -46,6 +46,15 @@ const errorCodes = (result: MigrationPlan) => result.report.errors.map((error) =
 const assertError = (result: MigrationPlan, code: MigrationErrorCode) =>
   assert.ok(errorCodes(result).includes(code), `期望 ${code}，实际：${errorCodes(result).join(', ') || '无'}`)
 
+/** A′ ≡ B：两层 shadow compare 都通过。 */
+const assertShadowPasses = (result: MigrationPlan, name = '') => {
+  assert.equal(result.report.shadow.ran, true, name)
+  assert.deepEqual(result.report.shadow.canonical, { equal: true, total: 0, paths: [] }, name)
+  assert.deepEqual(result.report.shadow.derived, { equal: true, total: 0, paths: [] }, name)
+}
+
+const SCHEMA_VERSION_ONLY = { equal: false, total: 1, paths: ['$.modules.travelAtlas.travelAtlasMeta.schemaVersion'] }
+
 /** 想去条目在 L′ 里指向的地点（旧 id）。 */
 const wantToGoPlaceOf = (result: MigrationPlan, itemId: string) =>
   result.canonical.applied.wantToGo.items.find((item) => item.id === itemId)!.placeId
@@ -90,6 +99,10 @@ test('公开样例：canApply；阿克雷里静默合并；格陵兰、挪威成
   assert.equal(report.counts.after.countries, 4)
   assert.equal(report.counts.after.cities, 7)
   assert.equal(result.canonical.applied.travel.meta.schemaVersion, 2)
+
+  // A′ ≡ B；A 与 A′ 只差 travelAtlasMeta.schemaVersion（阿克雷里的名称与坐标两边相同，合并看不出来）。
+  assertShadowPasses(result)
+  assert.deepEqual(report.aVsAPrime, SCHEMA_VERSION_ONLY)
 })
 
 test('公开样例：M 的地点 id 都是 UUIDv7，legacyKeys 带命名空间；写出的文件通过校验，读回与 M 深度相等', () => {
@@ -165,6 +178,14 @@ test('自动合并：全部 accept 后 canApply；存活地点用足迹的名称
   assert.deepEqual([item('w_husavik').place.lat, item('w_husavik').place.lng], [66.0449, -17.3389])
   assert.deepEqual(placeNamed(applied, 'Akureyri')!.location, { lat: 65.6885, lng: -18.1262 })
   assert.equal(applied.places.filter((place) => place.subtype === 'city').length, 4)
+  assertShadowPasses(result)
+  // A 与 A′ 的差异就是这些合并带来的显示变化：想去条目换成足迹的名称与坐标、阿克雷里有了坐标。
+  const paths = result.report.aVsAPrime.paths
+  for (const expected of [
+    '$.modules.travelAtlas.cityById.iceland__akureyri.lat',
+    '$.modules.wantToGo.wantToGoItems[1].place.nameZh',
+    '$.modules.wantToGo.wantToGoItems[2].place.lat',
+  ]) assert.ok(paths.includes(expected), expected)
 })
 
 test('自动合并：想去没有坐标、名称相同 → 静默；足迹与想去都没有坐标 → 静默', () => {
@@ -217,12 +238,15 @@ test('疑似重复：merge 并入足迹城市（接受它的名称与坐标，�
   const places = indexPlaces(merged.canonical.applied.places)
   const item = reconstructWantToGoItem(merged.canonical.applied.wantToGo.items[0], places)
   assert.deepEqual([item.place.nameZh, item.place.nameEn, item.place.lat, item.place.lng], ['雷克雅未克', 'Reykjavik', REYKJAVIK.lat, REYKJAVIK.lng])
+  assertShadowPasses(merged)
 
   const separate = plan(duplicateRaw(), { decisions: allDecided('separate') })
   assert.equal(separate.report.canApply, true)
   assert.deepEqual(separate.report.merges, [])
   assert.equal(wantToGoPlaceOf(separate, 'w_reykjavik_city'), 'wtg:w_reykjavik_city')
   assert.equal(separate.canonical.applied.places.length, merged.canonical.applied.places.length + 1)
+  assertShadowPasses(separate)
+  assert.deepEqual(separate.report.aVsAPrime, SCHEMA_VERSION_ONLY)
 })
 
 test('疑似重复：一个想去地点被决定并入两个足迹城市 → E_DECISION_CONFLICT，不合并，不产出文件', () => {
@@ -288,6 +312,7 @@ test('国家：addedCountries 的代码提升到地点上，消除 E_COUNTRY_ISO
   assert.deepEqual(result.report.merges, [{ subtype: 'country', from: 'iso:GL', into: 'greenland', rule: 'isoCountry', status: 'silent', confirmations: [] }])
   assert.equal(applied.places.find((place) => place.id === 'wtg:w_nuuk')!.partOf, 'greenland')
   assert.equal(applied.places.some((place) => place.id === 'iso:GL'), false)
+  assertShadowPasses(result)
 })
 
 test('国家：addedCountries 的中心坐标在地点没有坐标时提升；条目不再带代码与中心', () => {
@@ -350,10 +375,11 @@ test('国家：想去国家并入同 ISO 的足迹国家（名称相同静默、
 
   const accepted = plan(raw, { decisions: decisions({ nameDifferences: { 'wtg:w_faroes': 'accept', 'wtg:w_norway_again': 'accept' } }) })
   assert.equal(accepted.report.canApply, true)
+  assertShadowPasses(accepted)
 })
 
 // ---------------------------------------------------------------------------
-// 5. 每个错误码至少一例（E_SHADOW_* 见 shadowCompare 接入之后的用例）
+// 5. 每个错误码至少一例
 // ---------------------------------------------------------------------------
 
 test('E_MIXED_VERSIONS：旧位置出现 V2 版本或未知版本的文件', () => {
@@ -428,6 +454,26 @@ test('E_INVALID_OUTPUT：写出的文件没通过校验（国家代码不是两�
   const result = plan(personalRaw({ records: [reykjavikRecord({ country_code: 'isl' })] }))
   assertError(result, 'E_INVALID_OUTPUT')
   assert.ok(result.report.errors.find((error) => error.code === 'E_INVALID_OUTPUT')!.ids.some((id) => id.includes('iso3166Alpha2')))
+})
+
+test('E_SHADOW_CANONICAL 与 E_SHADOW_DERIVED：迁移清单把两个来源键映射到同一个 UUID（手改的清单）', () => {
+  const first = plan(sampleRaw())
+  const sources = { ...first.manifest.sources, 'country:faroe-islands': first.manifest.sources['country:iceland'] }
+  const result = plan(sampleRaw(), { manifest: { schema_version: 1, sources } })
+  assertError(result, 'E_INVALID_OUTPUT')
+  assertError(result, 'E_SHADOW_CANONICAL')
+  assertError(result, 'E_SHADOW_DERIVED')
+  assert.equal(result.report.canApply, false)
+  assert.equal(result.files, undefined)
+})
+
+test('E_SHADOW_DERIVED 单独出现：旧国家键是数组下标形式（"2024"），旧派生按对象键遍历会把它排到最前，UUID 不会', () => {
+  const result = plan(personalRaw({
+    records: [reykjavikRecord(), record({ id: 'r_numeric', country: '2024', country_en: '2024', country_code: 'xa', city: '某城', city_en: 'Somewhere', start_date: '2025-06-02', lat: 10, lng: 10 })],
+  }))
+  assert.deepEqual(errorCodes(result), ['E_SHADOW_DERIVED'])
+  assert.deepEqual(result.report.shadow.canonical, { equal: true, total: 0, paths: [] })
+  assert.ok(result.report.errors[0].ids.includes('$.modules.travelAtlas.countries[0].id'))
 })
 
 test('E_INVALID_OUTPUT：迁移清单里的值不是 UUIDv7', () => {
@@ -584,6 +630,8 @@ test('PR2 fixture：consistentPersonalRaw 与 nameInconsistencyRaw 都能 canApp
     assert.deepEqual(result.report.errors, [], name)
     assert.equal(result.report.canApply, true, name)
     assert.deepStrictEqual(readV2(JSON.parse(JSON.stringify(result.files))), result.canonical.migrated, name)
+    assertShadowPasses(result, name)
+    assert.deepEqual(result.report.aVsAPrime, SCHEMA_VERSION_ONLY, name)
   }
   const inconsistent = plan(nameInconsistencyRaw())
   assert.ok(inconsistent.report.info.some((entry) => entry.code === 'I_NORMALIZE_suspectedSplitCity'))

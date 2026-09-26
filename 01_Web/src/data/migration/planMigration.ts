@@ -13,6 +13,8 @@
  *   6. 每个 L′ 地点按稳定来源键向迁移清单要 UUID（没有就分配，清单只增不改）；
  *   7. 把 L′ 的地点 id 全部换成 UUID，得到 M；
  *   8. 写成 V2 文件，校验，再读回：必须与 M 相等；
+ *   9. shadow compare（`./shadowCompare.ts`）：读回的 Canonical 映射回旧 id 与 L′ 逐项相同，
+ *      派生结果 A′ ≡ B 逐字节相同；另外报告 A 与 A′ 的差异（合并与决定带来的显示变化）；
  *   10. 完整性：`legacyKeys` 全文件唯一，V2 文件通过校验。
  *
  * 本文件是全仓库唯一允许「知道旧 id 约定」的地方（稳定来源键 `<subtype>:<旧 id>` 与 legacyKeys 的
@@ -36,6 +38,7 @@ import { validateV2Files, type V2Files } from '../canonical/v2Schema.ts'
 import { WANT_TO_GO_META_KEYS, jsonClone, recordMatchesCityLocation, serializeV2 } from '../canonical/v2Serializer.ts'
 import { emptyManifest, type IdentityDecisions, type IdentityManifest } from './identityFiles.ts'
 import { diffJson, type DiffSummary } from './jsonDiff.ts'
+import { baselineOf, compareBaselines, shadowCompare } from './shadowCompare.ts'
 
 // ---------------------------------------------------------------------------
 // 类型
@@ -137,6 +140,10 @@ export interface MigrationReport {
   places: PlaceAssignment[]
   /** 写出并读回（步骤 8）。有门槛错误时不运行。 */
   roundTrip: { ran: boolean; skippedBecause?: string; diff?: DiffSummary }
+  /** A 与 A′ 的差异（只报告）：合并与决定带来的显示变化。 */
+  aVsAPrime: DiffSummary
+  /** 两层 shadow compare（步骤 9）。有门槛错误或读回失败时不运行。 */
+  shadow: { ran: boolean; skippedBecause?: string; canonical?: DiffSummary; derived?: DiffSummary }
   canApply: boolean
 }
 
@@ -672,11 +679,16 @@ export function planFromCanonical(input: PlanFromCanonicalInput): MigrationPlan 
   const uuidOf = new Map(places.map((place) => [place.oldId, place.newId]))
   const oldIdOf = new Map(places.map((place) => [place.newId, place.oldId]))
 
+  // ---- 9（一）. A 与 A′：只报告 ----
+  const baselineAPrime = baselineOf(applied)
+  const aVsAPrime = compareBaselines(baselineOf(legacy), baselineAPrime)
+
   // ---- 7–10. 换 id、写出、校验、读回 ----
   const gateErrors = errors.length
   let migrated: CanonicalData | undefined
   let files: V2Files | undefined
   let roundTrip: MigrationReport['roundTrip'] = { ran: false, skippedBecause: `存在 ${gateErrors} 个门槛错误` }
+  let shadow: MigrationReport['shadow'] = { ran: false, skippedBecause: `存在 ${gateErrors} 个门槛错误` }
   if (gateErrors === 0) {
     const renamed = mapPlaceIds(applied, (id) => uuidOf.get(id) ?? id)
     migrated = jsonClone({
@@ -717,8 +729,19 @@ export function planFromCanonical(input: PlanFromCanonicalInput): MigrationPlan 
       const diff = diffJson(migrated, read)
       roundTrip = { ran: true, diff }
       if (!diff.equal) addError('E_ROUNDTRIP', `V2 文件读回后与写出前不同（${diff.total} 处）。`, diff.paths)
+
+      // ---- 9（二）. shadow compare：两层 ----
+      const result = shadowCompare({ expected: applied, actual: read, oldIdOf, expectedBaseline: baselineAPrime })
+      shadow = { ran: true, ...result }
+      if (!result.canonical.equal) {
+        addError('E_SHADOW_CANONICAL', `读回的 Canonical 映射回旧 id 后与 L′ 不同（${result.canonical.total} 处）。`, result.canonical.paths)
+      }
+      if (!result.derived.equal) {
+        addError('E_SHADOW_DERIVED', `派生层 A′ 与 B 不是逐字节相同（${result.derived.total} 处）。`, result.derived.paths)
+      }
     } else {
       roundTrip = { ran: true }
+      shadow = { ran: false, skippedBecause: 'V2 文件读回失败' }
     }
     if (errors.length === 0) files = written
   }
@@ -733,7 +756,13 @@ export function planFromCanonical(input: PlanFromCanonicalInput): MigrationPlan 
     merges,
     places,
     roundTrip,
-    canApply: errors.length === 0 && files !== undefined && needsDecision.every((item) => item.decision !== undefined),
+    aVsAPrime,
+    shadow,
+    canApply: errors.length === 0
+      && files !== undefined
+      && shadow.canonical?.equal === true
+      && shadow.derived?.equal === true
+      && needsDecision.every((item) => item.decision !== undefined),
   }
 
   return { report, manifest, ...(files ? { files } : {}), canonical: { legacy, applied, ...(migrated ? { migrated } : {}), oldIdOf } }
