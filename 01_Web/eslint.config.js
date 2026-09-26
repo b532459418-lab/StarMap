@@ -72,7 +72,9 @@ export default defineConfig([
   },
   // RFC-LOC-1 PR1：src/data/derive/travelAtlas.ts 里的这四个函数是「按名字推导身份的旧规则」
   // （RFC-LOC-1 §1.1），PR5 删除。只允许派生层内部（src/data/derive/**，含其测试）引用；
-  // PR2：Legacy Adapter 与它的共享选择模块（RFC §3.6「原则 5 的过渡期例外」）加入白名单，PR5 一起删除。
+  // PR2：Legacy Adapter、它的共享选择模块与 normalizeLegacy（RFC §3.6「原则 5 的过渡期例外」）加入白名单，
+  // PR5 一起删除。受限来源从 derive/travelAtlas 扩大到整个 derive/**：派生层内部以同名转手导出也会被拦
+  // （改名后再转手导出仍拦不住，靠审查）。
   // 用 @typescript-eslint 版的规则而不是核心 no-restricted-imports：同名规则在后面的块里会整体
   // 覆盖前面块的选项，那样会替换掉上面 FR-MOD 对 src/worldgraph/** 的限制。
   {
@@ -92,9 +94,15 @@ export default defineConfig([
         {
           patterns: [
             {
-              group: ['**/derive/travelAtlas', '**/derive/travelAtlas.ts'],
+              group: ['**/derive/**'],
               importNames: ['countryKeyForRecord', 'cityKeyForRecord', 'getJourneyId', 'slugify'],
               message: 'RFC-LOC-1：按名字推导身份的旧规则只允许派生层内部使用（PR5 删除）。',
+            },
+            {
+              // representatives.ts 里包了一层的同一套旧规则（改了名字），同样只给白名单里的文件用。
+              group: ['**/canonical/representatives', '**/canonical/representatives.ts'],
+              importNames: ['legacyKeysOf', 'legacyJourneyIdOf'],
+              message: 'RFC-LOC-1：按名字推导身份的旧规则只允许 Legacy Adapter 与 normalizeLegacy 使用（PR5 删除）。',
             },
           ],
         },
