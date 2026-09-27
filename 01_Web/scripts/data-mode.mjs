@@ -40,7 +40,7 @@ const isPlainObject = (value) => typeof value === 'object' && value !== null && 
  * `Out-File` 默认都写 BOM。其余规则不变（区分大小写、不许多余字段）；只去一个，第二个 BOM 仍按非法 JSON 报错。
  */
 export function parseDataModeMarker(text, filePath) {
-  const source = text.startsWith('﻿') ? text.slice(1) : text
+  const source = text.startsWith('\uFEFF') ? text.slice(1) : text
   let value
   try {
     value = JSON.parse(source)

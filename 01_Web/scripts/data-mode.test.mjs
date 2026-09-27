@@ -89,15 +89,15 @@ test('标记格式错误时抛错：非 JSON、不是对象、缺 mode、未知�
 
 test('标记文件开头的一个 UTF-8 BOM 被容忍：带 BOM 的 { "mode": "v2" } 判为 v2；BOM 之后内容非法照样报错；只去一个', () => withPrivateRoot(async ({ paths }) => {
   const filePath = paths.dataModePath
-  assert.equal(parseDataModeMarker('﻿{ "mode": "v2" }', filePath), 'v2')
-  assert.equal(parseDataModeMarker('﻿{"mode":"legacy"}\r\n', filePath), 'legacy')
+  assert.equal(parseDataModeMarker('\uFEFF{ "mode": "v2" }', filePath), 'v2')
+  assert.equal(parseDataModeMarker('\uFEFF{"mode":"legacy"}\r\n', filePath), 'legacy')
   for (const [text, problem] of [
-    ['﻿{ "mode": "V2" }', /mode 不是 legacy 或 v2/],
-    ['﻿{ "mode": "v2", "extra": 1 }', /有多余的字段/],
-    ['﻿{}', /缺少 mode 字段/],
-    ['﻿', /不是有效的 JSON/],
-    ['﻿﻿{ "mode": "v2" }', /不是有效的 JSON/],
-    ['{ "mode": "v2" }﻿', /不是有效的 JSON/],
+    ['\uFEFF{ "mode": "V2" }', /mode 不是 legacy 或 v2/],
+    ['\uFEFF{ "mode": "v2", "extra": 1 }', /有多余的字段/],
+    ['\uFEFF{}', /缺少 mode 字段/],
+    ['\uFEFF', /不是有效的 JSON/],
+    ['\uFEFF\uFEFF{ "mode": "v2" }', /不是有效的 JSON/],
+    ['{ "mode": "v2" }\uFEFF', /不是有效的 JSON/],
   ]) {
     assert.throws(() => parseDataModeMarker(text, filePath), (error) => error instanceof DataModeMarkerError && problem.test(error.message), JSON.stringify(text))
   }
@@ -108,6 +108,15 @@ test('标记文件开头的一个 UTF-8 BOM 被容忍：带 BOM 的 { "mode": "v
   await writeFile(filePath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{ "mode": "V2" }', 'utf8')]))
   assert.throws(() => resolveDataMode(paths), DataModeMarkerError)
 }))
+
+test('防回退：data-mode.mjs 的源码里没有字面 U+FEFF，BOM 用转义写法（字面字符一旦被编辑器去掉，就成了 startsWith(\'\')）', () => {
+  const source = readFileSync(path.join(webRoot, 'scripts', 'data-mode.mjs'), 'utf8')
+  const bom = String.fromCharCode(0xfeff)
+  assert.equal(source.includes(bom), false, 'scripts/data-mode.mjs 含有字面 U+FEFF')
+  // 转义写法（反斜杠 + uFEFF）在源码里：解析器确实去的是 BOM。这里也不写字面反斜杠序列，免得本文件自己带上字面字符。
+  assert.ok(source.includes(`startsWith('${String.fromCharCode(92)}uFEFF')`), '没有找到 BOM 的转义写法')
+  assert.equal(source.includes("startsWith('')"), false)
+})
 
 test('resolveDataMode：标记文件损坏时抛 DataModeMarkerError（不按任何模式静默运行）', () => withPrivateRoot(async ({ paths }) => {
   await writeMarker(paths, '{ "mode": "V2" }')
