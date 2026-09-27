@@ -1,4 +1,4 @@
-import { appData } from './appData'
+import { appData, dataMode } from './appData'
 
 // 解析、空状态与 orderBySavedIds 在纯派生层（./derive/editorState.ts，RFC-LOC-1 PR1）；
 // 数据来源的选择在 ./rawInputs.ts，经 Canonical 重建的结果在 ./appData.ts（PR2）；本文件以原名导出。
@@ -7,4 +7,6 @@ export { orderBySavedIds } from './derive/editorState.ts'
 
 export const travelAtlasEditorState = appData.editorState.travelAtlasEditorState
 
-export const localEditorAvailable = import.meta.env.DEV && import.meta.env.MODE === 'personal'
+// RFC-LOC-1 PR3b-1 §2.3：V2 数据模式下编辑一律关闭（PR3b-2 / PR3b-3 开放）。全部编辑控件以它为门，
+// 在 V2 下根本不渲染（不靠 CSS 隐藏）；服务端另外对写入返回 409，那才是真正的防线。
+export const localEditorAvailable = import.meta.env.DEV && import.meta.env.MODE === 'personal' && dataMode !== 'v2'
