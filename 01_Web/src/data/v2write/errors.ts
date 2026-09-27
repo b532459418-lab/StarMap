@@ -96,6 +96,10 @@ export const V2_WRITE_MESSAGES = {
   E_PARTIAL_WRITE: (params: V2ErrorParams) => (typeof params.message === 'string' ? params.message : '部分 V2 数据文件已写入，其余没有写入。'),
   E_V2_MEDIA_UNAVAILABLE: () => 'V2 数据模式下暂不能编辑照片与无人机影像（RFC-LOC-1 PR3b-3 开放）。',
   E_UNKNOWN_ENDPOINT: () => '未知的本地编辑接口。',
+  /** 请求体读不出来（过大、不是 JSON）：原因原样（同旧模式）。 */
+  E_REQUEST_INVALID: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '请求内容无效。'),
+  /** 纯函数里意料之外的错误（程序缺陷）：原因原样，兜底用旧模式的「本地编辑操作失败。」。 */
+  E_UNEXPECTED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '本地编辑操作失败。'),
 } as const
 
 export type V2WriteErrorCode = keyof typeof V2_WRITE_MESSAGES

@@ -21,6 +21,7 @@ import {
   shouldHandlePrivateDataChange,
 } from './local-editor-data-mode.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
+import { createV2WriteContext, readV2EditorState, runV2Write, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
 import { createWantToGoStore } from './want-to-go-store.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -1094,14 +1095,20 @@ const authorizeWrite = (request) => (
 )
 
 /**
- * RFC-LOC-1 PR3b-1 §2.3：V2 数据模式下编辑一律关闭（PR3b-2 / PR3b-3 开放）。每个请求现读数据模式（不缓存）；
- * 拒绝时不读写任何文件。标记文件不合法时 resolveDataMode 抛错，由外层按 400 返回错误信息。
+ * RFC-LOC-1 PR3b-2：V2 数据模式下的写入。只经 v2-editor-store.mjs 的路由表分派（8 个非媒体写入端点），
+ * 没列进去的接口回 404——V2 下绝不进入下面的旧模式分支。读写都只碰 data/v2/，不读旧文件、不回落样例。
  */
-const dataModeRejection = (request, url) => editorDataModeRejection({
-  dataMode: resolveDataMode(privatePaths).mode,
-  method: request.method,
-  pathname: url.pathname,
-})
+const handleV2Write = async (request, url) => {
+  const route = v2EditorRoute(request.method, url.pathname)
+  if (!route) return { status: 404, body: v2ErrorBody('E_UNKNOWN_ENDPOINT') }
+  let input
+  try {
+    input = await readJsonBody(request)
+  } catch (error) {
+    return { status: 400, body: v2ErrorBody('E_REQUEST_INVALID', { reason: error instanceof Error ? error.message : '' }) }
+  }
+  return runV2Write({ privatePaths, route, input, ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }) })
+}
 
 export function travelAtlasLocalEditor(options = {}) {
   const profile = options.profile === 'personal' ? 'personal' : 'public'
@@ -1158,8 +1165,11 @@ export function travelAtlasLocalEditor(options = {}) {
         try {
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
             if (!isLoopbackRequest(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话读取。' })
-            const rejection = dataModeRejection(request, url)
-            if (rejection) return sendJson(response, rejection.status, rejection.body)
+            // RFC-LOC-1 PR3b-2：V2 下读 data/v2/ 的 editor-state，转成 V1 形状返回（每个请求现读数据模式）。
+            if (resolveDataMode(privatePaths).mode === 'v2') {
+              const result = await readV2EditorState({ privatePaths })
+              return sendJson(response, result.status, result.body)
+            }
             const state = normalizeState(await readJson(editorStatePath, emptyState))
             return sendJson(response, 200, { ok: true, state })
           }
@@ -1183,11 +1193,19 @@ export function travelAtlasLocalEditor(options = {}) {
           }
 
           if (!authorizeWrite(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话写入。' })
-          const rejection = dataModeRejection(request, url)
+          // RFC-LOC-1 PR3b-2：每个请求现读数据模式（不缓存）。V2 下媒体端点 409、不读写任何文件（PR3b-3 开放）；
+          // 标记文件不合法时 resolveDataMode 抛错，由外层按 400 返回错误信息。
+          const dataMode = resolveDataMode(privatePaths).mode
+          const rejection = editorDataModeRejection({ dataMode, method: request.method, pathname: url.pathname })
           if (rejection) return sendJson(response, rejection.status, rejection.body)
 
           editorMutationDepth += 1
           try {
+            if (dataMode === 'v2') {
+              const result = await handleV2Write(request, url)
+              return sendJson(response, result.status, result.body)
+            }
+
             if (request.method === 'PUT' && url.pathname === '/__travelatlas/editor/state') {
               const state = normalizeState(await readJsonBody(request))
               await atomicJsonWrite(editorStatePath, state)
