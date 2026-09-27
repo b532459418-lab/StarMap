@@ -36,3 +36,6 @@ export const getCitiesForCountry = derived.getCitiesForCountry
 export const shouldHideCityFromNavigation = derived.shouldHideCityFromNavigation
 
 export const missingCoordinateCities = derived.missingCoordinateCities
+
+// RFC-LOC-1 PR3b-1 §2.5：城市 → 所属国家（含被 editor 隐藏的城市）。UI 不得再从 id 的结构推断国家。
+export const countryIdOfCity = derived.countryIdOfCity

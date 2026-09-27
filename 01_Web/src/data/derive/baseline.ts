@@ -19,8 +19,15 @@ import type { WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
 import type { LayerId, WorldGraphSnapshot } from '../../worldgraph/types.ts'
 import type { City, CityId, Country, CountryId, TravelMapRecord } from '../../types/travel.ts'
 
-/** 基线格式标识。基线的结构或求值口径变化时改这里，旧基线就不会被误当成可比。 */
-export const BASELINE_FORMAT = 'starmap-legacy-baseline@1'
+/**
+ * 基线格式标识。基线的结构或求值口径变化时改这里，旧基线就不会被误当成可比。
+ *
+ * - @1（PR1）：六个模块的导出 + 地图与 Collection 查询。
+ * - @2（RFC-LOC-1 PR3b-1 §2.5）：`travelAtlas.evaluated` 增加 `countryIdOfCity`，定义域为
+ *   「城市级函数的定义域 ∪ editor-state 的 hiddenCityIds」。其余与 @1 逐字节相同：
+ *   删掉这一项、`format` 改回 @1，得到的就是 @1 基线（测试见 `../canonical/derive.test.ts`）。
+ */
+export const BASELINE_FORMAT = 'starmap-legacy-baseline@2'
 
 /** 恰好等于 `options.now` 的字符串在基线里一律替换成它。 */
 export const NOW_PLACEHOLDER = '<now>'
@@ -58,6 +65,7 @@ export interface AppDataExports {
     missingCoordinateCities: unknown
     getCitiesForCountry(countryId: CountryId): unknown
     shouldHideCityFromNavigation(city: City): boolean
+    countryIdOfCity(cityId: CityId): CountryId | undefined
   }
   editorState: {
     travelAtlasEditorState: unknown
@@ -125,7 +133,7 @@ export const baselineExportNames = {
       'cityById',
       'missingCoordinateCities',
     ],
-    evaluated: ['getCitiesForCountry', 'shouldHideCityFromNavigation'],
+    evaluated: ['getCitiesForCountry', 'shouldHideCityFromNavigation', 'countryIdOfCity'],
     notCaptured: [],
   },
   editorState: {
@@ -179,6 +187,12 @@ const pickData = (moduleName: ModuleName, source: object): Record<string, unknow
 /** 按首次出现的顺序去重。 */
 const uniqueInOrder = <T,>(values: Iterable<T>): T[] => [...new Set(values)]
 
+/** editor-state 里被隐藏的城市 id（`travelAtlasEditorState` 在接口上是 unknown，这里只取字符串）。 */
+const hiddenCityIdsOf = (editorState: unknown): CityId[] => {
+  const ids = (editorState as { hiddenCityIds?: unknown } | null | undefined)?.hiddenCityIds
+  return Array.isArray(ids) ? ids.filter((id): id is CityId => typeof id === 'string') : []
+}
+
 /**
  * 图层组合：足迹 × 想去 各开 / 关。可见图层 id 的顺序与 App 相同（按 officialLayers 过滤）。
  * 组合名是固定字符串，与 officialLayers 的顺序无关。
@@ -217,6 +231,7 @@ const toPlain = (value: unknown, now: string): unknown => {
  *
  * - 数据导出原样放入；
  * - 函数导出按全集求值：城市级函数的定义域是「足迹城市 ∪ 媒体项与无人机项引用的城市」（按首次出现顺序），
+ *   `countryIdOfCity` 的定义域再并上 editor-state 的 hiddenCityIds（它要回答被隐藏的城市）；
  *   结果记成 [输入 id, 输出] 数组；函数返回 undefined 时在 JSON 里写成 null；
  * - 额外跑地图查询（四种图层组合）与想去 Collection 查询；
  * - 所有恰好等于 `options.now` 的字符串替换为 `<now>`。
@@ -227,18 +242,23 @@ export function buildBaseline(exports: AppDataExports, options: BaselineOptions)
       throw new Error(`buildBaseline: 缺少模块 ${moduleName}`)
     }
   }
-  const { travelAtlas, mediaCatalog, droneMedia, wantToGo, worldGraph } = exports
+  const { travelAtlas, editorState, mediaCatalog, droneMedia, wantToGo, worldGraph } = exports
 
   const cityDomain = uniqueInOrder<CityId>([
     ...travelAtlas.cities.map((city) => city.id),
     ...mediaCatalog.allImportedMediaItems.map((item) => item.cityId),
     ...droneMedia.droneMediaItems.map((item) => item.cityId),
   ])
+  const countryOfCityDomain = uniqueInOrder<CityId>([
+    ...cityDomain,
+    ...hiddenCityIdsOf(editorState.travelAtlasEditorState),
+  ])
 
   const evaluated = {
     travelAtlas: {
       getCitiesForCountry: travelAtlas.countries.map((country) => [country.id, travelAtlas.getCitiesForCountry(country.id)]),
       shouldHideCityFromNavigation: travelAtlas.cities.map((city) => [city.id, travelAtlas.shouldHideCityFromNavigation(city)]),
+      countryIdOfCity: countryOfCityDomain.map((cityId) => [cityId, travelAtlas.countryIdOfCity(cityId) ?? null]),
     },
     editorState: {},
     mediaCatalog: {

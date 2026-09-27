@@ -51,6 +51,11 @@ const makeExports = (now = NOW): AppDataExports => {
   const routes = sampleRoutes()
   const cityById = Object.fromEntries(cities.map((city) => [city.id, city]))
   const countryById = Object.fromEntries(countries.map((country) => [country.id, country]))
+  // 被 editor 隐藏的城市不在 cities 里，countryIdOfCity 仍要回答（RFC-LOC-1 PR3b-1）。
+  const countryOfCity = new Map<string, string>([
+    ...cities.flatMap((city): [string, string][] => (city.countryId ? [[city.id, city.countryId]] : [])),
+    ['iceland__hidden-town', 'iceland'],
+  ])
 
   const plannedRecords: TravelMapRecord[] = [{
     id: 'planned_bergen',
@@ -123,9 +128,10 @@ const makeExports = (now = NOW): AppDataExports => {
       getCitiesForCountry: (countryId: string) =>
         countryById[countryId]?.cityIds.map((cityId) => cityById[cityId]).filter(Boolean) ?? [],
       shouldHideCityFromNavigation: (city: City) => city.nameEn === 'Vik',
+      countryIdOfCity: (cityId: string) => countryOfCity.get(cityId),
     },
     editorState: {
-      travelAtlasEditorState: { schemaVersion: 1, hiddenCityIds: ['iceland__vik'], updatedAt: `edited ${now}` },
+      travelAtlasEditorState: { schemaVersion: 1, hiddenCityIds: ['iceland__vik', 'iceland__hidden-town'], updatedAt: `edited ${now}` },
     },
     mediaCatalog: {
       allImportedMediaItems: mediaItems,
@@ -262,6 +268,13 @@ test('Map 转成按插入顺序的 [key, value] 数组，函数按定义域求�
   const domain = baseline.modules.droneMedia.hasDroneMedia.map(([cityId]: [string]) => cityId)
   assert.deepEqual(domain, [...sampleCities().map((city) => city.id), 'elsewhere__city'])
   assert.deepEqual(baseline.modules.droneMedia.hasDroneMedia.at(-1), ['elsewhere__city', true])
+  // @2：countryIdOfCity 的定义域再并上 editor-state 的 hiddenCityIds（去重，按首次出现顺序）；undefined 写成 null。
+  assert.equal(baseline.format, 'starmap-legacy-baseline@2')
+  assert.deepEqual(baseline.modules.travelAtlas.countryIdOfCity, [
+    ...sampleCities().map((city) => [city.id, city.countryId]),
+    ['elsewhere__city', null],
+    ['iceland__hidden-town', 'iceland'],
+  ])
   assert.deepEqual(
     baseline.queries.visiblePlaces.map(({ name, visibleLayerIds }: { name: string; visibleLayerIds: string[] }) => [name, visibleLayerIds]),
     [['travel+want_to_go', ['travel', 'want_to_go']], ['travel', ['travel']], ['want_to_go', ['want_to_go']], ['none', []]],

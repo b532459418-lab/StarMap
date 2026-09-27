@@ -22,8 +22,17 @@ import type { TravelMapRecord } from '../../types/travel.ts'
 
 export const NOW = '2000-01-01T00:00:00.000Z'
 
-/** PR1 公布的公开样例基线哈希（`legacy-baseline.mjs --sample`）。 */
-export const SAMPLE_BASELINE_SHA256 = 'eb91f172531f7c87280b07399af6ee80d1fc6e99a2ad38efa50b60b9afd299a4'
+/**
+ * 公开样例基线哈希（`legacy-baseline.mjs --sample`），格式 `starmap-legacy-baseline@2`（RFC-LOC-1 PR3b-1 §2.5：
+ * 增加 `countryIdOfCity`）。
+ */
+export const SAMPLE_BASELINE_SHA256 = '8caf2cfb4e0a4c3180aa004e0f65c919f9dcca4424e6bb0445943175fe38ac34'
+
+/**
+ * PR1 公布的 @1 格式哈希。@2 基线删掉 `countryIdOfCity`、`format` 改回 @1 之后必须仍等于它：
+ * 证明格式升级除了新增这一项之外没有改变任何东西（`./derive.test.ts`）。
+ */
+export const SAMPLE_BASELINE_SHA256_V1 = 'eb91f172531f7c87280b07399af6ee80d1fc6e99a2ad38efa50b60b9afd299a4'
 
 const readSample = (name: string): unknown =>
   JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'))

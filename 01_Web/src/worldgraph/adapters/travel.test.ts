@@ -724,7 +724,7 @@ test('快照自洽：id 唯一、引用不悬空', () => {
     'Relation id 必须唯一',
   )
   assert.equal(
-    new Set(snapshot.memberships.map((membership) => `${membership.entityId} ${membership.layerId}`)).size,
+    new Set(snapshot.memberships.map((membership) => `${membership.entityId}\u0000${membership.layerId}`)).size,
     snapshot.memberships.length,
     '(entityId, layerId) 复合键必须唯一',
   )

@@ -18,14 +18,20 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
+import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
+import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
 import { deriveAppData } from '../src/data/derive/appData.ts'
 import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = path.join(webRoot, 'scripts', 'legacy-baseline.mjs')
 const NOW = '2000-01-01T00:00:00.000Z'
-/** PR1 公布的公开样例基线哈希；PR2 的新路径必须产出同一份。 */
-const SAMPLE_BASELINE_SHA256 = 'eb91f172531f7c87280b07399af6ee80d1fc6e99a2ad38efa50b60b9afd299a4'
+/**
+ * 公开样例基线哈希；旧路径与 PR2 的新路径必须产出同一份。格式 @2（RFC-LOC-1 PR3b-1 增加 countryIdOfCity；
+ * 去掉这一项后等于 PR1 公布的 @1 哈希 eb91f172…299a4，见 src/data/canonical/derive.test.ts）。
+ */
+const SAMPLE_BASELINE_SHA256 = '8caf2cfb4e0a4c3180aa004e0f65c919f9dcca4424e6bb0445943175fe38ac34'
 
 const readSample = (name) => JSON.parse(readFileSync(path.join(webRoot, 'src', 'data', name), 'utf8'))
 
@@ -313,7 +319,7 @@ const inconsistentTravelMap = () => {
   return travel
 }
 
-test('--sample --path canonical：新路径的输出等于 PR1 公布的公开样例基线', () => withTemp(async ({ root, out }) => {
+test('--sample --path canonical：新路径的输出等于公布的公开样例基线（@2）', () => withTemp(async ({ root, out }) => {
   const canonical = path.join(out, 'canonical.json')
   const legacy = path.join(out, 'legacy.json')
   const normalized = path.join(out, 'normalized.json')
@@ -423,4 +429,125 @@ test('PR2 参数错误退出码 1', () => withTemp(async ({ root, out }) => {
     assert.equal(result.status, 1, `${args.join(' ')}\n${result.stderr}`)
     assert.match(result.stderr, /用法/)
   }
+}))
+
+// ---------------------------------------------------------------------------
+// RFC-LOC-1 PR3b-1：--path v2
+// ---------------------------------------------------------------------------
+
+const migrateCliPath = path.join(webRoot, 'scripts', 'migrate-identity.mjs')
+
+const runMigrate = (args, privateRoot) => spawnSync(process.execPath, [migrateCliPath, ...args], {
+  cwd: webRoot,
+  env: { ...process.env, STARMAP_PRIVATE_ROOT: privateRoot },
+  encoding: 'utf8',
+})
+
+/**
+ * 临时私人根：中性旧数据（公开样例的足迹与想去，editor-state 隐藏一个城市、调换国家顺序）→ migrate-identity 的
+ * dry-run 与 --apply 生成 data/v2/ → 写数据模式标记 { "mode": "v2" }。
+ */
+const prepareV2Root = async (root) => {
+  const travel = readSample('travel-map.sample.json')
+  travel.privacy_level = 'local-only'
+  await writePrivate(root, 'travel-map.local.json', travel)
+  await writePrivate(root, 'want-to-go.local.json', readSample('want-to-go.sample.json'))
+  await writePrivate(root, 'editor-state.local.json', { schemaVersion: 1, hiddenCityIds: ['iceland__vik'], countryOrder: ['faroe-islands', 'iceland'] })
+  assert.equal(runMigrate([], root).status, 0)
+  const applied = runMigrate(['--apply'], root)
+  assert.equal(applied.status, 0, applied.stdout + applied.stderr)
+  await writePrivate(root, 'data-mode.local.json', { mode: 'v2' })
+}
+
+const readV2FilesFrom = async (root) => Object.fromEntries(await Promise.all(V2_FILE_KEYS.map(async (key) => {
+  const filePath = path.join(root, 'data', 'v2', V2_FILE_NAMES[key])
+  return [key, existsSync(filePath) ? JSON.parse(await readFile(filePath, 'utf8')) : undefined]
+})))
+
+/** 与 App 在 V2 数据模式下相同的管线，在测试进程里算一遍。 */
+const expectedV2Baseline = (v2Files) =>
+  `${stableStringify(buildBaseline(deriveAppDataFromCanonical(canonicalForInputs({ dataMode: 'v2', v2Files }), { now: NOW }), { now: NOW }))}\n`
+
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+test('--path v2：读 data/v2/ 的五个文件 → V2 Reader → 派生 → 基线，等于同一份文件在 canonicalForInputs 管线上的结果；地点 id 是 UUID', () => withTemp(async ({ root, out }) => {
+  await prepareV2Root(root)
+  const target = path.join(out, 'v2.json')
+  const result = runCli(['--path', 'v2', '--out', target], root)
+  assert.equal(result.status, 0, result.stderr)
+  assert.ok(result.stderr.includes(`私人根目录：${path.resolve(root)}`), result.stderr)
+  const text = await readFile(target, 'utf8')
+  const v2Files = await readV2FilesFrom(root)
+  assert.equal(text, expectedV2Baseline(v2Files))
+
+  const { modules } = JSON.parse(text)
+  assert.ok(modules.travelAtlas.cities.length > 0)
+  assert.ok(modules.travelAtlas.cities.every((city) => UUID_V7.test(city.id) && UUID_V7.test(city.countryId)))
+  assert.equal(modules.travelAtlas.travelAtlasDataSource, 'local')
+  // 被隐藏的城市（维克）不在 cities 里，但 countryIdOfCity 的定义域里有它，答案是冰岛的 UUID。
+  const iceland = v2Files.places.places.find((place) => place.externalIds?.iso3166Alpha2 === 'IS').id
+  const [vik] = v2Files.editorState.hiddenCityIds
+  assert.ok(UUID_V7.test(vik))
+  assert.deepEqual(modules.travelAtlas.countryIdOfCity.find(([cityId]) => cityId === vik), [vik, iceland])
+  assert.equal(modules.travelAtlas.cities.some((city) => city.id === vik), false)
+}))
+
+test('--path v2 不看数据模式标记，总是读 data/v2/；缺的文件按空处理，data/v2/ 不存在时是空数据', () => withTemp(async ({ root, out }) => {
+  await prepareV2Root(root)
+  await rm(path.join(root, 'data', 'data-mode.local.json'))
+  const withoutMarker = path.join(out, 'no-marker.json')
+  assert.equal(runCli(['--path', 'v2', '--out', withoutMarker], root).status, 0)
+  assert.equal(await readFile(withoutMarker, 'utf8'), expectedV2Baseline(await readV2FilesFrom(root)))
+
+  await rm(path.join(root, 'data', 'v2', V2_FILE_NAMES.media))
+  const withoutMedia = path.join(out, 'no-media.json')
+  assert.equal(runCli(['--path', 'v2', '--out', withoutMedia], root).status, 0)
+  assert.equal(await readFile(withoutMedia, 'utf8'), expectedV2Baseline(await readV2FilesFrom(root)))
+
+  await rm(path.join(root, 'data', 'v2'), { recursive: true })
+  const empty = path.join(out, 'empty.json')
+  assert.equal(runCli(['--path', 'v2', '--out', empty], root).status, 0)
+  const text = await readFile(empty, 'utf8')
+  assert.equal(text, expectedV2Baseline(undefined))
+  const { modules } = JSON.parse(text)
+  assert.deepEqual([modules.travelAtlas.countries, modules.travelAtlas.cities, modules.wantToGo.wantToGoItems], [[], [], []])
+}))
+
+test('--path v2：V2 文件不合法 → 退出码 1，只报文件、路径与问题，不带内容；不是有效 JSON 同样退出码 1', () => withTemp(async ({ root, out }) => {
+  await prepareV2Root(root)
+  const placesPath = path.join(root, 'data', 'v2', V2_FILE_NAMES.places)
+  const places = JSON.parse(await readFile(placesPath, 'utf8'))
+  const secretName = places.places[0].names.en
+  places.places[0].names = { en: secretName, '': 'x' }
+  await writeFile(placesPath, JSON.stringify(places), 'utf8')
+  const invalid = runCli(['--path', 'v2', '--out', path.join(out, 'x.json')], root)
+  assert.equal(invalid.status, 1, invalid.stderr)
+  assert.match(invalid.stderr, /V2 数据文件没有通过校验/)
+  assert.match(invalid.stderr, /data\/v2\/places\.local\.json \$\.places\[0\]\.names/)
+  assert.ok(!invalid.stderr.includes(secretName))
+  assert.doesNotMatch(invalid.stderr, /\n\s+at /)
+
+  await writeFile(placesPath, '{ not json', 'utf8')
+  const unreadable = runCli(['--path', 'v2', '--out', path.join(out, 'y.json')], root)
+  assert.equal(unreadable.status, 1)
+  assert.match(unreadable.stderr, /读取失败：.*places\.local\.json（不是有效的 JSON）/)
+  assert.deepEqual(await readdir(out), [])
+}))
+
+test('--path v2：与 --sample、--normalize、--verify 同用是参数错误（退出码 1）；--out 在仓库之内被隐私门拒绝（退出码 2）', () => withTemp(async ({ root, out }) => {
+  for (const args of [
+    ['--sample', '--path', 'v2', '--out', path.join(out, 'a.json')],
+    ['--path', 'v2', '--sample', '--out', path.join(out, 'a.json')],
+    ['--path', 'v2', '--normalize', '--out', path.join(out, 'a.json')],
+    ['--verify', '--path', 'v2'],
+  ]) {
+    const result = runCli(args, root)
+    assert.equal(result.status, 1, `${args.join(' ')}\n${result.stderr}`)
+    assert.match(result.stderr, /用法/)
+  }
+  const inside = path.join(webRoot, 'legacy-baseline-v2-should-not-exist.json')
+  const gated = runCli(['--path', 'v2', '--out', inside], root)
+  assert.equal(gated.status, 2, gated.stderr)
+  assert.equal(existsSync(inside), false)
+  assert.deepEqual(await readdir(out), [])
 }))

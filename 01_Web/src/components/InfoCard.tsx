@@ -4,7 +4,7 @@ import { localEditorAvailable, travelAtlasEditorState } from '../data/editorStat
 import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource } from '../data/mediaCatalog'
 import { addLocalTravelRecord, deleteHiddenLocalMedia, importLocalMedia, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState, uploadLocalMedia } from '../data/localEditorApi'
 import type { CitySearchOption } from '../data/localEditorApi'
-import { cityById, countryById, getCitiesForCountry } from '../data/travelAtlas'
+import { cityById, countryById, countryIdOfCity, getCitiesForCountry } from '../data/travelAtlas'
 import type { CityId, Country, CountryId, SelectionMode } from '../types/travel'
 import type { CityPhotoGalleryRequest } from './CityPhotoGalleryModal'
 import { LocationSearchField } from './LocationSearchField'
@@ -80,8 +80,9 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   const memoryGridRef = useFlipLayout<HTMLDivElement>(
     isCityMode ? draftPhotoIds.join('|') : draftCityIds.join('|'),
   )
+  // 被隐藏的城市不在 cityById 里；所属国家只问 countryIdOfCity，不解析 id 的结构（RFC-LOC-1 PR3b-1 §2.5）。
   const hiddenCityIdsForCountry = country
-    ? draftHiddenCityIds.filter((id) => id.startsWith(`${country.id}__`))
+    ? draftHiddenCityIds.filter((id) => countryIdOfCity(id) === country.id)
     : []
   const hiddenPhotoIdsForCity = city
     ? draftHiddenPhotoIds.filter((id) => allImportedMediaItems.some((item) => item.id === id && item.cityId === city.id && item.kind === 'photo'))
@@ -373,14 +374,17 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     onSave={savePhotoDraft}
                   />
                 ) : null}
-                <input
-                  ref={photoInputRef}
-                  className="sr-only"
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/avif"
-                  multiple
-                  onChange={(event) => void uploadPhotos(event.currentTarget.files)}
-                />
+                {/* 上传入口与工具栏同一道门：公开模式与 V2 数据模式下不渲染（不靠 sr-only 隐藏）。 */}
+                {localEditorAvailable ? (
+                  <input
+                    ref={photoInputRef}
+                    className="sr-only"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/avif"
+                    multiple
+                    onChange={(event) => void uploadPhotos(event.currentTarget.files)}
+                  />
+                ) : null}
               </div>
             ) : (
               <div className="atlas-memory-panel-heading-row mb-3">
@@ -497,7 +501,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                   setEditorBusy(true)
                   void updateLocalEditorState((current) => ({
                     ...current,
-                    hiddenCityIds: current.hiddenCityIds.filter((id) => !id.startsWith(`${country?.id}__`)),
+                    hiddenCityIds: current.hiddenCityIds.filter((id) => countryIdOfCity(id) !== country?.id),
                   })).then(reloadAfterLocalSave).catch((error: unknown) => {
                     setEditorNotice(error instanceof Error ? error.message : '恢复失败。')
                     setEditorBusy(false)

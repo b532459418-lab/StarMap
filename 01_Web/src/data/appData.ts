@@ -1,7 +1,10 @@
 /**
- * App 读到的全部数据（RFC-LOC-1 PR2 规格 §2.7）：
+ * App 读到的全部数据（RFC-LOC-1 PR2 规格 §2.7；PR3b-1 规格 §2.2 加数据模式）：
  *
- *   原始输入（./rawInputs.ts）──Legacy Adapter──> Canonical Model ──派生──> 六个数据模块的导出
+ *   原始输入（./rawInputs.ts）──canonicalForInputs──> Canonical Model ──派生──> 六个数据模块的导出
+ *
+ * canonicalForInputs（./canonical/canonicalForInputs.ts）按数据模式选：legacy 模式走 Legacy Adapter（与 PR2 相同），
+ * v2 模式走 V2 Reader（只读 data/v2/ 的文件，没有数据时为空，不回落到样例）。
  *
  * 这里【不是】 StarMap Core：它经 ./rawInputs.ts 依赖 Vite 虚拟模块与 import.meta.env。
  * 模块级只算一次：适配器与派生都是纯函数，输入是模块级常量，所以导出的对象引用天然稳定
@@ -13,14 +16,17 @@
  * App 不再调用它。
  */
 
+import { canonicalForInputs, type DataMode } from './canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from './canonical/derive.ts'
-import { legacyAdapter } from './canonical/legacyAdapter.ts'
-import { rawAppInputs } from './rawInputs.ts'
+import { appInputs, rawAppInputs } from './rawInputs.ts'
 
 /** 模块加载时固定一次。适配器要求 options.now 必填且不读时钟，时间从这里注入。worldGraph.ts 以原名导出。 */
 export const worldGraphSessionNow: string = rawAppInputs.now
 
-const canonical = legacyAdapter(rawAppInputs)
+/** 私人目录的数据模式（公开模式恒为 legacy）。editorState.ts 的 localEditorAvailable 与 V2 提示据此判断。 */
+export const dataMode: DataMode = appInputs.dataMode
+
+const canonical = canonicalForInputs(appInputs)
 
 export const appData = deriveAppDataFromCanonical(canonical, { now: worldGraphSessionNow })
 
