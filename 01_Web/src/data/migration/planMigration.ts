@@ -27,11 +27,11 @@
  * 不读时钟、不读随机源：`now` 与 `newId` 由调用方注入。
  */
 
-import { slugify } from '../../worldgraph/slug.ts'
 import type { RawAppInputs } from '../derive/appData.ts'
 import { legacyAdapter } from '../canonical/legacyAdapter.ts'
 import { normalizeLegacy } from '../canonical/normalizeLegacy.ts'
 import { editorStatePlaceRefs, mapPlaceIds } from '../canonical/placeIds.ts'
+import { asCountryCode, distanceKm, footprintCityTitle, mergeKeyOf, wantToGoTitle } from '../canonical/placeResolver.ts'
 import { EN, ZH, isoOf } from '../canonical/reconstruct.ts'
 import { isoFromCode, ruleValues } from '../canonical/representatives.ts'
 import type { CanonicalData, CanonicalEditorState, CanonicalPlace, PlaceId } from '../canonical/types.ts'
@@ -208,16 +208,8 @@ const sameNames = (left: Record<string, string>, right: Record<string, string>) 
   return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key])
 }
 
-const EARTH_RADIUS_KM = 6371.0088
-
-/** 大圆距离（haversine），千米。 */
-export const distanceKm = (from: { lat: number; lng: number }, to: { lat: number; lng: number }): number => {
-  const radians = (degrees: number) => (degrees * Math.PI) / 180
-  const dLat = radians(to.lat - from.lat)
-  const dLng = radians(to.lng - from.lng)
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(radians(from.lat)) * Math.cos(radians(to.lat)) * Math.sin(dLng / 2) ** 2
-  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)))
-}
+/** 大圆距离（haversine），千米。PR3b-2 起在 ../canonical/placeResolver.ts（与 V2 写入共用），这里保留原导出名。 */
+export { distanceKm }
 
 /** 静默合并允许的最大坐标差。 */
 export const SAME_PLACE_KM = 1
@@ -231,40 +223,9 @@ export const SUSPECTED_DUPLICATE_KM = 10
 const locationNeedsConfirmation = (from: CanonicalPlace, into: CanonicalPlace): boolean =>
   from.location !== undefined && (into.location === undefined || distanceKm(from.location, into.location) > SAME_PLACE_KM)
 
-// ---------------------------------------------------------------------------
-// FR-MR-5 合并键：与 src/worldgraph/query.ts 的 mergeKeyOf 逐字一致
-// ---------------------------------------------------------------------------
-//
-// Core 的 mergeKeyOf 不导出（本 PR 不改 Core），这里照抄它与它的两个输入：
-// - 国家代码：`asCountryCode`（两位字母才算，统一大写）。足迹城市取所属国家 Entity 的 flagCode
-//   （= 国家地点 ISO 的小写），想去地点取自身的 countryCode（= 所属国家地点的 ISO）；
-// - 名称：Entity 的 title。足迹城市的 title 由 Core travel 适配器 `buildTitle(city.nameZh, city.nameEn)`
-//   得到，City 的名称由 ../canonical/derive.ts 从地点重建（nameZh = 中文名，nameEn = 英文名 || 中文名）；
-//   想去地点的 title 是 `{ zh: nameZh, en: nameEn }`，由 ../canonical/reconstruct.ts 从地点重建。
+// FR-MR-5 合并键（与 src/worldgraph/query.ts 的 mergeKeyOf 逐字一致）与它的两个输入，PR3b-2 起在
+// ../canonical/placeResolver.ts（asCountryCode、footprintCityTitle、wantToGoTitle、mergeKeyOf），与 V2 写入共用。
 // planMigration.test.ts 用真实管线 queryVisiblePlaces 对拍这套判断。
-
-type EntityTitle = { zh: string; en?: string }
-
-const asCountryCode = (value: unknown): string | undefined => {
-  const code = typeof value === 'string' && value !== '' ? value.trim().toUpperCase() : undefined
-  return code !== undefined && /^[A-Z]{2}$/.test(code) ? code : undefined
-}
-
-const footprintCityTitle = (place: CanonicalPlace): EntityTitle => {
-  const nameZh = place.names[ZH] ?? ''
-  const nameEn = (place.names[EN] ?? '') || nameZh
-  const title: EntityTitle = { zh: nameZh || nameEn || '' }
-  if (nameEn) title.en = nameEn
-  return title
-}
-
-const wantToGoTitle = (place: CanonicalPlace): EntityTitle => ({ zh: place.names[ZH] ?? '', en: place.names[EN] ?? '' })
-
-const mergeKeyOf = (countryCode: string | undefined, title: EntityTitle): string | undefined => {
-  if (countryCode === undefined) return undefined
-  const slug = slugify(title.en ?? title.zh)
-  return slug === '' ? undefined : `${countryCode}:${slug}`
-}
 
 // ---------------------------------------------------------------------------
 // 版本门槛
