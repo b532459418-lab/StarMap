@@ -455,3 +455,27 @@ test('shouldHideCityFromNavigation 按城市英文名或中文名匹配 display.
   // 隐藏只影响导航，城市仍在 cities 里。
   assert.equal(derived.cities.length, 3)
 })
+
+test('countryIdOfCity（RFC-LOC-1 PR3b-1）：全部记录建表——显示中、被 editor 隐藏、hiddenFromHome、只有 planned 的城市都查得到；别名归一之后；陈旧 id 为 undefined', () => {
+  const derived = deriveTravelAtlas(travelMap([
+    record({ id: 'shown' }),
+    record({ id: 'hidden-by-editor', city: '二城', city_en: 'Two' }),
+    record({ id: 'hidden-from-home', city: '三城', city_en: 'Three', hiddenFromHome: true }),
+    record({ id: 'planned-only', country: '乙国', country_en: 'Beta', city: '四城', city_en: 'Four', status: 'planned' }),
+    record({ id: 'alias', country: '丙國', country_en: 'Gamma Old', city: '五城', city_en: 'Five' }),
+  ], {
+    countryAliases: { 'Gamma Old': { country: '丙国', country_en: 'Gamma' } },
+  }), editor({ hiddenCityIds: ['alpha__two', 'alpha__ghost'] }))
+
+  assert.equal(derived.countryIdOfCity('alpha__one'), 'alpha')
+  assert.equal(derived.countryIdOfCity('alpha__two'), 'alpha')
+  assert.equal(derived.countryIdOfCity('alpha__three'), 'alpha')
+  assert.equal(derived.countryIdOfCity('beta__four'), 'beta')
+  assert.equal(derived.countryIdOfCity('gamma__five'), 'gamma')
+  // 被隐藏、hiddenFromHome、只有 planned 的城市都不在 cityById 里。
+  assert.deepEqual(Object.keys(derived.cityById), ['alpha__one', 'gamma__five'])
+  // 陈旧 id（前缀是 alpha__，但没有这座城市）、别名前的写法、国家 id：都不是城市。
+  assert.equal(derived.countryIdOfCity('alpha__ghost'), undefined)
+  assert.equal(derived.countryIdOfCity('gamma-old__five'), undefined)
+  assert.equal(derived.countryIdOfCity('alpha'), undefined)
+})

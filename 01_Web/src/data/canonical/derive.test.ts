@@ -7,7 +7,7 @@
  *   A = PR1 的 deriveAppData(原始数据)
  *   B = PR1 的 deriveAppData(normalizeLegacy(原始数据))
  *   C = deriveAppDataFromCanonical(legacyAdapter(原始数据))
- * - 公开样例：C ≡ A（字节），且等于 PR1 公布的基线哈希；
+ * - 公开样例：C ≡ A（字节），且等于公布的基线哈希（@2；去掉 PR3b-1 新增的 countryIdOfCity 后等于 PR1 的 @1 哈希）；
  * - 下面每个 fixture：B ≡ C（字节），没有任何条件；
  * - 没有不一致的 fixture 另外 A ≡ C。
  *
@@ -21,12 +21,14 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 
 import { deriveAppData, type RawAppInputs } from '../derive/appData.ts'
+import { buildBaseline, stableStringify } from '../derive/baseline.ts'
 import type { TravelMapRecord } from '../../types/travel.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
 import { legacyAdapter } from './legacyAdapter.ts'
 import {
   NOW,
   SAMPLE_BASELINE_SHA256,
+  SAMPLE_BASELINE_SHA256_V1,
   baselineText,
   consistentPersonalRaw,
   nameInconsistencyRaw,
@@ -35,8 +37,10 @@ import {
   record,
   sampleRaw,
   sampleTravelMap,
+  sampleWantToGo,
 } from './legacy.fixture.ts'
 import { normalizeLegacy } from './normalizeLegacy.ts'
+import { toV2Space } from './v2.fixture.ts'
 
 /** B：旧路径跑 normalizeLegacy(原始数据)。 */
 const pathB = (raw: RawAppInputs) => baselineText(deriveAppData(normalizeLegacy(raw).normalized))
@@ -72,12 +76,104 @@ const sha256 = (text: string) => createHash('sha256').update(`${text}\n`).digest
 // 公开样例：C ≡ A
 // ---------------------------------------------------------------------------
 
-test('公开样例：C 与 A 逐字节相同，等于 PR1 公布的基线', () => {
+test('公开样例：C 与 A 逐字节相同，等于公布的基线（@2）', () => {
   const a = pathA(sampleRaw())
   const c = pathC(sampleRaw())
   assert.ok(c === a, 'C 与 A 不是逐字节相同')
   assert.equal(sha256(c), SAMPLE_BASELINE_SHA256)
   assert.equal(pathB(sampleRaw()), c)
+})
+
+test('基线 @2：删掉 countryIdOfCity、format 改回 @1 之后，公开样例仍等于 PR1 公布的 @1 哈希', () => {
+  const baseline = buildBaseline(deriveAppDataFromCanonical(legacyAdapter(sampleRaw()), { now: NOW }), { now: NOW }) as {
+    format: string
+    modules: { travelAtlas: Record<string, unknown> }
+  }
+  assert.equal(baseline.format, 'starmap-legacy-baseline@2')
+  assert.equal(sha256(stableStringify(baseline)), SAMPLE_BASELINE_SHA256)
+  assert.deepEqual(baseline.modules.travelAtlas.countryIdOfCity, [
+    ['iceland__reykjavik', 'iceland'],
+    ['iceland__vik', 'iceland'],
+    ['iceland__akureyri', 'iceland'],
+    ['faroe-islands__torshavn', 'faroe-islands'],
+    ['faroe-islands__gjogv', 'faroe-islands'],
+  ])
+
+  delete baseline.modules.travelAtlas.countryIdOfCity
+  baseline.format = 'starmap-legacy-baseline@1'
+  assert.equal(sha256(stableStringify(baseline)), SAMPLE_BASELINE_SHA256_V1)
+})
+
+/**
+ * countryIdOfCity 的数据：显示中的城市、被 editor 隐藏的城市、hiddenFromHome 的城市、只有 planned 的城市、
+ * 国家别名（Faeroe Islands → Faroe Islands），另在 hiddenCityIds 里放一个陈旧 id（前缀是 iceland__，但没有这座城市）。
+ */
+const countryOfCityRaw = () => rawInputs({
+  records: [
+    record({ id: 'shown' }),
+    record({ id: 'hidden-by-editor', city: '维克', city_en: 'Vik', start_date: '2025-06-02' }),
+    record({ id: 'hidden-from-home', city: '阿克雷里', city_en: 'Akureyri', start_date: '2025-06-03', hiddenFromHome: true }),
+    record({ id: 'planned-only', country: '挪威', country_en: 'Norway', country_code: 'no', city: '卑尔根', city_en: 'Bergen', status: 'planned', start_date: '2026-07-01' }),
+    record({ id: 'alias', country: '法羅群島', country_en: 'Faeroe Islands', country_code: 'fo', city: '克拉克斯维克', city_en: 'Klaksvik', start_date: '2025-06-04' }),
+  ],
+  display: {
+    countryAliases: { 'Faeroe Islands': { country: '法罗群岛', country_en: 'Faroe Islands' } },
+    countryCodes: { Iceland: 'is', Norway: 'no', 'Faroe Islands': 'fo' },
+  },
+  editorState: { schemaVersion: 1, hiddenCityIds: ['iceland__vik', 'iceland__atlantis'] },
+  wantToGo: sampleWantToGo(),
+})
+
+const COUNTRY_OF_CITY_EXPECTED: [string, string | undefined][] = [
+  ['iceland__reykjavik', 'iceland'],
+  ['iceland__vik', 'iceland'],
+  ['iceland__akureyri', 'iceland'],
+  ['norway__bergen', 'norway'],
+  ['faroe-islands__klaksvik', 'faroe-islands'],
+  // 陈旧 id：旧写法按前缀会算进 iceland，countryIdOfCity 不算（规格 §2.5 接受的唯一差异）。
+  ['iceland__atlantis', undefined],
+  // 别名前的写法、国家 id、不存在的 id 都不是城市。
+  ['faeroe-islands__klaksvik', undefined],
+  ['iceland', undefined],
+  ['', undefined],
+]
+
+test('countryIdOfCity（Canonical 路径）：显示中、被 editor 隐藏、hiddenFromHome、只有 planned 的城市都查得到；陈旧 id 为 undefined；与旧路径逐项相同', () => {
+  const raw = countryOfCityRaw()
+  const canonical = legacyAdapter(raw)
+  const derived = deriveAppDataFromCanonical(canonical, { now: NOW }).travelAtlas
+  const legacy = deriveAppData(raw).travelAtlas
+  for (const [cityId, countryId] of COUNTRY_OF_CITY_EXPECTED) {
+    assert.equal(derived.countryIdOfCity(cityId), countryId, `Canonical：${cityId}`)
+    assert.equal(legacy.countryIdOfCity(cityId), countryId, `旧路径：${cityId}`)
+  }
+  // 被隐藏的城市不在 cityById 里——这正是 InfoCard 不能用 cityById 的原因。
+  assert.equal(derived.cityById.iceland__vik, undefined)
+  assert.equal(derived.cityById.norway__bergen, undefined)
+  // 想去地点（legacy 模式下每个条目一个）也是城市地点，按 partOf 回答。
+  assert.equal(derived.countryIdOfCity('wtg:wtg_2026-08-12_akureyri'), 'iceland')
+
+  // 基线的定义域 = 城市级函数的定义域 ∪ hiddenCityIds；A ≡ B ≡ C。
+  const c = assertBEqualsC(raw)
+  assert.equal(pathA(raw), c)
+  assert.deepEqual(JSON.parse(c).modules.travelAtlas.countryIdOfCity, [
+    ['iceland__reykjavik', 'iceland'],
+    ['faroe-islands__klaksvik', 'faroe-islands'],
+    ['iceland__vik', 'iceland'],
+    ['iceland__atlantis', null],
+  ])
+})
+
+test('countryIdOfCity（V2 id 空间）：地点 id 换成 UUID 后按 partOf 回答，被隐藏的城市同样查得到', () => {
+  const { data, uuidOf } = toV2Space(legacyAdapter(countryOfCityRaw()))
+  const derived = deriveAppDataFromCanonical(data, { now: NOW }).travelAtlas
+  for (const [cityId, countryId] of COUNTRY_OF_CITY_EXPECTED) {
+    const uuid = uuidOf.get(cityId)
+    if (uuid === undefined) continue
+    assert.equal(derived.countryIdOfCity(uuid), countryId === undefined ? undefined : uuidOf.get(countryId), cityId)
+  }
+  assert.equal(derived.countryIdOfCity(uuidOf.get('iceland')!), undefined)
+  assert.equal(derived.countryIdOfCity('iceland__vik'), undefined)
 })
 
 test('公开样例：导出名与 PR1 的 deriveAppData 完全相同', () => {

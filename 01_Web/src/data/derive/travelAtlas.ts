@@ -409,6 +409,17 @@ export const deriveTravelAtlas = (exportData: TravelMapExport, editorState: Trav
 
   const missingCoordinateCities = cities.filter((city) => city.missingCoordinates)
 
+  // RFC-LOC-1 PR3b-1 §2.5（纯新增，上面的导出与算法不动）：城市 → 所属国家，覆盖【全部】城市——
+  // 用全部记录建表（含 planned、hiddenFromHome、被 editor 隐藏的，国家别名归一之后），
+  // 所以被隐藏的城市也查得到；它们不在 cityById 里。UI 只调这个函数，不再解析 id 的结构。
+  const countryIdByCityId = new Map<CityId, CountryId>()
+  for (const record of exportData.records) {
+    const normalized = normalizeRecordCountry(record, display)
+    const cityId = cityKeyForRecord(normalized)
+    if (!countryIdByCityId.has(cityId)) countryIdByCityId.set(cityId, countryKeyForRecord(normalized))
+  }
+  const countryIdOfCity = (cityId: CityId): CountryId | undefined => countryIdByCityId.get(cityId)
+
   return {
     travelAtlasDisplay,
     plannedRecords,
@@ -424,6 +435,7 @@ export const deriveTravelAtlas = (exportData: TravelMapExport, editorState: Trav
     getCitiesForCountry,
     shouldHideCityFromNavigation,
     missingCoordinateCities,
+    countryIdOfCity,
   }
 }
 

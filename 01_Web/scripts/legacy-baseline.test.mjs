@@ -24,8 +24,11 @@ import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = path.join(webRoot, 'scripts', 'legacy-baseline.mjs')
 const NOW = '2000-01-01T00:00:00.000Z'
-/** PR1 公布的公开样例基线哈希；PR2 的新路径必须产出同一份。 */
-const SAMPLE_BASELINE_SHA256 = 'eb91f172531f7c87280b07399af6ee80d1fc6e99a2ad38efa50b60b9afd299a4'
+/**
+ * 公开样例基线哈希；旧路径与 PR2 的新路径必须产出同一份。格式 @2（RFC-LOC-1 PR3b-1 增加 countryIdOfCity；
+ * 去掉这一项后等于 PR1 公布的 @1 哈希 eb91f172…299a4，见 src/data/canonical/derive.test.ts）。
+ */
+const SAMPLE_BASELINE_SHA256 = '8caf2cfb4e0a4c3180aa004e0f65c919f9dcca4424e6bb0445943175fe38ac34'
 
 const readSample = (name) => JSON.parse(readFileSync(path.join(webRoot, 'src', 'data', name), 'utf8'))
 

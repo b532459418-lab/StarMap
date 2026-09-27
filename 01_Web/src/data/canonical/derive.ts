@@ -292,6 +292,13 @@ const deriveTravelAtlasFromCanonical = (
 
   const missingCoordinateCities = cities.filter((city) => city.missingCoordinates)
 
+  // RFC-LOC-1 PR3b-1 §2.5：城市 → 所属国家，覆盖【全部】城市地点（含被 editor 隐藏的：它们不在 cityById 里），
+  // 取城市地点的 partOf。不是城市地点（国家、不存在的 id）为 undefined。
+  const countryIdOfCity = (cityId: CityId): CountryId | undefined => {
+    const place = places.get(cityId)
+    return place?.subtype === 'city' ? place.partOf : undefined
+  }
+
   return {
     travelAtlasDisplay,
     plannedRecords,
@@ -307,6 +314,7 @@ const deriveTravelAtlasFromCanonical = (
     getCitiesForCountry,
     shouldHideCityFromNavigation,
     missingCoordinateCities,
+    countryIdOfCity,
   }
 }
 
