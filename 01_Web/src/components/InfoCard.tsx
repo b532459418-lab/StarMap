@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
-import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
+import { localEditorAvailable, mediaEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource } from '../data/mediaCatalog'
 import { addLocalTravelRecord, deleteHiddenLocalMedia, importLocalMedia, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState, uploadLocalMedia } from '../data/localEditorApi'
 import type { CitySearchOption } from '../data/localEditorApi'
@@ -326,8 +326,9 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
 
         {isOverview ? <p className="text-sm leading-6 text-slate-600">{summary}</p> : null}
 
+        {/* 城市照片区（城市模式）没有照片时只为媒体编辑而显示；城市卡片区（国家模式）为本地编辑而显示（RFC-LOC-1 PR3b-2 §2.7）。 */}
         {(isCountryGrid || isCityMode) && (
-          (isCityMode ? cityPhotos.length > 0 : memoryCities.length > 0) || localEditorAvailable
+          isCityMode ? cityPhotos.length > 0 || mediaEditorAvailable : memoryCities.length > 0 || localEditorAvailable
         ) ? (
           <div
             className={`atlas-memory-panel flex min-h-0 flex-col rounded-[22px] bg-slate-950 p-3 text-white shadow-[0_18px_50px_rgba(15,23,42,0.2)] ${
@@ -352,7 +353,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     {memorySectionLabel}
                   </span>
                 </button>
-                {localEditorAvailable ? (
+                {mediaEditorAvailable ? (
                   <LocalEditorToolbar
                     editing={photoEditing}
                     busy={editorBusy}
@@ -374,8 +375,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     onSave={savePhotoDraft}
                   />
                 ) : null}
-                {/* 上传入口与工具栏同一道门：公开模式与 V2 数据模式下不渲染（不靠 sr-only 隐藏）。 */}
-                {localEditorAvailable ? (
+                {/* 上传入口与照片工具栏同一道门：公开模式与 V2 数据模式下不渲染（不靠 sr-only 隐藏）。 */}
+                {mediaEditorAvailable ? (
                   <input
                     ref={photoInputRef}
                     className="sr-only"
@@ -512,7 +513,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
               </button>
             ) : null}
 
-            {isCityMode && photoEditing && hiddenPhotoIdsForCity.length > 0 ? (
+            {mediaEditorAvailable && isCityMode && photoEditing && hiddenPhotoIdsForCity.length > 0 ? (
               <div className="atlas-local-editor-hidden-actions">
                 <button
                   type="button"

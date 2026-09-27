@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { Drone, GripVertical, Maximize2, X } from 'lucide-react'
-import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
+import { mediaEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems } from '../data/mediaCatalog'
 import { deleteHiddenLocalMedia, importLocalMedia, reloadAfterLocalSave, updateLocalEditorState, uploadLocalMedia } from '../data/localEditorApi'
 import { readDroneFileMetadata } from '../data/droneMetadata'
@@ -112,7 +112,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
     ? fileDrafts.filter((draft) => draft.status === 'ready' && isLikelyEquirectangularPanorama(draft.width, draft.height)).length
     : 0
 
-  if (!city || (items.length === 0 && !localEditorAvailable)) return null
+  if (!city || (items.length === 0 && !mediaEditorAvailable)) return null
 
   const mediaTitle = `${city.nameZh}无人机影像`
 
@@ -262,7 +262,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
             <p className="text-[10px] font-semibold uppercase leading-4 tracking-[0.22em] text-white">Drone Media</p>
             <h2 className="mt-1 truncate text-[22px] font-semibold leading-[1.15] tracking-normal text-slate-950">{mediaTitle}</h2>
           </div>
-          {localEditorAvailable ? (
+          {mediaEditorAvailable ? (
             <LocalEditorToolbar
               editing={editing}
               busy={busy}
@@ -359,7 +359,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
 
         {notice ? <p className="atlas-local-editor-notice atlas-local-editor-notice-dark" role="status">{notice}</p> : null}
 
-        {editing && hiddenIdsForCity.length > 0 ? (
+        {mediaEditorAvailable && editing && hiddenIdsForCity.length > 0 ? (
           <div className="atlas-local-editor-hidden-actions">
             <button
               type="button"
