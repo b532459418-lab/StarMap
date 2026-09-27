@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Drone, GripVertical, MapPin, Plus, RotateCcw, Settings2, SlidersHorizontal, Undo2, X } from 'lucide-react'
+import { withoutListedCountries } from '../data/countrySearchFilter'
 import { hasDroneMedia } from '../data/droneMedia'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { addLocalCountry, deleteHiddenLocalCountries, reloadAfterLocalSave, searchLocalCountries, updateLocalEditorState } from '../data/localEditorApi'
@@ -87,7 +88,8 @@ export function CountrySelector({
   const countryListRef = useFlipLayout<HTMLDivElement>(draftCountryIds.join('|'))
   const searchCountryOptions = useCallback(async (query: string, signal: AbortSignal) => {
     const results = await searchLocalCountries(query, signal)
-    return results.filter((option) => !countries.some((country) => country.id === option.id))
+    // 目录候选的 id 是名字 slug，V2 下国家的 id 是地点 UUID：按 id 或国家代码判断「已在列表里」（RFC-LOC-1 PR3b-2）。
+    return withoutListedCountries(results, countries)
   }, [])
 
   const resetCountryDraft = () => {

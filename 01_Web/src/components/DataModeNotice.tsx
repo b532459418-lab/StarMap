@@ -12,7 +12,7 @@ const notice = dataModeNotice({
 })
 
 /**
- * RFC-LOC-1 PR3b-1 §2.4：个人模式 · V2 数据模式下，地图页上方的只读说明与空状态。
+ * RFC-LOC-1 PR3b-1 §2.4（PR3b-2 §2.7 改文案）：个人模式 · V2 数据模式下，地图页上方的说明（照片与无人机影像的编辑尚未开放）与空状态。
  * 公开模式与旧模式下不渲染。不拦截指针（pointer-events-none），不遮挡地球交互；
  * 沿用本地编辑器提示的类名（atlas-local-editor-notice / -empty）与地图页的 glass-panel 主题变量。
  */

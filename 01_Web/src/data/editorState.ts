@@ -7,6 +7,10 @@ export { orderBySavedIds } from './derive/editorState.ts'
 
 export const travelAtlasEditorState = appData.editorState.travelAtlasEditorState
 
-// RFC-LOC-1 PR3b-1 §2.3：V2 数据模式下编辑一律关闭（PR3b-2 / PR3b-3 开放）。全部编辑控件以它为门，
-// 在 V2 下根本不渲染（不靠 CSS 隐藏）；服务端另外对写入返回 409，那才是真正的防线。
-export const localEditorAvailable = import.meta.env.DEV && import.meta.env.MODE === 'personal' && dataMode !== 'v2'
+// 本地编辑只在开发模式的个人模式下可用（公开构建里恒为 false，编辑控件根本不渲染，不靠 CSS 隐藏）。
+// RFC-LOC-1 PR3b-2 §2.7：V2 数据模式下非媒体编辑已开放（服务端走 V2 写入），所以这里不再看数据模式。
+export const localEditorAvailable = import.meta.env.DEV && import.meta.env.MODE === 'personal'
+
+// 媒体编辑（城市照片的工具栏与上传、无人机影像的编辑区、隐藏媒体的恢复与彻底删除）在 V2 数据模式下仍关闭，
+// 由 RFC-LOC-1 PR3b-3 开放。这些控件以它为门，在 V2 下根本不渲染；服务端另外对三个媒体端点返回 409。
+export const mediaEditorAvailable = localEditorAvailable && dataMode !== 'v2'

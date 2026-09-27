@@ -1,12 +1,15 @@
 /**
- * scripts/local-editor-data-mode.mjs 的测试（RFC-LOC-1 PR3b-1 规格 §2.2、§2.3、§3「插件」）：
- * 虚拟模块的内容，以及 V2 数据模式下编辑接口的拒绝。端到端（dev server + curl）在规格 §6 手工验证。
+ * scripts/local-editor-data-mode.mjs 的测试（RFC-LOC-1 PR3b-1 规格 §2.2、§2.3、§3「插件」；PR3b-2 规格 §2.7、§3）：
+ * 虚拟模块的内容，V2 数据模式下编辑接口的拒绝（PR3b-2 起只拒绝媒体端点）与 V2 写入路由表，
+ * 以及读插件源码的两条断言：V2 分派在旧分支之前，旧模式的写入逻辑与路由分支逐字未变。
+ * 端到端（dev server + curl）在规格的浏览器验证里手工做；Node 端到端见 v2-editor-store.test.mjs。
  *
- * 运行方式：npm test。零依赖：只用 node:test + node:assert/strict + node:fs。不 import 插件本身。
+ * 运行方式：npm test。零依赖：只用 node:test + node:assert/strict + node:fs + node:crypto。不 import 插件本身。
  */
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -20,10 +23,13 @@ import {
   privateDataSources,
   renderPrivateDataModule,
   shouldHandlePrivateDataChange,
+  V2_MEDIA_ENDPOINTS,
+  V2_MEDIA_READ_ONLY_CODE,
+  V2_MEDIA_READ_ONLY_ERROR,
   V2_PRIVATE_FILE_KEYS,
-  V2_READ_ONLY_ERROR,
 } from './local-editor-data-mode.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
+import { V2_EDITOR_ROUTES, v2EditorRoute } from './v2-editor-store.mjs'
 import { V2_FILE_KEYS } from '../src/data/canonical/v2Schema.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -155,34 +161,113 @@ test('插件的编辑接口正好是：11 个写入端点、GET /editor/state、
   )
 })
 
-test('V2 模式：11 个写入端点与 GET /editor/state 全部 409（固定的错误信息），两个目录搜索放行；插件里的每个分支都被覆盖', () => {
-  for (const endpoint of [...WRITE_ENDPOINTS, 'GET /__travelatlas/editor/state']) {
+const MEDIA_ENDPOINTS = [
+  'POST /__travelatlas/editor/upload',
+  'POST /__travelatlas/editor/import',
+  'POST /__travelatlas/editor/media/delete',
+]
+const NON_MEDIA_WRITE_ENDPOINTS = WRITE_ENDPOINTS.filter((endpoint) => !MEDIA_ENDPOINTS.includes(endpoint))
+
+test('V2 模式（RFC-LOC-1 PR3b-2）：只有三个媒体端点 409（新错误信息与码），其余写入端点、GET /editor/state 与目录搜索都放行', () => {
+  assert.deepEqual([...V2_MEDIA_ENDPOINTS], MEDIA_ENDPOINTS)
+  assert.equal(NON_MEDIA_WRITE_ENDPOINTS.length, 8)
+  for (const endpoint of MEDIA_ENDPOINTS) {
     const [method, pathname] = endpoint.split(' ')
     assert.deepEqual(
       editorDataModeRejection({ dataMode: 'v2', method, pathname }),
-      { status: 409, body: { ok: false, error: V2_READ_ONLY_ERROR } },
+      { status: 409, body: { ok: false, error: V2_MEDIA_READ_ONLY_ERROR, code: V2_MEDIA_READ_ONLY_CODE } },
       endpoint,
     )
   }
-  for (const endpoint of READ_ONLY_CATALOGS) {
+  for (const endpoint of [...NON_MEDIA_WRITE_ENDPOINTS, 'GET /__travelatlas/editor/state', ...READ_ONLY_CATALOGS]) {
     const [method, pathname] = endpoint.split(' ')
     assert.equal(editorDataModeRejection({ dataMode: 'v2', method, pathname }), undefined, endpoint)
   }
   for (const { method, pathname } of pluginEndpoints()) {
-    const expected = READ_ONLY_CATALOGS.includes(`${method} ${pathname}`) ? undefined : 409
+    const expected = MEDIA_ENDPOINTS.includes(`${method} ${pathname}`) ? 409 : undefined
     assert.equal(editorDataModeRejection({ dataMode: 'v2', method, pathname })?.status, expected, `${method} ${pathname}`)
   }
-  assert.equal(V2_READ_ONLY_ERROR, 'V2 数据模式下暂不能编辑（RFC-LOC-1 PR3b-2 / PR3b-3 开放）。')
+  assert.equal(V2_MEDIA_READ_ONLY_ERROR, 'V2 数据模式下暂不能编辑照片与无人机影像（RFC-LOC-1 PR3b-3 开放）。')
+  assert.equal(V2_MEDIA_READ_ONLY_CODE, 'E_V2_MEDIA_UNAVAILABLE')
 })
 
-test('V2 模式默认拒绝：没列进只读名单的接口（包括将来新加的）、目录搜索换了方法，都是 409', () => {
+test('V2 模式的写入路由表正好是 8 个非媒体写入端点；没列进去的接口（包括将来新加的、媒体端点、换了方法的）没有路由', () => {
+  assert.deepEqual(Object.keys(V2_EDITOR_ROUTES).sort(), [...NON_MEDIA_WRITE_ENDPOINTS].sort())
+  for (const endpoint of NON_MEDIA_WRITE_ENDPOINTS) {
+    const [method, pathname] = endpoint.split(' ')
+    assert.equal(typeof v2EditorRoute(method, pathname)?.run, 'function', endpoint)
+  }
   for (const [method, pathname] of [
     ['POST', '/__travelatlas/editor/something-new'],
     ['DELETE', '/__travelatlas/editor/state'],
+    ['GET', '/__travelatlas/editor/state'],
     ['POST', '/__travelatlas/editor/catalog/cities'],
+    ...MEDIA_ENDPOINTS.map((endpoint) => endpoint.split(' ')),
   ]) {
-    assert.equal(editorDataModeRejection({ dataMode: 'v2', method, pathname })?.status, 409, `${method} ${pathname}`)
+    assert.equal(v2EditorRoute(method, pathname), undefined, `${method} ${pathname}`)
   }
+  // 成功时的状态码与旧模式相同。
+  assert.deepEqual(Object.fromEntries(Object.entries(V2_EDITOR_ROUTES).map(([endpoint, route]) => [endpoint, route.status])), {
+    'PUT /__travelatlas/editor/state': 200,
+    'POST /__travelatlas/editor/records': 201,
+    'POST /__travelatlas/editor/countries': 201,
+    'POST /__travelatlas/editor/countries/delete': 200,
+    'POST /__travelatlas/editor/wanttogo': 201,
+    'POST /__travelatlas/editor/wanttogo/update': 200,
+    'POST /__travelatlas/editor/wanttogo/delete': 200,
+    'POST /__travelatlas/editor/wanttogo/convert': 200,
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 插件源码：V2 分派在旧分支之前，旧模式的路由与写入逻辑逐字未变
+// ---------------------------------------------------------------------------
+
+const pluginSource = () => readFileSync(path.join(webRoot, 'scripts', 'local-editor-plugin.mjs'), 'utf8').replace(/\r\n/g, '\n')
+
+/** 从 `start` 到 `end`（`includeEnd` 时含 end）的原文。 */
+const sourceBetween = (source, start, end, includeEnd) => {
+  const from = source.indexOf(start)
+  const to = source.indexOf(end, from)
+  assert.ok(from >= 0 && to >= 0, `找不到源码区段：${start}`)
+  return source.slice(from, includeEnd ? to + end.length : to)
+}
+
+const sha256 = (text) => createHash('sha256').update(text).digest('hex')
+
+test('旧模式回归：插件里旧模式的写入逻辑、路由分支与 GET /editor/state 的读取与 main @ adf40c9 逐字相同（sha256）', () => {
+  const source = pluginSource()
+  // 从 emptyState 到 authorizeWrite 之前：normalizeState、国家目录、addCountry、addTravelRecord、媒体、删除国家、转足迹……
+  const legacyLogic = sourceBetween(source, 'const emptyState = {', 'const authorizeWrite = (request) => (', false)
+  assert.equal(sha256(legacyLogic), 'd38c9eef756435b9dc1275b8ff855b9e3a130372de88cfccc87509374ecea251')
+  // 11 个写入端点的旧分支，到末尾的 404。
+  const legacyRoutes = sourceBetween(
+    source,
+    "            if (request.method === 'PUT' && url.pathname === '/__travelatlas/editor/state') {",
+    "            return sendJson(response, 404, { ok: false, error: '未知的本地编辑接口。' })",
+    true,
+  )
+  assert.equal(sha256(legacyRoutes), '6ab54e04e929879ef7970359d9ce8b7914dc9d1904ec994a32b8540db5f6f1c7')
+  const legacyGetState = sourceBetween(
+    source,
+    '            const state = normalizeState(await readJson(editorStatePath, emptyState))',
+    '            return sendJson(response, 200, { ok: true, state })',
+    true,
+  )
+  assert.equal(sha256(legacyGetState), 'e6fbfd01b537c9cd05b7f23da8e51f58080ce426e032731b6af2e5b5075b7dce')
+})
+
+test('V2 分派：写入时先判定数据模式，V2 下在任何旧分支之前 return；GET /editor/state 在 V2 下读 V2 文件', () => {
+  const source = pluginSource()
+  const writeSection = source.slice(source.indexOf("if (!authorizeWrite(request)) return sendJson(response, 403"))
+  const dispatch = writeSection.indexOf("if (dataMode === 'v2') {\n              const result = await handleV2Write(request, url)\n              return sendJson(response, result.status, result.body)\n            }")
+  const firstLegacyBranch = writeSection.indexOf("if (request.method === 'PUT' && url.pathname === '/__travelatlas/editor/state')")
+  assert.ok(dispatch > 0 && firstLegacyBranch > dispatch, 'V2 分派必须在第一个旧分支之前')
+  assert.ok(writeSection.indexOf('const dataMode = resolveDataMode(privatePaths).mode') < writeSection.indexOf('editorMutationDepth += 1'))
+  assert.match(source, /const route = v2EditorRoute\(request\.method, url\.pathname\)\n {2}if \(!route\) return \{ status: 404, body: v2ErrorBody\('E_UNKNOWN_ENDPOINT'\) \}/)
+  const getState = sourceBetween(source, "if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {", 'return sendJson(response, 200, { ok: true, state })', true)
+  assert.ok(getState.indexOf("if (resolveDataMode(privatePaths).mode === 'v2') {") < getState.indexOf('normalizeState('))
+  assert.match(getState, /const result = await readV2EditorState\(\{ privatePaths \}\)/)
 })
 
 // ---------------------------------------------------------------------------
