@@ -9,6 +9,10 @@
  * - `testContext()`：确定的 UUID 序列（与迁移的序列错开）、固定时间、一份手写的小国家目录。
  */
 
+/// <reference types="node" />
+
+import assert from 'node:assert/strict'
+
 import { consistentPersonalRaw } from '../canonical/legacy.fixture.ts'
 import { EN } from '../canonical/reconstruct.ts'
 import type { CanonicalPlace } from '../canonical/types.ts'
@@ -16,6 +20,7 @@ import { sequentialUuids } from '../canonical/v2.fixture.ts'
 import type { V2FileKey, V2Files } from '../canonical/v2Schema.ts'
 import { jsonClone } from '../canonical/v2Serializer.ts'
 import { plan } from '../migration/migration.fixture.ts'
+import { V2WriteError, type V2WriteErrorCode } from './errors.ts'
 import { completeForWrite, integrityProblems, type CatalogCountry, type V2Write, type V2WriteContext } from './transaction.ts'
 
 /** 这次写入的时间：2026-09-27T08:00:00.000Z。 */
@@ -68,6 +73,20 @@ export const applyWrites = (files: Partial<V2Files>, writes: readonly V2Write[])
 
 /** 写入顺序：只看文件名。 */
 export const writeOrder = (writes: readonly V2Write[]): V2FileKey[] => writes.map((write) => write.file)
+
+/** 断言抛出指定码的 V2WriteError；给了 `message` 时文案也要逐字相同。 */
+export const assertV2Error = (run: () => unknown, code: V2WriteErrorCode, message?: string, check?: (error: V2WriteError) => void) => {
+  assert.throws(run, (error: unknown) => {
+    assert.ok(error instanceof V2WriteError, String(error))
+    assert.equal(error.code, code, error.message)
+    if (message !== undefined) assert.equal(error.message, message)
+    check?.(error)
+    return true
+  })
+}
+
+/** 一个不存在的地点 id（合法的 UUIDv7）。 */
+export const GHOST_ID = '019b76da-ffff-7000-8000-00000000ffff'
 
 /** 五个文件（缺的补空）通过完整性检查。 */
 export const assertIntact = (files: Partial<Record<V2FileKey, unknown>>, message = '') => {
