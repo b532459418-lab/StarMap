@@ -6,7 +6,7 @@
  *
  * 判定顺序（决定 C）：
  * 1. 标记文件 `data/data-mode.local.json` 存在：内容必须恰好是 `{ "mode": "legacy" }` 或 `{ "mode": "v2" }`，
- *    否则抛错（写出文件路径与期望格式），不猜；
+ *    否则抛错（写出文件路径与期望格式），不猜。开头的一个 UTF-8 BOM 容忍（Windows 自带工具默认会写）；
  * 2. 没有标记，但四个旧数据文件（travel-map / want-to-go / editor-state / user-media 的 .local.json）任一存在：`legacy`；
  * 3. 都没有（全新私人目录）：`freshProfileMode`，默认 `FRESH_PROFILE_MODE`。
  *
@@ -34,11 +34,16 @@ export class DataModeMarkerError extends Error {
 
 const isPlainObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value)
 
-/** 标记文件的原文 → 'legacy' | 'v2'。不合法时抛 DataModeMarkerError（只说哪类问题，不带原文）。 */
+/**
+ * 标记文件的原文 → 'legacy' | 'v2'。不合法时抛 DataModeMarkerError（只说哪类问题，不带原文）。
+ * 开头的一个 UTF-8 BOM（U+FEFF）先去掉：Windows 记事本、PowerShell 5.1 的 `Set-Content -Encoding utf8` /
+ * `Out-File` 默认都写 BOM。其余规则不变（区分大小写、不许多余字段）；只去一个，第二个 BOM 仍按非法 JSON 报错。
+ */
 export function parseDataModeMarker(text, filePath) {
+  const source = text.startsWith('﻿') ? text.slice(1) : text
   let value
   try {
-    value = JSON.parse(text)
+    value = JSON.parse(source)
   } catch {
     throw new DataModeMarkerError(filePath, '不是有效的 JSON')
   }

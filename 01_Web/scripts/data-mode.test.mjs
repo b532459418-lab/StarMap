@@ -65,7 +65,6 @@ test('标记格式错误时抛错：非 JSON、不是对象、缺 mode、未知�
   for (const [text, problem] of [
     ['', /不是有效的 JSON/],
     ['mode: v2', /不是有效的 JSON/],
-    ['﻿{ "mode": "v2" }', /不是有效的 JSON/],
     ['"v2"', /不是 JSON 对象/],
     ['["v2"]', /不是 JSON 对象/],
     ['null', /不是 JSON 对象/],
@@ -87,6 +86,28 @@ test('标记格式错误时抛错：非 JSON、不是对象、缺 mode、未知�
   assert.equal(parseDataModeMarker('{"mode":"legacy"}', filePath), 'legacy')
   assert.equal(parseDataModeMarker('\n  { "mode" : "v2" }\n', filePath), 'v2')
 })
+
+test('标记文件开头的一个 UTF-8 BOM 被容忍：带 BOM 的 { "mode": "v2" } 判为 v2；BOM 之后内容非法照样报错；只去一个', () => withPrivateRoot(async ({ paths }) => {
+  const filePath = paths.dataModePath
+  assert.equal(parseDataModeMarker('﻿{ "mode": "v2" }', filePath), 'v2')
+  assert.equal(parseDataModeMarker('﻿{"mode":"legacy"}\r\n', filePath), 'legacy')
+  for (const [text, problem] of [
+    ['﻿{ "mode": "V2" }', /mode 不是 legacy 或 v2/],
+    ['﻿{ "mode": "v2", "extra": 1 }', /有多余的字段/],
+    ['﻿{}', /缺少 mode 字段/],
+    ['﻿', /不是有效的 JSON/],
+    ['﻿﻿{ "mode": "v2" }', /不是有效的 JSON/],
+    ['{ "mode": "v2" }﻿', /不是有效的 JSON/],
+  ]) {
+    assert.throws(() => parseDataModeMarker(text, filePath), (error) => error instanceof DataModeMarkerError && problem.test(error.message), JSON.stringify(text))
+  }
+
+  // 磁盘上的真实字节：Windows 工具写出的 EF BB BF + JSON。
+  await writeFile(filePath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{ "mode": "v2" }\r\n', 'utf8')]))
+  assert.deepEqual(resolveDataMode(paths), { mode: 'v2', reason: 'marker' })
+  await writeFile(filePath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{ "mode": "V2" }', 'utf8')]))
+  assert.throws(() => resolveDataMode(paths), DataModeMarkerError)
+}))
 
 test('resolveDataMode：标记文件损坏时抛 DataModeMarkerError（不按任何模式静默运行）', () => withPrivateRoot(async ({ paths }) => {
   await writeMarker(paths, '{ "mode": "V2" }')
