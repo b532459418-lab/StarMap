@@ -374,14 +374,17 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     onSave={savePhotoDraft}
                   />
                 ) : null}
-                <input
-                  ref={photoInputRef}
-                  className="sr-only"
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/avif"
-                  multiple
-                  onChange={(event) => void uploadPhotos(event.currentTarget.files)}
-                />
+                {/* 上传入口与工具栏同一道门：公开模式与 V2 数据模式下不渲染（不靠 sr-only 隐藏）。 */}
+                {localEditorAvailable ? (
+                  <input
+                    ref={photoInputRef}
+                    className="sr-only"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/avif"
+                    multiple
+                    onChange={(event) => void uploadPhotos(event.currentTarget.files)}
+                  />
+                ) : null}
               </div>
             ) : (
               <div className="atlas-memory-panel-heading-row mb-3">
