@@ -10,7 +10,14 @@ import sharp from 'sharp'
 import { EnvHttpProxyAgent, fetch as proxyAwareFetch } from 'undici'
 import worldCountries from 'world-countries'
 import { buildTravelRecordInput, convertPlannedRecord, resolveTravelCountry } from './convert-to-travel.mjs'
+import { resolveDataMode } from './data-mode.mjs'
 import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
+import {
+  editorDataModeRejection,
+  privateDataModuleExports,
+  privateDataSources,
+  renderPrivateDataModule,
+} from './local-editor-data-mode.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { createWantToGoStore } from './want-to-go-store.mjs'
 
@@ -19,6 +26,7 @@ const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const sampleTravelMapPath = path.join(webRoot, 'src', 'data', 'travel-map.sample.json')
 const virtualPrivateDataId = 'virtual:starmap-private-data'
 const resolvedPrivateDataId = `\0${virtualPrivateDataId}`
+let privatePaths
 let privateRoot
 let dataRoot
 let editorStatePath
@@ -35,6 +43,7 @@ const configurePrivatePaths = (requestedRoot) => {
     ? { ...process.env, STARMAP_PRIVATE_ROOT: requestedRoot }
     : process.env
   const paths = getPrivatePaths(environment)
+  privatePaths = paths
   privateRoot = paths.root
   dataRoot = paths.dataRoot
   editorStatePath = paths.editorStatePath
@@ -1082,6 +1091,16 @@ const authorizeWrite = (request) => (
   && allowedOrigins(request)
 )
 
+/**
+ * RFC-LOC-1 PR3b-1 §2.3：V2 数据模式下编辑一律关闭（PR3b-2 / PR3b-3 开放）。每个请求现读数据模式（不缓存）；
+ * 拒绝时不读写任何文件。标记文件不合法时 resolveDataMode 抛错，由外层按 400 返回错误信息。
+ */
+const dataModeRejection = (request, url) => editorDataModeRejection({
+  dataMode: resolveDataMode(privatePaths).mode,
+  method: request.method,
+  pathname: url.pathname,
+})
+
 export function travelAtlasLocalEditor(options = {}) {
   const profile = options.profile === 'personal' ? 'personal' : 'public'
   configurePrivatePaths(options.privateRoot)
@@ -1096,22 +1115,13 @@ export function travelAtlasLocalEditor(options = {}) {
     },
     async load(id) {
       if (id !== resolvedPrivateDataId) return undefined
-      const privateData = profile === 'personal'
-        ? {
-            privateEditorState: await readJson(editorStatePath, undefined),
-            privateMediaCatalog: await readJson(mediaCatalogPath, undefined),
-            privateTravelMap: await readJson(localTravelMapPath, undefined),
-            privateWantToGo: await readJson(wantToGoPath, undefined),
-          }
-        : {
-            privateEditorState: undefined,
-            privateMediaCatalog: undefined,
-            privateTravelMap: undefined,
-            privateWantToGo: undefined,
-          }
-      return Object.entries(privateData)
-        .map(([name, value]) => `export const ${name} = ${JSON.stringify(value)};`)
-        .join('\n')
+      if (profile !== 'personal') return renderPrivateDataModule(privateDataModuleExports({ profile }))
+      // RFC-LOC-1 PR3b-1：按数据模式只读一边的文件（legacy：四个旧文件，顺序不变；v2：data/v2/ 的五个 V2 文件）。
+      // 标记文件不合法时 resolveDataMode 抛错，dev server 把它作为这个模块的加载错误报出来。
+      const { mode } = resolveDataMode(privatePaths)
+      const values = {}
+      for (const source of privateDataSources(mode, privatePaths)) values[source.key] = await readJson(source.path, undefined)
+      return renderPrivateDataModule(privateDataModuleExports({ profile, dataMode: mode, values }))
     },
     configureServer(server) {
       if (profile !== 'personal') return
@@ -1141,6 +1151,8 @@ export function travelAtlasLocalEditor(options = {}) {
         try {
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
             if (!isLoopbackRequest(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话读取。' })
+            const rejection = dataModeRejection(request, url)
+            if (rejection) return sendJson(response, rejection.status, rejection.body)
             const state = normalizeState(await readJson(editorStatePath, emptyState))
             return sendJson(response, 200, { ok: true, state })
           }
@@ -1164,6 +1176,8 @@ export function travelAtlasLocalEditor(options = {}) {
           }
 
           if (!authorizeWrite(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话写入。' })
+          const rejection = dataModeRejection(request, url)
+          if (rejection) return sendJson(response, rejection.status, rejection.body)
 
           editorMutationDepth += 1
           try {

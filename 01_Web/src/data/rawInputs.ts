@@ -10,11 +10,14 @@
 import travelMapSample from './travel-map.sample.json'
 import wantToGoSample from './want-to-go.sample.json'
 import {
+  privateDataMode,
   privateEditorState,
   privateMediaCatalog,
   privateTravelMap,
+  privateV2Files,
   privateWantToGo,
 } from 'virtual:starmap-private-data'
+import type { AppInputs, DataMode, V2FileInputs } from './canonical/canonicalForInputs.ts'
 import type { RawAppInputs } from './derive/appData.ts'
 import { isTravelMapExport, type TravelMapExport } from './derive/travelAtlas.ts'
 import type { WantToGoDataSource } from './derive/wantToGo.ts'
@@ -58,3 +61,17 @@ export const rawAppInputs: RawAppInputs = {
   // 原 worldGraph.ts 的 worldGraphSessionNow：模块加载时固定一次，适配器要求 now 必填且不读时钟。
   now: new Date().toISOString(),
 }
+
+// ---- 数据模式（RFC-LOC-1 PR3b-1 规格 §2.2）----
+// 由插件按私人目录的标记判定后注入（scripts/data-mode.mjs）；公开模式恒为 legacy。上面旧模式的选择一字不改。
+// v2 模式下虚拟模块的四个旧导出都是 undefined，Canonical 只从 v2Files 读（../canonical/canonicalForInputs.ts），
+// 不回落到样例（决定 E）；强制样例模式（?data=sample 等）只作用于旧模式的选择。
+export const dataMode: DataMode = privateDataMode === 'v2' ? 'v2' : 'legacy'
+
+/** v2 模式下 data/v2/ 的五个文件（缺的为 undefined）；legacy 模式为 undefined。 */
+export const v2Files: V2FileInputs | undefined = dataMode === 'v2' ? privateV2Files : undefined
+
+/** 交给 canonicalForInputs 的输入：legacy 模式是上面选好的旧数据，v2 模式只有 V2 文件。 */
+export const appInputs: AppInputs = dataMode === 'v2'
+  ? { dataMode, v2Files }
+  : { ...rawAppInputs, dataMode }

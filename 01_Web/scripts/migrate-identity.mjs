@@ -19,6 +19,8 @@
  * - `--apply`：canApply、迁移清单记录的哈希等于当前旧文件的哈希（`--sample` 且没给 `--manifest` 时清单只在内存里，
  *   不检查）、输出目录不存在或为空、输出目录在私人根目录之内或本仓库之外——全部满足才写出五个 V2 文件（各自原子写入），
  *   否则拒绝（退出码 2）。新分配了 UUID 时同时写回迁移清单。不写数据模式标记文件，不动任何旧文件。
+ *   私人模式下数据模式（scripts/data-mode.mjs）已经是 v2 时，`--apply` 直接拒绝（退出码 2，RFC-LOC-1 PR3b-1）：
+ *   data/v2/ 是正在使用的数据；标记文件不合法时报错（退出码 1）。dry-run 不受影响。
  * - 隐私门（与 legacy-baseline.mjs 共用 private-output.mjs 的判断）：私人模式下 `--report` 与 `--out-dir`
  *   只能在私人根目录之内（即使私人根在仓库里，例如独立克隆的 06_private/）或仓库之外（退出码 2），
  *   在读取任何私人文件之前检查。`--apply` 的输出目录用同一个判断。摘要只打印计数、键、id 与 JSON 路径，不打印名称与坐标；名称写在 `--report` 里。
@@ -31,6 +33,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { DataModeMarkerError, resolveDataMode } from './data-mode.mjs'
 import { atomicJsonWrite } from './json-file.mjs'
 import { isAllowedPrivateOutput } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot, webRoot } from './private-profile.mjs'
@@ -49,6 +52,7 @@ const usage = [
 class UsageError extends Error {}
 class PrivacyGateError extends Error {}
 class ReadError extends Error {}
+class DataModeRefusal extends Error {}
 
 const parseArgs = (argv) => {
   const options = { sample: false, apply: false, details: false }
@@ -347,6 +351,11 @@ const run = async (options) => {
         throw new PrivacyGateError(`拒绝写入：${flag} ${path.resolve(target)} 位于 Git 仓库 ${sourceRoot} 之内（且不在私人根目录之内）。私人数据的迁移结果与报告只能写到私人根目录之内或仓库之外。`)
       }
     }
+    // RFC-LOC-1 PR3b-1 §2.3：V2 数据模式下 data/v2/ 是正在使用的数据，--apply 不得运行（退出码 2）；dry-run 照常。
+    // 标记文件不合法时 resolveDataMode 抛 DataModeMarkerError（退出码 1）。都在读取任何私人文件之前。
+    if (options.apply && resolveDataMode(paths).mode === 'v2') {
+      throw new DataModeRefusal(`私人目录当前为 V2 数据模式（${paths.dataModePath}）：data/v2/ 是正在使用的数据，--apply 不能运行。dry-run 仍可运行。`)
+    }
   }
 
   const loaded = mode === 'sample' ? await loadSample() : await loadPrivate(paths)
@@ -422,9 +431,12 @@ const run = async (options) => {
 try {
   process.exitCode = await run(parseArgs(process.argv.slice(2)))
 } catch (error) {
-  if (error instanceof PrivacyGateError) {
+  if (error instanceof PrivacyGateError || error instanceof DataModeRefusal) {
     console.error(`[migrate-identity] ${error.message}`)
     process.exitCode = 2
+  } else if (error instanceof DataModeMarkerError) {
+    console.error(`[migrate-identity] ${error.message}`)
+    process.exitCode = 1
   } else if (error instanceof UsageError) {
     console.error(`[migrate-identity] ${error.message}\n${usage}`)
     process.exitCode = 1

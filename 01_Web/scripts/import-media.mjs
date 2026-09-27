@@ -4,8 +4,10 @@ import { copyFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/pro
 import path from 'node:path'
 import sharp from 'sharp'
 import { fileURLToPath } from 'node:url'
+import { DataModeMarkerError, resolveDataMode } from './data-mode.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 
+// RFC-LOC-1 PR3b-1：私人目录为 V2 数据模式（scripts/data-mode.mjs）时本脚本拒绝运行（退出码 2），见 main()。
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(scriptDirectory, '..')
 const privatePaths = getPrivatePaths()
@@ -573,6 +575,14 @@ function printReport(items) {
 }
 
 async function main() {
+  // RFC-LOC-1 PR3b-1 §2.3：V2 数据模式下不运行（预检与 --apply 都不）。本脚本只认旧格式，
+  // 会把旧格式的媒体目录写进一个 App 已经不读的文件。V2 下的导入由 PR3b-3 开放。标记文件不合法时报错退出。
+  if (resolveDataMode(privatePaths).mode === 'v2') {
+    console.error(`[import-media] 私人目录 ${privatePaths.root} 当前为 V2 数据模式（${privatePaths.dataModePath}）：暂不能导入媒体（RFC-LOC-1 PR3b-3 开放）。未读写任何文件。`)
+    process.exitCode = 2
+    return
+  }
+
   const locationIndex = await createLocationIndex()
   if (!locationIndex) {
     printReport([])
@@ -637,6 +647,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error)
+  console.error(error instanceof DataModeMarkerError ? `[import-media] ${error.message}` : error)
   process.exitCode = 1
 })

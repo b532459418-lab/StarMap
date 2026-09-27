@@ -19,6 +19,12 @@
  *                             A 与 B 的差异数与前 50 个路径、B 与 C 是否逐字节相同。B ≡ C 时退出码 0，否则 1。
  *                             不写任何文件，除非给了 --out-dir（写 a.json / b.json / c.json，规则同 --out）。
  *
+ * RFC-LOC-1 PR3b-1 增加：
+ *   --path v2                 只用于个人模式：读私人目录 data/v2/ 的五个 V2 文件 → canonicalForInputs（V2 Reader，
+ *                             缺的文件按空处理，与 App 在 V2 数据模式下完全相同）→ deriveAppDataFromCanonical → 基线。
+ *                             地点 id 是 UUID，不做映射。不看数据模式标记：总是读 data/v2/。与 --sample 同用是参数错误。
+ *                             用途：证明浏览器里 V2 模式的 App 与 Node 里读同一份 V2 文件逐字节相同。
+ *
  * 数据源选择与 App 在对应模式下的实际选择一致：
  * - 公开模式（--sample）：虚拟模块 virtual:starmap-private-data 不注入任何私有数据
  *   （local-editor-plugin.mjs 的 load()），所以足迹是样例、想去是样例（wantToGo.ts 规则 3），
@@ -49,6 +55,7 @@ import { getPrivatePaths, sourceRoot, webRoot } from './private-profile.mjs'
 import { deriveAppData } from '../src/data/derive/appData.ts'
 import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
 import { isTravelMapExport } from '../src/data/derive/travelAtlas.ts'
+import { canonicalForInputs, V2FilesInvalidError } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 import { legacyAdapter } from '../src/data/canonical/legacyAdapter.ts'
 import { normalizeLegacy } from '../src/data/canonical/normalizeLegacy.ts'
@@ -60,6 +67,7 @@ const usage = [
   '用法：',
   '  node scripts/legacy-baseline.mjs --sample --out <file> [--path legacy|canonical] [--normalize]',
   '  node scripts/legacy-baseline.mjs --out <file> [--path legacy|canonical] [--normalize]',
+  '  node scripts/legacy-baseline.mjs --out <file> --path v2',
   '  node scripts/legacy-baseline.mjs --verify [--sample] [--details] [--out-dir <dir>]',
   '  node scripts/legacy-baseline.mjs --compare <a.json> <b.json>',
 ].join('\n')
@@ -94,8 +102,8 @@ const parseArgs = (argv) => {
       out = valueAfter(index, '--out 后面需要一个文件路径。')
       index += 1
     } else if (arg === '--path' && derivePath === undefined) {
-      derivePath = valueAfter(index, '--path 后面需要 legacy 或 canonical。')
-      if (derivePath !== 'legacy' && derivePath !== 'canonical') throw new UsageError('--path 只能是 legacy 或 canonical。')
+      derivePath = valueAfter(index, '--path 后面需要 legacy、canonical 或 v2。')
+      if (!['legacy', 'canonical', 'v2'].includes(derivePath)) throw new UsageError('--path 只能是 legacy、canonical 或 v2。')
       index += 1
     } else if (arg === '--normalize' && !normalize) {
       normalize = true
@@ -119,7 +127,8 @@ const parseArgs = (argv) => {
   }
   if (details || outDir !== undefined) throw new UsageError('--details 与 --out-dir 只能与 --verify 同用。')
   if (out === undefined) throw new UsageError('缺少 --out <file>。')
-  if (normalize && derivePath === 'canonical') throw new UsageError('--normalize 只用于 legacy 路径。')
+  if (normalize && derivePath !== undefined && derivePath !== 'legacy') throw new UsageError('--normalize 只用于 legacy 路径。')
+  if (derivePath === 'v2' && sample) throw new UsageError('--path v2 只用于个人模式（读私人目录的 data/v2/），不能与 --sample 同用。')
   return { mode, action: 'generate', out, derivePath: derivePath ?? 'legacy', normalize }
 }
 
@@ -180,6 +189,14 @@ const loadRawInputs = async (mode) => {
       : { source: 'none', value: undefined },
     now: BASELINE_NOW,
   }
+}
+
+/** --path v2：私人目录 data/v2/ 的五个 V2 文件（不存在为 undefined，按空处理）。与虚拟模块在 V2 模式下读的相同。 */
+const loadV2Inputs = async () => {
+  const { v2FilePaths } = getPrivatePaths()
+  const v2Files = {}
+  for (const [key, filePath] of Object.entries(v2FilePaths)) v2Files[key] = await readPrivateJson(filePath)
+  return { dataMode: 'v2', v2Files }
 }
 
 const sha256 = (content) => createHash('sha256').update(content).digest('hex')
@@ -292,6 +309,9 @@ const legacyBaseline = (raw, { normalize = false } = {}) =>
 /** 新路径（PR2）：Legacy Adapter → Canonical → deriveAppDataFromCanonical。 */
 const canonicalBaseline = (raw) => baselineText(deriveAppDataFromCanonical(legacyAdapter(raw), { now: BASELINE_NOW }))
 
+/** V2 路径（PR3b-1）：canonicalForInputs（V2 Reader）→ deriveAppDataFromCanonical。与 App 的 V2 数据模式相同。 */
+const v2Baseline = (inputs) => baselineText(deriveAppDataFromCanonical(canonicalForInputs(inputs), { now: BASELINE_NOW }))
+
 const writeText = async (filePath, text) => {
   const outPath = path.resolve(filePath)
   await mkdir(path.dirname(outPath), { recursive: true })
@@ -303,8 +323,11 @@ const describeText = (text) => `${Buffer.byteLength(text, 'utf8')} 字节，sha2
 
 const generate = async ({ mode, out, derivePath, normalize }) => {
   checkPrivacyGate(mode, out)
-  const raw = await loadRawInputs(mode)
-  const text = derivePath === 'canonical' ? canonicalBaseline(raw) : legacyBaseline(raw, { normalize })
+  const text = derivePath === 'v2'
+    ? v2Baseline(await loadV2Inputs())
+    : derivePath === 'canonical'
+      ? canonicalBaseline(await loadRawInputs(mode))
+      : legacyBaseline(await loadRawInputs(mode), { normalize })
   const outPath = await writeText(out, text)
   console.log(`已写入 ${outPath}（${describeText(text)}）。`)
   return 0
@@ -372,7 +395,8 @@ try {
   } else if (error instanceof UsageError) {
     console.error(`[legacy-baseline] ${error.message}\n${usage}`)
     process.exitCode = 1
-  } else if (error instanceof ReadError) {
+  } else if (error instanceof ReadError || error instanceof V2FilesInvalidError) {
+    // V2FilesInvalidError 的消息只列文件、JSON 路径与问题类别，不含字段的值。
     console.error(`[legacy-baseline] ${error.message}`)
     process.exitCode = 1
   } else {
