@@ -9,9 +9,14 @@
  * 2. V2 模式下的写入拒绝：服务端是真正的防线。本地编辑接口里除两个只读的目录搜索外，全部返回 409，
  *    包括 11 个写入端点与 `GET /__travelatlas/editor/state`，不读写任何文件。
  *
+ * 3. 私人数据目录的文件变化要不要处理（让虚拟模块失效、按原有条件整页刷新）：新建、修改、删除都算，
+ *    这样新建 / 删除数据模式标记、生成 data/v2/ 的文件，不重启服务也能生效。
+ *
  * 这里只有纯函数；读文件、判定数据模式（`./data-mode.mjs`）在插件里做。
  * 本文件不 import 插件（插件在模块顶层解析私有资料层路径，并 import 了 sharp / undici / world-countries）。
  */
+
+import path from 'node:path'
 
 /** V2 模式下编辑接口的错误信息（`{ ok: false, error }`，UI 直接展示）。 */
 export const V2_READ_ONLY_ERROR = 'V2 数据模式下暂不能编辑（RFC-LOC-1 PR3b-2 / PR3b-3 开放）。'
@@ -75,4 +80,17 @@ export function editorDataModeRejection({ dataMode, method, pathname }) {
   if (dataMode !== 'v2') return undefined
   if (READ_ONLY_EDITOR_ENDPOINTS.has(`${method} ${pathname}`)) return undefined
   return { status: 409, body: { ok: false, error: V2_READ_ONLY_ERROR } }
+}
+
+/** 插件监听的文件事件：新建、修改、删除（chokidar 的事件名）。目录事件不单独处理，目录里的文件各自有事件。 */
+export const PRIVATE_DATA_WATCH_EVENTS = Object.freeze(['add', 'change', 'unlink'])
+
+/**
+ * 私人数据目录里这个文件事件要不要处理：事件是新建 / 修改 / 删除，且路径在 `dataRoot` 之内（含 dataRoot 本身）。
+ * 「之内」按路径层级判断：`data-backup/…` 这类只是前缀相同的兄弟目录不算。
+ */
+export function shouldHandlePrivateDataChange(event, changedPath, dataRoot) {
+  if (!PRIVATE_DATA_WATCH_EVENTS.includes(event)) return false
+  const relative = path.relative(path.resolve(dataRoot), path.resolve(changedPath))
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }

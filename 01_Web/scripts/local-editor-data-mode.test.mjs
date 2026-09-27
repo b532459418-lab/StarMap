@@ -15,9 +15,11 @@ import { fileURLToPath } from 'node:url'
 import {
   editorDataModeRejection,
   LEGACY_PRIVATE_EXPORTS,
+  PRIVATE_DATA_WATCH_EVENTS,
   privateDataModuleExports,
   privateDataSources,
   renderPrivateDataModule,
+  shouldHandlePrivateDataChange,
   V2_PRIVATE_FILE_KEYS,
   V2_READ_ONLY_ERROR,
 } from './local-editor-data-mode.mjs'
@@ -181,6 +183,57 @@ test('V2 模式默认拒绝：没列进只读名单的接口（包括将来新�
   ]) {
     assert.equal(editorDataModeRejection({ dataMode: 'v2', method, pathname })?.status, 409, `${method} ${pathname}`)
   }
+})
+
+// ---------------------------------------------------------------------------
+// 私人数据目录的文件事件
+// ---------------------------------------------------------------------------
+
+test('文件事件：私人数据目录之内的新建、修改、删除都要处理（含数据模式标记、data/v2/ 与迁移清单）', () => {
+  assert.deepEqual(PRIVATE_DATA_WATCH_EVENTS, ['add', 'change', 'unlink'])
+  const inside = [
+    paths.dataModePath,
+    paths.localTravelMapPath,
+    paths.editorStatePath,
+    paths.v2FilePaths.places,
+    paths.v2FilePaths.media,
+    path.join(paths.dataRoot, 'migration', 'identity-manifest.local.json'),
+    path.join(paths.dataRoot, 'editor-state.local.json.1234.tmp'),
+    path.join(paths.dataRoot, '..data-mode-like-name.json'),
+    paths.dataRoot,
+  ]
+  for (const event of ['add', 'change', 'unlink']) {
+    for (const filePath of inside) assert.equal(shouldHandlePrivateDataChange(event, filePath, paths.dataRoot), true, `${event} ${filePath}`)
+  }
+  // dataRoot 末尾带分隔符也一样。
+  assert.equal(shouldHandlePrivateDataChange('add', paths.dataModePath, `${paths.dataRoot}${path.sep}`), true)
+})
+
+test('文件事件：私人数据目录之外、只是前缀相同的兄弟目录、目录事件与其他事件都不处理', () => {
+  for (const filePath of [
+    path.join(paths.root, 'config', '.env.local'),
+    path.join(paths.root, 'MediaInbox', 'Iceland', 'Reykjavik', 'photos', 'a.jpg'),
+    path.join(paths.root, 'data-backup', 'travel-map.local.json'),
+    `${paths.dataRoot}2${path.sep}travel-map.local.json`,
+    paths.root,
+    path.join(webRoot, 'src', 'App.tsx'),
+  ]) {
+    for (const event of ['add', 'change', 'unlink']) {
+      assert.equal(shouldHandlePrivateDataChange(event, filePath, paths.dataRoot), false, `${event} ${filePath}`)
+    }
+  }
+  for (const event of ['addDir', 'unlinkDir', 'ready', 'error', 'all', 'raw']) {
+    assert.equal(shouldHandlePrivateDataChange(event, paths.dataModePath, paths.dataRoot), false, event)
+  }
+})
+
+test('插件对 add、change、unlink 三种事件注册同一个处理，且经 shouldHandlePrivateDataChange 过滤；不再只监听 change', () => {
+  const source = readFileSync(path.join(webRoot, 'scripts', 'local-editor-plugin.mjs'), 'utf8')
+  assert.match(source, /for \(const event of PRIVATE_DATA_WATCH_EVENTS\) \{\s*server\.watcher\.on\(event, /)
+  assert.match(source, /if \(!shouldHandlePrivateDataChange\(event, changedPath, dataRoot\)\) return/)
+  assert.doesNotMatch(source, /server\.watcher\.on\('change'/)
+  // 原有的刷新条件保留：编辑器写入期间与之后的静默期不刷新。
+  assert.match(source, /if \(editorMutationDepth > 0 \|\| Date\.now\(\) < ignoreWatcherUntil\) return/)
 })
 
 test('legacy 模式：任何接口都不拒绝（旧行为不变）', () => {

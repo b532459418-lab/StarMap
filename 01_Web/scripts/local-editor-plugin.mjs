@@ -14,9 +14,11 @@ import { resolveDataMode } from './data-mode.mjs'
 import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
 import {
   editorDataModeRejection,
+  PRIVATE_DATA_WATCH_EVENTS,
   privateDataModuleExports,
   privateDataSources,
   renderPrivateDataModule,
+  shouldHandlePrivateDataChange,
 } from './local-editor-data-mode.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { createWantToGoStore } from './want-to-go-store.mjs'
@@ -1128,13 +1130,18 @@ export function travelAtlasLocalEditor(options = {}) {
       let editorMutationDepth = 0
       let ignoreWatcherUntil = 0
       server.watcher.add(dataRoot)
-      server.watcher.on('change', (changedPath) => {
-        if (!path.resolve(changedPath).startsWith(path.resolve(dataRoot))) return
+      // 新建、修改、删除都走同一套处理（RFC-LOC-1 PR3b-1）：新建 / 删除数据模式标记、生成 data/v2/ 的文件，
+      // 不重启服务也会让虚拟模块失效；编辑器自己的写入期间与之后 1.5 秒内不刷新页面（原有条件）。
+      const onPrivateDataEvent = (event, changedPath) => {
+        if (!shouldHandlePrivateDataChange(event, changedPath, dataRoot)) return
         const privateModule = server.moduleGraph.getModuleById(resolvedPrivateDataId)
         if (privateModule) server.moduleGraph.invalidateModule(privateModule)
         if (editorMutationDepth > 0 || Date.now() < ignoreWatcherUntil) return
         server.ws.send({ type: 'full-reload' })
-      })
+      }
+      for (const event of PRIVATE_DATA_WATCH_EVENTS) {
+        server.watcher.on(event, (changedPath) => onPrivateDataEvent(event, changedPath))
+      }
       server.middlewares.use(async (request, response, next) => {
         const url = new URL(request.url ?? '/', 'http://127.0.0.1')
         if (url.pathname.startsWith('/media/user/')) {
