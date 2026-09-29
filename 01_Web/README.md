@@ -46,14 +46,64 @@ npm run release:check
 
 StarMap has two data layers:
 
-- `src/data/travel-map.sample.json` is a tracked neutral North Atlantic demonstration used by a clean open-source clone.
-- `src/data/want-to-go.sample.json` is a tracked neutral Want to Go sample with three places (Nuuk, Tromsø, Akureyri). Akureyri matches the travel sample so the public map shows the heart badge for a place that is in both layers.
-- `<private-root>/data/travel-map.local.json` is the external private overlay containing the owner's countries, cities, routes, coordinates, and display rules.
-- `<private-root>/data/want-to-go.local.json` is the external private list of places the owner wants to go, written by the loopback editor.
+- `src/data/v2-sample/` is the tracked neutral North Atlantic demonstration used by a clean open-source clone: a five-city journey plus a Want to Go sample with three places (Nuuk, Tromsø, Akureyri). Akureyri is one place in both layers, so the public map shows the heart badge. The directory holds the five V2 data files and the fixed `identity-manifest.json` that keeps their ids stable (see [Regenerate the V2 sample](#regenerate-the-v2-sample)).
+- `src/data/travel-map.sample.json` and `src/data/want-to-go.sample.json` are the same sample in the legacy format. The V2 sample is generated from them; the migration tool, the baseline tool, and the tests still read them.
+- `<private-root>/data/` is the external private layer containing the owner's countries, cities, routes, coordinates, display rules, Want to Go list, editor state, and media catalog. Its layout depends on the data mode described below.
 
-The private overlay is considered only in the explicit personal profile. Public preview and public build ignore it even when it exists. New users can copy the sample shape into their private data path and replace its records with their own; navigation is generated from that data.
+The private layer is considered only in the explicit personal profile. Public preview and public build ignore it even when it exists; they, and forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development), read `src/data/v2-sample/`. The sample is read-only: its travel and Want to Go sources are marked as sample, so no write control is rendered for it.
 
-Want to Go chooses its source in `src/data/wantToGo.ts`, in this order: forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development) uses the sample; otherwise the personal profile uses `want-to-go.local.json`, and an empty list when that file does not exist yet; every other profile uses the sample. Unlike travel data, the personal profile never falls back to the Want to Go sample: sample items are not in the private file, so the editor could not hide them. The add entry and the Hide button are rendered only for private data, in addition to the existing development-only editor gate.
+In the personal profile, Want to Go never falls back to the sample: sample items are not in the private file, so the editor could not hide them. When the private Want to Go file does not exist yet, the list is empty. The add entry and the Hide button are rendered only for private data, in addition to the existing development-only editor gate.
+
+## Data Modes
+
+A private folder uses one of two data formats:
+
+- **V2** (`v2`): every country and city is a place with a permanent id in `data/v2/places.local.json`; travel records, Want to Go items, editor state, and media refer to places by id. The files are `data/v2/places.local.json`, `travel-map.local.json`, `want-to-go.local.json`, `editor-state.local.json`, and `user-media.local.json`, plus the media importer's `data/v2/media-source-index.local.json`.
+- **Legacy** (`legacy`): the earlier format, `data/travel-map.local.json`, `want-to-go.local.json`, `editor-state.local.json`, and `user-media.local.json`, where countries and cities are identified by their names.
+
+The personal profile, the local editor, and the scripts decide the mode in this order:
+
+1. If `data/data-mode.local.json` exists, it decides. Its content must be exactly `{ "mode": "legacy" }` or `{ "mode": "v2" }`; anything else is an error, and the dev server and scripts refuse to run instead of guessing.
+2. Otherwise, if any of the four legacy files exists, the mode is `legacy`.
+3. Otherwise (a new private folder) the mode is `v2`. The map starts empty with the hint “还没有足迹，从添加第一个城市开始。”; nothing is copied from the sample.
+
+`.bak` files, which every editor write keeps as the previous version, never count as data files. Check the current mode and the reason with:
+
+```powershell
+npm run data-mode
+```
+
+The legacy format is still supported for existing private folders and will be removed in a later release, so migrate when convenient. Do not edit the V2 files by hand; use the local editor, the media importer, or the commands below.
+
+### Migrate existing legacy data
+
+Run these from `01_Web/`. None of them changes the legacy files.
+
+1. **Dry run**: `npm run identity:check`. It prints counts, errors, items that need a decision, and whether the migration can be applied (`canApply`). It also writes `data/migration/identity-manifest.local.json`, which fixes the new id of every place so later runs reuse it. Add `-- --report <file>` to write the full report, including place names, to a file inside the private folder or outside the repository.
+2. **Decide**: if the dry run lists items that need a decision (possible duplicate places, name or coordinate differences between a visited city and a Want to Go place), write each decision into `data/migration/identity-decisions.local.json` under the key the report shows, then run the dry run again until `canApply` is `true`.
+3. **Apply and switch**: `npm run identity:check -- --apply --switch`. It writes the five V2 files to `data/v2/`, verifies them, and then writes the marker `{ "mode": "v2" }`. A running dev server reloads the page in V2 mode.
+
+`--apply` without `--switch` only writes the V2 files; switch later with `npm run data-mode -- v2`. That command refuses while legacy data exists and `data/v2/` has no V2 files, because the switch would show an empty world. A private folder without legacy data needs no migration: `npm run identity:check` reports that and changes nothing.
+
+Media keep their catalog entries through the migration. The first media import in V2 mode gives every item a new id based on its file content, so ordering, hiding, and covers saved for the old ids no longer apply; the dry run reports how many items are affected.
+
+### Roll back
+
+```powershell
+npm run data-mode -- legacy
+```
+
+This writes `{ "mode": "legacy" }` and the app reads the untouched legacy files again. Edits made in V2 mode are not copied back to them, so roll back only while checking the migration. `npm run data-mode -- v2` switches forward again.
+
+### Regenerate the V2 sample
+
+The V2 sample is generated from the legacy samples with the same migration tool:
+
+```powershell
+npm run sample:v2
+```
+
+The command runs `migrate-identity --sample --apply` with a fixed planning time and the committed `src/data/v2-sample/identity-manifest.json`, so the output is identical byte for byte. `--apply` refuses a non-empty output directory, so first delete the five V2 files in `src/data/v2-sample/` and keep `identity-manifest.json`. If the legacy samples changed, `--apply` asks for a new dry run; run `node scripts/migrate-identity.mjs --sample --manifest src/data/v2-sample/identity-manifest.json --now 2026-08-12T00:00:00.000Z`, delete the `identity-manifest.bak` it leaves, and then run `npm run sample:v2`. Existing places keep their ids; new places get new ones. `npm run privacy:check` checks that the directory contains only these six files and that the V2 files are valid.
 
 Run `npm run privacy:check` before every public release. See the [open-source privacy boundary](../03_Reference/TravelAtlas_open_source_privacy_boundary.md) for the boundary table and deployment options.
 
@@ -70,7 +120,9 @@ npm run media:import
 
 The first command is read-only and reports unresolved countries, cities, formats, or drone metadata. After a clean preflight, the second command preserves a local original copy and generates two WebP derivatives for every still image: a `640 px` thumbnail for city/sidebar/card surfaces and a `2400 px` preview for the photo viewer. Full-resolution photos and panoramas are requested only by explicit viewing actions. All three tiers use stable, hash-based paths inside the ignored local user library, and the ignored catalog records their dimensions. Restart the preview after importing.
 
-Inbox source media must never be moved, renamed, overwritten, or deleted. Agents may create or update only the private mapping sidecars `country.json` and city-level `media.json`; supported still formats are optimized outside the Inbox by the importer, while unsupported formats still require a separate user-approved conversion step.
+Inbox source media must never be moved, renamed, overwritten, or deleted. Agents may create or update only the private control files `place.json`, `country.json`, and city-level `media.json`; `place.json` is normally written by StarMap itself. Supported still formats are optimized outside the Inbox by the importer, while unsupported formats still require a separate user-approved conversion step.
+
+In V2 mode the importer resolves each country and city folder against the place registry (`place.json`, then a legacy `country.json`, then the folder name), writes `place.json` into folders it matched by name, and derives every media id and generated path from the file content alone. The [Media Inbox README](../02_Assets/MediaInbox/README.md) describes the rules.
 
 See [`../03_Reference/TravelAtlas_media_import_protocol.md`](../03_Reference/TravelAtlas_media_import_protocol.md) for the complete user and Agent contract.
 
@@ -116,7 +168,9 @@ For each public update, bump the package version, create a matching semantic-ver
 - `src/worldgraph/collection.ts` is the Core list query behind it (`queryCollection` / `filterCollection`); unlike the map query it ignores layer visibility and keeps hidden entries.
 - `src/extensions/` holds the Google imagery, labels, and Photorealistic 3D Tiles integrations; see [`src/extensions/README.md`](src/extensions/README.md).
 - `src/components/AtlasGlobe.tsx` is the frozen legacy react-globe implementation.
-- `src/data/travelAtlas.ts` selects private data only from the profile-specific virtual module and otherwise loads the tracked public sample.
+- `src/data/rawInputs.ts` chooses what the app reads: the tracked V2 sample in public and forced sample mode, otherwise the private V2 or legacy files injected by the profile-specific virtual module.
+- `src/data/travelAtlas.ts` exports the travel data derived from those inputs.
+- `scripts/data-mode.mjs` decides the private data mode; `scripts/data-mode-cli.mjs` (`npm run data-mode`) shows and switches it; `scripts/migrate-identity.mjs` (`npm run identity:check`, `npm run sample:v2`) migrates legacy data to V2.
 - `src/data/wantToGo.ts` chooses the Want to Go source (tracked sample, private file, or none) and parses it through the Core adapter.
 - `src/data/worldGraph.ts` merges the travel, want-to-go, and planned-record snapshots into the single World Graph snapshot that the map queries.
 - `src/data/mediaCatalog.ts` receives personal media only in personal mode; `src/data/droneMedia.ts` contains no built-in user media.

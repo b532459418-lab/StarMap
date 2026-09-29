@@ -35,7 +35,7 @@ When a user mentions uploading, importing, organizing, or adding travel photos o
 2. If the user only asks how to upload, explain the folder workflow first; do not modify files or run the import.
 3. If the user asks to perform the import, verify that every item has a reliable existing country and city, and that drone metadata is sufficient for the requested result.
 4. If a country, city, media type, date, coordinate, privacy status, or intended use is missing or uncertain, ask the smallest necessary question and stop. Without a reliable answer, do not guess, copy, convert, catalog, or import that item. A zero-exit preflight does not override this stop rule when its warnings reveal unresolved data.
-5. Source media inside `MediaInbox` is immutable. The only Agent-writable Inbox files are the private control sidecars `country.json` and city-level `media.json`; conversions and other derivatives must never be written there.
+5. Source media inside `MediaInbox` is immutable. The only Agent-writable Inbox files are the private control files `place.json` (normally written by StarMap itself on upload and import), `country.json`, and city-level `media.json`; conversions and other derivatives must never be written there.
 
 ## Project Boundary
 
@@ -87,6 +87,7 @@ npm run dev:personal
 ## Assets and Secrets
 
 - Public project-owned media belongs under tracked `02_Assets/` or `01_Web/public/`. Personal source media, derivatives, data, and configuration belong only in the external `06_private/` layer.
+- The private data layer `<private-root>/data/` holds the legacy-format `*.local.json` files, `v2/` (the V2 data files and the V2 media source index), `migration/` (the identity manifest and migration decisions), and `data-mode.local.json` (the data-mode marker). A new private folder uses V2; see [`01_Web/README.md`](01_Web/README.md#data-modes). Never hand-edit the V2 data files or the marker: change data through the local editor, `npm run media:import`, `npm run identity:check`, and `npm run data-mode`.
 - Do not commit personal travel media to a future public template without an explicit publication review.
 - Never read, print, copy, or commit `.env.local`, tokens, cookies, credentials, or secrets. `.gitignore` is defense in depth; the primary boundary is that `06_private/` is physically outside this Git repository.
 - Never ask a user to paste a complete token into chat or task output; direct entry by the user is the only acceptable configuration path.
