@@ -36,7 +36,7 @@ Country and city folders must refer to places that already exist in StarMap. Add
 
 ## How Folders Are Matched
 
-A private folder uses the V2 data format unless it still holds legacy data (see [Data Modes](../../01_Web/README.md#data-modes)). In V2 mode the importer matches folders against the place registry `<private-root>/data/v2/places.local.json`:
+The importer matches folders against the place registry `<private-root>/data/v2/places.local.json`:
 
 - **Country folder**, in this order: `place.json` (`{ "placeId": "<country place id>" }`); a legacy `country.json` whose `countryId` is an old country key of that place; the folder name, compared with the country's Chinese name, English name, or ISO code.
 - **City folder**, in this order: `place.json`, which must name a city of that country; the folder name, compared with the Chinese and English names of that country's cities.
@@ -46,7 +46,7 @@ A private folder uses the V2 data format unless it still holds legacy data (see 
 - Uploads from the local editor put files into `MediaInbox/<country>/<city>/photos/` or `drone/` using the English name (or the Chinese name when there is none) and write `place.json` into new folders. When two cities in the same country have the same name, the second one gets the folder `<name> (<last 8 characters of its place id>)`.
 - Each media item's id is `media-` plus the first 16 hexadecimal characters of the SHA-256 of the source file, and its generated files live in `media/user/<same 16 characters>/`. Renaming a place, moving a file to another city folder, or changing a drone item's kind keeps its id and path, so its order, cover, and hidden state follow it. An explicit `id` in `media.json` still takes precedence.
 
-In legacy mode, folder names are matched against `<private-root>/data/travel-map.local.json` as before, and `country.json` may map an ambiguous country folder to an existing `countryId`.
+A private folder that still holds legacy-format data it has not migrated cannot import media: `npm run media:check` and `npm run media:import` stop with exit code 2 and explain how to migrate (see [Legacy-format data](../../01_Web/README.md#legacy-format-data)). After the migration, a legacy `country.json` still resolves through the place's old country key, as described above.
 
 ## Agent Workflow
 
@@ -63,7 +63,7 @@ Original media in `MediaInbox` is immutable by default: never move, rename, over
 
 - `<country>/place.json` and `<country>/<city>/place.json` bind a folder to a place id (`{ "placeId": "…" }`). StarMap normally writes them itself on upload and import. Write one by hand only to resolve a reported ambiguity, with a place id taken from `data/v2/places.local.json`.
 - `<country>/country.json` maps an ambiguous country folder to an existing legacy `countryId`.
-- `<country>/<city>/media.json` records drone type and capture metadata using `media.example.json` as the shape reference. In V2 mode an entry may also carry `placeId` (a city place id) to assign one file to another city; the legacy `countryId` + `cityId` pair is still accepted. Giving both and having them disagree is an error.
+- `<country>/<city>/media.json` records drone type and capture metadata using `media.example.json` as the shape reference. An entry may also carry `placeId` (a city place id) to assign one file to another city; the legacy `countryId` + `cityId` pair is still accepted. Giving both and having them disagree is an error.
 
 These JSON files are metadata, not media derivatives. Converted, resized, optimized, or otherwise derived media must never be written into the Inbox. The editor's `.bak` backups of these files are ignored by the importer.
 
@@ -79,7 +79,7 @@ These JSON files are metadata, not media derivatives. Converted, resized, optimi
 
 - `<private-root>/MediaInbox/<real-country>/`: private source delivery and sidecars; physically outside the source Git repository.
 - `<private-root>/media/user/`: generated website media; physically outside the source Git repository.
-- `<private-root>/data/`: personal travel data, editor state, and media catalogs (`data/v2/` in V2 mode, `data/*.local.json` in legacy mode); physically outside the source Git repository.
+- `<private-root>/data/`: personal travel data, editor state, and media catalogs in `data/v2/` (legacy-format `data/*.local.json` files, if any, are read only by the migration tool); physically outside the source Git repository.
 - `_country-template/`, rules, schema, and scripts: safe to publish with the open-source repository.
 
 Never place credentials, tickets, identity documents, hotel addresses, booking references, or private family material in the Inbox. Never add private Inbox files, generated user media, or local catalogs to Git.

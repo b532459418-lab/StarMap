@@ -120,22 +120,20 @@ The **Collection** tab in the top navigation lists every place on the Want to Go
 
 Once you have been to a place, **Mark as visited** (标记为去过) turns it into a travel record in the personal profile. The button sits next to **View on map** on Collection cards and next to **Hide** on the map detail card. Enter the visit date yourself (the end date and trip title are optional); the city joins your travel records under the country you already use for that country code, and the want-to-go entry is removed unless you tick **Keep on the Want to Go list** (保留在想去列表（还想再去）), in which case the visited city shows the heart badge. Planned travel records can be marked as visited the same way: the record itself becomes a visited one with the dates you enter, and no new record is added. A whole country or a place without coordinates must first be narrowed down to a city with coordinates; its button is disabled and the reason is shown. A city that is already in your travel records has the button disabled with that reason (the editor also refuses such a request without writing anything); hide or delete the want-to-go entry instead. The want-to-go note is not copied into the travel record. After a successful conversion the page reloads on the new city, and the Travel layer is switched back on if it was off.
 
-Your places are saved in `<private-root>/data/v2/want-to-go.local.json` (`<private-root>/data/want-to-go.local.json` in a private folder that still uses the legacy format), outside the source repository like the rest of your private data. If that file does not exist yet, the personal profile starts with an empty Want to Go layer rather than the sample. Travel records with `status: planned` in your travel data also appear on the Want to Go layer; apart from **Mark as visited** they are read-only there, so change anything else in the travel data itself.
+Your places are saved in `<private-root>/data/v2/want-to-go.local.json`, outside the source repository like the rest of your private data. If that file does not exist yet, the personal profile starts with an empty Want to Go layer rather than the sample. Travel records with `status: planned` in your travel data also appear on the Want to Go layer; apart from **Mark as visited** they are read-only there, so change anything else in the travel data itself.
 
 Public builds and `dev:public` show a neutral three-place sample instead (Nuuk, Tromsø, and Akureyri, which overlaps the sample journey to demonstrate the heart badge) and contain no add, hide, delete, or Mark as visited controls. Forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development) previews the public site: it shows the same sample, and the local editor is off even in the personal profile, so no editing control is rendered.
 
 ## Existing data in the legacy format
 
-A new private folder starts in the current (V2) data format with an empty map. A private folder created before that keeps using its existing files (the legacy format) until you migrate it; StarMap never migrates data automatically. From `01_Web/`:
+The personal profile reads only the current (V2) data format in `<private-root>/data/v2/`, and a new private folder starts with an empty map. A private folder created before that holds its data in the legacy format, which StarMap no longer reads. Until you migrate it, the map shows a migration notice, the local editor refuses to save, and the media import refuses to run, so nothing is written next to the unmigrated data. StarMap never migrates, moves, or rewrites your files by itself. From `01_Web/`:
 
 ```powershell
-npm run data-mode                              # current format and the reason
-npm run identity:check                         # dry run: report only, nothing is migrated
-npm run identity:check -- --apply --switch     # write the V2 files and switch to them
-npm run data-mode -- legacy                    # roll back to the untouched legacy files
+npm run identity:check                  # dry run: report only, nothing is migrated
+npm run identity:check -- --apply       # write the V2 files, then refresh the page
 ```
 
-Resolve everything the dry run asks you to decide before applying. The full steps, the decisions file, and what the migration means for media are in [01_Web/README.md](01_Web/README.md#data-modes).
+Resolve everything the dry run asks you to decide before applying. After the migration the legacy files, and the `data/data-mode.local.json` marker of earlier versions, are leftovers that StarMap ignores; keep or delete them. If you do not need the old data at all, move the four legacy files out of `data/` instead. The full steps, the decisions file, and what the migration means for media are in [01_Web/README.md](01_Web/README.md#legacy-format-data).
 
 ## Build and verify
 
