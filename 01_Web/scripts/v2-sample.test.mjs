@@ -81,6 +81,19 @@ test('sample:v2 的命令：--sample --apply，输出到 src/data/v2-sample，�
   assert.equal(args[args.indexOf('--now') + 1], new Date(legacyTravelSample.generated_at).toISOString())
 })
 
+test('行尾：V2 样例与它的两份输入（旧足迹、旧想去样例）在任何检出里都是 LF——清单记录的是输入原文的 sha256，生成结果按字节比较', () => {
+  const attributes = readFileSync(path.join(webRoot, '..', '.gitattributes'), 'utf8')
+  for (const rule of ['01_Web/src/data/v2-sample/*.json text eol=lf', '01_Web/src/data/travel-map.sample.json text eol=lf', '01_Web/src/data/want-to-go.sample.json text eol=lf']) {
+    assert.ok(attributes.split(/\r?\n/).includes(rule), `.gitattributes 缺少：${rule}`)
+  }
+  const files = [
+    path.join(webRoot, 'src', 'data', 'travel-map.sample.json'),
+    path.join(webRoot, 'src', 'data', 'want-to-go.sample.json'),
+    ...V2_SAMPLE_ALLOWED_FILES.map((name) => path.join(V2_SAMPLE_DIRECTORY, name)),
+  ]
+  for (const file of files) assert.equal(readFileSync(file).includes(13), false, `${file} 含有 CR（检出时被改成了 CRLF？）`)
+})
+
 test('sample:v2 可复现：同一条命令（输出目录与清单换到只放了已提交清单的临时目录）写出的五个文件与已提交文件逐字节相同，清单不变', () => withTemp(async (directory) => {
   const out = path.join(directory, 'v2-sample')
   await mkdir(out)
