@@ -18,12 +18,16 @@ import {
   droneUploadMetadataOf,
   generatedDirectoriesOf,
   idsMissingFromSourceIndex,
+  inboxFolderCandidates,
+  inboxFolderDecision,
   mediaSourcesOf,
-  placeFolderClaims,
+  pickInboxFolder,
+  placeFolderSuffix,
   removeMediaFromEditorState,
   restoreImportedMedia,
   uploadKindOf,
   uploadTargetOf,
+  type InboxFolderState,
 } from './editorWrites.ts'
 import { buildMediaItem, mediaCatalogFileOf, mediaIdOf } from './importPlan.ts'
 
@@ -116,30 +120,48 @@ test('上传 · 无人机参数：日期必填、经纬度成对且在范围内�
   assertV2Error(() => droneUploadMetadataOf(query({ date: '2026-07-03', lat: 'a', lng: '0' }), 'aerialPhoto', 'X'), 'E_MEDIA_COORDINATES_RANGE')
 })
 
-test('上传 · place.json：没有就写入（国家在前）；已有且指向同一地点不动；指向别的地点或内容无效 → 冲突，一个都不写', () => {
-  const target = { countryId: 'country-1', cityId: 'city-1' }
-  const labels = { country: 'Iceland', city: 'Iceland/Reykjavik' }
-  assert.deepEqual(placeFolderClaims(target, {}, labels), [
-    { folder: 'country', value: { placeId: 'country-1' } },
-    { folder: 'city', value: { placeId: 'city-1' } },
-  ])
-  assert.deepEqual(placeFolderClaims(target, { country: { placeId: 'country-1' }, city: { placeId: ' city-1 ' } }, labels), [])
-  assert.deepEqual(placeFolderClaims(target, { country: { placeId: 'country-1', note: 'x' } }, labels), [{ folder: 'city', value: { placeId: 'city-1' } }])
-
-  assertV2Error(
-    () => placeFolderClaims(target, { city: { placeId: 'city-2' } }, labels),
-    'E_MEDIA_FOLDER_CONFLICT',
-    '投递箱文件夹 Iceland/Reykjavik 的 place.json 指向别的地点（或内容无效），未写入文件。请先确认这个文件夹属于哪个地点。',
-    (error) => assert.deepEqual(error.params, { folder: 'Iceland/Reykjavik', expected: 'city-1', actual: 'city-2' }),
-  )
-  assertV2Error(() => placeFolderClaims(target, { country: { placeId: 'country-2' } }, labels), 'E_MEDIA_FOLDER_CONFLICT', undefined, (error) => {
-    assert.equal(error.params?.folder, 'Iceland')
-  })
-  for (const invalid of [null, {}, { placeId: '' }, 'country-1', []]) {
-    assertV2Error(() => placeFolderClaims(target, { country: invalid }, labels), 'E_MEDIA_FOLDER_CONFLICT', undefined, (error) => {
-      assert.equal(error.params?.actual, null)
-    })
+test('上传 · 文件夹能不能用：不存在或没有 place.json → 用并写入；已指向这个地点 → 直接用；指向别的地点或内容无效 → 被占用', () => {
+  assert.equal(inboxFolderDecision('city-1', { exists: false }), 'claim')
+  assert.equal(inboxFolderDecision('city-1', { exists: true, placeConfig: undefined }), 'claim', '手动建的文件夹（还没有 place.json）')
+  assert.equal(inboxFolderDecision('city-1', { exists: true, placeConfig: { placeId: ' city-1 ' } }), 'mine')
+  assert.equal(inboxFolderDecision('city-1', { exists: true, placeConfig: { placeId: 'city-1', note: 'x' } }), 'mine')
+  assert.equal(inboxFolderDecision('city-1', { exists: true, placeConfig: { placeId: 'city-2' } }), 'taken')
+  for (const invalid of [null, {}, { placeId: '' }, 'city-1', []]) {
+    assert.equal(inboxFolderDecision('city-1', { exists: true, placeConfig: invalid }), 'taken', JSON.stringify(invalid))
   }
+})
+
+test('上传 · 同名地点的文件夹名：显示名被别的地点占用时用 <显示名> (<地点 id 最后 8 位>)；两个都被占用 → 冲突，一个都不写', () => {
+  // 先后添加的两个同名城市：UUIDv7 的前 8 位（时间戳高位）相同，最后 8 位不同。
+  const first = '019b76da-0001-7000-8000-00000000a1b2'
+  const second = '019b76da-0002-7000-8000-00000000c3d4'
+  assert.equal(first.slice(0, 8), second.slice(0, 8))
+  assert.equal(placeFolderSuffix(first), '0000a1b2')
+  assert.equal(placeFolderSuffix(second), '0000c3d4')
+  assert.deepEqual(inboxFolderCandidates('Springfield', second), ['Springfield', 'Springfield (0000c3d4)'])
+
+  const candidates = (states: InboxFolderState[]) => inboxFolderCandidates('Springfield', second).map((name, index) => ({
+    name,
+    label: `United States/${name}`,
+    state: states[index],
+  }))
+  assert.deepEqual(pickInboxFolder(second, candidates([{ exists: false }, { exists: false }])), { name: 'Springfield', claim: true })
+  assert.deepEqual(pickInboxFolder(second, candidates([{ exists: true, placeConfig: { placeId: second } }, { exists: false }])), { name: 'Springfield', claim: false })
+  assert.deepEqual(
+    pickInboxFolder(second, candidates([{ exists: true, placeConfig: { placeId: first } }, { exists: false }])),
+    { name: 'Springfield (0000c3d4)', claim: true },
+    '显示名已归第一个 Springfield',
+  )
+  assert.deepEqual(
+    pickInboxFolder(second, candidates([{ exists: true, placeConfig: { placeId: first } }, { exists: true, placeConfig: { placeId: second } }])),
+    { name: 'Springfield (0000c3d4)', claim: false },
+  )
+  assertV2Error(
+    () => pickInboxFolder(second, candidates([{ exists: true, placeConfig: { placeId: first } }, { exists: true, placeConfig: null }])),
+    'E_MEDIA_FOLDER_CONFLICT',
+    '投递箱文件夹 United States/Springfield、United States/Springfield (0000c3d4) 的 place.json 都指向别的地点（或内容无效），未写入文件。请先确认这些文件夹属于哪个地点。',
+    (error) => assert.deepEqual(error.params, { folders: ['United States/Springfield', 'United States/Springfield (0000c3d4)'], expected: second }),
+  )
 })
 
 // ---------------------------------------------------------------------------

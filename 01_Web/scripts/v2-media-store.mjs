@@ -10,7 +10,8 @@
  * 判断在纯函数里（src/data/v2media/editorWrites.ts）；这里只做 IO：
  *
  * - 上传：目标（城市地点 id，countryId 必须是它的 partOf）→ 收件箱 `MediaInbox/<国家显示名>/<城市显示名>/photos|drone/`
- *   → 两个文件夹的 place.json（没有就写入，已有且指向别的地点就报错、不写文件）→ 接收文件 → 写 place.json → 无人机 sidecar。
+ *   → 选文件夹：显示名的文件夹已被别的地点占用（place.json 指向别处）时改用 `<显示名> (<地点 id 后缀>)`，两个都被占用才报错、
+ *   不写文件 → 接收文件 → 给新用上的文件夹写 place.json → 无人机 sidecar。
  * - 导入：运行导入器（先预检、后应用，同旧）→ 按 V2 源文件索引恢复新导入条目的隐藏状态并追加进排序表（editor-state 走
  *   PR3b-2 的事务与完整性检查）。
  * - 删除：只能删该城市里已隐藏的照片或无人机影像 → 先算好 editor-state 的清理（事务，含完整性检查）→ 删源文件、sidecar 条目、
@@ -29,13 +30,15 @@ import {
   droneUploadMetadataOf,
   generatedDirectoriesOf,
   idsMissingFromSourceIndex,
+  inboxFolderCandidates,
   mediaSourcesOf,
-  placeFolderClaims,
+  pickInboxFolder,
   removeMediaFromEditorState,
   restoreImportedMedia,
   uploadKindOf,
   uploadTargetOf,
 } from '../src/data/v2media/editorWrites.ts'
+import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
 import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
 
 /** V2 下的三个媒体端点 → 处理方式。与 v2-editor-store.mjs 的 V2_EDITOR_ROUTES 不相交，两者合起来是全部 11 个写入端点。 */
@@ -89,6 +92,33 @@ const readControlFile = async (target) => {
 
 const inboxRelative = (inboxRoot, target) => path.relative(inboxRoot, target).split(path.sep).join('/')
 
+const directoryExists = async (target) => {
+  try {
+    return (await stat(target)).isDirectory()
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false
+    throw error
+  }
+}
+
+/**
+ * 在 `parentDirectory` 下为地点 `placeId` 选收件箱文件夹（§2.4）：候选是显示名与 `<显示名> (<地点 id 后缀>)`
+ * （都经 safeSegment）；按顺序取第一个不存在、没有 place.json、或 place.json 已指向这个地点的。
+ * 文件系统不分大小写时（Windows），只差大小写的同名文件夹就是同一个文件夹，同样按它的 place.json 判断。
+ * 返回 `{ name, claim }`，`claim` 为 true 表示要写入 place.json。候选都被占用 → E_MEDIA_FOLDER_CONFLICT。
+ */
+const chooseInboxFolder = async (parentDirectory, parentLabel, displayName, placeId, label, deps) => {
+  const candidates = []
+  for (const name of inboxFolderCandidates(displayName, placeId).map((candidate) => deps.safeSegment(candidate, label))) {
+    const directory = path.join(parentDirectory, name)
+    const state = await directoryExists(directory)
+      ? { exists: true, placeConfig: await readControlFile(path.join(directory, 'place.json')) }
+      : { exists: false }
+    candidates.push({ name, label: parentLabel ? `${parentLabel}/${name}` : name, state })
+  }
+  return pickInboxFolder(placeId, candidates)
+}
+
 // ---------------------------------------------------------------------------
 // POST /upload
 // ---------------------------------------------------------------------------
@@ -102,23 +132,22 @@ export async function handleV2Upload({ privatePaths, query, request, deps, now =
     const kind = uploadKindOf(query)
     const files = await readV2Files(privatePaths)
     const target = uploadTargetOf(files, { countryId: query.get('countryId') ?? '', cityId: query.get('cityId') ?? '' }, now)
-    const countryFolder = deps.safeSegment(target.countryFolderName, '国家名')
-    const cityFolder = deps.safeSegment(target.cityFolderName, '城市名')
-    const countryRoot = path.join(privatePaths.inboxRoot, countryFolder)
-    const cityRoot = path.join(countryRoot, cityFolder)
-    const claimPaths = { country: path.join(countryRoot, 'place.json'), city: path.join(cityRoot, 'place.json') }
-    const claims = placeFolderClaims(
-      { countryId: target.country.id, cityId: target.city.id },
-      { country: await readControlFile(claimPaths.country), city: await readControlFile(claimPaths.city) },
-      { country: countryFolder, city: `${countryFolder}/${cityFolder}` },
-    )
+    // 先选国家文件夹，再在它下面选城市文件夹：显示名已被别的地点占用时改用带地点 id 后缀的名字。
+    const country = await chooseInboxFolder(privatePaths.inboxRoot, '', target.countryFolderName, target.country.id, '国家名', deps)
+    const countryRoot = path.join(privatePaths.inboxRoot, country.name)
+    const city = await chooseInboxFolder(countryRoot, country.name, target.cityFolderName, target.city.id, '城市名', deps)
+    const cityRoot = path.join(countryRoot, city.name)
+    const claims = [
+      ...(country.claim ? [{ file: path.join(countryRoot, 'place.json'), value: placeConfigOf(target.country.id) }] : []),
+      ...(city.claim ? [{ file: path.join(cityRoot, 'place.json'), value: placeConfigOf(target.city.id) }] : []),
+    ]
 
     const destination = await deps.reserveDestination(path.join(cityRoot, kind === 'photo' ? 'photos' : 'drone'), query.get('fileName') ?? '')
     if (!UPLOAD_EXTENSIONS.has(path.extname(destination).toLowerCase())) throw new V2WriteError('E_MEDIA_EXTENSION')
     const droneMetadata = kind === 'photo' ? undefined : droneUploadMetadataOf(query, kind, target.cityFolderName)
 
     const imageMetadata = await deps.writeUpload(request, destination, kind)
-    for (const claim of claims) await atomicJsonWrite(claimPaths[claim.folder], claim.value)
+    for (const claim of claims) await atomicJsonWrite(claim.file, claim.value)
     if (droneMetadata) await deps.updateDroneSidecar(cityRoot, destination, droneMetadata, imageMetadata)
 
     const fileStats = await stat(destination)

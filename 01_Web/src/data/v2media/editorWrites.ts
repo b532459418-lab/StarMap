@@ -2,7 +2,7 @@
  * 本地编辑器三个媒体端点在 V2 数据模式下的纯函数（RFC-LOC-1 PR3b-3 规格 §2.4）：
  *
  * - `POST /upload`：上传目标（城市地点与所属国家、收件箱文件夹的显示名）、其余参数的校验、
- *   收件箱文件夹 `place.json` 的写入与冲突；
+ *   收件箱文件夹的选择（同名地点不共用文件夹）与 `place.json` 的写入；
  * - `POST /import`：导入之后按 V2 源文件索引恢复新导入条目的隐藏状态，并把它们追加进排序表（键为地点 id）；
  * - `POST /media/delete`：能删哪些媒体、内容寻址的生成目录在哪、从 editor-state 里清掉这些 id。
  *
@@ -25,7 +25,7 @@ import {
   type V2WriteContext,
   type V2WriteOutcome,
 } from '../v2write/transaction.ts'
-import { generatedDirectoryOfSrc, placeConfigOf, placeDisplayName, placeIdOfConfig } from './importPlan.ts'
+import { generatedDirectoryOfSrc, placeDisplayName, placeIdOfConfig } from './importPlan.ts'
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -125,35 +125,56 @@ export const droneUploadMetadataOf = (query: QueryLike, kind: Exclude<UploadKind
   }
 }
 
-export interface FolderClaimWrite {
-  folder: 'country' | 'city'
-  value: { placeId: PlaceId }
+/**
+ * 收件箱里一个文件夹现在的样子：不存在；或存在，`placeConfig` 是它的 `place.json` 内容
+ * （没有 place.json 为 undefined，读不出为 null）。
+ */
+export type InboxFolderState = { exists: false } | { exists: true; placeConfig: unknown }
+
+/**
+ * 这个文件夹能不能给地点 `placeId` 用（§2.4）：
+ * - `'claim'`：不存在，或存在但还没有 place.json——可以用，并要写入 place.json；
+ * - `'mine'`：place.json 已经指向这个地点——直接用，不写；
+ * - `'taken'`：place.json 指向别的地点，或内容不是 `{ placeId }`——不能用。
+ */
+export const inboxFolderDecision = (placeId: PlaceId, state: InboxFolderState): 'claim' | 'mine' | 'taken' => {
+  if (!state.exists || state.placeConfig === undefined) return 'claim'
+  return placeIdOfConfig(state.placeConfig) === placeId ? 'mine' : 'taken'
 }
 
 /**
- * 收件箱国家、城市文件夹的 `place.json`（§2.4）：没有就写入；已有且指向同一个地点，不动；
- * 已有但指向别的地点（或内容不是 `{ placeId }`）→ `E_MEDIA_FOLDER_CONFLICT`，一个文件都不写。
- * `existing` 是两个文件现在的内容（不存在为 undefined），`labels` 是两个文件夹在收件箱里的相对路径（错误信息用）。
- * 返回要写的文件，按 国家 → 城市 的顺序。
+ * 同名地点的文件夹名后缀：地点 id 去掉连字符后的【最后】 8 位十六进制。只用于让文件夹名不同，
+ * 不参与任何匹配（导入器靠 place.json 解析这类文件夹）。
+ * 不取前 8 位：地点 id 是 UUIDv7，前 8 位是毫秒时间戳的高 32 位，约每 65 秒才变一次——同一次迁移、
+ * 或一分钟内先后添加的两个同名城市，前 8 位几乎总是相同；最后 8 位是随机位。
  */
-export const placeFolderClaims = (
-  target: { countryId: PlaceId; cityId: PlaceId },
-  existing: { country?: unknown; city?: unknown },
-  labels: { country: string; city: string },
-): FolderClaimWrite[] => {
-  const writes: FolderClaimWrite[] = []
-  for (const [folder, placeId] of [['country', target.countryId], ['city', target.cityId]] as const) {
-    const current = existing[folder]
-    if (current === undefined) {
-      writes.push({ folder, value: placeConfigOf(placeId) })
-      continue
-    }
-    const currentId = placeIdOfConfig(current)
-    if (currentId !== placeId) {
-      throw new V2WriteError('E_MEDIA_FOLDER_CONFLICT', { folder: labels[folder], expected: placeId, actual: currentId ?? null })
-    }
+export const placeFolderSuffix = (placeId: PlaceId): string => placeId.replaceAll('-', '').slice(-8)
+
+/**
+ * 收件箱文件夹名的候选（未经 safeSegment）：先用显示名；它已被别的地点占用时（Windows 上包括只差大小写的同名文件夹）
+ * 用 `<显示名> (<后缀>)`。
+ */
+export const inboxFolderCandidates = (displayName: string, placeId: PlaceId): string[] =>
+  [displayName, `${displayName} (${placeFolderSuffix(placeId)})`]
+
+export interface InboxFolderCandidate {
+  /** 文件夹名（已经过 safeSegment）。 */
+  name: string
+  /** 在收件箱里的相对路径（错误信息用）。 */
+  label: string
+  state: InboxFolderState
+}
+
+/**
+ * 按顺序选第一个能给 `placeId` 用的候选文件夹；`claim` 为 true 时调用方要写入 place.json。
+ * 候选都被别的地点占用 → `E_MEDIA_FOLDER_CONFLICT`，一个文件都不写。
+ */
+export const pickInboxFolder = (placeId: PlaceId, candidates: readonly InboxFolderCandidate[]): { name: string; claim: boolean } => {
+  for (const candidate of candidates) {
+    const decision = inboxFolderDecision(placeId, candidate.state)
+    if (decision !== 'taken') return { name: candidate.name, claim: decision === 'claim' }
   }
-  return writes
+  throw new V2WriteError('E_MEDIA_FOLDER_CONFLICT', { folders: [...new Set(candidates.map((candidate) => candidate.label))], expected: placeId })
 }
 
 // ---------------------------------------------------------------------------

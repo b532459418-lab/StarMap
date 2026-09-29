@@ -116,9 +116,11 @@ export const V2_WRITE_MESSAGES = {
   E_INTEGRITY: () => 'V2 数据没有通过完整性检查（例如引用了不存在的地点），未写入任何文件。',
   E_WRITE_FAILED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '写入 V2 数据文件失败。'),
   E_PARTIAL_WRITE: (params: V2ErrorParams) => (typeof params.message === 'string' ? params.message : '部分 V2 数据文件已写入，其余没有写入。'),
-  /** 新（PR3b-3）：上传时收件箱文件夹里已有 place.json，却指向别的地点。 */
-  E_MEDIA_FOLDER_CONFLICT: (params: V2ErrorParams) =>
-    `投递箱文件夹 ${String(params.folder ?? '')} 的 place.json 指向别的地点（或内容无效），未写入文件。请先确认这个文件夹属于哪个地点。`,
+  /** 新（PR3b-3）：上传时候选的收件箱文件夹（显示名，以及带地点 id 后缀的名字）都已有 place.json，却都指向别的地点。 */
+  E_MEDIA_FOLDER_CONFLICT: (params: V2ErrorParams) => {
+    const folders = Array.isArray(params.folders) ? params.folders.map(String).join('、') : ''
+    return `投递箱文件夹 ${folders} 的 place.json 都指向别的地点（或内容无效），未写入文件。请先确认这些文件夹属于哪个地点。`
+  },
   E_UNKNOWN_ENDPOINT: () => '未知的本地编辑接口。',
   /** 请求体读不出来（过大、不是 JSON）：原因原样（同旧模式）。 */
   E_REQUEST_INVALID: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '请求内容无效。'),

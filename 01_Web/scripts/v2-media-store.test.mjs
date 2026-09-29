@@ -26,6 +26,7 @@ import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, readV2Files, runV2Write } from './v2-editor-store.mjs'
 import { handleV2Import, handleV2MediaDelete, handleV2Upload } from './v2-media-store.mjs'
+import { placeFolderSuffix } from '../src/data/v2media/editorWrites.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { completeForWrite, integrityProblems } from '../src/data/v2write/transaction.ts'
 
@@ -317,14 +318,79 @@ test('V2 上传的拒绝：类型、地点、扩展名、无人机日期、旧�
     const vik = await upload(env, { countryId: ID.iceland, cityId: ID.vik, fileName: 'beach.jpg' }, red)
     assert.equal(vik.body.sourcePath, 'Iceland/维克/photos/beach.jpg')
 
-    // 已有 place.json 指向别的地点：冲突，不写文件。
+    // 显示名的文件夹与带后缀的文件夹都已有 place.json 且指向别的地点：冲突，不写文件。
+    const suffixed = `维克 (${placeFolderSuffix(ID.vik)})`
     await writeFile(path.join(paths.inboxRoot, 'Iceland', '维克', 'place.json'), `${JSON.stringify({ placeId: ID.reykjavik })}\n`, 'utf8')
+    await mkdir(path.join(paths.inboxRoot, 'Iceland', suffixed), { recursive: true })
+    await writeFile(path.join(paths.inboxRoot, 'Iceland', suffixed, 'place.json'), `${JSON.stringify({ placeId: ID.torshavn })}\n`, 'utf8')
     const before = await listTree(paths.inboxRoot)
     const conflict = await upload(env, { countryId: ID.iceland, cityId: ID.vik, fileName: 'other.jpg' }, red)
     assert.equal(conflict.status, 400)
     assert.equal(conflict.body.code, 'E_MEDIA_FOLDER_CONFLICT')
-    assert.equal(conflict.body.error, '投递箱文件夹 Iceland/维克 的 place.json 指向别的地点（或内容无效），未写入文件。请先确认这个文件夹属于哪个地点。')
+    assert.equal(conflict.body.error, `投递箱文件夹 Iceland/维克、Iceland/${suffixed} 的 place.json 都指向别的地点（或内容无效），未写入文件。请先确认这些文件夹属于哪个地点。`)
     assert.deepEqual(await listTree(paths.inboxRoot), before)
+  })
+})
+
+/** 美国：两个英文名、中文名都相同的 Springfield（各自的地点），以及一个只差大小写的 springfield。 */
+const SAME_NAME = { us: newId(), springfieldA: newId(), springfieldB: newId(), springfieldLower: newId() }
+const sameNamePlaces = () => {
+  const places = placesFile()
+  places.places.push(
+    { id: SAME_NAME.us, subtype: 'country', names: { 'zh-Hans': '美国', en: 'United States' }, externalIds: { iso3166Alpha2: 'US' }, location: { lat: 39, lng: -98 } },
+    { id: SAME_NAME.springfieldA, subtype: 'city', names: { 'zh-Hans': '斯普林菲尔德', en: 'Springfield' }, partOf: SAME_NAME.us, location: { lat: 39.8, lng: -89.65 } },
+    { id: SAME_NAME.springfieldB, subtype: 'city', names: { 'zh-Hans': '斯普林菲尔德', en: 'Springfield' }, partOf: SAME_NAME.us, location: { lat: 42.1, lng: -72.59 } },
+    { id: SAME_NAME.springfieldLower, subtype: 'city', names: { en: 'springfield' }, partOf: SAME_NAME.us, location: { lat: 37.2, lng: -93.29 } },
+  )
+  return places
+}
+
+test('同一国家的同名城市不共用收件箱文件夹：两个 Springfield 各上传一张照片都成功、各进各的文件夹（第二个用 <显示名> (<地点 id 后缀>)），导入后归属正确；只差大小写的也一样', async () => {
+  await withV2Root(async (env) => {
+    const { paths, deps, ctx } = env
+    await writeFile(paths.v2FilePaths.places, `${JSON.stringify(sameNamePlaces(), null, 2)}\n`, 'utf8')
+    // 先后添加的地点 id 前 8 位相同（UUIDv7 的时间戳高位），所以后缀取最后 8 位。
+    assert.equal(SAME_NAME.springfieldA.slice(0, 8), SAME_NAME.springfieldB.slice(0, 8))
+
+    const a = await upload(env, { countryId: SAME_NAME.us, cityId: SAME_NAME.springfieldA, fileName: 'capitol.jpg' }, await jpeg({ r: 10, g: 20, b: 30 }))
+    const b = await upload(env, { countryId: SAME_NAME.us, cityId: SAME_NAME.springfieldB, fileName: 'armory.jpg' }, await jpeg({ r: 40, g: 50, b: 60 }))
+    const lower = await upload(env, { countryId: SAME_NAME.us, cityId: SAME_NAME.springfieldLower, fileName: 'square.jpg' }, await jpeg({ r: 70, g: 80, b: 90 }))
+    for (const result of [a, b, lower]) assert.equal(result.status, 201, JSON.stringify(result.body))
+    const folderB = `Springfield (${placeFolderSuffix(SAME_NAME.springfieldB)})`
+    assert.equal(a.body.sourcePath, 'United States/Springfield/photos/capitol.jpg')
+    assert.equal(b.body.sourcePath, `United States/${folderB}/photos/armory.jpg`)
+    assert.deepEqual(await readJson(path.join(paths.inboxRoot, 'United States', 'place.json')), { placeId: SAME_NAME.us })
+    assert.deepEqual(await readJson(path.join(paths.inboxRoot, 'United States', 'Springfield', 'place.json')), { placeId: SAME_NAME.springfieldA })
+    assert.deepEqual(await readJson(path.join(paths.inboxRoot, 'United States', folderB, 'place.json')), { placeId: SAME_NAME.springfieldB })
+    // 只差大小写：文件系统不分大小写（Windows）时 springfield 就是 Springfield 那个文件夹，被 A 占用，于是用带后缀的名字；
+    // 分大小写的文件系统上它是另一个文件夹。两种情况下它都有自己的文件夹与 place.json。
+    const lowerFolder = lower.body.sourcePath.split('/')[1]
+    assert.ok([`springfield (${placeFolderSuffix(SAME_NAME.springfieldLower)})`, 'springfield'].includes(lowerFolder), lowerFolder)
+    assert.deepEqual(await readJson(path.join(paths.inboxRoot, 'United States', lowerFolder, 'place.json')), { placeId: SAME_NAME.springfieldLower })
+
+    // 再给第二个 Springfield 上传一张：直接用它自己的文件夹。
+    const b2 = await upload(env, { countryId: SAME_NAME.us, cityId: SAME_NAME.springfieldB, fileName: 'park.jpg' }, await jpeg({ r: 45, g: 55, b: 65 }))
+    assert.equal(b2.body.sourcePath, `United States/${folderB}/photos/park.jpg`)
+
+    const imported = await handleV2Import({
+      privatePaths: paths,
+      input: { sourcePaths: [a, b, lower, b2].map((result) => result.body.sourcePath) },
+      ctx,
+      deps,
+    })
+    assert.equal(imported.status, 200, JSON.stringify(imported.body))
+    const owners = Object.fromEntries((await readCatalog(paths)).items.map((item) => [item.originalFileName, item.placeId]))
+    assert.deepEqual(owners, {
+      'capitol.jpg': SAME_NAME.springfieldA,
+      'armory.jpg': SAME_NAME.springfieldB,
+      'park.jpg': SAME_NAME.springfieldB,
+      'square.jpg': SAME_NAME.springfieldLower,
+    })
+    const state = (await readV2EditorState({ privatePaths: paths })).body.state
+    assert.equal(state.mediaOrderByCity[SAME_NAME.springfieldA].length, 1)
+    assert.equal(state.mediaOrderByCity[SAME_NAME.springfieldB].length, 2)
+    assert.equal(state.mediaOrderByCity[SAME_NAME.springfieldLower].length, 1)
+    await assertIntact(paths, '同名城市导入之后')
   })
 })
 
