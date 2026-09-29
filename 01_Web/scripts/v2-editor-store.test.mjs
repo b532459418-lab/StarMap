@@ -1,12 +1,12 @@
 /**
  * V2 写入的端到端测试（RFC-LOC-1 PR3b-2 规格 §3「端到端（Node）」）：在临时私人根上
  *
- *   1. 中性旧数据 → migrate-identity 的 dry-run 与 --apply → 写数据模式标记 { "mode": "v2" }；
+ *   1. 中性旧数据 → migrate-identity 的 dry-run 与 --apply（PR5a 起没有数据模式，写出 V2 文件即生效）；
  *   2. 经 scripts/v2-editor-store.mjs（插件用的同一个 IO 层：读 data/v2/ → 纯函数 → 按顺序原子写盘）执行一组编辑；
  *   3. 每一步之后，磁盘上的五个 V2 文件都通过 validateV2Files、没有悬空引用；四个旧文件逐字节不变；
  *   4. 最后 legacy-baseline --path v2 能正常产出。
  *
- * 另测：全新 V2 目录（只有标记）从空白开始写，不复制样例；写盘中途失败时的错误码与说明。
+ * 另测：全新私人目录从空白开始写，不复制样例；写盘中途失败时的错误码与说明。
  *
  * 运行方式：npm test。零依赖：只用 node:test + node:assert/strict + node:fs + node:child_process + node:crypto。
  * 每次都把 STARMAP_PRIVATE_ROOT 指向本测试用 fs.mkdtemp 建的临时目录，绝不读作者的真实私有层；用例结束时删除临时目录。
@@ -22,8 +22,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { resolveDataMode } from './data-mode.mjs'
 import { atomicJsonWrite } from './json-file.mjs'
+import { isLegacyUnmigrated, legacyDataStateOf } from './legacy-data.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, runV2Write } from './v2-editor-store.mjs'
 import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
@@ -142,15 +142,15 @@ const getState = async (paths) => {
 
 const putState = (run, paths) => async (update, label) => run('PUT /__travelatlas/editor/state', update(await getState(paths)), label)
 
-test('端到端：旧数据 → migrate-identity → 标记 v2 → 一组编辑；每一步五个 V2 文件都合法、无悬空引用，旧文件不变；最后 legacy-baseline --path v2 正常产出', () => withTemp(async ({ root, out, paths }) => {
+test('端到端：旧数据 → migrate-identity → 一组编辑；每一步五个 V2 文件都合法、无悬空引用，旧文件不变；最后 legacy-baseline --path v2 正常产出', () => withTemp(async ({ root, out, paths }) => {
   await writeLegacyData(root)
   const dryRun = runScript('migrate-identity.mjs', [], root)
   assert.equal(dryRun.status, 0, dryRun.stdout + dryRun.stderr)
   assert.match(dryRun.stdout, /^canApply：true$/m)
   const applied = runScript('migrate-identity.mjs', ['--apply'], root)
   assert.equal(applied.status, 0, applied.stdout + applied.stderr)
-  await writePrivate(root, 'data-mode.local.json', { mode: 'v2' })
-  assert.equal(resolveDataMode(paths).mode, 'v2')
+  // 迁移之后是残留（旧文件与 V2 文件都在）：不算未迁移，写入照常。
+  assert.equal(isLegacyUnmigrated(legacyDataStateOf(paths)), false)
   const legacyBefore = await legacySnapshot(root)
   const run = editor(paths, legacyBefore)
   const put = putState(run, paths)
@@ -248,8 +248,7 @@ test('端到端：旧数据 → migrate-identity → 标记 v2 → 一组编辑�
   assert.deepEqual(await legacySnapshot(root), legacyBefore)
 }))
 
-test('端到端 · 全新 V2 目录（只有标记）：从空白开始写；生成合法的 data/v2/ 文件；没有任何样例数据', () => withTemp(async ({ root, out, paths }) => {
-  await writePrivate(root, 'data-mode.local.json', { mode: 'v2' })
+test('端到端 · 全新私人目录：从空白开始写；生成合法的 data/v2/ 文件；没有任何样例数据', () => withTemp(async ({ root, out, paths }) => {
   const run = editor(paths, await legacySnapshot(root))
   const { updatedAt, ...emptyState } = await getState(paths)
   assert.equal(typeof updatedAt, 'string')
@@ -279,8 +278,7 @@ test('端到端 · 全新 V2 目录（只有标记）：从空白开始写；生
   assert.deepEqual(JSON.parse(await readFile(target, 'utf8')).modules.travelAtlas.cities.map((city) => city.nameEn), ['Reykjavik'])
 }))
 
-test('写盘中途失败：第一步失败 → E_WRITE_FAILED，什么都没写；之后的步骤失败 → 旧模式式的说明（E_PARTIAL_WRITE），已写的文件仍无悬空引用', () => withTemp(async ({ root, paths }) => {
-  await writePrivate(root, 'data-mode.local.json', { mode: 'v2' })
+test('写盘中途失败：第一步失败 → E_WRITE_FAILED，什么都没写；之后的步骤失败 → 旧模式式的说明（E_PARTIAL_WRITE），已写的文件仍无悬空引用', () => withTemp(async ({ paths }) => {
   const input = { country: '丹麦', country_en: 'Denmark', country_code: 'DK', city: '哥本哈根', city_en: 'Copenhagen', start_date: '2026-03-01', lat: 55.6761, lng: 12.5683 }
   const failOn = (file) => async (target, value) => {
     if (target === paths.v2FilePaths[file]) throw new Error('磁盘已满。')

@@ -1,11 +1,11 @@
 /**
- * V2 数据模式下本地编辑器三个媒体端点的 IO 层（RFC-LOC-1 PR3b-3 规格 §2.4）：上传、导入、彻底删除隐藏媒体。
+ * 本地编辑器三个媒体端点的 IO 层（RFC-LOC-1 PR3b-3 规格 §2.4）：上传、导入、彻底删除隐藏媒体。
  *
  * 为什么单独成文件：理由同 v2-editor-store.mjs——插件在模块顶层 import sharp / undici / world-countries 并解析私有资料层路径，
- * 无法在 node --test 下加载。插件在 V2 下把三个媒体端点交给这里；旧模式的上传、导入、删除逻辑与文案一行不改。
- * 那些旧模式的辅助函数（safeSegment、reserveDestination、writeUpload、updateDroneSidecar、runImporter、
- * normalizeInboxRelativePath、removeSidecarEntries、isPathInside）经 `deps` 由插件传进来原样复用，所以
- * 文件名规则、上传大小与图片校验、无人机 sidecar 的写法、导入器的预检判断都与旧模式相同。
+ * 无法在 node --test 下加载。插件把三个媒体端点交给这里（PR5a 起旧格式的上传、导入、删除逻辑已删除）。
+ * 插件里的辅助函数（safeSegment、reserveDestination、writeUpload、updateDroneSidecar、runImporter、
+ * normalizeInboxRelativePath、removeSidecarEntries、isPathInside）经 `deps` 传进来复用，所以
+ * 文件名规则、上传大小与图片校验、无人机 sidecar 的写法、导入器的预检判断都与 PR3b-3 之前的旧模式相同。
  *
  * 判断在纯函数里（src/data/v2media/editorWrites.ts）；这里只做 IO：
  *
@@ -48,7 +48,7 @@ export const V2_MEDIA_ROUTES = Object.freeze({
   'POST /__travelatlas/editor/media/delete': 'delete',
 })
 
-/** V2 模式下这个请求是不是媒体端点；是则返回 'upload' | 'import' | 'delete'。 */
+/** 这个请求是不是媒体端点；是则返回 'upload' | 'import' | 'delete'。 */
 export const v2MediaRoute = (method, pathname) => V2_MEDIA_ROUTES[`${method} ${pathname}`]
 
 const UPLOAD_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif'])

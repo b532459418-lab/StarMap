@@ -1,7 +1,8 @@
 /**
- * V2 数据模式下的媒体导入（RFC-LOC-1 PR3b-3 规格 §2.1–§2.3、§2.5）。
+ * 媒体导入（RFC-LOC-1 PR3b-3 规格 §2.1–§2.3、§2.5）。
  *
- * scripts/import-media.mjs 按数据模式分派：旧模式照旧运行它自己的代码（一字不改），V2 时调用这里的 runV2MediaImport。
+ * 入口是 scripts/import-media.mjs（`npm run media:check` / `media:import`）：PR5a 起旧格式的导入器已删除，入口只检查
+ * 私人目录有没有没迁移的旧数据（有则拒绝，退出码 2），然后调用这里的 runV2MediaImport。
  * 流程与旧导入器相同——扫描投递箱 → 打印报告（预检）→ 加 --apply 时生成三级网页文件并写目录——只有三处不同：
  *
  * - **归属**：从地点注册表（data/v2/places.local.json）建索引，国家文件夹按 place.json → 旧 country.json 的 countryId
@@ -140,7 +141,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
       result[item.kind] = (result[item.kind] ?? 0) + 1
       return result
     }, {})
-    log(`StarMap 媒体${apply ? '导入' : '预检'}（V2 数据模式）：${items.length} 个文件`)
+    log(`StarMap 媒体${apply ? '导入' : '预检'}：${items.length} 个文件`)
     log(`普通照片 ${counts.photo ?? 0} | 360 全景 ${counts.panorama360 ?? 0} | 航拍照片 ${counts.aerialPhoto ?? 0} | 视频 ${counts.video ?? 0}`)
     if (warnings.length > 0) {
       log(`\n提醒（${warnings.length}）：`)

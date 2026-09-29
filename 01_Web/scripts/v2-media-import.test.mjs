@@ -1,8 +1,8 @@
 /**
- * V2 媒体导入（scripts/v2-media-import.mjs，经 scripts/import-media.mjs 分派）的端到端测试
- * （RFC-LOC-1 PR3b-3 规格 §2.5、§3「导入器幂等」「改名与搬家」「旧模式回归」）。
+ * V2 媒体导入（scripts/v2-media-import.mjs，入口 scripts/import-media.mjs）的端到端测试
+ * （RFC-LOC-1 PR3b-3 规格 §2.5、§3「导入器幂等」「改名与搬家」；PR5a 规格 §4.3、§5：旧导入器删除，未迁移时退出码 2）。
  *
- * 每个用例在 fs.mkdtemp 建的临时私人根上运行：数据模式标记为 v2，地点注册表是手写的中性数据
+ * 每个用例在 fs.mkdtemp 建的临时私人根上运行：地点注册表是手写的中性数据
  * （冰岛：雷克雅未克、维克；法罗群岛：托尔斯港），投递箱里的图片由 sharp 现场生成（纯色小图，一张 2:1）。
  * STARMAP_PRIVATE_ROOT 总是指向临时目录，绝不读作者的真实私有层；用例结束时删除临时目录。
  *
@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -87,7 +87,6 @@ const withV2Root = async (run) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'starmap-v2-media-test-'))
   const root = path.join(directory, 'private')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
-  await writeJson(paths.dataModePath, { mode: 'v2' })
   await writeJson(paths.v2FilePaths.places, placesFile())
   try {
     await run({ root, paths })
@@ -128,7 +127,7 @@ const readV2Set = async (paths) => {
 
 // ---------------------------------------------------------------------------
 
-test('V2 导入（CLI 分派）：预检不写文件；--apply 写 V3 目录与 V2 源文件索引；内容寻址；连续两次 --apply 除 generatedAt 外逐字节相同', async () => {
+test('V2 导入（CLI）：预检不写文件；--apply 写 V3 目录与 V2 源文件索引；内容寻址；连续两次 --apply 除 generatedAt 外逐字节相同', async () => {
   await withV2Root(async ({ root, paths }) => {
     await writeInbox(paths)
     const inboxHashesBefore = ['Iceland/Reykjavik/photos/harbour.jpg', 'Faroe Islands/Torshavn/drone/bay.jpg', 'Faroe Islands/Torshavn/media.json']
@@ -136,7 +135,7 @@ test('V2 导入（CLI 分派）：预检不写文件；--apply 写 V3 目录与 
 
     const preflight = runImportCli(root)
     assert.equal(preflight.status, 0, preflight.stderr)
-    assert.match(preflight.stdout, /StarMap 媒体预检（V2 数据模式）：4 个文件/)
+    assert.match(preflight.stdout, /^StarMap 媒体预检：4 个文件$/m)
     assert.match(preflight.stdout, /普通照片 3 \| 360 全景 0 \| 航拍照片 1 \| 视频 0/)
     assert.match(preflight.stdout, /发现 1 个内容完全相同的重复文件/)
     assert.match(preflight.stdout, /预检通过/)
@@ -404,30 +403,17 @@ test('V2 导入：投递箱为空时写出空目录；注册表不合法时报�
 })
 
 // ---------------------------------------------------------------------------
-// 旧模式回归
+// 旧格式数据（RFC-LOC-1 PR5a 决定 I）：旧导入器已删除；没迁移时拒绝，迁移之后的残留照常
 // ---------------------------------------------------------------------------
 
-test('旧模式回归：import-media.mjs 在旧模式下运行的代码与 main @ 6a69a26 逐字相同（sha256）', () => {
-  const source = readFileSync(path.join(webRoot, 'scripts', 'import-media.mjs'), 'utf8').replace(/\r\n/g, '\n')
-  const between = (start, end) => {
-    const from = source.indexOf(start)
-    const to = end === undefined ? source.length : source.indexOf(end, from)
-    assert.ok(from >= 0 && to >= 0, `找不到源码区段：${start}`)
-    return source.slice(from, to)
-  }
-  const sha256 = (text) => createHash('sha256').update(text).digest('hex')
-  // import 语句。
-  assert.equal(sha256(between('import { createHash }', '// RFC-LOC-1 PR3b')), '31e5881030ceac1bcf8d9571b67b914c8005164e4e6c67f531d9f54c4f8a8465')
-  // 常量与全部辅助函数（到 main 之前）。
-  assert.equal(sha256(between('const scriptDirectory = ', 'async function main() {')), 'd8551321695f98dd6a977e994842ecfd8b184ee86afbf901c34a688c564de8c7')
-  // main 里分派之后的旧流程，到文件末尾。
-  assert.equal(sha256(between('  const locationIndex = await createLocationIndex()')), 'd3951b52db2f78f61434872deb008c15d3fc13ba5b20324fc24b118a1d19113f')
-  // 分派在旧流程之前，V2 导入器按需加载。
-  const main = between('async function main() {', '  const locationIndex = await createLocationIndex()')
-  assert.match(main, /if \(resolveDataMode\(privatePaths\)\.mode === 'v2'\) \{\n {4}const \{ runV2MediaImport \} = await import\('\.\/v2-media-import\.mjs'\)\n {4}process\.exitCode = await runV2MediaImport\(\{ privatePaths, apply: shouldApply \}\)\n {4}return\n {2}\}/)
+test('入口只剩几行：import-media.mjs 不再含旧导入器，也不再按数据模式分派；直接调用 V2 导入器', () => {
+  const source = readFileSync(path.join(webRoot, 'scripts', 'import-media.mjs'), 'utf8')
+  assert.ok(source.split(/\r?\n/).length < 40, '入口文件应当只有几行')
+  assert.doesNotMatch(source, /resolveDataMode|data-mode\.mjs|createLocationIndex|travel-map\.sample\.json|localTravelMapPath/)
+  assert.match(source, /process\.exitCode = await runV2MediaImport\(\{ privatePaths, apply \}\)/)
 })
 
-test('旧模式：同一个投递箱在旧模式下仍由旧代码导入（旧格式的 id 与路径），不写 data/v2/', async () => {
+test('未迁移：私人目录只有旧数据、data/v2/ 没有 V2 文件 → media:check 与 media:import 都拒绝，退出码 2，说明怎么迁移；不写任何文件', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'starmap-legacy-media-test-'))
   const root = path.join(directory, 'private')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
@@ -436,16 +422,34 @@ test('旧模式：同一个投递箱在旧模式下仍由旧代码导入（旧�
       schema_version: 1,
       records: [{ id: 'r1', country: '冰岛', country_en: 'Iceland', country_code: 'is', city: '雷克雅未克', city_en: 'Reykjavik', start_date: '2025-06-01', status: 'visited', lat: 64.1466, lng: -21.9426 }],
     })
-    await makeImage(path.join(paths.inboxRoot, 'Iceland', 'Reykjavik', 'photos', 'harbour.jpg'), { color: RED })
-    const result = runImportCli(root, ['--apply'])
-    assert.equal(result.status, 0, result.stderr)
-    const catalog = await readJsonFile(paths.mediaCatalogPath)
-    assert.equal(catalog.schemaVersion, 2)
-    assert.match(catalog.items[0].id, /^iceland-reykjavik-photo-[0-9a-f]{16}$/)
-    assert.match(catalog.items[0].src, /^\/media\/user\/iceland\/reykjavik\/photo\/[0-9a-f]{16}\/original\.jpg$/)
-    assert.equal(catalog.items[0].cityId, 'iceland__reykjavik')
+    await writeInbox(paths)
+    const before = (await readdir(root, { recursive: true })).sort()
+    for (const args of [[], ['--apply']]) {
+      const result = runImportCli(root, args)
+      assert.equal(result.status, 2, `${args.join(' ')}\n${result.stdout}${result.stderr}`)
+      assert.equal(result.stdout, '')
+      assert.match(result.stderr, /^\[import-media\] 私人目录里有旧格式的数据，还没有迁移，没有导入任何媒体。/)
+      assert.match(result.stderr, /npm run identity:check -- --apply/)
+    }
+    assert.deepEqual((await readdir(root, { recursive: true })).sort(), before, '不写 data/v2/、生成文件与 place.json')
     assert.equal(existsSync(paths.v2DataRoot), false)
+    assert.equal(existsSync(paths.userMediaRoot), false)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('残留：旧文件与 V2 文件都在（已迁移）→ 照常由 V2 导入器导入，不写旧格式的媒体目录；PR4 的数据模式标记（哪怕是 legacy）被忽略', async () => {
+  await withV2Root(async ({ root, paths }) => {
+    await writeJson(paths.localTravelMapPath, { schema_version: 1, records: [] })
+    await writeJson(path.join(paths.dataRoot, 'data-mode.local.json'), { mode: 'legacy' })
+    await writeInbox(paths)
+    const result = runImportCli(root, ['--apply'])
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+    const catalog = await readJsonFile(paths.v2FilePaths.media)
+    assert.equal(catalog.items.length, 4)
+    assert.ok(catalog.items.every((item) => /^media-[0-9a-f]{16}$/.test(item.id)))
+    assert.equal(existsSync(paths.mediaCatalogPath), false, '不写旧格式的媒体目录')
+    assert.equal(existsSync(paths.mediaSourceIndexPath), false, '不写旧格式的源文件索引')
+  })
 })

@@ -185,7 +185,7 @@ test('shadow compare 在已提交文件上成立：V2 样例（来源 sample）�
   const { legacy, applied, oldIdOf } = plan.canonical
 
   // App 在公开模式下的输入（src/data/rawInputs.ts）：已提交的五个文件，来源 sample。
-  const v2Sample = canonicalForInputs({ dataMode: 'v2', v2Files: readV2SampleFiles(), source: 'sample' })
+  const v2Sample = canonicalForInputs({ v2Files: readV2SampleFiles(), source: 'sample' })
   assert.equal(v2Sample.travel.source, 'sample')
   assert.equal(v2Sample.wantToGo.source, 'sample')
 
@@ -206,9 +206,9 @@ test('shadow compare 在已提交文件上成立：V2 样例（来源 sample）�
 
 test('canonicalForInputs 的来源参数：缺省为 local（与 PR3b 相同），sample 只改 travel.source 与 wantToGo.source', () => {
   const files = readV2SampleFiles()
-  const local = canonicalForInputs({ dataMode: 'v2', v2Files: files })
-  const explicitLocal = canonicalForInputs({ dataMode: 'v2', v2Files: files, source: 'local' })
-  const sample = canonicalForInputs({ dataMode: 'v2', v2Files: files, source: 'sample' })
+  const local = canonicalForInputs({ v2Files: files })
+  const explicitLocal = canonicalForInputs({ v2Files: files, source: 'local' })
+  const sample = canonicalForInputs({ v2Files: files, source: 'sample' })
   assert.equal(local.travel.source, 'local')
   assert.equal(local.wantToGo.source, 'local')
   assert.deepEqual(explicitLocal, local)
@@ -216,18 +216,18 @@ test('canonicalForInputs 的来源参数：缺省为 local（与 PR3b 相同）�
     { ...sample, travel: { ...sample.travel, source: 'local' }, wantToGo: { ...sample.wantToGo, source: 'local' } },
     local,
   )
-  const empty = canonicalForInputs({ dataMode: 'v2', v2Files: undefined, source: 'sample' })
+  const empty = canonicalForInputs({ v2Files: undefined, source: 'sample' })
   assert.equal(empty.travel.source, 'sample')
   assert.equal(empty.places.length, 0)
 })
 
-test('App 接线：rawInputs.ts 静态 import 五个 V2 样例文件（文件名同 V2_SAMPLE_FILE_NAMES），不再 import 旧的想去样例', () => {
+test('App 接线：rawInputs.ts 静态 import 五个 V2 样例文件（文件名同 V2_SAMPLE_FILE_NAMES），不再 import 任何旧样例（PR5a 起足迹样例也不）', () => {
   const source = readFileSync(path.join(webRoot, 'src', 'data', 'rawInputs.ts'), 'utf8')
   for (const name of Object.values(V2_SAMPLE_FILE_NAMES)) {
     assert.match(source, new RegExp(`^import \\w+ from './v2-sample/${name.replace('.', '\\.')}'$`, 'm'), name)
   }
-  assert.doesNotMatch(source, /want-to-go\.sample\.json/)
-  assert.match(source, /\{ dataMode: 'v2', v2Files: v2SampleFiles, source: 'sample' \}/)
+  assert.doesNotMatch(source, /want-to-go\.sample\.json|travel-map\.sample\.json/)
+  assert.match(source, /\{ v2Files: v2SampleFiles, source: 'sample' \}/)
 })
 
 // ---------------------------------------------------------------------------

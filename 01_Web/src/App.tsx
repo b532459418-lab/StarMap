@@ -6,7 +6,7 @@ import type { AtlasPage } from './components/AtlasHeader'
 import { CesiumAtlasGlobe } from './components/CesiumAtlasGlobe'
 import { CollectionPage } from './components/CollectionPage'
 import { CountrySelector } from './components/CountrySelector'
-import { DataModeNotice } from './components/DataModeNotice'
+import { PrivateDataNotice } from './components/PrivateDataNotice'
 import type { ThemeMode } from './components/DayNightToggle'
 import { CompassButton } from './components/CompassButton'
 import { ConvertToTravelDialog } from './components/ConvertToTravelDialog'
@@ -596,8 +596,8 @@ function App() {
           </div>
 
           <div className="pointer-events-none absolute inset-0 z-20">
-            {/* RFC-LOC-1 PR3b-1 / PR3b-3：个人模式 · V2 数据模式下没有任何足迹与想去时的空状态；其他情况下组件什么都不渲染。 */}
-            {activePage === 'map' ? <DataModeNotice /> : null}
+            {/* RFC-LOC-1 PR3b-1 / PR5a：个人模式下旧数据还没迁移时的迁移提示，或没有任何足迹与想去时的空状态；其他情况下组件什么都不渲染。 */}
+            {activePage === 'map' ? <PrivateDataNotice /> : null}
             <div
               className="atlas-overlay-frame absolute bottom-0"
               data-page={activePage}

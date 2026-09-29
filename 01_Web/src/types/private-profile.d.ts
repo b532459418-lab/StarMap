@@ -1,15 +1,14 @@
 declare module 'virtual:starmap-private-data' {
-  export const privateEditorState: unknown
-  export const privateMediaCatalog: unknown
-  export const privateTravelMap: unknown
-  export const privateWantToGo: unknown
   /**
-   * 私人目录的数据模式（RFC-LOC-1 PR3b-1，判定见 scripts/data-mode.mjs）。公开模式恒为 'legacy'。
-   * 为 'v2' 时上面四个旧导出都是 undefined：App 在 V2 模式下绝不会读到旧文件。
+   * 个人模式下为私人目录 data/v2/ 里的五个 V2 文件（缺的为 undefined）；公开模式为 undefined。
+   * App 只读这五个文件（RFC-LOC-1 PR5a），旧格式的私人文件不注入。插件：scripts/local-editor-plugin.mjs。
    */
-  export const privateDataMode: 'legacy' | 'v2'
-  /** V2 模式下为 data/v2/ 里的五个 V2 文件（缺的为 undefined）；其他情况为 undefined。 */
   export const privateV2Files:
     | { places?: unknown; travel?: unknown; wantToGo?: unknown; editorState?: unknown; media?: unknown }
     | undefined
+  /**
+   * 个人模式下私人目录有没迁移的旧数据（判定见 scripts/legacy-data.mjs：旧数据文件任一存在，且 data/v2/ 没有任何 V2 文件）。
+   * 公开模式恒为 false。
+   */
+  export const privateLegacyUnmigrated: boolean
 }

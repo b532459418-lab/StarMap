@@ -1,7 +1,7 @@
 /**
- * V2 数据模式下本地编辑接口的 IO 层（RFC-LOC-1 PR3b-2 规格 §2.1）。
+ * 本地编辑接口的 IO 层（RFC-LOC-1 PR3b-2 规格 §2.1；PR5a 起是唯一的写入实现）。
  *
- * 为什么单独成文件：理由同 want-to-go-store.mjs —— 插件在模块顶层 import sharp / undici / world-countries
+ * 为什么单独成文件：插件在模块顶层 import sharp / undici / world-countries
  * 并解析私有资料层路径，无法在 node --test 下加载。这里只做插件的四件事，端到端测试（v2-editor-store.test.mjs）
  * 因此能在临时私人根上跑真实的读写：
  *
@@ -16,7 +16,7 @@
  */
 
 import { atomicJsonWrite, readJson } from './json-file.mjs'
-import { V2_PRIVATE_FILE_KEYS } from './local-editor-data-mode.mjs'
+import { V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import {
   V2WriteError,
@@ -33,7 +33,7 @@ import {
 } from '../src/data/v2write/index.ts'
 
 /**
- * V2 模式下的 8 个非媒体写入端点 → 纯函数与成功时的状态码（与旧模式相同）。三个媒体端点（上传、导入、删除）不在这里：
+ * 8 个非媒体写入端点 → 纯函数与成功时的状态码（与旧模式相同）。三个媒体端点（上传、导入、删除）不在这里：
  * 它们的请求体与流程不同（上传的请求体是文件本身，导入与删除要运行导入器、动收件箱与生成文件），由
  * scripts/v2-media-store.mjs 的 V2_MEDIA_ROUTES 处理（RFC-LOC-1 PR3b-3）。
  */
@@ -48,7 +48,7 @@ export const V2_EDITOR_ROUTES = Object.freeze({
   'POST /__travelatlas/editor/wanttogo/convert': Object.freeze({ run: convertToTravel, status: 200 }),
 })
 
-/** V2 模式下这个请求对应的写入；不是这 8 个之一时为 undefined（插件回 404，不进入任何旧分支）。 */
+/** 这个请求对应的写入；不是这 8 个之一时为 undefined（插件回 404）。 */
 export const v2EditorRoute = (method, pathname) => V2_EDITOR_ROUTES[`${method} ${pathname}`]
 
 /** 错误响应体（`{ ok: false, error, code, params? }`）。 */

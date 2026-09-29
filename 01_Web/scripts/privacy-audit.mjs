@@ -36,8 +36,6 @@ const allowedWantToGoPaths = new Set([
   // RFC-LOC-1 PR4: the V2 public sample (checked by auditV2SampleDirectory below).
   `01_Web/src/data/v2-sample/${V2_SAMPLE_FILE_NAMES.wantToGo}`,
   '03_Reference/want-to-go.schema.json',
-  '01_Web/scripts/want-to-go-store.mjs',
-  '01_Web/scripts/want-to-go-store.test.mjs',
 ])
 const unexpectedWantToGoFiles = publicFiles.filter((filePath) => {
   const normalized = filePath.replaceAll('\\', '/')

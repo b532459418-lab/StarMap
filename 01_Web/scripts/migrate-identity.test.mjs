@@ -1,5 +1,5 @@
 /**
- * scripts/migrate-identity.mjs 的测试（RFC-LOC-1 PR3a 规格 §3、§4）。
+ * scripts/migrate-identity.mjs 的测试（RFC-LOC-1 PR3a 规格 §3、§4；PR4 规格 §2.2；PR5a 规格 §4.4：删除 --switch 与数据模式标记）。
  *
  * 运行方式：npm test（node --test 同时覆盖 src/**\/*.test.ts 与 scripts/**\/*.test.mjs）。
  * 零依赖：只用 node:test + node:assert/strict + node:fs + node:child_process。
@@ -224,7 +224,7 @@ test('迁移提示（PR3b-3）：私人目录有旧媒体时摘要给出 I_MEDIA
   assert.doesNotMatch(sample.stdout, /I_MEDIA_IDS_WILL_CHANGE/)
 }))
 
-test('个人模式 --apply：dry-run 之后写出到 data/v2/，使用清单里的 UUID；不写数据模式标记；旧文件不变', () => withTemp(async ({ root }) => {
+test('个人模式 --apply：dry-run 之后写出到 data/v2/，使用清单里的 UUID；提示刷新页面；不写数据模式标记；旧文件不变', () => withTemp(async ({ root }) => {
   await writeLegacyData(root)
   const before = await legacySnapshot(root)
   assert.equal(runCli([], root).status, 0)
@@ -240,11 +240,16 @@ test('个人模式 --apply：dry-run 之后写出到 data/v2/，使用清单里�
   assert.deepEqual(await readJson(manifestPath(root)), manifest)
   assert.equal(existsSync(path.join(root, 'data', 'data-mode.local.json')), false)
   assert.deepEqual(await legacySnapshot(root), before)
+  // PR5a：App 只读 data/v2/，写出即生效。
+  assert.match(result.stdout, /^迁移完成：刷新页面即可看到数据。$/m)
+  assert.match(result.stdout, /^旧文件未改动：App 不再读取它们，可以删除，也可以保留。$/m)
+  assert.doesNotMatch(result.stdout, /数据模式|data-mode|--switch/)
 
-  // 再 apply 一次：输出目录已非空，被拒。
+  // 再 apply 一次：data/v2/ 里已有 V2 文件（App 正在读取的数据），在读取任何私人文件之前被拒。
   const again = runCli(['--apply'], root)
   assert.equal(again.status, 2)
-  assert.match(again.stdout, /不是空目录/)
+  assert.equal(again.stdout, '')
+  assert.match(again.stderr, /里已有 V2 文件：那是 App 正在读取的数据，--apply 不能运行。dry-run 仍可运行。/)
 }))
 
 test('个人模式 --apply：没有 dry-run 过、或数据在 dry-run 之后变了 → 被拒（退出码 2），什么都不写', () => withTemp(async ({ root }) => {
@@ -405,90 +410,95 @@ test('参数错误退出码 1', () => withTemp(async ({ root }) => {
 }))
 
 // ---------------------------------------------------------------------------
-// RFC-LOC-1 PR4：检查顺序、--switch、--now
+// RFC-LOC-1 PR4 / PR5a：检查顺序、V2 文件检查、--switch 已删除、--now
 // ---------------------------------------------------------------------------
 
 const markerPath = (root) => path.join(root, 'data', 'data-mode.local.json')
 
-test('PR4 检查顺序：全新目录（默认就是 V2）上 dry-run、--apply、--apply --switch 都提示「无需迁移」，退出码 0，什么都不写；有 V2 标记也一样', () => withTemp(async ({ root }) => {
-  for (const withMarker of [false, true]) {
-    if (withMarker) await writeFile(markerPath(root), '{ "mode": "v2" }\n', 'utf8')
-    const before = await readdir(path.join(root, 'data'))
-    for (const args of [[], ['--apply'], ['--apply', '--switch']]) {
+test('检查顺序：没有旧数据（全新目录、只有 V2 文件、有 PR4 的标记）时 dry-run 与 --apply 都提示「无需迁移」，退出码 0，什么都不写', () => withTemp(async ({ root }) => {
+  const v2Places = path.join(root, 'data', 'v2', V2_FILE_NAMES.places)
+  for (const setup of ['fresh', 'marker', 'v2-files']) {
+    if (setup === 'marker') await writeFile(markerPath(root), '{ "mode": "v2" }\n', 'utf8')
+    if (setup === 'v2-files') {
+      await mkdir(path.dirname(v2Places), { recursive: true })
+      await writeFile(v2Places, '{}\n', 'utf8')
+    }
+    const before = await readdir(path.join(root, 'data'), { recursive: true })
+    for (const args of [[], ['--apply']]) {
       const result = runCli(args, root)
-      assert.equal(result.status, 0, `${args.join(' ')}\n${result.stdout}${result.stderr}`)
-      assert.equal(result.stdout, '私人目录没有旧数据，无需迁移。\n', args.join(' '))
-      assert.doesNotMatch(result.stderr, /V2 数据模式/)
-      assert.deepEqual(await readdir(path.join(root, 'data')), before, '什么都没写')
+      assert.equal(result.status, 0, `${setup} ${args.join(' ')}\n${result.stdout}${result.stderr}`)
+      assert.equal(result.stdout, '私人目录没有旧数据，无需迁移。\n', `${setup} ${args.join(' ')}`)
+      assert.deepEqual(await readdir(path.join(root, 'data'), { recursive: true }), before, '什么都没写')
     }
   }
-  assert.equal(existsSync(path.join(root, 'data', 'v2')), false)
+  assert.equal(await readFile(markerPath(root), 'utf8'), '{ "mode": "v2" }\n', '标记不读、不改')
 }))
 
-test('PR4 检查顺序：有旧数据时，V2 标记下的 --apply 仍被拒（退出码 2），在读取任何私人文件之前', () => withTemp(async ({ root }) => {
+test('有旧数据、data/v2/ 里已有 V2 文件（残留）：--apply 被拒（退出码 2），不论 --out-dir 指向哪里，在读取任何私人文件之前；dry-run 照常；PR4 的标记不影响', () => withTemp(async ({ root, out }) => {
   await writeLegacyData(root)
-  await writeFile(markerPath(root), '{ "mode": "v2" }\n', 'utf8')
-  const result = runCli(['--apply', '--switch'], root)
-  assert.equal(result.status, 2, result.stderr)
-  assert.match(result.stderr, /V2 数据模式.*--apply 不能运行/)
-  assert.equal(result.stdout, '')
-  assert.equal(existsSync(path.join(root, 'data', 'v2')), false)
+  await mkdir(path.join(root, 'data', 'v2'), { recursive: true })
+  await writeFile(path.join(root, 'data', 'v2', V2_FILE_NAMES.media), '{ broken', 'utf8')
+  // 旧文件改坏：--apply 若读了私人文件就会报读取错误（退出码 1），而不是这里的拒绝。
+  await writePrivate(root, 'editor-state.local.json', '{ broken')
+  for (const marker of [undefined, '{ "mode": "legacy" }\n']) {
+    if (marker) await writeFile(markerPath(root), marker, 'utf8')
+    for (const args of [['--apply'], ['--apply', '--out-dir', path.join(out, 'elsewhere')]]) {
+      const result = runCli(args, root)
+      assert.equal(result.status, 2, `${args.join(' ')}\n${result.stderr}`)
+      assert.equal(result.stdout, '')
+      assert.match(result.stderr, /里已有 V2 文件：那是 App 正在读取的数据，--apply 不能运行。dry-run 仍可运行。/)
+    }
+  }
+  assert.equal(existsSync(path.join(out, 'elsewhere')), false)
+  assert.deepEqual(await readdir(path.join(root, 'data', 'v2')), [V2_FILE_NAMES.media])
+
+  // dry-run 照常（旧文件恢复成合法的之后）。
+  await writePrivate(root, 'editor-state.local.json', { schemaVersion: 1 })
+  const dryRun = runCli([], root)
+  assert.equal(dryRun.status, 0, dryRun.stderr)
+  assert.match(dryRun.stdout, /^canApply：/m)
 }))
 
-test('--apply --switch：写出 V2 文件后写入标记 { "mode": "v2" }（字节层：无 BOM、结尾换行），打印回滚方法；旧文件不变', () => withTemp(async ({ root }) => {
+test('--apply 写到别处（--out-dir 在私人根之内）：说明那不是 App 读取的 data/v2/；旧文件未改动', () => withTemp(async ({ root }) => {
   await writeLegacyData(root)
   const before = await legacySnapshot(root)
   assert.equal(runCli([], root).status, 0)
-  // 旧数据、没有标记：判定为 legacy。
-  assert.equal(existsSync(markerPath(root)), false)
-
-  const result = runCli(['--apply', '--switch'], root)
+  const target = path.join(root, 'data', 'v2-preview')
+  const result = runCli(['--apply', '--out-dir', target], root)
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-  await assertV2Files(path.join(root, 'data', 'v2'))
-  const bytes = await readFile(markerPath(root))
-  assert.notDeepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], '不带 BOM')
-  assert.equal(bytes.toString('utf8'), '{\n  "mode": "v2"\n}\n')
-  assert.match(result.stdout, /已写入数据模式标记 .*data-mode\.local\.json：\{ "mode": "v2" \}/)
-  assert.match(result.stdout, /^回滚：npm run data-mode -- legacy/m)
-  assert.doesNotMatch(result.stdout, /没有写数据模式标记文件/)
+  await assertV2Files(target)
+  assert.match(result.stdout, /^V2 文件写在 .*v2-preview，不是 App 读取的 .*v2。$/m)
+  assert.doesNotMatch(result.stdout, /迁移完成/)
+  assert.equal(existsSync(path.join(root, 'data', 'v2')), false)
+  assert.equal(existsSync(markerPath(root)), false)
   assert.deepEqual(await legacySnapshot(root), before)
-  assert.equal(existsSync(path.join(root, 'data', 'data-mode.local.bak')), false, '之前没有标记，不留 .bak')
-
-  // 没有 --switch 时行为不变：不写标记（另起一个私人根）。
-  await rm(markerPath(root))
-  await rm(path.join(root, 'data', 'v2'), { recursive: true })
-  const plain = runCli(['--apply'], root)
-  assert.equal(plain.status, 0, plain.stderr)
-  assert.match(plain.stdout, /没有写数据模式标记文件，旧文件未改动。/)
-  assert.equal(existsSync(markerPath(root)), false)
 }))
 
-test('--apply --switch：被门槛拒绝时不写标记；--switch 只能写到默认的 data/v2/（给别的 --out-dir 是参数错误）', () => withTemp(async ({ root, out }) => {
+test('--switch 已删除（PR5a）：给了就是参数错误（退出码 1），提示去掉它；什么都不读、不写', () => withTemp(async ({ root, out }) => {
   await writeLegacyData(root)
-  // 没 dry-run：被拒，标记不写。
-  const refused = runCli(['--apply', '--switch'], root)
-  assert.equal(refused.status, 2)
-  assert.match(refused.stdout, /请先 dry-run/)
-  assert.equal(existsSync(markerPath(root)), false)
-
   assert.equal(runCli([], root).status, 0)
-  const elsewhere = runCli(['--apply', '--switch', '--out-dir', path.join(out, 'v2')], root)
-  assert.equal(elsewhere.status, 1, elsewhere.stderr)
-  assert.match(elsewhere.stderr, /--switch 只能把 V2 文件写到私人目录/)
-  assert.equal(existsSync(path.join(out, 'v2')), false)
-  assert.equal(existsSync(markerPath(root)), false)
-
-  // 显式给默认位置可以。
-  const explicit = runCli(['--apply', '--switch', '--out-dir', path.join(root, 'data', 'v2')], root)
-  assert.equal(explicit.status, 0, `${explicit.stdout}\n${explicit.stderr}`)
-  assert.equal(await readFile(markerPath(root), 'utf8'), '{\n  "mode": "v2"\n}\n')
-}))
-
-test('参数（PR4）：--sample 加 --switch、--switch 不带 --apply、--now 不带 --sample、--now 格式不对 → 退出码 1', () => withTemp(async ({ root, out }) => {
+  const before = await readdir(path.join(root, 'data'), { recursive: true })
   for (const args of [
+    ['--apply', '--switch'],
+    ['--switch', '--apply'],
+    ['--switch'],
     ['--sample', '--switch'],
     ['--sample', '--apply', '--switch', '--out-dir', out],
-    ['--switch'],
+  ]) {
+    const result = runCli(args, root)
+    assert.equal(result.status, 1, `${args.join(' ')}\n${result.stderr}`)
+    assert.equal(result.stdout, '')
+    assert.match(result.stderr, /--switch 已删除：App 只读 data\/v2\/，没有数据模式需要切换。去掉 --switch 重新运行/)
+    assert.match(result.stderr, /用法/)
+    assert.doesNotMatch(result.stderr, /\[--switch\]/, '用法里不再有 --switch')
+  }
+  assert.deepEqual(await readdir(path.join(root, 'data'), { recursive: true }), before)
+  assert.deepEqual(await readdir(out), [])
+  assert.equal(existsSync(markerPath(root)), false)
+}))
+
+test('参数（PR4）：--now 不带 --sample、--now 格式不对 → 退出码 1', () => withTemp(async ({ root, out }) => {
+  for (const args of [
     ['--now', '2026-08-12T00:00:00.000Z'],
     ['--apply', '--now', '2026-08-12T00:00:00.000Z'],
     ['--sample', '--now'],

@@ -1,8 +1,8 @@
 import { appData } from './appData'
 import type { City, JourneyDay, Route, TravelMapRecord } from '../types/travel'
 
-// 数据来源的选择在 ./rawInputs.ts，派生（Legacy Adapter → Canonical → 派生）在 ./appData.ts
-// （RFC-LOC-1 PR2）；本文件以原名导出。
+// 数据来源的选择在 ./rawInputs.ts，派生（V2 Reader → Canonical → 派生）在 ./appData.ts
+// （RFC-LOC-1 PR2；PR5a 起只读 V2 文件）；本文件以原名导出。
 const derived = appData.travelAtlas
 
 // 声明成 string：与 PR1 之前的导出类型（`localTravelMap ? 'local' : 'sample'` 推断出的 string）保持一致。
