@@ -435,27 +435,14 @@ test('PR2 参数错误退出码 1', () => withTemp(async ({ root, out }) => {
 // RFC-LOC-1 PR3b-1：--path v2
 // ---------------------------------------------------------------------------
 
-const migrateCliPath = path.join(webRoot, 'scripts', 'migrate-identity.mjs')
-
-const runMigrate = (args, privateRoot) => spawnSync(process.execPath, [migrateCliPath, ...args], {
-  cwd: webRoot,
-  env: { ...process.env, STARMAP_PRIVATE_ROOT: privateRoot },
-  encoding: 'utf8',
-})
-
 /**
- * 临时私人根：中性旧数据（公开样例的足迹与想去，editor-state 隐藏一个城市、调换国家顺序）→ migrate-identity 的
- * dry-run 与 --apply 生成 data/v2/ → 写数据模式标记 { "mode": "v2" }。
+ * 临时私人根：data/v2/ 是中性旧数据（公开样例的足迹与想去，editor-state 隐藏一个城市、调换国家顺序）迁移后的五个文件
+ * （冻结的 ./fixtures/baseline-v2.json；RFC-LOC-1 PR5b 之前由 migrate-identity 现场生成）→ 写数据模式标记 { "mode": "v2" }。
  */
 const prepareV2Root = async (root) => {
-  const travel = readSample('travel-map.sample.json')
-  travel.privacy_level = 'local-only'
-  await writePrivate(root, 'travel-map.local.json', travel)
-  await writePrivate(root, 'want-to-go.local.json', readSample('want-to-go.sample.json'))
-  await writePrivate(root, 'editor-state.local.json', { schemaVersion: 1, hiddenCityIds: ['iceland__vik'], countryOrder: ['faroe-islands', 'iceland'] })
-  assert.equal(runMigrate([], root).status, 0)
-  const applied = runMigrate(['--apply'], root)
-  assert.equal(applied.status, 0, applied.stdout + applied.stderr)
+  const files = JSON.parse(readFileSync(path.join(webRoot, 'scripts', 'fixtures', 'baseline-v2.json'), 'utf8'))
+  await mkdir(path.join(root, 'data', 'v2'), { recursive: true })
+  for (const key of V2_FILE_KEYS) await writeFile(path.join(root, 'data', 'v2', V2_FILE_NAMES[key]), `${JSON.stringify(files[key], null, 2)}\n`, 'utf8')
   await writePrivate(root, 'data-mode.local.json', { mode: 'v2' })
 }
 

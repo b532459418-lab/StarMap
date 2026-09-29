@@ -57,7 +57,8 @@ const writeJson = async (target, value) => {
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
 }
 
-const readSample = (name) => JSON.parse(readFileSync(path.join(webRoot, 'src', 'data', name), 'utf8'))
+/** 冻结的五个 V2 文件（./fixtures/，RFC-LOC-1 PR5b：删除迁移工具之前由 migrate-identity 现场生成）。 */
+const readFixture = (name) => JSON.parse(readFileSync(path.join(webRoot, 'scripts', 'fixtures', name), 'utf8'))
 
 /** `<目录>/<名字>.json` → `<目录>/<名字>.bak`，与 atomicJsonWrite 的命名相同。 */
 const bakOf = (filePath) => filePath.replace(/\.json$/i, '.bak')
@@ -123,13 +124,10 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
   const root = path.join(directory, 'private')
   const out = path.join(directory, 'out')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
-  const travel = readSample('travel-map.sample.json')
-  travel.privacy_level = 'local-only'
-  await writeJson(paths.localTravelMapPath, travel)
-  await writeJson(paths.wantToGoPath, readSample('want-to-go.sample.json'))
-  assert.equal(runScript('migrate-identity.mjs', [], root).status, 0)
-  const applied = runScript('migrate-identity.mjs', ['--apply'], root)
-  assert.equal(applied.status, 0, applied.stdout + applied.stderr)
+  // 迁移之后的私人根：data/v2/ 是公开旧样例的足迹与想去迁移后的五个文件（冻结），旧文件还在（内容无所谓，最小的 JSON）。
+  for (const [key, value] of Object.entries(readFixture('bak-files-v2.json'))) await writeJson(paths.v2FilePaths[key], value)
+  await writeJson(paths.localTravelMapPath, { schema_version: 1, records: [] })
+  await writeJson(paths.wantToGoPath, { schema_version: 1, items: [] })
 
   // 经插件用的同一个 IO 层做两次编辑：atomicJsonWrite 给被改写的文件留下 .bak（上一版）。
   const ctx = createV2WriteContext({ countryCatalog: CATALOG, newId: sequentialUuids(Date.UTC(2026, 8, 29)) })

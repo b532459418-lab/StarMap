@@ -4,7 +4,8 @@
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
  * 两种 V2 数据：`toV2Space`（./v2.fixture.ts）直接从 Legacy Adapter 的输出搬进 V2 id 空间、不做地点合并；
- * 以及迁移规划（../migration/planMigration.ts）在合并与决定之后产出的 M。
+ * 以及迁移规划（../migration/planMigration.ts）在合并与决定之后产出的 M。PR5b 起两种都是冻结的静态数据
+ * （./frozen.fixture.ts 的 `v2SpaceCanonical` 与 `migratedCanonical`；删除旧代码之前用当时的代码生成）。
  */
 
 /// <reference types="node" />
@@ -12,11 +13,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { consistentPersonalRaw, nameInconsistencyRaw, rawInputs, record, sampleRaw } from './legacy.fixture.ts'
-import { legacyAdapter } from './legacyAdapter.ts'
+import { migratedCanonical, v2SpaceCanonical } from './frozen.fixture.ts'
 import type { CanonicalData } from './types.ts'
-import { fileMetaFromRaw, planMigration } from '../migration/planMigration.ts'
-import { sequentialUuids, toV2Space } from './v2.fixture.ts'
 import { readV2 } from './v2Reader.ts'
 import { validateV2Files, type V2Files } from './v2Schema.ts'
 import { serializeV2, type V2FileMeta } from './v2Serializer.ts'
@@ -33,37 +31,31 @@ const roundTrip = (data: CanonicalData, meta: V2FileMeta = META) => {
 }
 
 test('三份 PR2 fixture：写成 V2 文件后通过校验，读回与原 Canonical 深度相等', () => {
-  for (const [name, raw] of [
-    ['公开样例', sampleRaw()],
-    ['consistentPersonalRaw', consistentPersonalRaw()],
-    ['nameInconsistencyRaw', nameInconsistencyRaw()],
+  for (const [name, key] of [
+    ['公开样例', 'sample'],
+    ['consistentPersonalRaw', 'personal'],
+    ['nameInconsistencyRaw', 'nameInconsistency'],
   ] as const) {
-    const { data } = toV2Space(legacyAdapter(raw))
+    const data = v2SpaceCanonical(key)
     const { read } = roundTrip(data)
     assert.deepStrictEqual(read, data, name)
   }
 })
 
 test('三份 PR2 fixture 经迁移规划（合并之后的 L′ → M）：写出再读回与 M 深度相等', () => {
-  for (const [name, raw] of [
-    ['公开样例', sampleRaw()],
-    ['consistentPersonalRaw', consistentPersonalRaw()],
-    ['nameInconsistencyRaw', nameInconsistencyRaw()],
+  for (const [name, key] of [
+    ['公开样例', 'sample'],
+    ['consistentPersonalRaw', 'personal'],
+    ['nameInconsistencyRaw', 'nameInconsistency'],
   ] as const) {
-    const migrated = planMigration({
-      raw,
-      fileMeta: fileMetaFromRaw(raw),
-      sourceHash: 'x',
-      newId: sequentialUuids(),
-      now: '2026-09-26T00:00:00.000Z',
-    }).canonical.migrated!
-    const { read } = roundTrip(migrated, { placesGeneratedAt: 'x', ...fileMetaFromRaw(raw) })
+    const { canonical: migrated, fileMeta } = migratedCanonical(key)
+    const { read } = roundTrip(migrated, { placesGeneratedAt: 'x', ...fileMeta })
     assert.deepStrictEqual(read, migrated, name)
   }
 })
 
 test('写出的形状：足迹元数据改回蛇形字段名；运行时字段不写；地点注册表带 generated_at', () => {
-  const { data } = toV2Space(legacyAdapter(sampleRaw()))
+  const data = v2SpaceCanonical('sample')
   const files = serializeV2(data, META)
   assert.deepEqual(Object.keys(files.travel), ['schema_version', 'generated_at', 'privacy_level', 'intended_use', 'safety_notes', 'display', 'records'])
   assert.equal(files.travel.schema_version, 2)
@@ -79,15 +71,8 @@ test('写出的形状：足迹元数据改回蛇形字段名；运行时字段�
 })
 
 test('记录坐标：与城市相同 → 省略两个键；null → 写 null；自身坐标 → 原样写；读回都还原', () => {
-  const raw = rawInputs({
-    records: [
-      record({ id: 'same', start_date: '2025-06-01' }),
-      record({ id: 'own', start_date: '2025-06-02', lat: 64.2, lng: -21.8 }),
-      record({ id: 'none', start_date: '2025-06-03', lat: null, lng: null }),
-      record({ id: 'half', start_date: '2025-06-04', lat: 64.1466, lng: null }),
-    ],
-  })
-  const { data } = toV2Space(legacyAdapter(raw))
+  // 四条冰岛 · 雷克雅未克的记录：same（与城市相同）、own（64.2, -21.8）、none（null, null）、half（64.1466, null）。
+  const data = v2SpaceCanonical('recordCoordinates')
   const city = data.places.find((place) => place.subtype === 'city')!
   assert.deepEqual(city.location, { lat: 64.1466, lng: -21.9426 })
 
@@ -109,7 +94,7 @@ test('记录坐标：与城市相同 → 省略两个键；null → 写 null；�
 })
 
 test('文件级元数据原样保留：想去只搬三个字段，媒体搬 schemaVersion 与 items 以外的全部顶层字段', () => {
-  const { data } = toV2Space(legacyAdapter(consistentPersonalRaw()))
+  const data = v2SpaceCanonical('personal')
   const files = serializeV2(data, {
     placesGeneratedAt: 'x',
     wantToGo: { schema_version: 1, generated_at: '2026-08-12T00:00:00.000Z', privacy_level: 'local-only', intended_use: 'Personal.', items: ['ignored'], extra: 1 },
@@ -131,7 +116,7 @@ test('文件级元数据原样保留：想去只搬三个字段，媒体搬 sche
 })
 
 test('输出不与输入共享引用，也不改输入', () => {
-  const { data } = toV2Space(legacyAdapter(consistentPersonalRaw()))
+  const data = v2SpaceCanonical('personal')
   const before = JSON.stringify(data)
   const files = serializeV2(data, META)
   files.places.places[0].names.en = 'Changed'

@@ -11,7 +11,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { planMigration, fileMetaFromRaw } from '../migration/planMigration.ts'
 import {
   canonicalForInputs,
   completeV2Files,
@@ -20,23 +19,23 @@ import {
   type V2FileInputs,
 } from './canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
-import { NOW, baselineText, consistentPersonalRaw } from './legacy.fixture.ts'
-import { sequentialUuids } from './v2.fixture.ts'
+import { canonicalForInputsFixture } from './frozen.fixture.ts'
 import { readV2 } from './v2Reader.ts'
 import { V2_FILE_KEYS, validateV2Files, type V2Files } from './v2Schema.ts'
+import { buildBaseline, stableStringify } from '../derive/baseline.ts'
 
-/** PR3a 的迁移：consistentPersonalRaw → V2 文件（M 与 write(M)）。 */
+const NOW = '2000-01-01T00:00:00.000Z'
+
+/** 基线字符串（同 scripts/baseline.mjs，不含末尾换行）。 */
+const baselineText = (data: ReturnType<typeof deriveAppDataFromCanonical>) => stableStringify(buildBaseline(data, { now: NOW }))
+
+/**
+ * PR3a 的迁移：中性个人模式数据 consistentPersonalRaw → V2 文件（M 与 write(M)）。PR5b 起是冻结的静态数据
+ * （./frozen.fixture.ts；删除迁移工具之前用当时的代码生成）。
+ */
 const migrated = () => {
-  const raw = { ...consistentPersonalRaw(), now: NOW }
-  const result = planMigration({
-    raw,
-    fileMeta: fileMetaFromRaw(raw),
-    sourceHash: 'test',
-    newId: sequentialUuids(),
-    now: NOW,
-  })
-  assert.equal(result.report.canApply, true)
-  return { files: JSON.parse(JSON.stringify(result.files!)) as V2Files, M: result.canonical.migrated! }
+  const { files, migrated: M } = canonicalForInputsFixture()
+  return { files: files as V2Files, M }
 }
 
 /** 旧格式输入的每个字段都换成读了就抛错的 getter：证明 canonicalForInputs 根本不读它们。 */

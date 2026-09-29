@@ -1,0 +1,6398 @@
+{
+  "sample": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.4179,
+          "lng": -19.691599999999998
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 62.16645,
+          "lng": -6.865
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 63.4186,
+          "lng": -19.006
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "faroe-islands__gjogv",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "杰格夫",
+          "en": "Gjogv"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__gjogv"
+        ],
+        "location": {
+          "lat": 62.325,
+          "lng": -6.94
+        }
+      },
+      {
+        "id": "iso:GL",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "GL"
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_nuuk",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "努克",
+          "en": "Nuuk"
+        },
+        "partOf": "iso:GL",
+        "location": {
+          "lat": 64.1814,
+          "lng": -51.6941
+        }
+      },
+      {
+        "id": "iso:NO",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_tromso",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "特罗姆瑟",
+          "en": "Tromsø"
+        },
+        "partOf": "iso:NO",
+        "location": {
+          "lat": 69.6492,
+          "lng": 18.9553
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      }
+    ],
+    "travel": {
+      "source": "sample",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-08-12",
+        "privacyLevel": "public-sample",
+        "intendedUse": "Neutral open-source StarMap demonstration data.",
+        "safetyNotes": [
+          "Fictional itinerary assembled from public geographic facts.",
+          "Replace this sample with generated/travel-map.local.json for personal use."
+        ]
+      },
+      "display": {
+        "overviewTarget": {
+          "lat": 64,
+          "lng": -13
+        },
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "id": "sample_reykjavik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-01",
+          "end_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "notes": "Sample city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_vik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-03",
+          "end_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 63.4186,
+          "lng": -19.006,
+          "notes": "Sample landscape stop.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_akureyri",
+          "region": "North Atlantic",
+          "start_date": "2025-06-04",
+          "end_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 65.6885,
+          "lng": -18.1262,
+          "notes": "Sample northern city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__akureyri",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_torshavn",
+          "region": "North Atlantic",
+          "start_date": "2025-06-06",
+          "end_date": "2025-06-07",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 62.0079,
+          "lng": -6.79,
+          "notes": "Sample island capital record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_gjogv",
+          "region": "North Atlantic",
+          "start_date": "2025-06-08",
+          "end_date": "2025-06-08",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 62.325,
+          "lng": -6.94,
+          "notes": "Sample coastal village record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__gjogv",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "sample",
+      "items": [
+        {
+          "id": "wtg_2026-08-12_nuuk",
+          "placeId": "wtg:wtg_2026-08-12_nuuk",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "格陵兰的首府，坐落在峡湾入海口，是世界上最北的首府之一。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_tromso",
+          "placeId": "wtg:wtg_2026-08-12_tromso",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "北极圈以北的城市，冬季可以看极光，夏季有午夜阳光。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_akureyri",
+          "placeId": "wtg:wtg_2026-08-12_akureyri",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "冰岛北部最大的城镇，位于埃亚峡湾的深处。",
+          "source": "sample"
+        }
+      ],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "personal": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.91755,
+          "lng": -20.034399999999998
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 62.186499999999995,
+          "lng": -6.773000000000001
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 60.3913,
+          "lng": 5.3221
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 63.4186,
+          "lng": -19.006
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "faroe-islands__gjogv",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "杰格夫",
+          "en": "Gjogv"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__gjogv"
+        ],
+        "location": {
+          "lat": 62.325,
+          "lng": -6.94
+        }
+      },
+      {
+        "id": "faroe-islands__klaksvik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "克拉克斯维克",
+          "en": "Klaksvik"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__klaksvik"
+        ],
+        "location": {
+          "lat": 62.2266,
+          "lng": -6.589
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 60.3913,
+          "lng": 5.3221
+        }
+      },
+      {
+        "id": "iso:GL",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "GL"
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_nuuk",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "努克",
+          "en": "Nuuk"
+        },
+        "partOf": "iso:GL",
+        "location": {
+          "lat": 64.1814,
+          "lng": -51.6941
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_tromso",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "特罗姆瑟",
+          "en": "Tromsø"
+        },
+        "partOf": "norway",
+        "location": {
+          "lat": 69.6492,
+          "lng": 18.9553
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "overviewTarget": {
+          "lat": 64,
+          "lng": -13
+        },
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "id": "sample_reykjavik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-01",
+          "end_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "notes": "Sample city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_vik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-03",
+          "end_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 63.4186,
+          "lng": -19.006,
+          "notes": "Sample landscape stop.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_akureyri",
+          "region": "North Atlantic",
+          "start_date": "2025-06-04",
+          "end_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 65.6885,
+          "lng": -18.1262,
+          "notes": "Sample northern city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__akureyri",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_torshavn",
+          "region": "North Atlantic",
+          "start_date": "2025-06-06",
+          "end_date": "2025-06-07",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 62.0079,
+          "lng": -6.79,
+          "notes": "Sample island capital record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_gjogv",
+          "region": "North Atlantic",
+          "start_date": "2025-06-08",
+          "end_date": "2025-06-08",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 62.325,
+          "lng": -6.94,
+          "notes": "Sample coastal village record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__gjogv",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-09",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 62.2266,
+          "lng": -6.589,
+          "id": "alias_klaksvik",
+          "region": "North Atlantic / Nordoyar",
+          "placeId": "faroe-islands__klaksvik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2026-07-01",
+          "year": 2025,
+          "trip_title": "2026 Fjord Plan",
+          "status": "planned",
+          "lat": 60.3913,
+          "lng": 5.3221,
+          "id": "planned_bergen",
+          "notes": "Planned fjord stop.",
+          "placeId": "norway__bergen"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "local",
+      "items": [
+        {
+          "id": "wtg_2026-08-12_nuuk",
+          "placeId": "wtg:wtg_2026-08-12_nuuk",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "格陵兰的首府，坐落在峡湾入海口，是世界上最北的首府之一。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_tromso",
+          "placeId": "wtg:wtg_2026-08-12_tromso",
+          "addedAt": "2026-08-12",
+          "hidden": true,
+          "note": "北极圈以北的城市，冬季可以看极光，夏季有午夜阳光。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_akureyri",
+          "placeId": "wtg:wtg_2026-08-12_akureyri",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "冰岛北部最大的城镇，位于埃亚峡湾的深处。",
+          "source": "sample"
+        }
+      ],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [
+        "faroe-islands",
+        "iceland"
+      ],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [
+        "iceland__vik"
+      ],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {
+        "iceland__reykjavik": "photo-reykjavik-2"
+      },
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": [],
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    "media": {
+      "items": [
+        {
+          "kind": "photo",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "photo-reykjavik-1",
+          "src": "/media/user/sample/photo-1.jpg",
+          "originalFileName": "photo-1.jpg",
+          "placeId": "iceland__reykjavik",
+          "title": {
+            "names": {
+              "zh-Hans": "港口",
+              "en": "Harbour"
+            }
+          }
+        },
+        {
+          "kind": "photo",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "photo-reykjavik-2",
+          "src": "/media/user/sample/photo-2.jpg",
+          "originalFileName": "photo-2.jpg",
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "kind": "aerialPhoto",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "drone-torshavn-1",
+          "src": "/media/user/sample/drone-1.jpg",
+          "originalFileName": "drone-1.jpg",
+          "date": "2025-06-06",
+          "resolution": "4000x3000",
+          "position": {
+            "lat": 62.01,
+            "lng": -6.77,
+            "altitudeMeters": 120
+          },
+          "placeId": "faroe-islands__torshavn"
+        }
+      ],
+      "problems": []
+    }
+  },
+  "personalDanglingMedia": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.91755,
+          "lng": -20.034399999999998
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 62.186499999999995,
+          "lng": -6.773000000000001
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 60.3913,
+          "lng": 5.3221
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 63.4186,
+          "lng": -19.006
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "faroe-islands__gjogv",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "杰格夫",
+          "en": "Gjogv"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__gjogv"
+        ],
+        "location": {
+          "lat": 62.325,
+          "lng": -6.94
+        }
+      },
+      {
+        "id": "faroe-islands__klaksvik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "克拉克斯维克",
+          "en": "Klaksvik"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__klaksvik"
+        ],
+        "location": {
+          "lat": 62.2266,
+          "lng": -6.589
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 60.3913,
+          "lng": 5.3221
+        }
+      },
+      {
+        "id": "iso:GL",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "GL"
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_nuuk",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "努克",
+          "en": "Nuuk"
+        },
+        "partOf": "iso:GL",
+        "location": {
+          "lat": 64.1814,
+          "lng": -51.6941
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_tromso",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "特罗姆瑟",
+          "en": "Tromsø"
+        },
+        "partOf": "norway",
+        "location": {
+          "lat": 69.6492,
+          "lng": 18.9553
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "overviewTarget": {
+          "lat": 64,
+          "lng": -13
+        },
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "id": "sample_reykjavik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-01",
+          "end_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "notes": "Sample city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_vik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-03",
+          "end_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 63.4186,
+          "lng": -19.006,
+          "notes": "Sample landscape stop.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_akureyri",
+          "region": "North Atlantic",
+          "start_date": "2025-06-04",
+          "end_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 65.6885,
+          "lng": -18.1262,
+          "notes": "Sample northern city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__akureyri",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_torshavn",
+          "region": "North Atlantic",
+          "start_date": "2025-06-06",
+          "end_date": "2025-06-07",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 62.0079,
+          "lng": -6.79,
+          "notes": "Sample island capital record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_gjogv",
+          "region": "North Atlantic",
+          "start_date": "2025-06-08",
+          "end_date": "2025-06-08",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 62.325,
+          "lng": -6.94,
+          "notes": "Sample coastal village record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__gjogv",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-09",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 62.2266,
+          "lng": -6.589,
+          "id": "alias_klaksvik",
+          "region": "North Atlantic / Nordoyar",
+          "placeId": "faroe-islands__klaksvik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2026-07-01",
+          "year": 2025,
+          "trip_title": "2026 Fjord Plan",
+          "status": "planned",
+          "lat": 60.3913,
+          "lng": 5.3221,
+          "id": "planned_bergen",
+          "notes": "Planned fjord stop.",
+          "placeId": "norway__bergen"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "local",
+      "items": [
+        {
+          "id": "wtg_2026-08-12_nuuk",
+          "placeId": "wtg:wtg_2026-08-12_nuuk",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "格陵兰的首府，坐落在峡湾入海口，是世界上最北的首府之一。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_tromso",
+          "placeId": "wtg:wtg_2026-08-12_tromso",
+          "addedAt": "2026-08-12",
+          "hidden": true,
+          "note": "北极圈以北的城市，冬季可以看极光，夏季有午夜阳光。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_akureyri",
+          "placeId": "wtg:wtg_2026-08-12_akureyri",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "冰岛北部最大的城镇，位于埃亚峡湾的深处。",
+          "source": "sample"
+        }
+      ],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [
+        "faroe-islands",
+        "iceland"
+      ],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [
+        "iceland__vik"
+      ],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {
+        "iceland__reykjavik": "photo-reykjavik-2"
+      },
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": [],
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    "media": {
+      "items": [
+        {
+          "kind": "photo",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "photo-reykjavik-1",
+          "src": "/media/user/sample/photo-1.jpg",
+          "originalFileName": "photo-1.jpg",
+          "placeId": "iceland__reykjavik",
+          "title": {
+            "names": {
+              "zh-Hans": "港口",
+              "en": "Harbour"
+            }
+          }
+        },
+        {
+          "kind": "photo",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "photo-reykjavik-2",
+          "src": "/media/user/sample/photo-2.jpg",
+          "originalFileName": "photo-2.jpg",
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "kind": "aerialPhoto",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "drone-torshavn-1",
+          "src": "/media/user/sample/drone-1.jpg",
+          "originalFileName": "drone-1.jpg",
+          "date": "2025-06-06",
+          "resolution": "4000x3000",
+          "position": {
+            "lat": 62.01,
+            "lng": -6.77,
+            "altitudeMeters": 120
+          },
+          "placeId": "faroe-islands__torshavn"
+        },
+        {
+          "kind": "photo",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "photo-ghost-1",
+          "src": "/media/user/sample/ghost.jpg",
+          "originalFileName": "ghost.jpg",
+          "placeId": "atlantis__ghost-town"
+        }
+      ],
+      "problems": []
+    }
+  },
+  "nameInconsistency": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.25925,
+          "lng": -19.887774999999998
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 62.16645,
+          "lng": -6.865
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 63.4186,
+          "lng": -19.006
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "faroe-islands__gjogv",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "杰格夫",
+          "en": "Gjogv"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__gjogv"
+        ],
+        "location": {
+          "lat": 62.325,
+          "lng": -6.94
+        }
+      },
+      {
+        "id": "faroe-islands__tórshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Tórshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__tórshavn"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "iceland__维克镇",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克镇"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__维克镇"
+        ],
+        "location": {
+          "lat": 63.42,
+          "lng": -19.01
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "overviewTarget": {
+          "lat": 64,
+          "lng": -13
+        },
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "id": "sample_reykjavik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-01",
+          "end_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "notes": "Sample city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_vik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-03",
+          "end_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 63.4186,
+          "lng": -19.006,
+          "notes": "Sample landscape stop.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_akureyri",
+          "region": "North Atlantic",
+          "start_date": "2025-06-04",
+          "end_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 65.6885,
+          "lng": -18.1262,
+          "notes": "Sample northern city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__akureyri",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_torshavn",
+          "region": "North Atlantic",
+          "start_date": "2025-06-06",
+          "end_date": "2025-06-07",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 62.0079,
+          "lng": -6.79,
+          "notes": "Sample island capital record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_gjogv",
+          "region": "North Atlantic",
+          "start_date": "2025-06-08",
+          "end_date": "2025-06-08",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 62.325,
+          "lng": -6.94,
+          "notes": "Sample coastal village record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__gjogv",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-09",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "mismatch_city_zh",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-10",
+          "year": 2025,
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "mismatch_city_en_case",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "iceland-2025"
+        },
+        {
+          "start_date": "2025-06-11",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 65.6885,
+          "lng": -18.1262,
+          "id": "mismatch_country_en_case",
+          "placeId": "iceland__akureyri",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-12",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 63.4186,
+          "lng": -19.006,
+          "id": "mismatch_country_zh",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-13",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 62.0079,
+          "lng": -6.79,
+          "id": "mismatch_city_diacritic",
+          "placeId": "faroe-islands__tórshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-14",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 62.325,
+          "lng": -6.94,
+          "id": "mismatch_country_code",
+          "placeId": "faroe-islands__gjogv",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-15",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 63.42,
+          "lng": -19.01,
+          "id": "mismatch_city_empty_en",
+          "placeId": "iceland__维克镇",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "countryOfCity": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands__klaksvik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "克拉克斯维克",
+          "en": "Klaksvik"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__klaksvik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iso:GL",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "GL"
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_nuuk",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "努克",
+          "en": "Nuuk"
+        },
+        "partOf": "iso:GL",
+        "location": {
+          "lat": 64.1814,
+          "lng": -51.6941
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_tromso",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "特罗姆瑟",
+          "en": "Tromsø"
+        },
+        "partOf": "norway",
+        "location": {
+          "lat": 69.6492,
+          "lng": 18.9553
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "shown",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "hidden-by-editor",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "hidden-from-home",
+          "hiddenFromHome": true,
+          "placeId": "iceland__akureyri",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2026-07-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "planned",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "planned-only",
+          "placeId": "norway__bergen"
+        },
+        {
+          "start_date": "2025-06-04",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "alias",
+          "placeId": "faroe-islands__klaksvik",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "local",
+      "items": [
+        {
+          "id": "wtg_2026-08-12_nuuk",
+          "placeId": "wtg:wtg_2026-08-12_nuuk",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "格陵兰的首府，坐落在峡湾入海口，是世界上最北的首府之一。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_tromso",
+          "placeId": "wtg:wtg_2026-08-12_tromso",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "北极圈以北的城市，冬季可以看极光，夏季有午夜阳光。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_akureyri",
+          "placeId": "wtg:wtg_2026-08-12_akureyri",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "冰岛北部最大的城镇，位于埃亚峡湾的深处。",
+          "source": "sample"
+        }
+      ],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [
+        "iceland__vik",
+        "iceland__atlantis"
+      ],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "alias": {
+    "places": [
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands__klaksvik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "克拉克斯维克",
+          "en": "Klaksvik"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__klaksvik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands__vidoy",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维德",
+          "en": "Vidoy"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__vidoy"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "a",
+          "region": "North Atlantic",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "b",
+          "region": "Nordoyar",
+          "placeId": "faroe-islands__klaksvik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2026-01-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "planned",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "c",
+          "region": "Islands / Nordoyar",
+          "placeId": "faroe-islands__vidoy"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "classification1": {
+    "places": [
+      {
+        "id": "denmark",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "丹麦",
+          "en": "Denmark"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "DK"
+        },
+        "legacyKeys": [
+          "denmark"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "瑞典",
+          "en": "Sweden"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "SE"
+        },
+        "legacyKeys": [
+          "sweden"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "denmark__copenhagen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥本哈根",
+          "en": "Copenhagen"
+        },
+        "partOf": "denmark",
+        "legacyKeys": [
+          "denmark__copenhagen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__stockholm",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "斯德哥尔摩",
+          "en": "Stockholm"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__stockholm"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__gothenburg",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥德堡",
+          "en": "Gothenburg"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__gothenburg"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [
+          "denmark",
+          "iceland"
+        ],
+        "originCountryIds": [
+          "denmark"
+        ],
+        "regionCountryIds": [
+          "sweden"
+        ],
+        "regionIncludes": [
+          "Atlantic"
+        ],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-05-30",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "home",
+          "placeId": "denmark__copenhagen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is1",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is2",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "fo",
+          "region": "North Atlantic",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-04",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "no",
+          "region": "Iceland Highlands",
+          "placeId": "norway__bergen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "se",
+          "type": "daytrip",
+          "placeId": "sweden__stockholm",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-06",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "override",
+          "travelCategory": "destination",
+          "hiddenFromHome": true,
+          "placeId": "sweden__gothenburg",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "classification2": {
+    "places": [
+      {
+        "id": "denmark",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "丹麦",
+          "en": "Denmark"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "DK"
+        },
+        "legacyKeys": [
+          "denmark"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "瑞典",
+          "en": "Sweden"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "SE"
+        },
+        "legacyKeys": [
+          "sweden"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "denmark__copenhagen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥本哈根",
+          "en": "Copenhagen"
+        },
+        "partOf": "denmark",
+        "legacyKeys": [
+          "denmark__copenhagen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__stockholm",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "斯德哥尔摩",
+          "en": "Stockholm"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__stockholm"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__gothenburg",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥德堡",
+          "en": "Gothenburg"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__gothenburg"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [
+          "iceland"
+        ],
+        "originCountryIds": [
+          "iceland"
+        ],
+        "regionCountryIds": [
+          "iceland"
+        ],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-05-30",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "home",
+          "placeId": "denmark__copenhagen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is1",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is2",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "fo",
+          "region": "North Atlantic",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-04",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "no",
+          "region": "Iceland Highlands",
+          "placeId": "norway__bergen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "se",
+          "type": "daytrip",
+          "placeId": "sweden__stockholm",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-06",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "override",
+          "travelCategory": "destination",
+          "hiddenFromHome": true,
+          "placeId": "sweden__gothenburg",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "classification3": {
+    "places": [
+      {
+        "id": "denmark",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "丹麦",
+          "en": "Denmark"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "DK"
+        },
+        "legacyKeys": [
+          "denmark"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "瑞典",
+          "en": "Sweden"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "SE"
+        },
+        "legacyKeys": [
+          "sweden"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "denmark__copenhagen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥本哈根",
+          "en": "Copenhagen"
+        },
+        "partOf": "denmark",
+        "legacyKeys": [
+          "denmark__copenhagen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__stockholm",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "斯德哥尔摩",
+          "en": "Stockholm"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__stockholm"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__gothenburg",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥德堡",
+          "en": "Gothenburg"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__gothenburg"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [
+          "iceland"
+        ],
+        "regionIncludes": [
+          "Iceland"
+        ],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-05-30",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "home",
+          "placeId": "denmark__copenhagen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is1",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is2",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "fo",
+          "region": "North Atlantic",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-04",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "no",
+          "region": "Iceland Highlands",
+          "placeId": "norway__bergen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "se",
+          "type": "daytrip",
+          "placeId": "sweden__stockholm",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-06",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "override",
+          "travelCategory": "destination",
+          "hiddenFromHome": true,
+          "placeId": "sweden__gothenburg",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "classification4": {
+    "places": [
+      {
+        "id": "denmark",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "丹麦",
+          "en": "Denmark"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "DK"
+        },
+        "legacyKeys": [
+          "denmark"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "瑞典",
+          "en": "Sweden"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "SE"
+        },
+        "legacyKeys": [
+          "sweden"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "denmark__copenhagen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥本哈根",
+          "en": "Copenhagen"
+        },
+        "partOf": "denmark",
+        "legacyKeys": [
+          "denmark__copenhagen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__stockholm",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "斯德哥尔摩",
+          "en": "Stockholm"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__stockholm"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__gothenburg",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥德堡",
+          "en": "Gothenburg"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__gothenburg"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [
+          "norway"
+        ],
+        "originCountryIds": [],
+        "regionCountryIds": [
+          "norway"
+        ],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": [
+          "faroe-islands__torshavn",
+          "norway__bergen"
+        ]
+      },
+      "records": [
+        {
+          "start_date": "2025-05-30",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "home",
+          "placeId": "denmark__copenhagen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is1",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is2",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "fo",
+          "region": "North Atlantic",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-04",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "no",
+          "region": "Iceland Highlands",
+          "placeId": "norway__bergen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "se",
+          "type": "daytrip",
+          "placeId": "sweden__stockholm",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-06",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "override",
+          "travelCategory": "destination",
+          "hiddenFromHome": true,
+          "placeId": "sweden__gothenburg",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "classificationConsistent": {
+    "places": [
+      {
+        "id": "denmark",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "丹麦",
+          "en": "Denmark"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "DK"
+        },
+        "legacyKeys": [
+          "denmark"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "瑞典",
+          "en": "Sweden"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "SE"
+        },
+        "legacyKeys": [
+          "sweden"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "denmark__copenhagen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥本哈根",
+          "en": "Copenhagen"
+        },
+        "partOf": "denmark",
+        "legacyKeys": [
+          "denmark__copenhagen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__stockholm",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "斯德哥尔摩",
+          "en": "Stockholm"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__stockholm"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "sweden__gothenburg",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哥德堡",
+          "en": "Gothenburg"
+        },
+        "partOf": "sweden",
+        "legacyKeys": [
+          "sweden__gothenburg"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [
+          "denmark"
+        ],
+        "originCountryIds": [
+          "denmark"
+        ],
+        "regionCountryIds": [],
+        "regionIncludes": [
+          "Atlantic"
+        ],
+        "navigationHiddenCityIds": [
+          "faroe-islands__torshavn"
+        ]
+      },
+      "records": [
+        {
+          "start_date": "2025-05-30",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "home",
+          "placeId": "denmark__copenhagen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is1",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "is2",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "fo",
+          "region": "North Atlantic",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-04",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "no",
+          "region": "Iceland Highlands",
+          "placeId": "norway__bergen",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "se",
+          "type": "daytrip",
+          "placeId": "sweden__stockholm",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-06",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "override",
+          "travelCategory": "destination",
+          "hiddenFromHome": true,
+          "placeId": "sweden__gothenburg",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "journeyRules1": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__husavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "胡萨维克",
+          "en": "Husavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__husavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "Ring Road 2025",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "a",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "ring"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "Ring Road 2025",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "b",
+          "placeId": "iceland__vik",
+          "journeyId": "ring"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "c",
+          "placeId": "iceland__akureyri",
+          "journeyId": "iceland-2025"
+        },
+        {
+          "start_date": "2025-06-04",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "d",
+          "journeyId": "own",
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "start_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "Harbour days",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "e",
+          "placeId": "iceland__husavik",
+          "journeyId": "harbour-days"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "journeyRules2": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__husavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "胡萨维克",
+          "en": "Husavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__husavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "Ring Road 2025",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "a",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "everything"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "Ring Road 2025",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "b",
+          "placeId": "iceland__vik",
+          "journeyId": "everything"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "c",
+          "placeId": "iceland__akureyri",
+          "journeyId": "everything"
+        },
+        {
+          "start_date": "2025-06-04",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "d",
+          "journeyId": "own",
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "start_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "Harbour days",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "e",
+          "placeId": "iceland__husavik",
+          "journeyId": "everything"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "journeyRules3": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__husavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "胡萨维克",
+          "en": "Husavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__husavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "Ring Road 2025",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "a",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "ring"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "Ring Road 2025",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "b",
+          "placeId": "iceland__vik",
+          "journeyId": "ring"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "c",
+          "placeId": "iceland__akureyri",
+          "journeyId": "iceland-2025"
+        },
+        {
+          "start_date": "2025-06-04",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "d",
+          "journeyId": "own",
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "start_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "Harbour days",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "e",
+          "placeId": "iceland__husavik",
+          "journeyId": ""
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "editorHidden": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.91755,
+          "lng": -20.034399999999998
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 62.16645,
+          "lng": -6.865
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 63.4186,
+          "lng": -19.006
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "faroe-islands__gjogv",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "杰格夫",
+          "en": "Gjogv"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__gjogv"
+        ],
+        "location": {
+          "lat": 62.325,
+          "lng": -6.94
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "overviewTarget": {
+          "lat": 64,
+          "lng": -13
+        },
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "id": "sample_reykjavik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-01",
+          "end_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "notes": "Sample city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_vik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-03",
+          "end_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 63.4186,
+          "lng": -19.006,
+          "notes": "Sample landscape stop.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_akureyri",
+          "region": "North Atlantic",
+          "start_date": "2025-06-04",
+          "end_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 65.6885,
+          "lng": -18.1262,
+          "notes": "Sample northern city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__akureyri",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_torshavn",
+          "region": "North Atlantic",
+          "start_date": "2025-06-06",
+          "end_date": "2025-06-07",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 62.0079,
+          "lng": -6.79,
+          "notes": "Sample island capital record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_gjogv",
+          "region": "North Atlantic",
+          "start_date": "2025-06-08",
+          "end_date": "2025-06-08",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 62.325,
+          "lng": -6.94,
+          "notes": "Sample coastal village record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__gjogv",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [
+        "faroe-islands",
+        "iceland"
+      ],
+      "hiddenCountryIds": [
+        "faroe-islands"
+      ],
+      "cityOrderByCountry": {
+        "iceland": [
+          "iceland__akureyri",
+          "iceland__reykjavik"
+        ]
+      },
+      "hiddenCityIds": [
+        "iceland__vik"
+      ],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "addedCountriesConsistent": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "greenland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "GL"
+        },
+        "location": {
+          "lat": 72,
+          "lng": -40
+        },
+        "legacyKeys": [
+          "greenland"
+        ]
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "a",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [
+        {
+          "placeId": "greenland",
+          "region": "Arctic",
+          "visitedDate": "2024-08-01"
+        }
+      ],
+      "countryOrder": [
+        "greenland"
+      ],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "addedCountriesShown": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "legacyKeys": [
+          "norway"
+        ]
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ]
+      },
+      {
+        "id": "greenland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "GL"
+        },
+        "location": {
+          "lat": 72,
+          "lng": -40
+        },
+        "legacyKeys": [
+          "greenland"
+        ]
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "a",
+          "hiddenFromHome": false,
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": null,
+          "lng": null,
+          "id": "n",
+          "hiddenFromHome": false,
+          "placeId": "norway__bergen",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [
+        {
+          "placeId": "greenland",
+          "region": "Arctic",
+          "visitedDate": "2024-08-01"
+        },
+        {
+          "placeId": "norway",
+          "countryCode": "",
+          "center": {
+            "lat": 60,
+            "lng": 8
+          }
+        },
+        {
+          "placeId": "iceland"
+        }
+      ],
+      "countryOrder": [
+        "iceland",
+        "greenland",
+        "norway"
+      ],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "addedCountriesHomeHidden": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "legacyKeys": [
+          "norway"
+        ]
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ]
+      },
+      {
+        "id": "greenland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "GL"
+        },
+        "location": {
+          "lat": 72,
+          "lng": -40
+        },
+        "legacyKeys": [
+          "greenland"
+        ]
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "a",
+          "hiddenFromHome": true,
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": null,
+          "lng": null,
+          "id": "n",
+          "hiddenFromHome": true,
+          "placeId": "norway__bergen",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [
+        {
+          "placeId": "greenland",
+          "region": "Arctic",
+          "visitedDate": "2024-08-01"
+        },
+        {
+          "placeId": "norway",
+          "countryCode": "",
+          "center": {
+            "lat": 60,
+            "lng": 8
+          }
+        },
+        {
+          "placeId": "iceland"
+        }
+      ],
+      "countryOrder": [
+        "iceland",
+        "greenland",
+        "norway"
+      ],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "planned": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 60.39,
+          "lng": 5.32
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 60.39,
+          "lng": 5.32
+        }
+      },
+      {
+        "id": "norway__oslo",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "奥斯陆",
+          "en": "Oslo"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__oslo"
+        ]
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "visited",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2026-03-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "planned",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "same-city",
+          "notes": "again",
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "planned",
+          "lat": 60.39,
+          "lng": 5.32,
+          "id": "planned-only",
+          "placeId": "norway__bergen"
+        },
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "planned",
+          "lat": null,
+          "lng": null,
+          "id": "planned-no-coordinate",
+          "placeId": "norway__oslo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "media": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "a",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "b",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "none",
+      "items": [],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {
+        "iceland__reykjavik": [
+          "p3",
+          "p1"
+        ]
+      },
+      "hiddenMediaIds": [
+        "p2"
+      ],
+      "coverMediaByCity": {
+        "iceland__reykjavik": "p3"
+      },
+      "droneOrderByCity": {
+        "iceland__vik": [
+          "d2",
+          "d1"
+        ]
+      },
+      "hiddenDroneMediaIds": [
+        "d3"
+      ]
+    },
+    "media": {
+      "items": [
+        {
+          "kind": "photo",
+          "scope": "city",
+          "src": "/m.jpg",
+          "originalFileName": "m.jpg",
+          "isCover": true,
+          "status": "ready",
+          "id": "p1",
+          "placeId": "iceland__reykjavik",
+          "title": {
+            "names": {
+              "zh-Hans": "港口"
+            }
+          }
+        },
+        {
+          "kind": "photo",
+          "scope": "city",
+          "src": "/m.jpg",
+          "originalFileName": "m.jpg",
+          "isCover": false,
+          "status": "ready",
+          "id": "p2",
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "kind": "photo",
+          "scope": "city",
+          "src": "/m.jpg",
+          "originalFileName": "m.jpg",
+          "isCover": false,
+          "status": "ready",
+          "id": "p3",
+          "variants": {
+            "thumb": {
+              "src": "/t.webp"
+            },
+            "original": {
+              "src": "/o.jpg"
+            }
+          },
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "kind": "photo",
+          "scope": "city",
+          "src": "/m.jpg",
+          "originalFileName": "m.jpg",
+          "isCover": false,
+          "status": "needsMetadata",
+          "id": "p4",
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "kind": "aerialPhoto",
+          "scope": "city",
+          "src": "/m.jpg",
+          "originalFileName": "m.jpg",
+          "isCover": false,
+          "status": "ready",
+          "id": "d1",
+          "date": "2025-06-02",
+          "resolution": "4K",
+          "placeId": "iceland__vik",
+          "title": {
+            "names": {
+              "en": "Coast"
+            }
+          }
+        },
+        {
+          "kind": "panorama360",
+          "scope": "city",
+          "src": "/m.jpg",
+          "originalFileName": "m.jpg",
+          "isCover": false,
+          "status": "ready",
+          "id": "d2",
+          "date": "2025-06-02",
+          "resolution": "8K",
+          "position": {
+            "lat": 63.4,
+            "lng": -19
+          },
+          "placeId": "iceland__vik"
+        },
+        {
+          "kind": "aerialPhoto",
+          "scope": "city",
+          "src": "/m.jpg",
+          "originalFileName": "m.jpg",
+          "isCover": false,
+          "status": "ready",
+          "id": "d3",
+          "date": "2025-06-02",
+          "resolution": "4K",
+          "placeId": "iceland__vik"
+        },
+        {
+          "kind": "video",
+          "scope": "city",
+          "src": "/m.jpg",
+          "originalFileName": "m.jpg",
+          "isCover": false,
+          "status": "ready",
+          "id": "v1",
+          "placeId": "iceland__vik"
+        },
+        {
+          "kind": "aerialPhoto",
+          "scope": "city",
+          "src": "/m.jpg",
+          "originalFileName": "m.jpg",
+          "isCover": false,
+          "status": "ready",
+          "id": "ghost",
+          "date": "2025-01-01",
+          "resolution": "4K",
+          "placeId": "atlantis__ghost"
+        }
+      ],
+      "problems": [
+        "第 10 条媒体记录不是一个对象，已跳过。",
+        "第 11 条媒体记录的 kind 不是 photo / panorama360 / aerialPhoto / video 之一，已跳过。"
+      ]
+    }
+  },
+  "combined": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.25925,
+          "lng": -19.887774999999998
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 62.17848,
+          "lng": -6.8098
+        }
+      },
+      {
+        "id": "norway",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "NO"
+        },
+        "legacyKeys": [
+          "norway"
+        ],
+        "location": {
+          "lat": 60.3913,
+          "lng": 5.3221
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__vik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__vik"
+        ],
+        "location": {
+          "lat": 63.4186,
+          "lng": -19.006
+        }
+      },
+      {
+        "id": "iceland__akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__akureyri"
+        ],
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      },
+      {
+        "id": "faroe-islands__torshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__torshavn"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "faroe-islands__gjogv",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "杰格夫",
+          "en": "Gjogv"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__gjogv"
+        ],
+        "location": {
+          "lat": 62.325,
+          "lng": -6.94
+        }
+      },
+      {
+        "id": "faroe-islands__klaksvik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "克拉克斯维克",
+          "en": "Klaksvik"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__klaksvik"
+        ],
+        "location": {
+          "lat": 62.2266,
+          "lng": -6.589
+        }
+      },
+      {
+        "id": "norway__bergen",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "卑尔根",
+          "en": "Bergen"
+        },
+        "partOf": "norway",
+        "legacyKeys": [
+          "norway__bergen"
+        ],
+        "location": {
+          "lat": 60.3913,
+          "lng": 5.3221
+        }
+      },
+      {
+        "id": "faroe-islands__tórshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Tórshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__tórshavn"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "iceland__维克镇",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克镇"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__维克镇"
+        ],
+        "location": {
+          "lat": 63.42,
+          "lng": -19.01
+        }
+      },
+      {
+        "id": "iso:GL",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "GL"
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_nuuk",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "努克",
+          "en": "Nuuk"
+        },
+        "partOf": "iso:GL",
+        "location": {
+          "lat": 64.1814,
+          "lng": -51.6941
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_tromso",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "特罗姆瑟",
+          "en": "Tromsø"
+        },
+        "partOf": "norway",
+        "location": {
+          "lat": 69.6492,
+          "lng": 18.9553
+        }
+      },
+      {
+        "id": "wtg:wtg_2026-08-12_akureyri",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 65.6885,
+          "lng": -18.1262
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "overviewTarget": {
+          "lat": 64,
+          "lng": -13
+        },
+        "homeHiddenCountryIds": [
+          "iceland"
+        ],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [
+          "Nordoyar"
+        ],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "id": "sample_reykjavik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-01",
+          "end_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "notes": "Sample city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_vik",
+          "region": "North Atlantic",
+          "start_date": "2025-06-03",
+          "end_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 63.4186,
+          "lng": -19.006,
+          "notes": "Sample landscape stop.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_akureyri",
+          "region": "North Atlantic",
+          "start_date": "2025-06-04",
+          "end_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 65.6885,
+          "lng": -18.1262,
+          "notes": "Sample northern city record.",
+          "source": "StarMap public sample",
+          "placeId": "iceland__akureyri",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_torshavn",
+          "region": "North Atlantic",
+          "start_date": "2025-06-06",
+          "end_date": "2025-06-07",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "city",
+          "status": "visited",
+          "lat": 62.0079,
+          "lng": -6.79,
+          "notes": "Sample island capital record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__torshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "id": "sample_gjogv",
+          "region": "North Atlantic",
+          "start_date": "2025-06-08",
+          "end_date": "2025-06-08",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "type": "daytrip",
+          "status": "visited",
+          "lat": 62.325,
+          "lng": -6.94,
+          "notes": "Sample coastal village record.",
+          "source": "StarMap public sample",
+          "placeId": "faroe-islands__gjogv",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-09",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 62.2266,
+          "lng": -6.589,
+          "id": "alias_klaksvik",
+          "region": "North Atlantic / Nordoyar",
+          "placeId": "faroe-islands__klaksvik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2026-07-01",
+          "year": 2025,
+          "trip_title": "2026 Fjord Plan",
+          "status": "planned",
+          "lat": 60.3913,
+          "lng": 5.3221,
+          "id": "planned_bergen",
+          "notes": "Planned fjord stop.",
+          "placeId": "norway__bergen"
+        },
+        {
+          "start_date": "2025-06-09",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "mismatch_city_zh",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-10",
+          "year": 2025,
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "mismatch_city_en_case",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "iceland-2025"
+        },
+        {
+          "start_date": "2025-06-11",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 65.6885,
+          "lng": -18.1262,
+          "id": "mismatch_country_en_case",
+          "placeId": "iceland__akureyri",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-12",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 63.4186,
+          "lng": -19.006,
+          "id": "mismatch_country_zh",
+          "placeId": "iceland__vik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-13",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 62.0079,
+          "lng": -6.79,
+          "id": "mismatch_city_diacritic",
+          "placeId": "faroe-islands__tórshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-14",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 62.325,
+          "lng": -6.94,
+          "id": "mismatch_country_code",
+          "placeId": "faroe-islands__gjogv",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-15",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 63.42,
+          "lng": -19.01,
+          "id": "mismatch_city_empty_en",
+          "placeId": "iceland__维克镇",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "local",
+      "items": [
+        {
+          "id": "wtg_2026-08-12_nuuk",
+          "placeId": "wtg:wtg_2026-08-12_nuuk",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "格陵兰的首府，坐落在峡湾入海口，是世界上最北的首府之一。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_tromso",
+          "placeId": "wtg:wtg_2026-08-12_tromso",
+          "addedAt": "2026-08-12",
+          "hidden": true,
+          "note": "北极圈以北的城市，冬季可以看极光，夏季有午夜阳光。",
+          "source": "sample"
+        },
+        {
+          "id": "wtg_2026-08-12_akureyri",
+          "placeId": "wtg:wtg_2026-08-12_akureyri",
+          "addedAt": "2026-08-12",
+          "hidden": false,
+          "note": "冰岛北部最大的城镇，位于埃亚峡湾的深处。",
+          "source": "sample"
+        }
+      ],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [
+        "faroe-islands",
+        "iceland"
+      ],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [
+        "iceland__vik"
+      ],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {
+        "iceland__reykjavik": "photo-reykjavik-2"
+      },
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": [],
+      "updatedAt": "2026-09-01T00:00:00.000Z"
+    },
+    "media": {
+      "items": [
+        {
+          "kind": "photo",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "photo-reykjavik-1",
+          "src": "/media/user/sample/photo-1.jpg",
+          "originalFileName": "photo-1.jpg",
+          "placeId": "iceland__reykjavik",
+          "title": {
+            "names": {
+              "zh-Hans": "港口",
+              "en": "Harbour"
+            }
+          }
+        },
+        {
+          "kind": "photo",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "photo-reykjavik-2",
+          "src": "/media/user/sample/photo-2.jpg",
+          "originalFileName": "photo-2.jpg",
+          "placeId": "iceland__reykjavik"
+        },
+        {
+          "kind": "aerialPhoto",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "drone-torshavn-1",
+          "src": "/media/user/sample/drone-1.jpg",
+          "originalFileName": "drone-1.jpg",
+          "date": "2025-06-06",
+          "resolution": "4000x3000",
+          "position": {
+            "lat": 62.01,
+            "lng": -6.77,
+            "altitudeMeters": 120
+          },
+          "placeId": "faroe-islands__torshavn"
+        },
+        {
+          "kind": "photo",
+          "scope": "city",
+          "isCover": false,
+          "status": "ready",
+          "id": "photo-ghost-1",
+          "src": "/media/user/sample/ghost.jpg",
+          "originalFileName": "ghost.jpg",
+          "placeId": "atlantis__ghost-town"
+        }
+      ],
+      "problems": []
+    }
+  },
+  "duplicate": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.10685000000001,
+          "lng": -21.94015
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__hafnarfjordur",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "哈夫纳峡湾",
+          "en": "Hafnarfjordur"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__hafnarfjordur"
+        ],
+        "location": {
+          "lat": 64.0671,
+          "lng": -21.9377
+        }
+      },
+      {
+        "id": "wtg:w_reykjavik_city",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik City"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "wtg:w_gardabaer",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "加尔扎拜尔",
+          "en": "Gardabaer"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 64.0886,
+          "lng": -21.9227
+        }
+      },
+      {
+        "id": "iso:GL",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "GL"
+        }
+      },
+      {
+        "id": "wtg:w_nuuk",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "努克",
+          "en": "Nuuk"
+        },
+        "partOf": "iso:GL",
+        "location": {
+          "lat": 64.1814,
+          "lng": -51.6941
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "r_reykjavik",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-05",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.0671,
+          "lng": -21.9377,
+          "id": "r_hafnarfjordur",
+          "placeId": "iceland__hafnarfjordur",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "local",
+      "items": [
+        {
+          "id": "w_reykjavik_city",
+          "placeId": "wtg:w_reykjavik_city",
+          "addedAt": "2026-08-12",
+          "hidden": false
+        },
+        {
+          "id": "w_gardabaer",
+          "placeId": "wtg:w_gardabaer",
+          "addedAt": "2026-08-12",
+          "hidden": false
+        },
+        {
+          "id": "w_nuuk",
+          "placeId": "wtg:w_nuuk",
+          "addedAt": "2026-08-12",
+          "hidden": false
+        }
+      ],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  },
+  "caseAndDiacritic": {
+    "places": [
+      {
+        "id": "iceland",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "IS"
+        },
+        "legacyKeys": [
+          "iceland"
+        ],
+        "location": {
+          "lat": 64.5367,
+          "lng": -19.429166666666664
+        }
+      },
+      {
+        "id": "faroe-islands",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "FO"
+        },
+        "legacyKeys": [
+          "faroe-islands"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "iceland__reykjavik",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__reykjavik"
+        ],
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "iceland__维克",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__维克"
+        ],
+        "location": {
+          "lat": 63.4186,
+          "lng": -19.006
+        }
+      },
+      {
+        "id": "iceland__húsavík",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "胡萨维克",
+          "en": "Húsavík"
+        },
+        "partOf": "iceland",
+        "legacyKeys": [
+          "iceland__húsavík"
+        ],
+        "location": {
+          "lat": 66.0449,
+          "lng": -17.3389
+        }
+      },
+      {
+        "id": "faroe-islands__tórshavn",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Tórshavn"
+        },
+        "partOf": "faroe-islands",
+        "legacyKeys": [
+          "faroe-islands__tórshavn"
+        ],
+        "location": {
+          "lat": 62.0079,
+          "lng": -6.79
+        }
+      },
+      {
+        "id": "wtg:w_reykjavik_lower",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "reykjavik"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 64.1466,
+          "lng": -21.9426
+        }
+      },
+      {
+        "id": "wtg:w_vik_zh",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "维克",
+          "en": "维克"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 63.42,
+          "lng": -19
+        }
+      },
+      {
+        "id": "wtg:w_husavik_plain",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "胡萨维克",
+          "en": "Husavik"
+        },
+        "partOf": "iceland",
+        "location": {
+          "lat": 66.0449,
+          "lng": -17.3389
+        }
+      },
+      {
+        "id": "wtg:w_torshavn_accent",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Tórshavn"
+        },
+        "partOf": "faroe-islands",
+        "location": {
+          "lat": 62.01,
+          "lng": -6.77
+        }
+      },
+      {
+        "id": "iso:DK",
+        "subtype": "country",
+        "names": {
+          "zh-Hans": "丹麦",
+          "en": "Denmark"
+        },
+        "externalIds": {
+          "iso3166Alpha2": "DK"
+        }
+      },
+      {
+        "id": "wtg:w_torshavn_other_country",
+        "subtype": "city",
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Tórshavn"
+        },
+        "partOf": "iso:DK",
+        "location": {
+          "lat": 62.01,
+          "lng": -6.77
+        }
+      }
+    ],
+    "travel": {
+      "source": "local",
+      "meta": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-01-01",
+        "privacyLevel": "local-only"
+      },
+      "display": {
+        "homeHiddenCountryIds": [],
+        "originCountryIds": [],
+        "regionCountryIds": [],
+        "regionIncludes": [],
+        "navigationHiddenCityIds": []
+      },
+      "records": [
+        {
+          "start_date": "2025-06-01",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 64.1466,
+          "lng": -21.9426,
+          "id": "r_reykjavik",
+          "placeId": "iceland__reykjavik",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-02",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 63.4186,
+          "lng": -19.006,
+          "id": "r_vik",
+          "placeId": "iceland__维克",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-03",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 66.0449,
+          "lng": -17.3389,
+          "id": "r_husavik",
+          "placeId": "iceland__húsavík",
+          "journeyId": "2025-north-atlantic-demo"
+        },
+        {
+          "start_date": "2025-06-06",
+          "year": 2025,
+          "trip_title": "2025 North Atlantic Demo",
+          "status": "visited",
+          "lat": 62.0079,
+          "lng": -6.79,
+          "id": "r_torshavn",
+          "placeId": "faroe-islands__tórshavn",
+          "journeyId": "2025-north-atlantic-demo"
+        }
+      ]
+    },
+    "wantToGo": {
+      "source": "local",
+      "items": [
+        {
+          "id": "w_reykjavik_lower",
+          "placeId": "wtg:w_reykjavik_lower",
+          "addedAt": "2026-08-12",
+          "hidden": false
+        },
+        {
+          "id": "w_vik_zh",
+          "placeId": "wtg:w_vik_zh",
+          "addedAt": "2026-08-12",
+          "hidden": false
+        },
+        {
+          "id": "w_husavik_plain",
+          "placeId": "wtg:w_husavik_plain",
+          "addedAt": "2026-08-12",
+          "hidden": false
+        },
+        {
+          "id": "w_torshavn_accent",
+          "placeId": "wtg:w_torshavn_accent",
+          "addedAt": "2026-08-12",
+          "hidden": false
+        },
+        {
+          "id": "w_torshavn_other_country",
+          "placeId": "wtg:w_torshavn_other_country",
+          "addedAt": "2026-08-12",
+          "hidden": false
+        }
+      ],
+      "problems": []
+    },
+    "editorState": {
+      "schemaVersion": 2,
+      "addedCountries": [],
+      "countryOrder": [],
+      "hiddenCountryIds": [],
+      "cityOrderByCountry": {},
+      "hiddenCityIds": [],
+      "mediaOrderByCity": {},
+      "hiddenMediaIds": [],
+      "coverMediaByCity": {},
+      "droneOrderByCity": {},
+      "hiddenDroneMediaIds": []
+    },
+    "media": {
+      "items": [],
+      "problems": []
+    }
+  }
+}
