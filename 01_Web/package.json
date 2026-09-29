@@ -14,7 +14,6 @@
     "test": "node --test \"src/**/*.test.ts\" \"scripts/**/*.test.mjs\"",
     "baseline": "node scripts/legacy-baseline.mjs",
     "identity:check": "node scripts/migrate-identity.mjs",
-    "data-mode": "node scripts/data-mode-cli.mjs",
     "sample:v2": "node scripts/migrate-identity.mjs --sample --apply --out-dir src/data/v2-sample --manifest src/data/v2-sample/identity-manifest.json --now 2026-08-12T00:00:00.000Z",
     "media:check": "node scripts/import-media.mjs",
     "media:import": "node scripts/import-media.mjs --apply",

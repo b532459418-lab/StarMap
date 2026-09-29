@@ -1,8 +1,8 @@
 /**
  * 本地编辑器的公共 JSON 文件 IO。
  *
- * 这三个函数原先住在 local-editor-plugin.mjs 里。提取到这里只是为了让
- * want-to-go-store.mjs 能复用同一套「备份 + 原子改名」写入行为，
+ * 这三个函数原先住在 local-editor-plugin.mjs 里。提取到这里是为了让
+ * 插件之外的脚本（V2 写入层、导入器、迁移工具）复用同一套「备份 + 原子改名」写入行为，
  * 而不必 import 插件（插件 import 了 sharp / undici / world-countries，
  * 且在模块顶层解析私有资料层路径，单测里不该被牵进来）。
  *

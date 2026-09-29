@@ -32,7 +32,7 @@ export interface WantToGoTravelInput {
 }
 
 // ---- 想去 → 足迹（PR9）的前置条件 ----
-// 与转换端点（scripts/convert-to-travel.mjs）同一套判断与文案：Collection 与详情卡据此把
+// 与转换端点（src/data/v2write/convert.ts；PR5a 之前还有旧格式的 scripts/convert-to-travel.mjs）同一套判断与文案：Collection 与详情卡据此把
 // 「标记为去过」显示为禁用并说明原因；端点仍会再校验一次。返回 undefined 表示可以转换。
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)

@@ -18,7 +18,7 @@ export function resolvePrivateRoot(environment = process.env) {
 
 /**
  * V2 文件在 `data/v2/` 下的文件名（RFC-LOC-1 PR3 总体方案决定 B）。与 `src/data/canonical/v2Schema.ts` 的
- * `V2_FILE_NAMES` 相同（`data-mode.test.mjs` 核对）；这里不 import 它，因为 vite.config.ts 也加载本文件。
+ * `V2_FILE_NAMES` 相同（`private-data-module.test.mjs` 核对）；这里不 import 它，因为 vite.config.ts 也加载本文件。
  */
 export const V2_DATA_FILE_NAMES = Object.freeze({
   places: 'places.local.json',
@@ -27,6 +27,9 @@ export const V2_DATA_FILE_NAMES = Object.freeze({
   editorState: 'editor-state.local.json',
   media: 'user-media.local.json',
 })
+
+/** 五个 V2 文件的键（与 getPrivatePaths().v2FilePaths、src/data/canonical/v2Schema.ts 的 V2_FILE_KEYS 相同，顺序也相同）。 */
+export const V2_PRIVATE_FILE_KEYS = Object.freeze(Object.keys(V2_DATA_FILE_NAMES))
 
 export function getPrivatePaths(environment = process.env) {
   const root = resolvePrivateRoot(environment)
@@ -43,8 +46,7 @@ export function getPrivatePaths(environment = process.env) {
     mediaCatalogPath: path.join(dataRoot, 'user-media.local.json'),
     mediaSourceIndexPath: path.join(dataRoot, 'media-source-index.local.json'),
     wantToGoPath: path.join(dataRoot, 'want-to-go.local.json'),
-    // RFC-LOC-1 PR3b-1：数据模式标记与 V2 文件（判定见 data-mode.mjs）。
-    dataModePath: path.join(dataRoot, 'data-mode.local.json'),
+    // RFC-LOC-1 PR3b-1：V2 文件。PR5a 起 App 只读它们；上面四个旧格式文件只有迁移工具读（未迁移的判定见 legacy-data.mjs）。
     v2DataRoot,
     v2FilePaths: Object.fromEntries(
       Object.entries(V2_DATA_FILE_NAMES).map(([key, fileName]) => [key, path.join(v2DataRoot, fileName)]),

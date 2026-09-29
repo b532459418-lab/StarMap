@@ -3,10 +3,10 @@
  * 依次上传照片与全景 → 导入（恢复隐藏、追加排序）→ 隐藏 → 彻底删除，每一步之后五个 V2 文件都通过完整性检查。
  *
  * 插件本身在模块顶层 import sharp / undici / world-countries 并解析私有资料层路径，node --test 下不能加载，
- * 所以插件传给 IO 层的旧模式辅助函数（deps）在这里按插件的写法重写一遍：文件名规则、预留文件名、无人机 sidecar、
+ * 所以插件传给 IO 层的辅助函数（deps）在这里按插件的写法重写一遍：文件名规则、预留文件名、无人机 sidecar、
  * 运行导入器（子进程跑 scripts/import-media.mjs：先预检、有未解决信息就停、再 --apply）、删 sidecar 条目。
  * 只有「接收上传」换成了直接写入测试给的字节（同样用 sharp 校验尺寸与全景比例）。插件接线本身由
- * local-editor-data-mode.test.mjs 读源码断言，真实的上传流在规格 §5 的浏览器验证里走。
+ * private-data-module.test.mjs 读源码断言，真实的上传流在规格的浏览器验证里走。
  *
  * 图片由 sharp 现场生成（纯色小图，一张 2:1）。STARMAP_PRIVATE_ROOT 总是指向 fs.mkdtemp 建的临时目录，用例结束时删除。
  */
@@ -50,7 +50,7 @@ const placesFile = () => ({
 
 const jpeg = (color, width = 64, height = 48) => sharp({ create: { width, height, channels: 3, background: color } }).jpeg({ quality: 90 }).toBuffer()
 
-/** 插件传给 V2 媒体端点的辅助函数，按插件（旧模式）的写法重写；只有 writeUpload 直接写测试给的字节。 */
+/** 插件传给 V2 媒体端点的辅助函数，按插件的写法重写；只有 writeUpload 直接写测试给的字节。 */
 const depsFor = (paths) => {
   const inboxRoot = paths.inboxRoot
   const isPathInside = (root, target) => {
@@ -138,7 +138,6 @@ const withV2Root = async (run) => {
   const root = path.join(directory, 'private')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
   await mkdir(paths.v2DataRoot, { recursive: true })
-  await writeFile(paths.dataModePath, '{ "mode": "v2" }\n', 'utf8')
   await writeFile(paths.v2FilePaths.places, `${JSON.stringify(placesFile(), null, 2)}\n`, 'utf8')
   try {
     await run({ root, paths, deps: depsFor(paths), ctx: createV2WriteContext({ countryCatalog: new Map() }) })
@@ -201,7 +200,7 @@ test('V2 媒体端点：上传（写 place.json）→ 导入（恢复与追加�
     // ---- 导入：新条目追加到排序表 ----
     const imported = await handleV2Import({ privatePaths: paths, input: { sourcePaths: [first.body.sourcePath, second.body.sourcePath] }, ctx, deps })
     assert.equal(imported.status, 200, JSON.stringify(imported.body))
-    assert.match(imported.body.output, /StarMap 媒体导入（V2 数据模式）：2 个文件/)
+    assert.match(imported.body.output, /^StarMap 媒体导入：2 个文件$/m)
     const catalog = await readCatalog(paths)
     const idOf = (fileName) => catalog.items.find((item) => item.originalFileName === fileName).id
     const harbourId = idOf('Harbour.jpg')

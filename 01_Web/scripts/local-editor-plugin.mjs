@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { cp, mkdir, rm, stat, unlink } from 'node:fs/promises'
+import { cp, mkdir, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -9,34 +9,27 @@ import { promisify } from 'node:util'
 import sharp from 'sharp'
 import { EnvHttpProxyAgent, fetch as proxyAwareFetch } from 'undici'
 import worldCountries from 'world-countries'
-import { buildTravelRecordInput, convertPlannedRecord, resolveTravelCountry } from './convert-to-travel.mjs'
-import { resolveDataMode } from './data-mode.mjs'
 import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
+import { isLegacyUnmigrated, legacyDataStateOf, legacyWriteRefusal } from './legacy-data.mjs'
 import {
   PRIVATE_DATA_WATCH_EVENTS,
   privateDataModuleExports,
-  privateDataSources,
   renderPrivateDataModule,
   shouldHandlePrivateDataChange,
-} from './local-editor-data-mode.mjs'
-import { getPrivatePaths } from './private-profile.mjs'
+} from './private-data-module.mjs'
+import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { createV2WriteContext, readV2EditorState, runV2Write, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
 import { handleV2Import, handleV2MediaDelete, handleV2Upload, v2MediaRoute } from './v2-media-store.mjs'
-import { createWantToGoStore } from './want-to-go-store.mjs'
 
+// RFC-LOC-1 PR5a：本地编辑器只读写 data/v2/（V2 写入层：v2-editor-store.mjs 与 v2-media-store.mjs）。旧格式的写入逻辑、
+// 数据模式与回滚开关都已删除。私人目录有没迁移的旧数据时（./legacy-data.mjs），全部写入端点返回 409 E_LEGACY_UNMIGRATED。
 const execFileAsync = promisify(execFile)
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const sampleTravelMapPath = path.join(webRoot, 'src', 'data', 'travel-map.sample.json')
 const virtualPrivateDataId = 'virtual:starmap-private-data'
 const resolvedPrivateDataId = `\0${virtualPrivateDataId}`
 let privatePaths
 let privateRoot
 let dataRoot
-let editorStatePath
-let localTravelMapPath
-let mediaCatalogPath
-let mediaSourceIndexPath
-let wantToGoPath
 let inboxRoot
 let userMediaRoot
 let cesiumAccessToken = ''
@@ -49,14 +42,10 @@ const configurePrivatePaths = (requestedRoot) => {
   privatePaths = paths
   privateRoot = paths.root
   dataRoot = paths.dataRoot
-  editorStatePath = paths.editorStatePath
-  localTravelMapPath = paths.localTravelMapPath
-  mediaCatalogPath = paths.mediaCatalogPath
-  mediaSourceIndexPath = paths.mediaSourceIndexPath
-  wantToGoPath = paths.wantToGoPath
   inboxRoot = paths.inboxRoot
   userMediaRoot = paths.userMediaRoot
 }
+
 
 configurePrivatePaths()
 const editorHeader = 'x-travelatlas-local-editor'
@@ -69,20 +58,6 @@ const userMediaContentTypes = new Map([
   ['.png', 'image/png'],
   ['.webp', 'image/webp'],
 ])
-
-const emptyState = {
-  schemaVersion: 1,
-  addedCountries: [],
-  countryOrder: [],
-  hiddenCountryIds: [],
-  cityOrderByCountry: {},
-  hiddenCityIds: [],
-  mediaOrderByCity: {},
-  hiddenMediaIds: [],
-  coverMediaByCity: {},
-  droneOrderByCity: {},
-  hiddenDroneMediaIds: [],
-}
 
 const sendJson = (response, status, body) => {
   response.statusCode = status
@@ -100,56 +75,6 @@ const readJsonBody = async (request) => {
     chunks.push(chunk)
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
-}
-
-const isStringArray = (value) => Array.isArray(value) && value.every((item) => typeof item === 'string')
-const isStringArrayRecord = (value) => value && typeof value === 'object'
-  && Object.values(value).every(isStringArray)
-const isStringRecord = (value) => value && typeof value === 'object'
-  && Object.values(value).every((item) => typeof item === 'string')
-
-const normalizeAddedCountry = (value) => {
-  if (!value || typeof value !== 'object') return undefined
-  const centerLat = Number(value.centerLat)
-  const centerLng = Number(value.centerLng)
-  if (
-    typeof value.id !== 'string'
-    || typeof value.nameZh !== 'string'
-    || typeof value.nameEn !== 'string'
-    || typeof value.countryCode !== 'string'
-    || !Number.isFinite(centerLat)
-    || !Number.isFinite(centerLng)
-  ) return undefined
-  return {
-    id: value.id,
-    nameZh: value.nameZh,
-    nameEn: value.nameEn,
-    countryCode: value.countryCode.toLowerCase(),
-    centerLat,
-    centerLng,
-    ...(typeof value.region === 'string' && value.region ? { region: value.region } : {}),
-    ...(typeof value.visitedDate === 'string' && value.visitedDate ? { visitedDate: value.visitedDate } : {}),
-  }
-}
-
-const normalizeState = (value) => {
-  if (!value || typeof value !== 'object') throw new Error('编辑状态格式无效。')
-  return {
-    schemaVersion: 1,
-    addedCountries: Array.isArray(value.addedCountries)
-      ? value.addedCountries.map(normalizeAddedCountry).filter(Boolean)
-      : [],
-    countryOrder: isStringArray(value.countryOrder) ? value.countryOrder : [],
-    hiddenCountryIds: isStringArray(value.hiddenCountryIds) ? value.hiddenCountryIds : [],
-    cityOrderByCountry: isStringArrayRecord(value.cityOrderByCountry) ? value.cityOrderByCountry : {},
-    hiddenCityIds: isStringArray(value.hiddenCityIds) ? value.hiddenCityIds : [],
-    mediaOrderByCity: isStringArrayRecord(value.mediaOrderByCity) ? value.mediaOrderByCity : {},
-    hiddenMediaIds: isStringArray(value.hiddenMediaIds) ? value.hiddenMediaIds : [],
-    coverMediaByCity: isStringRecord(value.coverMediaByCity) ? value.coverMediaByCity : {},
-    droneOrderByCity: isStringArrayRecord(value.droneOrderByCity) ? value.droneOrderByCity : {},
-    hiddenDroneMediaIds: isStringArray(value.hiddenDroneMediaIds) ? value.hiddenDroneMediaIds : [],
-    updatedAt: new Date().toISOString(),
-  }
 }
 
 const slugify = (value) => value
@@ -213,69 +138,6 @@ const searchCountryCatalog = (query) => countryCatalog
     centerLng: country.centerLng,
     region: country.region,
   }))
-
-const sortCountryIdsByLatestVisit = (records, addedCountries, currentOrder) => {
-  const latestDateByCountry = new Map()
-  const rememberDate = (countryId, value) => {
-    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return
-    const current = latestDateByCountry.get(countryId)
-    if (!current || value > current) latestDateByCountry.set(countryId, value)
-  }
-
-  for (const record of records) {
-    const countryId = countryIdForRecord(record)
-    rememberDate(countryId, record.start_date)
-    rememberDate(countryId, record.end_date)
-  }
-  for (const country of addedCountries) rememberDate(country.id, country.visitedDate)
-
-  const countryIds = [...new Set([
-    ...currentOrder,
-    ...records.map(countryIdForRecord),
-    ...addedCountries.map((country) => country.id),
-  ])]
-  const currentRank = new Map(countryIds.map((id, index) => [id, index]))
-  return countryIds.sort((left, right) => {
-    const dateOrder = (latestDateByCountry.get(right) ?? '').localeCompare(latestDateByCountry.get(left) ?? '')
-    return dateOrder || (currentRank.get(left) ?? 0) - (currentRank.get(right) ?? 0)
-  })
-}
-
-const addCountry = async (input) => {
-  const countryCode = requireText(input.countryCode, '国家代码').toUpperCase()
-  const country = countryCatalogByCode.get(countryCode)
-  if (!country) throw new Error('没有找到这个国家，请从候选列表中选择。')
-  const visitedDate = requireText(input.visitedDate, '首次到访日期')
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(visitedDate)) throw new Error('首次到访日期必须使用 YYYY-MM-DD。')
-
-  const sourcePath = await exists(localTravelMapPath) ? localTravelMapPath : sampleTravelMapPath
-  const travelMap = await readJson(sourcePath, { records: [] })
-  if (travelMap.records?.some((record) => countryIdForRecord(record) === country.id)) {
-    throw new Error('这个国家已经存在于国家足迹中。')
-  }
-
-  const state = normalizeState(await readJson(editorStatePath, emptyState))
-  if (state.addedCountries.some((candidate) => candidate.id === country.id)) {
-    throw new Error('这个国家已经存在于国家足迹中。')
-  }
-  state.addedCountries = [...state.addedCountries, {
-    id: country.id,
-    nameZh: country.nameZh,
-    nameEn: country.nameEn,
-    countryCode: country.countryCode.toLowerCase(),
-    centerLat: country.centerLat,
-    centerLng: country.centerLng,
-    region: country.region,
-    visitedDate,
-  }]
-  state.countryOrder = sortCountryIdsByLatestVisit(
-    travelMap.records ?? [],
-    state.addedCountries,
-    state.countryOrder,
-  )
-  await atomicJsonWrite(editorStatePath, normalizeState(state))
-  return { countryId: country.id }
-}
 
 const citySearchCache = new Map()
 let citySearchQueue = Promise.resolve()
@@ -468,99 +330,10 @@ const searchCityCatalog = async (query, countryCode, requestReferer) => {
   }
 }
 
-const countryIdForRecord = (record) => slugify(record.country_en || record.country || 'unknown-country')
-const cityIdForRecord = (record) => `${countryIdForRecord(record)}__${slugify(record.city_en || record.city || record.id)}`
-
-const getLocation = async (countryId, cityId) => {
-  const sourcePath = await exists(localTravelMapPath) ? localTravelMapPath : sampleTravelMapPath
-  const travelMap = await readJson(sourcePath, { records: [] })
-  const record = travelMap.records?.find((candidate) => (
-    countryIdForRecord(candidate) === countryId && cityIdForRecord(candidate) === cityId
-  ))
-  if (!record) throw new Error('找不到对应的国家和城市，请先把城市加入旅行数据。')
-  return {
-    countryId,
-    cityId,
-    countryName: record.country_en || record.country,
-    cityName: record.city_en || record.city,
-  }
-}
-
 const requireText = (value, label) => {
   const text = typeof value === 'string' ? value.trim() : ''
   if (!text) throw new Error(`请填写${label}。`)
   return text
-}
-
-const numberInRange = (value, min, max, label) => {
-  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) {
-    throw new Error(`请填写${label}。`)
-  }
-  const number = Number(value)
-  if (!Number.isFinite(number) || number < min || number > max) throw new Error(`${label}无效。`)
-  return number
-}
-
-const ensureLocalTravelMap = async () => {
-  if (!await exists(localTravelMapPath)) {
-    const sample = await readJson(sampleTravelMapPath, { schema_version: 1, records: [] })
-    await atomicJsonWrite(localTravelMapPath, {
-      ...sample,
-      generated_at: new Date().toISOString(),
-      privacy_level: 'private-local',
-    })
-  }
-  return readJson(localTravelMapPath, { schema_version: 1, records: [] })
-}
-
-const addTravelRecord = async (input) => {
-  const country = requireText(input.country, '国家中文名')
-  const countryEn = requireText(input.country_en, '国家英文名')
-  const city = requireText(input.city, '城市中文名')
-  const cityEn = requireText(input.city_en, '城市英文名')
-  const startDate = requireText(input.start_date, '到访日期')
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new Error('到访日期必须使用 YYYY-MM-DD。')
-  const endDate = typeof input.end_date === 'string' && input.end_date.trim() ? input.end_date.trim() : undefined
-  if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) throw new Error('结束日期必须使用 YYYY-MM-DD。')
-  if (endDate && endDate < startDate) throw new Error('结束日期不能早于到访日期。')
-  const lat = numberInRange(input.lat, -90, 90, '纬度')
-  const lng = numberInRange(input.lng, -180, 180, '经度')
-  const countryCode = typeof input.country_code === 'string' ? input.country_code.trim().toUpperCase() : ''
-  if (countryCode && !/^[A-Z]{2}$/.test(countryCode)) throw new Error('国家代码必须是两个英文字母。')
-  const travelMap = await ensureLocalTravelMap()
-  const targetCountryId = slugify(countryEn)
-  const targetCityId = `${targetCountryId}__${slugify(cityEn)}`
-  const duplicate = travelMap.records?.some((record) => cityIdForRecord(record) === targetCityId)
-  if (duplicate) throw new Error('这个城市已经存在；如需增加一次新的行程，请使用行程编辑，而不是重复添加城市。')
-  const idBase = `manual-${startDate}-${slugify(countryEn)}-${slugify(cityEn)}`
-  const ids = new Set((travelMap.records ?? []).map((record) => record.id))
-  let id = idBase
-  for (let suffix = 2; ids.has(id); suffix += 1) id = `${idBase}-${suffix}`
-
-  travelMap.records = [...(travelMap.records ?? []), {
-    id,
-    country,
-    country_en: countryEn,
-    ...(countryCode
-      ? { country_code: countryCode }
-      : {}),
-    city,
-    city_en: cityEn,
-    start_date: startDate,
-    ...(endDate ? { end_date: endDate } : {}),
-    year: Number(startDate.slice(0, 4)),
-    trip_title: typeof input.trip_title === 'string' && input.trip_title.trim()
-      ? input.trip_title.trim()
-      : `${country} · ${city}`,
-    type: 'visit',
-    status: 'visited',
-    lat,
-    lng,
-    source: 'local-editor',
-  }]
-  travelMap.generated_at = new Date().toISOString()
-  await atomicJsonWrite(localTravelMapPath, travelMap)
-  return { id, countryId: targetCountryId, cityId: targetCityId }
 }
 
 const safeSegment = (value, label) => {
@@ -677,47 +450,6 @@ const normalizeInboxRelativePath = (value) => {
   return path.relative(inboxRoot, target).split(path.sep).join('/')
 }
 
-const restoreImportedMedia = async (sourcePaths) => {
-  if (sourcePaths.length === 0) return []
-
-  const requestedSources = new Set(sourcePaths.map((sourcePath) => sourcePath.toLocaleLowerCase('en-US')))
-  const sourceIndex = await readJson(mediaSourceIndexPath, { sourcesById: {} })
-  const importedIds = Object.entries(sourceIndex.sourcesById ?? {})
-    .filter(([, sources]) => Array.isArray(sources) && sources.some(
-      (source) => requestedSources.has(String(source).replaceAll('\\', '/').toLocaleLowerCase('en-US')),
-    ))
-    .map(([id]) => id)
-
-  if (importedIds.length === 0) {
-    throw new Error('文件已经接收，但导入结果没有对应媒体记录。请保留当前页面并查看导入详情。')
-  }
-
-  const catalog = await readJson(mediaCatalogPath, { items: [] })
-  const itemsById = new Map((Array.isArray(catalog.items) ? catalog.items : []).map((item) => [item.id, item]))
-  const importedItems = importedIds.map((id) => itemsById.get(id)).filter(Boolean)
-  if (importedItems.length !== importedIds.length) {
-    throw new Error('导入索引与媒体目录不一致，已停止刷新页面。')
-  }
-
-  const state = normalizeState(await readJson(editorStatePath, emptyState))
-  const nextState = {
-    ...state,
-    mediaOrderByCity: { ...state.mediaOrderByCity },
-    droneOrderByCity: { ...state.droneOrderByCity },
-    hiddenMediaIds: state.hiddenMediaIds.filter((id) => !importedIds.includes(id)),
-    hiddenDroneMediaIds: state.hiddenDroneMediaIds.filter((id) => !importedIds.includes(id)),
-  }
-
-  for (const item of importedItems) {
-    const orderKey = item.kind === 'photo' ? 'mediaOrderByCity' : 'droneOrderByCity'
-    const currentOrder = nextState[orderKey][item.cityId] ?? []
-    nextState[orderKey][item.cityId] = [...currentOrder.filter((id) => id !== item.id), item.id]
-  }
-
-  await atomicJsonWrite(editorStatePath, normalizeState(nextState))
-  return importedIds
-}
-
 const serveUserMedia = async (request, response, pathname) => {
   if (!isLoopbackRequest(request)) {
     response.statusCode = 403
@@ -796,154 +528,6 @@ const removeSidecarEntries = async (sourcePaths) => {
   }
 }
 
-const deleteHiddenMedia = async (input) => {
-  const cityId = typeof input?.cityId === 'string' ? input.cityId.trim() : ''
-  const ids = isStringArray(input?.ids) ? [...new Set(input.ids)] : []
-  if (!cityId || ids.length === 0) throw new Error('没有可删除的隐藏媒体。')
-
-  const state = normalizeState(await readJson(editorStatePath, emptyState))
-  const hiddenPhotoIds = new Set(state.hiddenMediaIds)
-  const hiddenDroneIds = new Set(state.hiddenDroneMediaIds)
-  const catalog = await readJson(mediaCatalogPath, { items: [] })
-  const catalogItems = Array.isArray(catalog.items) ? catalog.items : []
-  const itemsById = new Map(catalogItems.map((item) => [item.id, item]))
-  for (const id of ids) {
-    const item = itemsById.get(id)
-    const isHiddenPhoto = item?.kind === 'photo' && hiddenPhotoIds.has(id)
-    const isHiddenDroneMedia = ['panorama360', 'aerialPhoto'].includes(item?.kind) && hiddenDroneIds.has(id)
-    if (item?.cityId !== cityId || (!isHiddenPhoto && !isHiddenDroneMedia)) {
-      throw new Error('只能彻底删除当前城市中已经隐藏的照片或无人机影像。')
-    }
-  }
-
-  let sourceIndex = await readJson(mediaSourceIndexPath, { sourcesById: {} })
-  if (ids.some((id) => !Array.isArray(sourceIndex.sourcesById?.[id]))) {
-    await runImporter()
-    sourceIndex = await readJson(mediaSourceIndexPath, { sourcesById: {} })
-  }
-
-  const sourcePaths = []
-  for (const id of ids) {
-    const relativeSources = sourceIndex.sourcesById?.[id]
-    if (!Array.isArray(relativeSources) || relativeSources.length === 0) {
-      throw new Error(`找不到媒体 ${id} 对应的投递箱原图，已停止删除。`)
-    }
-    for (const relativeSource of relativeSources) {
-      const sourcePath = path.resolve(inboxRoot, relativeSource)
-      if (!isPathInside(inboxRoot, sourcePath)) throw new Error('媒体源文件路径超出投递箱范围，已停止删除。')
-      sourcePaths.push(sourcePath)
-    }
-  }
-
-  const generatedDirectories = []
-  for (const id of ids) {
-    const item = itemsById.get(id)
-    const mediaSrc = String(item?.src ?? '').replaceAll('\\', '/')
-    const mediaPrefix = '/media/user/'
-    if (!mediaSrc.startsWith(mediaPrefix)) {
-      throw new Error('影像生成路径格式无效，已停止删除。')
-    }
-    const generatedFile = path.resolve(userMediaRoot, mediaSrc.slice(mediaPrefix.length))
-    const generatedDirectory = path.dirname(generatedFile)
-    if (!isPathInside(userMediaRoot, generatedDirectory)) {
-      throw new Error('生成文件路径超出用户媒体目录，已停止删除。')
-    }
-    generatedDirectories.push(generatedDirectory)
-  }
-
-  let deletedSourceFiles = 0
-  for (const sourcePath of new Set(sourcePaths)) {
-    try {
-      await unlink(sourcePath)
-      deletedSourceFiles += 1
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error
-    }
-  }
-  await removeSidecarEntries(sourcePaths)
-
-  for (const generatedDirectory of new Set(generatedDirectories)) {
-    await rm(generatedDirectory, { recursive: true, force: true })
-  }
-
-  const nextState = normalizeState({
-    ...state,
-    hiddenMediaIds: state.hiddenMediaIds.filter((id) => !ids.includes(id)),
-    hiddenDroneMediaIds: state.hiddenDroneMediaIds.filter((id) => !ids.includes(id)),
-    mediaOrderByCity: Object.fromEntries(Object.entries(state.mediaOrderByCity)
-      .map(([key, value]) => [key, value.filter((id) => !ids.includes(id))])),
-    droneOrderByCity: Object.fromEntries(Object.entries(state.droneOrderByCity)
-      .map(([key, value]) => [key, value.filter((id) => !ids.includes(id))])),
-  })
-  await atomicJsonWrite(editorStatePath, nextState)
-  const output = await runImporter()
-  return { deletedIds: ids, deletedSourceFiles, output }
-}
-
-const deleteHiddenCountries = async (input) => {
-  const ids = isStringArray(input?.ids)
-    ? [...new Set(input.ids.map((id) => id.trim()).filter(Boolean))]
-    : []
-  if (ids.length === 0) throw new Error('没有可删除的隐藏国家。')
-
-  const state = normalizeState(await readJson(editorStatePath, emptyState))
-  const hiddenCountryIds = new Set(state.hiddenCountryIds)
-  if (ids.some((id) => !hiddenCountryIds.has(id))) {
-    throw new Error('只能彻底删除已经隐藏的国家。')
-  }
-
-  const travelMap = await ensureLocalTravelMap()
-  const records = Array.isArray(travelMap.records) ? travelMap.records : []
-  const targetRecords = records.filter((record) => ids.includes(countryIdForRecord(record)))
-  const addedCountryIds = new Set(state.addedCountries.map((country) => country.id))
-  if (ids.some((id) => !targetRecords.some((record) => countryIdForRecord(record) === id) && !addedCountryIds.has(id))) {
-    throw new Error('找不到待删除国家的本地旅行数据，已停止删除。')
-  }
-
-  const catalog = await readJson(mediaCatalogPath, { items: [] })
-  const catalogItems = Array.isArray(catalog.items) ? catalog.items : []
-  const blockingItems = catalogItems.filter((item) => ids.includes(item.countryId))
-  if (blockingItems.length > 0) {
-    const recordsByCityId = new Map(targetRecords.map((record) => [cityIdForRecord(record), record]))
-    const mediaCountByCity = blockingItems.reduce((counts, item) => {
-      const cityId = String(item.cityId ?? '')
-      counts.set(cityId, (counts.get(cityId) ?? 0) + 1)
-      return counts
-    }, new Map())
-    const citySummary = [...mediaCountByCity.entries()].map(([cityId, count]) => {
-      const record = recordsByCityId.get(cityId)
-      const cityName = record?.city || record?.city_en || cityId || '未知城市'
-      return `${cityName}（${count} 个媒体）`
-    }).join('、')
-    throw new Error(`以下城市仍有照片或无人机影像：${citySummary}。请先在对应城市中彻底删除这些媒体。`)
-  }
-
-  const cityIds = new Set(targetRecords.map(cityIdForRecord))
-  const omitCityEntries = (record) => Object.fromEntries(
-    Object.entries(record).filter(([cityId]) => !cityIds.has(cityId)),
-  )
-
-  travelMap.records = records.filter((record) => !ids.includes(countryIdForRecord(record)))
-  travelMap.generated_at = new Date().toISOString()
-  await atomicJsonWrite(localTravelMapPath, travelMap)
-
-  const nextState = normalizeState({
-    ...state,
-    addedCountries: state.addedCountries.filter((country) => !ids.includes(country.id)),
-    countryOrder: state.countryOrder.filter((id) => !ids.includes(id)),
-    hiddenCountryIds: state.hiddenCountryIds.filter((id) => !ids.includes(id)),
-    cityOrderByCountry: Object.fromEntries(
-      Object.entries(state.cityOrderByCountry).filter(([countryId]) => !ids.includes(countryId)),
-    ),
-    hiddenCityIds: state.hiddenCityIds.filter((id) => !cityIds.has(id)),
-    mediaOrderByCity: omitCityEntries(state.mediaOrderByCity),
-    coverMediaByCity: omitCityEntries(state.coverMediaByCity),
-    droneOrderByCity: omitCityEntries(state.droneOrderByCity),
-  })
-  await atomicJsonWrite(editorStatePath, nextState)
-  return { deletedCountryIds: ids, deletedRecordCount: targetRecords.length }
-}
-
 const allowedOrigins = (request) => {
   const origin = request.headers.origin
   if (!origin) return true
@@ -961,133 +545,6 @@ const isLoopbackRequest = (request) => {
   return address === '::1' || address === '127.0.0.1' || address.startsWith('::ffff:127.')
 }
 
-/** 每次调用都按当前私有资料层路径新建一个 store，避免缓存过期的 wantToGoPath。 */
-const wantToGoStore = () => createWantToGoStore({ filePath: wantToGoPath })
-
-// ---- 想去 → 足迹（PR9，PRD S5 / R13）----
-// 判断与构造都在 convert-to-travel.mjs（有单测）；这里只负责读文件、按顺序写入和出错时的说明。
-// 纪律：先全部校验，再按「足迹 → 编辑状态 → 想去」的顺序写。足迹已写入而后续步骤失败时，
-// 错误以「足迹已创建，但」开头，让用户知道磁盘上的现状。
-
-/**
- * 校验用的只读读取：本地旅行记录还不存在时按样例判断（与 addCountry / getLocation 相同），
- * 不在校验阶段创建文件；真正写入时由 addTravelRecord 的 ensureLocalTravelMap 创建。
- */
-const readTravelMapForValidation = async () => {
-  const sourcePath = await exists(localTravelMapPath) ? localTravelMapPath : sampleTravelMapPath
-  return readJson(sourcePath, { schema_version: 1, records: [] })
-}
-
-/** 足迹写入之后的失败原因，放进括号里：去掉末尾句号，避免与外层句子叠成「。）。」。 */
-const conversionFailureReason = (error) => (error instanceof Error ? error.message : '未知错误').replace(/[。.]$/, '')
-
-/** 转换前这个国家是否已在足迹里：有已去过的记录，或是手动添加的国家。只有 planned 记录的国家不算。 */
-const isCountryInFootprint = (countryId, records, addedCountries) => (
-  records.some((record) => record?.status !== 'planned' && countryIdForRecord(record) === countryId)
-  || addedCountries.some((country) => country.id === countryId)
-)
-
-/**
- * 新国家按最近到访日期排进 countryOrder（与 addCountry 同一个 sortCountryIdsByLatestVisit）。
- * 只在足迹写入之后调用。planned 记录的日期是计划日期而不是到访日期，这里不参与排序，
- * 否则同一国家还剩一条未来的 planned 时，它会被排到最前面。
- */
-const reorderCountriesAfterConversion = async () => {
-  try {
-    const travelMap = await readJson(localTravelMapPath, { records: [] })
-    const state = normalizeState(await readJson(editorStatePath, emptyState))
-    const visitedRecords = (Array.isArray(travelMap.records) ? travelMap.records : [])
-      .filter((record) => record?.status !== 'planned')
-    state.countryOrder = sortCountryIdsByLatestVisit(
-      visitedRecords,
-      state.addedCountries,
-      state.countryOrder,
-    )
-    await atomicJsonWrite(editorStatePath, normalizeState(state))
-  } catch (error) {
-    throw new Error(`足迹已创建，但国家列表的排序没有更新（${conversionFailureReason(error)}）。`, { cause: error })
-  }
-}
-
-const convertWantToGoItem = async (input) => {
-  const id = requireText(input.id, '想去记录 id')
-  if (input.keepWantToGo !== undefined && typeof input.keepWantToGo !== 'boolean') {
-    throw new Error('保留想去条目只能是 true 或 false。')
-  }
-  const store = wantToGoStore()
-  // 想去文件不存在时条目必然不存在；先判断，避免 store.read() 为了这次校验去创建空文件。
-  const item = await exists(wantToGoPath)
-    ? (await store.read()).items.find((candidate) => candidate?.id === id)
-    : undefined
-  if (!item) throw new Error('找不到这条想去记录。')
-
-  const travelMap = await readTravelMapForValidation()
-  const records = Array.isArray(travelMap.records) ? travelMap.records : []
-  const state = normalizeState(await readJson(editorStatePath, emptyState))
-  const country = resolveTravelCountry(item.place?.countryCode, {
-    records,
-    countryCodes: travelMap.display?.countryCodes,
-    addedCountries: state.addedCountries,
-    catalogByCode: countryCatalogByCode,
-  })
-  const recordInput = buildTravelRecordInput(item, {
-    country,
-    startDate: input.startDate,
-    endDate: input.endDate,
-    tripTitle: input.tripTitle,
-  })
-  // 与 addTravelRecord 相同的 cityId 规则，但在任何写入之前判断，并给出转换场景的说明（规格 §2 第 3 条）。
-  const countryId = slugify(recordInput.country_en)
-  const cityId = `${countryId}__${slugify(recordInput.city_en)}`
-  if (records.some((record) => cityIdForRecord(record) === cityId)) {
-    throw new Error('这个城市已经在足迹里了。如果只是想从想去列表移除，请使用隐藏或彻底删除。')
-  }
-  const isNewCountry = !isCountryInFootprint(countryId, records, state.addedCountries)
-
-  // 以上全部通过才开始写：足迹 → 编辑状态 → 想去。
-  const created = await addTravelRecord(recordInput)
-  if (isNewCountry) await reorderCountriesAfterConversion()
-  let wantToGoRemoved = false
-  if (input.keepWantToGo !== true) {
-    try {
-      await store.remove({ id })
-      wantToGoRemoved = true
-    } catch (error) {
-      throw new Error(
-        `足迹已创建，但想去条目没有移除（${conversionFailureReason(error)}）。可以在想去列表里隐藏或彻底删除它。`,
-        { cause: error },
-      )
-    }
-  }
-  return { travelRecordId: created.id, countryId: created.countryId, cityId: created.cityId, wantToGoRemoved }
-}
-
-const convertPlannedTravelRecord = async (input) => {
-  const recordId = requireText(input.recordId, '旅行计划 id')
-  // planned 只存在于个人旅行记录（样例里没有）。文件不存在就无从转换，也不为此创建它。
-  if (!await exists(localTravelMapPath)) throw new Error('找不到这条旅行计划。')
-  const travelMap = await readJson(localTravelMapPath, { schema_version: 1, records: [] })
-  const { travelMap: nextTravelMap, record } = convertPlannedRecord(travelMap, recordId, {
-    startDate: input.startDate,
-    endDate: input.endDate,
-  })
-  const records = Array.isArray(travelMap.records) ? travelMap.records : []
-  const state = normalizeState(await readJson(editorStatePath, emptyState))
-  const countryId = countryIdForRecord(record)
-  const isNewCountry = !isCountryInFootprint(countryId, records, state.addedCountries)
-
-  await atomicJsonWrite(localTravelMapPath, { ...nextTravelMap, generated_at: new Date().toISOString() })
-  if (isNewCountry) await reorderCountriesAfterConversion()
-  return { travelRecordId: record.id, countryId, cityId: cityIdForRecord(record), wantToGoRemoved: false }
-}
-
-/** POST /__travelatlas/editor/wanttogo/convert 的请求体二选一：想去条目，或 planned 旅行计划。 */
-const convertToTravel = async (input) => {
-  if (input?.source === 'want-to-go') return convertWantToGoItem(input)
-  if (input?.source === 'planned') return convertPlannedTravelRecord(input)
-  throw new Error('转换来源只能是 want-to-go 或 planned。')
-}
-
 const authorizeWrite = (request) => (
   isLoopbackRequest(request)
   && request.headers[editorHeader] === '1'
@@ -1095,8 +552,8 @@ const authorizeWrite = (request) => (
 )
 
 /**
- * RFC-LOC-1 PR3b-3：V2 数据模式下的三个媒体端点（上传、导入、彻底删除隐藏媒体），交给 v2-media-store.mjs。
- * 旧模式的辅助函数（文件名规则、接收上传、无人机 sidecar、运行导入器、删 sidecar 条目）原样传进去复用，本身一行不改。
+ * RFC-LOC-1 PR3b-3：三个媒体端点（上传、导入、彻底删除隐藏媒体），交给 v2-media-store.mjs。
+ * 上面的辅助函数（文件名规则、接收上传、无人机 sidecar、运行导入器、删 sidecar 条目）原样传进去复用。
  * 上传的请求体是文件本身，不按 JSON 读。
  */
 const handleV2Media = async (routeName, request, url) => {
@@ -1123,9 +580,8 @@ const handleV2Media = async (routeName, request, url) => {
 }
 
 /**
- * RFC-LOC-1 PR3b-2 / PR3b-3：V2 数据模式下的写入。三个媒体端点经 v2-media-store.mjs 的路由表，其余经 v2-editor-store.mjs 的
- * 路由表（8 个非媒体写入端点）分派；两张表都没列的接口回 404——V2 下绝不进入下面的旧模式分支。
- * 数据读写只碰 data/v2/（媒体另有收件箱与生成文件），不读旧文件、不回落样例。
+ * RFC-LOC-1 PR3b-2 / PR3b-3：全部 11 个写入端点。三个媒体端点经 v2-media-store.mjs 的路由表，其余 8 个经 v2-editor-store.mjs 的
+ * 路由表分派；两张表都没列的接口回 404。数据读写只碰 data/v2/（媒体另有收件箱与生成文件），不读旧文件、不回落样例。
  */
 const handleV2Write = async (request, url) => {
   const mediaRoute = v2MediaRoute(request.method, url.pathname)
@@ -1156,22 +612,21 @@ export function travelAtlasLocalEditor(options = {}) {
     async load(id) {
       if (id !== resolvedPrivateDataId) return undefined
       if (profile !== 'personal') return renderPrivateDataModule(privateDataModuleExports({ profile }))
-      // RFC-LOC-1 PR3b-1：按数据模式只读一边的文件（legacy：四个旧文件，顺序不变；v2：data/v2/ 的五个 V2 文件）。
-      // 标记文件不合法时 resolveDataMode 抛错，dev server 把它作为这个模块的加载错误报出来。
-      const { mode } = resolveDataMode(privatePaths)
-      const values = {}
-      for (const source of privateDataSources(mode, privatePaths)) values[source.key] = await readJson(source.path, undefined)
-      return renderPrivateDataModule(privateDataModuleExports({ profile, dataMode: mode, values }))
+      // RFC-LOC-1 PR5a：只读 data/v2/ 的五个 V2 文件（缺的为 undefined），外加「未迁移」的判定（只看旧文件在不在，不读内容）。
+      const v2Values = {}
+      for (const key of V2_PRIVATE_FILE_KEYS) v2Values[key] = await readJson(privatePaths.v2FilePaths[key], undefined)
+      const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
+      return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values, legacyUnmigrated }))
     },
     configureServer(server) {
       if (profile !== 'personal') return
       let editorMutationDepth = 0
       let ignoreWatcherUntil = 0
       server.watcher.add(dataRoot)
-      // 新建、修改、删除都走同一套处理（RFC-LOC-1 PR3b-1）：新建 / 删除数据模式标记、生成 data/v2/ 的文件，
-      // 不重启服务也会让虚拟模块失效；编辑器自己的写入期间与之后 1.5 秒内不刷新页面（原有条件）。
+      // data/v2/ 的新建、修改、删除，以及四个旧数据文件的新建与删除（RFC-LOC-1 PR5a）：迁移写出 V2 文件、导入器更新媒体目录、
+      // 把旧文件移走，不重启服务也会让虚拟模块失效；编辑器自己的写入期间与之后 1.5 秒内不刷新页面（原有条件）。
       const onPrivateDataEvent = (event, changedPath) => {
-        if (!shouldHandlePrivateDataChange(event, changedPath, dataRoot)) return
+        if (!shouldHandlePrivateDataChange(event, changedPath, privatePaths)) return
         const privateModule = server.moduleGraph.getModuleById(resolvedPrivateDataId)
         if (privateModule) server.moduleGraph.invalidateModule(privateModule)
         if (editorMutationDepth > 0 || Date.now() < ignoreWatcherUntil) return
@@ -1196,13 +651,9 @@ export function travelAtlasLocalEditor(options = {}) {
         try {
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
             if (!isLoopbackRequest(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话读取。' })
-            // RFC-LOC-1 PR3b-2：V2 下读 data/v2/ 的 editor-state，转成 V1 形状返回（每个请求现读数据模式）。
-            if (resolveDataMode(privatePaths).mode === 'v2') {
-              const result = await readV2EditorState({ privatePaths })
-              return sendJson(response, result.status, result.body)
-            }
-            const state = normalizeState(await readJson(editorStatePath, emptyState))
-            return sendJson(response, 200, { ok: true, state })
+            // RFC-LOC-1 PR3b-2：读 data/v2/ 的 editor-state，转成 V1 形状返回。
+            const result = await readV2EditorState({ privatePaths })
+            return sendJson(response, result.status, result.body)
           }
 
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/catalog/countries') {
@@ -1224,139 +675,15 @@ export function travelAtlasLocalEditor(options = {}) {
           }
 
           if (!authorizeWrite(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话写入。' })
-          // RFC-LOC-1 PR3b-2 / PR3b-3：每个请求现读数据模式（不缓存）。V2 下全部 11 个写入端点都走 V2 实现（handleV2Write）；
-          // 标记文件不合法时 resolveDataMode 抛错，由外层按 400 返回错误信息。
-          const dataMode = resolveDataMode(privatePaths).mode
+          // RFC-LOC-1 PR5a 决定 I：私人目录有没迁移的旧数据时，全部写入端点拒绝（409 E_LEGACY_UNMIGRATED），什么都不写——
+          // 否则 data/v2/ 被写出后，迁移工具的 --apply 会因为输出目录非空而拒绝运行。每个请求现判（只看文件在不在）。
+          const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
+          if (refusal) return sendJson(response, refusal.status, refusal.body)
 
           editorMutationDepth += 1
           try {
-            if (dataMode === 'v2') {
-              const result = await handleV2Write(request, url)
-              return sendJson(response, result.status, result.body)
-            }
-
-            if (request.method === 'PUT' && url.pathname === '/__travelatlas/editor/state') {
-              const state = normalizeState(await readJsonBody(request))
-              await atomicJsonWrite(editorStatePath, state)
-              return sendJson(response, 200, { ok: true, state })
-            }
-
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/records') {
-              const result = await addTravelRecord(await readJsonBody(request))
-              return sendJson(response, 201, { ok: true, ...result })
-            }
-
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/countries') {
-              const result = await addCountry(await readJsonBody(request))
-              return sendJson(response, 201, { ok: true, ...result })
-            }
-
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/countries/delete') {
-              const result = await deleteHiddenCountries(await readJsonBody(request))
-              return sendJson(response, 200, { ok: true, ...result })
-            }
-
-            // ---- Want to Go（FR-WTG-6）----
-            // 校验全部在 want-to-go-store.mjs 里，这里只负责转发与响应码。
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/wanttogo') {
-              const result = await wantToGoStore().add(await readJsonBody(request))
-              return sendJson(response, 201, { ok: true, ...result })
-            }
-
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/wanttogo/update') {
-              const result = await wantToGoStore().update(await readJsonBody(request))
-              return sendJson(response, 200, { ok: true, ...result })
-            }
-
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/wanttogo/delete') {
-              const result = await wantToGoStore().deleteHidden(await readJsonBody(request))
-              return sendJson(response, 200, { ok: true, ...result })
-            }
-
-            // PR9：想去 / planned → 足迹。一个端点完成整件事，先全部校验再写（见 convertToTravel）。
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/wanttogo/convert') {
-              const result = await convertToTravel(await readJsonBody(request))
-              return sendJson(response, 200, { ok: true, ...result })
-            }
-
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/upload') {
-              const countryId = url.searchParams.get('countryId') ?? ''
-              const cityId = url.searchParams.get('cityId') ?? ''
-              const kind = url.searchParams.get('kind') ?? 'photo'
-              const fileName = url.searchParams.get('fileName') ?? ''
-              if (!['photo', 'panorama360', 'aerialPhoto'].includes(kind)) throw new Error('不支持的媒体类型。')
-
-              const location = await getLocation(countryId, cityId)
-              const countryFolder = safeSegment(location.countryName, '国家名')
-              const cityFolder = safeSegment(location.cityName, '城市名')
-              const cityRoot = path.join(inboxRoot, countryFolder, cityFolder)
-              const mediaFolder = kind === 'photo' ? 'photos' : 'drone'
-              const destination = await reserveDestination(path.join(cityRoot, mediaFolder), fileName)
-              const extension = path.extname(destination).toLowerCase()
-              if (!['.jpg', '.jpeg', '.png', '.webp', '.avif'].includes(extension)) {
-                throw new Error('当前网页编辑器只接收 JPG、PNG、WebP 或 AVIF 图片。')
-              }
-              let droneMetadata
-              if (kind !== 'photo') {
-                const date = url.searchParams.get('date') ?? ''
-                const latText = url.searchParams.get('lat')
-                const lngText = url.searchParams.get('lng')
-                const lat = latText === null || latText === '' ? undefined : Number(latText)
-                const lng = lngText === null || lngText === '' ? undefined : Number(lngText)
-                const altitudeText = url.searchParams.get('altitudeMeters')
-                const altitudeMeters = altitudeText ? Number(altitudeText) : undefined
-                const relativeAltitudeText = url.searchParams.get('relativeAltitudeMeters')
-                const relativeAltitudeMeters = relativeAltitudeText ? Number(relativeAltitudeText) : undefined
-                if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('无人机影像必须填写有效日期。')
-                if ((lat === undefined) !== (lng === undefined)) {
-                  throw new Error('经纬度需要同时填写，或同时留空。')
-                }
-                if (
-                  (lat !== undefined && (!Number.isFinite(lat) || lat < -90 || lat > 90))
-                  || (lng !== undefined && (!Number.isFinite(lng) || lng < -180 || lng > 180))
-                ) {
-                  throw new Error('经纬度超出有效范围。')
-                }
-                droneMetadata = {
-                  kind,
-                  date,
-                  lat,
-                  lng,
-                  altitudeMeters: Number.isFinite(altitudeMeters) ? altitudeMeters : undefined,
-                  relativeAltitudeMeters: Number.isFinite(relativeAltitudeMeters) ? relativeAltitudeMeters : undefined,
-                  titleZh: url.searchParams.get('titleZh') || `${location.cityName}无人机影像`,
-                  titleEn: url.searchParams.get('titleEn') || `${location.cityName} Drone Media`,
-                }
-              }
-
-              const imageMetadata = await writeUpload(request, destination, kind)
-              if (droneMetadata) await updateDroneSidecar(cityRoot, destination, droneMetadata, imageMetadata)
-
-              const fileStats = await stat(destination)
-              return sendJson(response, 201, {
-                ok: true,
-                fileName: path.basename(destination),
-                bytes: fileStats.size,
-                sourcePath: path.relative(inboxRoot, destination).split(path.sep).join('/'),
-              })
-            }
-
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/import') {
-              const input = await readJsonBody(request)
-              const sourcePaths = isStringArray(input?.sourcePaths)
-                ? [...new Set(input.sourcePaths.map(normalizeInboxRelativePath).filter(Boolean))]
-                : []
-              const output = await runImporter()
-              const restoredMediaIds = await restoreImportedMedia(sourcePaths)
-              return sendJson(response, 200, { ok: true, output, restoredMediaIds })
-            }
-
-            if (request.method === 'POST' && url.pathname === '/__travelatlas/editor/media/delete') {
-              const result = await deleteHiddenMedia(await readJsonBody(request))
-              return sendJson(response, 200, { ok: true, ...result })
-            }
-
-            return sendJson(response, 404, { ok: false, error: '未知的本地编辑接口。' })
+            const result = await handleV2Write(request, url)
+            return sendJson(response, result.status, result.body)
           } finally {
             editorMutationDepth -= 1
             if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500

@@ -1,11 +1,12 @@
 /**
- * `.bak` 文件的锁定测试（RFC-LOC-1 PR4 规格 §2.4）。
+ * `.bak` 文件的锁定测试（RFC-LOC-1 PR4 规格 §2.4；PR5a 规格 §5 按新判定调整）。
  *
  * `atomicJsonWrite`（scripts/json-file.mjs）写入前把旧文件复制成 `<名字>.bak`：这是有意的安全网，保留。
  * 这里锁定它们无害——只测，不改代码：
- *   1. 私人目录 `data/` 里的 `.bak` 不影响数据模式判定（不算旧数据，也不算标记）；
+ *   1. 私人目录 `data/` 与 `data/v2/` 里的 `.bak` 不影响「未迁移」的判定（scripts/legacy-data.mjs：不算旧数据，也不算 V2 文件），
+ *      因而也不影响写入拒绝、导入器与迁移工具；
  *   2. `data/v2/` 里的 `.bak` 不影响 V2 读取与校验（虚拟模块、基线工具、编辑状态接口只读五个确切的文件名）；
- *   3. 收件箱里的 `.bak` 不影响导入（V2 与旧模式的导入器都跳过它们）。
+ *   3. 收件箱里的 `.bak` 不影响导入（导入器跳过它们）。
  * `.bak` 一律写成非法 JSON 或指向别处的内容：它们若被读到，结果一定会变。
  *
  * 运行方式：npm test。私人根一律是 fs.mkdtemp 建的临时目录（STARMAP_PRIVATE_ROOT），绝不读作者的真实私有层；
@@ -22,9 +23,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 
-import { hasLegacyData, hasV2Data, resolveDataMode } from './data-mode.mjs'
-import { privateDataModuleExports, privateDataSources } from './local-editor-data-mode.mjs'
-import { getPrivatePaths } from './private-profile.mjs'
+import { hasLegacyData, hasV2Data, isLegacyUnmigrated, legacyDataStateOf, legacyWriteRefusal } from './legacy-data.mjs'
+import { privateDataModuleExports } from './private-data-module.mjs'
+import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, runV2Write } from './v2-editor-store.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
@@ -62,46 +63,42 @@ const readSample = (name) => JSON.parse(readFileSync(path.join(webRoot, 'src', '
 const bakOf = (filePath) => filePath.replace(/\.json$/i, '.bak')
 
 // ---------------------------------------------------------------------------
-// 1. 数据模式判定
+// 1. 「未迁移」的判定
 // ---------------------------------------------------------------------------
 
-test('.bak 与数据模式：data/ 里只有四个旧文件与标记的 .bak → 仍是全新目录（v2）；不算旧数据，也不算标记', () => withTemp(async (directory) => {
+test('.bak 与「未迁移」：data/ 里只有四个旧文件（与 PR4 数据模式标记）的 .bak → 等于全新目录；不拒绝写入，迁移工具报「无需迁移」', () => withTemp(async (directory) => {
   const root = path.join(directory, 'private')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
   await mkdir(paths.dataRoot, { recursive: true })
   for (const filePath of [paths.localTravelMapPath, paths.wantToGoPath, paths.editorStatePath, paths.mediaCatalogPath]) {
     await writeFile(bakOf(filePath), '{"schema_version":1,"records":[]}', 'utf8')
   }
-  await writeFile(bakOf(paths.dataModePath), '{ "mode": "legacy" }', 'utf8')
+  await writeFile(path.join(paths.dataRoot, 'data-mode.local.bak'), '{ "mode": "legacy" }', 'utf8')
   assert.equal(hasLegacyData(paths), false)
-  assert.deepEqual(resolveDataMode(paths), { mode: 'v2', reason: 'fresh-profile' })
+  assert.deepEqual(legacyDataStateOf(paths), { legacyFiles: [], v2Files: [] })
+  assert.equal(legacyWriteRefusal(legacyDataStateOf(paths)), undefined)
 
-  const status = runScript('data-mode-cli.mjs', [], root)
-  assert.equal(status.status, 0, status.stderr)
-  assert.match(status.stdout, /^判定原因：全新目录 → v2（/m)
-  const migrate = runScript('migrate-identity.mjs', ['--apply', '--switch'], root)
-  assert.equal(migrate.status, 0, migrate.stderr)
-  assert.equal(migrate.stdout, '私人目录没有旧数据，无需迁移。\n')
-
-  // 标记的 .bak 是 v2、真正的标记不存在、有旧数据 → 按旧数据判定为 legacy。
-  await writeFile(bakOf(paths.dataModePath), '{ "mode": "v2" }', 'utf8')
-  await writeFile(paths.wantToGoPath, '{"schema_version":1,"items":[]}', 'utf8')
-  assert.deepEqual(resolveDataMode(paths), { mode: 'legacy', reason: 'legacy-data' })
-  // 一个损坏的 .bak 标记也不会被读到。
-  await writeFile(bakOf(paths.dataModePath), BROKEN, 'utf8')
-  assert.deepEqual(resolveDataMode(paths), { mode: 'legacy', reason: 'legacy-data' })
+  for (const args of [[], ['--apply']]) {
+    const migrate = runScript('migrate-identity.mjs', args, root)
+    assert.equal(migrate.status, 0, migrate.stderr)
+    assert.equal(migrate.stdout, '私人目录没有旧数据，无需迁移。\n')
+  }
 }))
 
-test('.bak 与 v2 的防呆：有旧数据、data/v2/ 里只有 .bak → 不算 V2 文件，npm run data-mode -- v2 照样拒绝', () => withTemp(async (directory) => {
+test('.bak 与「未迁移」：有旧数据、data/v2/ 里只有 .bak → 不算 V2 文件，仍是未迁移：写入拒绝（409），导入器拒绝（退出码 2），都不写', () => withTemp(async (directory) => {
   const root = path.join(directory, 'private')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
   await writeJson(paths.localTravelMapPath, { schema_version: 1, records: [] })
   await mkdir(paths.v2DataRoot, { recursive: true })
   for (const filePath of Object.values(paths.v2FilePaths)) await writeFile(bakOf(filePath), '{}', 'utf8')
   assert.equal(hasV2Data(paths), false)
-  const refused = runScript('data-mode-cli.mjs', ['v2'], root)
+  assert.equal(isLegacyUnmigrated(legacyDataStateOf(paths)), true)
+  assert.equal(legacyWriteRefusal(legacyDataStateOf(paths))?.status, 409)
+  const before = (await readdir(paths.v2DataRoot)).sort()
+  const refused = runScript('import-media.mjs', ['--apply'], root)
   assert.equal(refused.status, 2, refused.stderr)
-  assert.equal(existsSync(paths.dataModePath), false)
+  assert.deepEqual((await readdir(paths.v2DataRoot)).sort(), before)
+  assert.equal(existsSync(paths.userMediaRoot), false)
 }))
 
 // ---------------------------------------------------------------------------
@@ -118,11 +115,11 @@ const readFiveV2Files = async (paths) => Object.fromEntries(await Promise.all(V2
 ])))
 
 const v2BaselineOf = (files) => `${stableStringify(buildBaseline(
-  deriveAppDataFromCanonical(canonicalForInputs({ dataMode: 'v2', v2Files: files }), { now: BASELINE_NOW }),
+  deriveAppDataFromCanonical(canonicalForInputs({ v2Files: files }), { now: BASELINE_NOW }),
   { now: BASELINE_NOW },
 ))}\n`
 
-test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响模式判定、虚拟模块读的文件、V2 校验、编辑状态接口与 legacy-baseline --path v2', () => withTemp(async (directory) => {
+test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响「未迁移」的判定、虚拟模块读的文件、V2 校验、编辑状态接口与 legacy-baseline --path v2', () => withTemp(async (directory) => {
   const root = path.join(directory, 'private')
   const out = path.join(directory, 'out')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
@@ -131,7 +128,7 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
   await writeJson(paths.localTravelMapPath, travel)
   await writeJson(paths.wantToGoPath, readSample('want-to-go.sample.json'))
   assert.equal(runScript('migrate-identity.mjs', [], root).status, 0)
-  const applied = runScript('migrate-identity.mjs', ['--apply', '--switch'], root)
+  const applied = runScript('migrate-identity.mjs', ['--apply'], root)
   assert.equal(applied.status, 0, applied.stdout + applied.stderr)
 
   // 经插件用的同一个 IO 层做两次编辑：atomicJsonWrite 给被改写的文件留下 .bak（上一版）。
@@ -156,12 +153,12 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
   const expectedState = await readV2EditorState({ privatePaths: paths })
 
   const check = async (label) => {
-    assert.deepEqual(resolveDataMode(paths), { mode: 'v2', reason: 'marker' }, label)
-    // 虚拟模块（local-editor-plugin.mjs 的 load）在 V2 下只读这五个确切的路径。
-    const sources = privateDataSources('v2', paths)
-    assert.deepEqual(sources.map((source) => source.path).sort(), Object.values(paths.v2FilePaths).sort(), label)
-    const values = Object.fromEntries(await Promise.all(sources.map(async (source) => [source.key, JSON.parse(await readFile(source.path, 'utf8'))])))
-    assert.deepEqual(privateDataModuleExports({ profile: 'personal', dataMode: 'v2', values }).privateV2Files, files, label)
+    // 旧文件还在（迁移不动它们）、V2 文件也在：残留，不算未迁移。
+    assert.equal(legacyDataStateOf(paths).v2Files.length, 5, label)
+    assert.equal(isLegacyUnmigrated(legacyDataStateOf(paths)), false, label)
+    // 虚拟模块（local-editor-plugin.mjs 的 load）只读这五个确切的路径。
+    const v2Values = Object.fromEntries(await Promise.all(V2_PRIVATE_FILE_KEYS.map(async (key) => [key, JSON.parse(await readFile(paths.v2FilePaths[key], 'utf8'))])))
+    assert.deepEqual(privateDataModuleExports({ profile: 'personal', v2Values }).privateV2Files, files, label)
     assert.deepEqual(await readV2EditorState({ privatePaths: paths }), expectedState, label)
     const target = path.join(out, `${label}.json`)
     const result = runScript('legacy-baseline.mjs', ['--path', 'v2', '--out', target], root)
@@ -203,15 +200,15 @@ const makeImages = async (directory) => {
   return { photo, drone }
 }
 
-/** 收件箱：Iceland/Reykjavik/photos/harbour.jpg + drone/bay.jpg + media.json（V2 下城市文件夹再加 place.json）。 */
-const writeInbox = async (paths, images, { v2 }) => {
+/** 收件箱：Iceland/Reykjavik/photos/harbour.jpg + drone/bay.jpg + media.json + 城市文件夹的 place.json。 */
+const writeInbox = async (paths, images) => {
   const city = path.join(paths.inboxRoot, 'Iceland', 'Reykjavik')
   await mkdir(path.join(city, 'photos'), { recursive: true })
   await mkdir(path.join(city, 'drone'), { recursive: true })
   await copyFile(images.photo, path.join(city, 'photos', 'harbour.jpg'))
   await copyFile(images.drone, path.join(city, 'drone', 'bay.jpg'))
   await writeJson(path.join(city, 'media.json'), { 'drone/bay.jpg': { kind: 'aerialPhoto', titleEn: 'Bay', date: '2025-06-02', resolution: '200 × 100', captureType: 'Aerial Photo' } })
-  if (v2) await writeJson(path.join(city, 'place.json'), { placeId: ID.reykjavik })
+  await writeJson(path.join(city, 'place.json'), { placeId: ID.reykjavik })
 }
 
 /** 各种 .bak：控制文件的上一版（指向别处或改坏）、媒体文件夹里的 .bak。 */
@@ -229,48 +226,36 @@ const addInboxBaks = async (paths) => {
 /** 目录与源文件索引里 generatedAt 以外的内容。 */
 const withoutGeneratedAt = (text) => text.replace(/^ {2}"generatedAt": "[^"]*",\n/m, '')
 
-const importInto = async (root, { v2, withBak, images }) => {
+const importInto = async (root, { withBak, images }) => {
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
-  if (v2) {
-    await writeJson(paths.dataModePath, { mode: 'v2' })
-    await writeJson(paths.v2FilePaths.places, placesFile())
-  } else {
-    await writeJson(paths.localTravelMapPath, {
-      schema_version: 1,
-      records: [{ id: 'r1', country: '冰岛', country_en: 'Iceland', country_code: 'is', city: '雷克雅未克', city_en: 'Reykjavik', start_date: '2025-06-01', status: 'visited', lat: 64.1466, lng: -21.9426 }],
-    })
-  }
-  await writeInbox(paths, images, { v2 })
+  await writeJson(paths.v2FilePaths.places, placesFile())
+  await writeInbox(paths, images)
   if (withBak) await addInboxBaks(paths)
   const preflight = runScript('import-media.mjs', [], root)
   const applied = runScript('import-media.mjs', ['--apply'], root)
   assert.equal(applied.status, 0, `${applied.stdout}\n${applied.stderr}`)
-  const catalogPath = v2 ? paths.v2FilePaths.media : paths.mediaCatalogPath
-  const indexPath = v2 ? paths.v2MediaSourceIndexPath : paths.mediaSourceIndexPath
   return {
     preflight: preflight.stdout + preflight.stderr,
     output: applied.stdout.replaceAll(root, '<root>') + applied.stderr.replaceAll(root, '<root>'),
-    catalog: withoutGeneratedAt(await readFile(catalogPath, 'utf8')),
-    index: withoutGeneratedAt(await readFile(indexPath, 'utf8')),
+    catalog: withoutGeneratedAt(await readFile(paths.v2FilePaths.media, 'utf8')),
+    index: withoutGeneratedAt(await readFile(paths.v2MediaSourceIndexPath, 'utf8')),
     generated: (await readdir(paths.userMediaRoot, { recursive: true })).sort(),
   }
 }
 
-for (const v2 of [true, false]) {
-  test(`.bak 在收件箱（${v2 ? 'V2' : '旧模式'}）：控制文件与媒体文件夹里的 .bak 不改变导入结果、不出现在输出里`, () => withTemp(async (directory) => {
-    const images = await makeImages(directory)
-    const clean = await importInto(path.join(directory, 'clean'), { v2, withBak: false, images })
-    const withBak = await importInto(path.join(directory, 'with-bak'), { v2, withBak: true, images })
-    assert.equal(withBak.catalog, clean.catalog)
-    assert.equal(withBak.index.replaceAll(path.join(directory, 'with-bak'), '<root>'), clean.index.replaceAll(path.join(directory, 'clean'), '<root>'))
-    assert.deepEqual(withBak.generated, clean.generated)
-    assert.equal(withBak.output, clean.output)
-    assert.doesNotMatch(withBak.preflight, /\.bak/)
-    assert.doesNotMatch(withBak.output, /\.bak/)
-    const catalog = JSON.parse(clean.catalog)
-    assert.equal(catalog.items.length, 2)
-    // 收件箱里的 .bak 原样保留（导入器不删、不改）。
-    const city = path.join(directory, 'with-bak', 'MediaInbox', 'Iceland', 'Reykjavik')
-    assert.equal(await readFile(path.join(city, 'place.bak'), 'utf8'), BROKEN)
-  }))
-}
+test('.bak 在收件箱：控制文件与媒体文件夹里的 .bak 不改变导入结果、不出现在输出里', () => withTemp(async (directory) => {
+  const images = await makeImages(directory)
+  const clean = await importInto(path.join(directory, 'clean'), { withBak: false, images })
+  const withBak = await importInto(path.join(directory, 'with-bak'), { withBak: true, images })
+  assert.equal(withBak.catalog, clean.catalog)
+  assert.equal(withBak.index.replaceAll(path.join(directory, 'with-bak'), '<root>'), clean.index.replaceAll(path.join(directory, 'clean'), '<root>'))
+  assert.deepEqual(withBak.generated, clean.generated)
+  assert.equal(withBak.output, clean.output)
+  assert.doesNotMatch(withBak.preflight, /\.bak/)
+  assert.doesNotMatch(withBak.output, /\.bak/)
+  const catalog = JSON.parse(clean.catalog)
+  assert.equal(catalog.items.length, 2)
+  // 收件箱里的 .bak 原样保留（导入器不删、不改）。
+  const city = path.join(directory, 'with-bak', 'MediaInbox', 'Iceland', 'Reykjavik')
+  assert.equal(await readFile(path.join(city, 'place.bak'), 'utf8'), BROKEN)
+}))

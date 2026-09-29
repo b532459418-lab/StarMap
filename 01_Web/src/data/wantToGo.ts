@@ -12,10 +12,10 @@
  * 1. 强制样例模式（VITE_TRAVEL_ATLAS_DATA_MODE=sample，或开发时 ?data=sample）或公开模式
  *    → tracked 的中性样例（RFC-LOC-1 PR4 起是 V2 文件 src/data/v2-sample/want-to-go.json，经 V2 Reader）。
  *    判定与足迹完全一致。公开模式下虚拟模块本来就不注入任何私有数据。
- * 2. 否则个人模式（import.meta.env.MODE === 'personal'）→ 私有层的想去文件（legacy：want-to-go.local.json；
- *    v2：data/v2/ 里的同名文件）；文件不存在 → 空列表，【不】回落样例。理由：样例条目若出现在个人模式，会带着「隐藏」
- *    按钮，而隐藏请求写的是私有文件，必然报"找不到这条想去记录"。
- *    （足迹在个人模式 legacy 下回落样例是既有行为，这里刻意不照搬。）
+ * 2. 否则个人模式（import.meta.env.MODE === 'personal'）→ 私有层的想去文件 data/v2/want-to-go.local.json
+ *    （RFC-LOC-1 PR5a 起旧格式的 want-to-go.local.json 不再读取）；文件不存在 → 空列表，【不】回落样例。
+ *    理由：样例条目若出现在个人模式，会带着「隐藏」按钮，而隐藏请求写的是私有文件，必然报"找不到这条想去记录"。
+ *    足迹同样不回落样例（决定 E）。
  *
  * 写入控件只对 'local' 来源开放（WantToGoCard 的「隐藏」、LayerPanel 的添加入口），
  * 这是 localEditorAvailable 之外的另一层门控。
