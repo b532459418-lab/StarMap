@@ -6,10 +6,9 @@
  *    - 个人模式 · legacy：四个旧文件照旧（读取顺序不变），`privateV2Files` 为 undefined；
  *    - 个人模式 · v2：【只】读 data/v2/ 的五个 V2 文件（缺的为 undefined），四个旧导出为 undefined——
  *      App 在 V2 模式下绝不会读到旧文件。
- * 2. V2 模式下的写入拒绝：服务端是真正的防线。PR3b-2 起 V2 下只拒绝三个媒体端点（上传、导入、删除媒体）：
- *    返回 409，不读写任何文件（PR3b-3 开放）。其余 8 个写入端点与 `GET /__travelatlas/editor/state` 在 V2 下
- *    走 V2 实现（scripts/v2-editor-store.mjs）；插件在 V2 下只经那里的路由表分派，没列进去的接口回 404，
- *    绝不进入旧模式的写入分支。
+ * 2. （PR3b-1 / PR3b-2 的「V2 下拒绝写入」已随 PR3b-3 删除：V2 下全部 11 个写入端点都有 V2 实现——8 个非媒体端点在
+ *    scripts/v2-editor-store.mjs，3 个媒体端点在 scripts/v2-media-store.mjs；插件在 V2 下只经这两张路由表分派，
+ *    没列进去的接口回 404，绝不进入旧模式的写入分支。）
  *
  * 3. 私人数据目录的文件变化要不要处理（让虚拟模块失效、按原有条件整页刷新）：新建、修改、删除都算，
  *    这样新建 / 删除数据模式标记、生成 data/v2/ 的文件，不重启服务也能生效。
@@ -19,12 +18,6 @@
  */
 
 import path from 'node:path'
-
-import { messageFor } from '../src/data/v2write/errors.ts'
-
-/** V2 模式下媒体端点的错误码与信息（`{ ok: false, error, code }`，UI 直接展示 error）。 */
-export const V2_MEDIA_READ_ONLY_CODE = 'E_V2_MEDIA_UNAVAILABLE'
-export const V2_MEDIA_READ_ONLY_ERROR = messageFor(V2_MEDIA_READ_ONLY_CODE)
 
 /** 旧文件：虚拟模块的导出名 → getPrivatePaths() 的路径键。顺序就是读取顺序（与 PR3b-1 之前相同）。 */
 export const LEGACY_PRIVATE_EXPORTS = Object.freeze([
@@ -68,25 +61,6 @@ export function renderPrivateDataModule(exports) {
   return Object.entries(exports)
     .map(([name, value]) => `export const ${name} = ${JSON.stringify(value)};`)
     .join('\n')
-}
-
-/** 媒体写入端点：V2 模式下仍关闭（RFC-LOC-1 PR3b-3 开放）。 */
-export const V2_MEDIA_ENDPOINTS = Object.freeze([
-  'POST /__travelatlas/editor/upload',
-  'POST /__travelatlas/editor/import',
-  'POST /__travelatlas/editor/media/delete',
-])
-
-/**
- * 编辑接口在当前数据模式下是否要拒绝。返回 `{ status, body }` 表示拒绝，undefined 表示放行。
- * v2 模式下只拒绝三个媒体端点（409，固定的错误码与信息）；其余接口放行给插件的 V2 分派
- * （8 个写入端点与 `GET /editor/state` 走 V2 实现，目录搜索照常，其他一律 404）。
- * 调用方在本机 / 请求头 / Origin 检查之后、进入任何分支之前调用。
- */
-export function editorDataModeRejection({ dataMode, method, pathname }) {
-  if (dataMode !== 'v2') return undefined
-  if (!V2_MEDIA_ENDPOINTS.includes(`${method} ${pathname}`)) return undefined
-  return { status: 409, body: { ok: false, error: V2_MEDIA_READ_ONLY_ERROR, code: V2_MEDIA_READ_ONLY_CODE } }
 }
 
 /** 插件监听的文件事件：新建、修改、删除（chokidar 的事件名）。目录事件不单独处理，目录里的文件各自有事件。 */

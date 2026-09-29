@@ -23,7 +23,7 @@ import { appInputs, rawAppInputs } from './rawInputs.ts'
 /** 模块加载时固定一次。适配器要求 options.now 必填且不读时钟，时间从这里注入。worldGraph.ts 以原名导出。 */
 export const worldGraphSessionNow: string = rawAppInputs.now
 
-/** 私人目录的数据模式（公开模式恒为 legacy）。editorState.ts 的 localEditorAvailable 与 V2 提示据此判断。 */
+/** 私人目录的数据模式（公开模式恒为 legacy）。V2 的空状态提示（components/DataModeNotice.tsx）据此判断。 */
 export const dataMode: DataMode = appInputs.dataMode
 
 const canonical = canonicalForInputs(appInputs)

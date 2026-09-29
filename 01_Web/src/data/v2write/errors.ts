@@ -88,13 +88,39 @@ export const V2_WRITE_MESSAGES = {
   E_PLANNED_NOT_FOUND: () => '找不到这条旅行计划。',
   E_PLANNED_NO_COORDINATES: () => '这条旅行计划没有坐标，无法转为足迹。',
 
+  // ---- 媒体（PR3b-3）：沿用插件里旧模式上传、导入、删除媒体的文案 ----
+  E_MEDIA_KIND_INVALID: () => '不支持的媒体类型。',
+  E_MEDIA_LOCATION_NOT_FOUND: () => '找不到对应的国家和城市，请先把城市加入旅行数据。',
+  E_MEDIA_EXTENSION: () => '当前网页编辑器只接收 JPG、PNG、WebP 或 AVIF 图片。',
+  E_MEDIA_DRONE_DATE: () => '无人机影像必须填写有效日期。',
+  E_MEDIA_COORDINATES_RANGE: () => '经纬度超出有效范围。',
+  /** 旧模式上传辅助函数（文件名、文件大小、图片尺寸、全景比例）拒绝时的原因，原样。 */
+  E_MEDIA_UPLOAD_REJECTED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '上传失败。'),
+  E_MEDIA_IMPORT_PATH_INVALID: () => '媒体源文件路径超出投递箱范围。',
+  /** 预检的提醒里有未解决的必要信息（`details` 里是导入器的完整输出）。 */
+  E_MEDIA_IMPORT_BLOCKED: () => '媒体预检发现未解决信息，已停止导入。',
+  /** 导入器运行失败（例如预检有「需要处理」时退出码为 1）：原因原样。 */
+  E_MEDIA_IMPORT_FAILED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '媒体导入失败。'),
+  E_MEDIA_IMPORT_NO_RECORD: () => '文件已经接收，但导入结果没有对应媒体记录。请保留当前页面并查看导入详情。',
+  E_MEDIA_INDEX_MISMATCH: () => '导入索引与媒体目录不一致，已停止刷新页面。',
+  E_MEDIA_DELETE_EMPTY: () => '没有可删除的隐藏媒体。',
+  E_MEDIA_DELETE_NOT_HIDDEN: () => '只能彻底删除当前城市中已经隐藏的照片或无人机影像。',
+  E_MEDIA_SOURCE_MISSING: (params: V2ErrorParams) => `找不到媒体 ${String(params.id ?? '')} 对应的投递箱原图，已停止删除。`,
+  E_MEDIA_SOURCE_OUTSIDE_INBOX: () => '媒体源文件路径超出投递箱范围，已停止删除。',
+  E_MEDIA_PATH_INVALID: () => '影像生成路径格式无效，已停止删除。',
+  E_MEDIA_GENERATED_OUTSIDE: () => '生成文件路径超出用户媒体目录，已停止删除。',
+
   // ---- 新：V2 才有的情形 ----
   E_PLACE_AMBIGUOUS: () => '地点注册表里有不止一个地点与之匹配，无法确定是哪一个，未写入。请先合并重复的地点。',
   E_UNKNOWN_PLACE_REF: () => '编辑状态引用了不存在的地点，或地点类型不对，未保存。请刷新页面后重试。',
   E_INTEGRITY: () => 'V2 数据没有通过完整性检查（例如引用了不存在的地点），未写入任何文件。',
   E_WRITE_FAILED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '写入 V2 数据文件失败。'),
   E_PARTIAL_WRITE: (params: V2ErrorParams) => (typeof params.message === 'string' ? params.message : '部分 V2 数据文件已写入，其余没有写入。'),
-  E_V2_MEDIA_UNAVAILABLE: () => 'V2 数据模式下暂不能编辑照片与无人机影像（RFC-LOC-1 PR3b-3 开放）。',
+  /** 新（PR3b-3）：上传时候选的收件箱文件夹（显示名，以及带地点 id 后缀的名字）都已有 place.json，却都指向别的地点。 */
+  E_MEDIA_FOLDER_CONFLICT: (params: V2ErrorParams) => {
+    const folders = Array.isArray(params.folders) ? params.folders.map(String).join('、') : ''
+    return `投递箱文件夹 ${folders} 的 place.json 都指向别的地点（或内容无效），未写入文件。请先确认这些文件夹属于哪个地点。`
+  },
   E_UNKNOWN_ENDPOINT: () => '未知的本地编辑接口。',
   /** 请求体读不出来（过大、不是 JSON）：原因原样（同旧模式）。 */
   E_REQUEST_INVALID: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '请求内容无效。'),

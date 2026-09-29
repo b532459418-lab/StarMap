@@ -209,6 +209,18 @@ test('个人模式：dry-run 写迁移清单（记录旧文件哈希）；两次
   assert.deepEqual(await legacySnapshot(root), before)
 }))
 
+test('迁移提示（PR3b-3）：私人目录有旧媒体时摘要给出 I_MEDIA_IDS_WILL_CHANGE 与受影响的条目数；公开样例没有媒体，不给', () => withTemp(async ({ root }) => {
+  await writeLegacyData(root)
+  const personal = runCli([], root)
+  assert.equal(personal.status, 0, personal.stderr)
+  assert.match(personal.stdout, /^ {2}\[I_MEDIA_IDS_WILL_CHANGE\] 1 个媒体项迁移后沿用旧 id；V2 模式下第一次导入媒体时会按文件内容换成新 id，editor-state 里按旧 id 记的 1 处排序、隐藏与封面随之失效（RFC-LOC-1 PR3b-3）。$/m)
+  assert.match(personal.stdout, /^canApply：true$/m, '只提示，不阻塞')
+
+  const sample = runCli(['--sample'], root)
+  assert.equal(sample.status, 0, sample.stderr)
+  assert.doesNotMatch(sample.stdout, /I_MEDIA_IDS_WILL_CHANGE/)
+}))
+
 test('个人模式 --apply：dry-run 之后写出到 data/v2/，使用清单里的 UUID；不写数据模式标记；旧文件不变', () => withTemp(async ({ root }) => {
   await writeLegacyData(root)
   const before = await legacySnapshot(root)

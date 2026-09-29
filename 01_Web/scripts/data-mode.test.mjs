@@ -1,6 +1,6 @@
 /**
- * scripts/data-mode.mjs 的测试（RFC-LOC-1 PR3b-1 规格 §2.1、§2.3、§3），以及两个脚本在 V2 数据模式下的拒绝：
- * import-media 与 migrate-identity --apply。
+ * scripts/data-mode.mjs 的测试（RFC-LOC-1 PR3b-1 规格 §2.1、§2.3、§3），以及两个脚本在 V2 数据模式下的行为：
+ * import-media 改由 V2 导入器运行（PR3b-3），migrate-identity --apply 拒绝。
  *
  * 运行方式：npm test。零依赖：只用 node:test + node:assert/strict + node:fs + node:child_process。
  * 私人根一律是本测试用 fs.mkdtemp 建的临时目录（STARMAP_PRIVATE_ROOT），绝不读作者的真实私有层；用例结束时删除。
@@ -185,15 +185,16 @@ const snapshotTree = async (root) => {
   return result
 }
 
-test('import-media：V2 模式下拒绝运行（预检与 --apply 都是退出码 2），不读写任何文件；标记损坏时报错（退出码 1）', () => withPrivateRoot(async ({ root, paths }) => {
+test('import-media：V2 模式下改由 V2 导入器运行（PR3b-3 去掉了 PR3b-1 的拒绝），不读旧足迹文件，有错误时不写任何文件；标记损坏时报错（退出码 1）', () => withPrivateRoot(async ({ root, paths }) => {
   await writeFile(paths.localTravelMapPath, JSON.stringify(readSample('travel-map.sample.json')), 'utf8')
   await writeMarker(paths, '{ "mode": "v2" }')
   const before = await snapshotTree(root)
   for (const args of [[], ['--apply']]) {
     const result = runScript('import-media.mjs', args, root)
-    assert.equal(result.status, 2, `${args.join(' ')}\n${result.stderr}`)
-    assert.match(result.stderr, /V2 数据模式/)
-    assert.doesNotMatch(result.stdout, /预检通过|需要处理/)
+    assert.equal(result.status, 1, `${args.join(' ')}\n${result.stderr}`)
+    assert.match(result.stdout, /（V2 数据模式）：0 个文件/)
+    assert.match(result.stderr, /需要处理（1）[\s\S]*找不到外置私有层的 MediaInbox/)
+    assert.doesNotMatch(result.stdout, /预检通过/)
   }
   assert.deepEqual(await snapshotTree(root), before)
   assert.equal(existsSync(path.join(root, 'MediaInbox')), false)

@@ -33,8 +33,9 @@ import {
 } from '../src/data/v2write/index.ts'
 
 /**
- * V2 模式下开放的 8 个写入端点 → 纯函数与成功时的状态码（与旧模式相同）。媒体端点（上传、导入、删除）不在这里：
- * 它们在 V2 下由 local-editor-data-mode.mjs 的 editorDataModeRejection 返回 409（PR3b-3 开放）。
+ * V2 模式下的 8 个非媒体写入端点 → 纯函数与成功时的状态码（与旧模式相同）。三个媒体端点（上传、导入、删除）不在这里：
+ * 它们的请求体与流程不同（上传的请求体是文件本身，导入与删除要运行导入器、动收件箱与生成文件），由
+ * scripts/v2-media-store.mjs 的 V2_MEDIA_ROUTES 处理（RFC-LOC-1 PR3b-3）。
  */
 export const V2_EDITOR_ROUTES = Object.freeze({
   'PUT /__travelatlas/editor/state': Object.freeze({ run: putEditorState, status: 200 }),
@@ -90,20 +91,31 @@ export async function runV2Write({ privatePaths, route, input, ctx, write = atom
     return failureResponse(error)
   }
 
+  const failure = await applyV2Writes({ privatePaths, writes: outcome.writes, write })
+  if (failure) return failure
+  return { status: route.status, body: { ok: true, ...outcome.result } }
+}
+
+/**
+ * 按 `writes` 的顺序逐个原子写盘（PR3b-3 起媒体端点也用）。全部成功返回 undefined；某一步失败时停下，返回错误响应：
+ * 第一步就失败为 E_WRITE_FAILED；之后的步骤失败时，有 `onFailure` 模板的为 E_PARTIAL_WRITE，没有的为 E_WRITE_FAILED
+ * （都列出已写的文件）。`firstStepPartial` 为 true 时第一步失败也按「部分写入」说明（调用方在此之前已经动过别的文件）。
+ */
+export async function applyV2Writes({ privatePaths, writes, write = atomicJsonWrite, firstStepPartial = false }) {
   const written = []
-  for (const step of outcome.writes) {
+  for (const step of writes) {
     try {
       await write(privatePaths.v2FilePaths[step.file], step.value)
     } catch (error) {
       const params = { written: [...written], failed: step.file, reason: reasonOf(error) }
-      if (written.length > 0 && typeof step.onFailure === 'string') {
+      if ((written.length > 0 || firstStepPartial) && typeof step.onFailure === 'string') {
         return { status: 400, body: v2ErrorBody('E_PARTIAL_WRITE', { ...params, message: step.onFailure.replace('{reason}', bracketReason(error)) }) }
       }
       return { status: 400, body: v2ErrorBody('E_WRITE_FAILED', params) }
     }
     written.push(step.file)
   }
-  return { status: route.status, body: { ok: true, ...outcome.result } }
+  return undefined
 }
 
 /** GET /editor/state（V2）：`{ ok: true, state }`（V1 形状），失败为 400。 */

@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { DataModeMarkerError, resolveDataMode } from './data-mode.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 
-// RFC-LOC-1 PR3b-1：私人目录为 V2 数据模式（scripts/data-mode.mjs）时本脚本拒绝运行（退出码 2），见 main()。
+// RFC-LOC-1 PR3b-3：私人目录为 V2 数据模式（scripts/data-mode.mjs）时改由 scripts/v2-media-import.mjs 导入，见 main()；
+// 本文件其余代码只在旧模式下运行，与 PR3b-3 之前逐字相同。
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(scriptDirectory, '..')
 const privatePaths = getPrivatePaths()
@@ -575,11 +576,11 @@ function printReport(items) {
 }
 
 async function main() {
-  // RFC-LOC-1 PR3b-1 §2.3：V2 数据模式下不运行（预检与 --apply 都不）。本脚本只认旧格式，
-  // 会把旧格式的媒体目录写进一个 App 已经不读的文件。V2 下的导入由 PR3b-3 开放。标记文件不合法时报错退出。
+  // RFC-LOC-1 PR3b-3 §2.5：按数据模式分派。V2 下由 scripts/v2-media-import.mjs 导入（按地点注册表解析归属、内容寻址，
+  // 写 data/v2/）；旧模式照旧运行下面的代码。标记文件不合法时报错退出。V2 导入器按需加载，旧模式不加载它。
   if (resolveDataMode(privatePaths).mode === 'v2') {
-    console.error(`[import-media] 私人目录 ${privatePaths.root} 当前为 V2 数据模式（${privatePaths.dataModePath}）：暂不能导入媒体（RFC-LOC-1 PR3b-3 开放）。未读写任何文件。`)
-    process.exitCode = 2
+    const { runV2MediaImport } = await import('./v2-media-import.mjs')
+    process.exitCode = await runV2MediaImport({ privatePaths, apply: shouldApply })
     return
   }
 

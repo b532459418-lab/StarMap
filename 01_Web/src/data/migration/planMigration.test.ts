@@ -744,6 +744,38 @@ test('提示：没有坐标的城市、保留了自身坐标的记录、重复�
   assert.deepEqual(idsOf('I_WTG_DUPLICATE'), ['wtg:w_nuuk | wtg:w_nuuk#2'])
 })
 
+test('提示（PR3b-3）：有旧媒体时给出 I_MEDIA_IDS_WILL_CHANGE（受影响的媒体项与 editor-state 引用数），不阻塞；没有旧媒体时不给', () => {
+  const withMedia = plan(consistentPersonalRaw())
+  const hint = withMedia.report.info.find((entry) => entry.code === 'I_MEDIA_IDS_WILL_CHANGE')
+  assert.ok(hint, '有旧媒体时应当提示')
+  const mediaIds = withMedia.canonical.legacy.media.items.map((item) => item.id)
+  assert.equal(mediaIds.length, 3)
+  assert.deepEqual(hint.ids, mediaIds)
+  const state = withMedia.canonical.applied.editorState
+  const references = [
+    ...Object.values(state.mediaOrderByCity).flat(),
+    ...Object.values(state.droneOrderByCity).flat(),
+    ...Object.values(state.coverMediaByCity),
+    ...state.hiddenMediaIds,
+    ...state.hiddenDroneMediaIds,
+  ].filter((id) => mediaIds.includes(id)).length
+  assert.ok(references > 0, 'fixture 里有按媒体 id 记的 editor-state')
+  assert.equal(
+    hint.message,
+    `3 个媒体项迁移后沿用旧 id；V2 模式下第一次导入媒体时会按文件内容换成新 id，editor-state 里按旧 id 记的 ${references} 处排序、隐藏与封面随之失效（RFC-LOC-1 PR3b-3）。`,
+  )
+  assert.equal(withMedia.report.canApply, true, '只提示，不阻塞')
+  assert.equal(withMedia.report.errors.length, 0)
+
+  for (const [name, raw] of [
+    ['没有媒体目录', personalRaw({ records: [reykjavikRecord()] })],
+    ['媒体目录为空', personalRaw({ records: [reykjavikRecord()], mediaCatalog: { schemaVersion: 2, items: [] } })],
+    ['公开样例', sampleRaw()],
+  ] as const) {
+    assert.equal(plan(raw).report.info.some((entry) => entry.code === 'I_MEDIA_IDS_WILL_CHANGE'), false, name)
+  }
+})
+
 test('规划不修改输入，也不读时钟与随机源：同样的输入两次结果逐字节相同', () => {
   const raw = autoMergeRaw()
   const before = JSON.stringify(raw)
