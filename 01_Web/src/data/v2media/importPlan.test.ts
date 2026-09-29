@@ -31,6 +31,7 @@ import {
   resolveCityFolder,
   resolveCountryFolder,
   resolveFileOverride,
+  shouldPinFolder,
   sourcesByIdOf,
   uniqueById,
   type MediaFileFacts,
@@ -353,6 +354,21 @@ test('逐文件覆盖的错误：placeId 不是城市、旧字段不成对、旧
     resolveFileOverride(index, reykjavik, { placeId: ids.torshavn, countryId: 'iceland', cityId: 'iceland__vik' }, rel),
     `${rel} 的 placeId 与 countryId / cityId 指向不同的城市，请只保留一种。`,
   )
+})
+
+test('固定归属（RFC ID-6）：按文件夹名或旧 country.json 解析成功的文件夹要写 place.json，已靠 place.json 解析的与失败的不写', () => {
+  const byName = resolveCountryFolder(index, { folderName: 'Iceland' })
+  const byCountryJson = resolveCountryFolder(index, { folderName: 'x', countryConfig: { countryId: 'faroe-islands' } })
+  const byPlaceJson = resolveCountryFolder(index, { folderName: 'x', placeConfig: placeConfigOf(ids.iceland) })
+  const cityByName = resolveCityFolder(index, iceland, { countryFolderName: 'Iceland', folderName: 'Reykjavik' })
+  const cityByPlaceJson = resolveCityFolder(index, iceland, { countryFolderName: 'Iceland', folderName: 'x', placeConfig: placeConfigOf(ids.vik) })
+  assert.deepEqual(
+    [byName, byCountryJson, byPlaceJson, cityByName, cityByPlaceJson].map((lookup) => (lookup.ok ? lookup.source : 'failed')),
+    ['name', 'country.json', 'place.json', 'name', 'place.json'],
+  )
+  assert.deepEqual([byName, byCountryJson, byPlaceJson, cityByName, cityByPlaceJson].map(shouldPinFolder), [true, true, false, true, false])
+  assert.equal(shouldPinFolder(resolveCountryFolder(index, { folderName: 'Atlantis' })), false)
+  assert.equal(shouldPinFolder(resolveFileOverride(index, place(ids.reykjavik), { placeId: ids.vik }, 'x')), false, '逐文件覆盖不是文件夹，不固定')
 })
 
 test('legacyKeys 属于不止一个地点时（注册表本身不合法）按歧义报错，不任选一个', () => {

@@ -17,6 +17,8 @@
  * - 城市文件夹：`place.json`（必须是城市，且属于所在国家文件夹解析出的国家）→ 文件夹名（在该国家的城市里与中英文名比对）。
  * - 逐文件覆盖（sidecar 条目）：`placeId`（城市），或旧的 `countryId` + `cityId`（经 `legacyKeys`）；两种都有且不一致是错误。
  * 排在前面的一种存在就以它为准；候选恰好一个才算找到，0 个或多个都报错。不猜，不新建地点。
+ * 按文件夹名或旧 country.json 解析成功的文件夹，导入器在 --apply（且整次导入没有错误）时写入 place.json 固定下来
+ * （RFC ID-6：匹配结果一旦确认就以 id 引用存下，不再每次按名字重新匹配；见 `shouldPinFolder`）。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
@@ -176,9 +178,15 @@ const matchByName = (candidates: readonly CanonicalPlace[], aliasesOf: (place: C
 // 归属解析
 // ---------------------------------------------------------------------------
 
-export type PlaceLookup = { ok: true; place: CanonicalPlace } | { ok: false; error: string }
+/**
+ * 文件夹的归属是怎么得到的：`place.json`，旧 `country.json` 的 countryId（经 legacyKeys），或文件夹名。
+ * 后两种是「匹配提示」：导入器在 --apply 时把结果写成 place.json 固定下来（RFC ID-6），此后不再按名字重新匹配。
+ */
+export type FolderSource = 'place.json' | 'country.json' | 'name'
 
-const found = (place: CanonicalPlace): PlaceLookup => ({ ok: true, place })
+export type PlaceLookup = { ok: true; place: CanonicalPlace; source?: FolderSource } | { ok: false; error: string }
+
+const found = (place: CanonicalPlace, source?: FolderSource): PlaceLookup => (source ? { ok: true, place, source } : { ok: true, place })
 const failed = (error: string): PlaceLookup => ({ ok: false, error })
 
 /** `place.json` 的内容 → 地点 id；格式不对（不是对象、没有非空的 placeId）时为 undefined。 */
@@ -203,7 +211,7 @@ const placeFromConfig = (
   if (!place) return failed(`${label} 指定了不存在的地点：${id}`)
   if (place.subtype !== expected) return failed(`${label} 指定的地点不是${SUBTYPE_LABELS[expected]}：${id}`)
   if (country !== undefined && place.partOf !== country.id) return failed(`${label} 指定的城市不属于 ${placeDisplayName(country)}：${id}`)
-  return found(place)
+  return found(place, 'place.json')
 }
 
 export interface CountryFolderInput {
@@ -224,13 +232,13 @@ export const resolveCountryFolder = (index: MediaPlaceIndex, input: CountryFolde
     const place = index.byLegacyKey.get(`country:${legacyId}`)
     if (place === null) return failed(`${folderName}/country.json 的 countryId 对应了不止一个国家：${legacyId}。请改用 place.json 填写 placeId。`)
     if (place === undefined || place.subtype !== 'country') return failed(`${folderName}/country.json 指定了不存在的 countryId：${legacyId}`)
-    return found(place)
+    return found(place, 'country.json')
   }
 
   const matches = matchByName(index.countries, countryAliases, folderName)
   if (matches.length > 1) return failed(`国家目录名称存在歧义：${folderName}。请在 place.json 中填写 placeId。`)
   if (matches.length === 0) return failed(`找不到国家：${folderName}。目录名需与 StarMap 中的国家中文名、英文名或国家代码一致，或在 place.json 中填写 placeId。`)
-  return found(matches[0])
+  return found(matches[0], 'name')
 }
 
 export interface CityFolderInput {
@@ -251,8 +259,14 @@ export const resolveCityFolder = (index: MediaPlaceIndex, country: CanonicalPlac
   const countryName = placeDisplayName(country)
   if (matches.length > 1) return failed(`${countryName} 内的城市目录名称存在歧义：${folderName}。请在 place.json 中填写 placeId。`)
   if (matches.length === 0) return failed(`在 ${countryName} 中找不到城市：${folderName}。请先在 StarMap 中添加这个城市。`)
-  return found(matches[0])
+  return found(matches[0], 'name')
 }
+
+/**
+ * 要不要把这个文件夹的归属写成 place.json 固定下来（RFC ID-6）：按文件夹名或旧 country.json 解析成功的要；
+ * 已经靠 place.json 解析的不动。只在 --apply 且整次导入没有错误时写（由调用方保证）。
+ */
+export const shouldPinFolder = (lookup: PlaceLookup): boolean => lookup.ok && lookup.source !== undefined && lookup.source !== 'place.json'
 
 const trimmedText = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
 

@@ -6,7 +6,8 @@
  *
  * - **归属**：从地点注册表（data/v2/places.local.json）建索引，国家文件夹按 place.json → 旧 country.json 的 countryId
  *   （经 legacyKeys）→ 文件夹名解析，城市文件夹按 place.json → 文件夹名解析；不读旧足迹文件，也不回落到样例。
- *   0 个或多个候选都报错，不猜，不新建地点。
+ *   0 个或多个候选都报错，不猜，不新建地点。按文件夹名或旧 country.json 解析成功的文件夹，--apply 且整次导入没有错误时
+ *   写入 place.json（`{ "placeId": … }`，atomicJsonWrite）固定下来（RFC ID-6），此后地点改名也不影响；预检不写，已有的不动。
  * - **内容寻址**：媒体 id = media-<源文件 sha256 前 16 位>，生成文件在 media/user/<同一哈希>/。改名、搬城市、改类型
  *   都不改变 id 与路径；重复运行，目录与源文件索引除 generatedAt 外逐字节相同。
  * - **写盘**：data/v2/user-media.local.json（PR3a 的 V3 格式）与 data/v2/media-source-index.local.json，都用
@@ -47,10 +48,12 @@ import {
   metadataForFile,
   normalizeName,
   orientedDimensions,
+  placeConfigOf,
   placeDisplayName,
   resolveCityFolder,
   resolveCountryFolder,
   resolveFileOverride,
+  shouldPinFolder,
   sourcesByIdOf,
   uniqueById,
 } from '../src/data/v2media/importPlan.ts'
@@ -128,6 +131,8 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
   const errors = []
   const warnings = []
   const planned = []
+  /** 按文件夹名或旧 country.json 解析成功、还没有 place.json 的文件夹：--apply 时写入 place.json 固定下来（RFC ID-6）。 */
+  const pins = []
   const relative = (filePath) => path.relative(inboxRoot, filePath)
 
   const printReport = (items) => {
@@ -144,6 +149,10 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
     if (errors.length > 0) {
       logError(`\n需要处理（${errors.length}）：`)
       for (const error of errors) logError(`- ${error}`)
+    }
+    if (!apply && errors.length === 0 && pins.length > 0) {
+      log(`\n导入时将在 ${pins.length} 个按名称匹配的收件箱文件夹写入 place.json，固定为地点 id：`)
+      for (const pin of pins) log(`- ${toPosix(relative(pin.directory))}/place.json`)
     }
     if (!apply && errors.length === 0) log('\n预检通过。确认无误后运行 npm run media:import。')
   }
@@ -313,6 +322,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
         continue
       }
       const country = countryLookup.place
+      if (shouldPinFolder(countryLookup)) pins.push({ directory: countryRoot, placeId: country.id })
       const countryLabel = placeDisplayName(country)
 
       const countryRootMedia = (await readdir(countryRoot, { withFileTypes: true }))
@@ -337,6 +347,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
           errors.push(cityLookup.error)
           continue
         }
+        if (shouldPinFolder(cityLookup)) pins.push({ directory: cityRoot, placeId: cityLookup.place.id })
         await scanCity(cityRoot, country, cityLookup.place)
       }
     }
@@ -380,6 +391,14 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
         .webp({ quality: derivative.quality, effort: 4 })
         .toFile(derivative.outputPath)
     }
+  }
+
+  // RFC ID-6：按名称（或旧 country.json）匹配成功的文件夹写入 place.json，此后按 id 解析、不再按名字重新匹配。
+  // 已有 place.json 的文件夹不在 pins 里，不动。
+  for (const pin of pins) await atomicJsonWrite(path.join(pin.directory, 'place.json'), placeConfigOf(pin.placeId))
+  if (pins.length > 0) {
+    log(`\n已在 ${pins.length} 个按名称匹配的收件箱文件夹写入 place.json，固定为地点 id：`)
+    for (const pin of pins) log(`- ${toPosix(relative(pin.directory))}/place.json`)
   }
 
   await atomicJsonWrite(privatePaths.v2FilePaths.media, catalog)

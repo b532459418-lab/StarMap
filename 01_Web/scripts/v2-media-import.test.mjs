@@ -271,6 +271,10 @@ test('V2 导入的错误：找不到国家或城市、place.json 指向别国城
     assert.equal(existsSync(paths.v2FilePaths.media), false)
     assert.equal(existsSync(paths.v2MediaSourceIndexPath), false)
     assert.equal(existsSync(paths.userMediaRoot), false)
+    // 有错误时也不固定任何按名称匹配成功的文件夹（Iceland、Vik、Faroe Islands、Torshavn 都没有 place.json）。
+    for (const folder of ['Iceland', 'Iceland/Vik', 'Faroe Islands', 'Faroe Islands/Torshavn']) {
+      assert.equal(existsSync(path.join(paths.inboxRoot, ...folder.split('/'), 'place.json')), false, folder)
+    }
   })
 
   await withV2Root(async ({ paths }) => {
@@ -280,6 +284,105 @@ test('V2 导入的错误：找不到国家或城市、place.json 指向别国城
     assert.equal(result.code, 1)
     assert.match(result.output, /找不到国家：Iceland/, '没有地点注册表时不回落到任何旧数据或样例')
     assert.equal(existsSync(paths.v2FilePaths.media), false)
+  })
+})
+
+/**
+ * 手动建的收件箱（模拟用户自己放照片）：雷克雅未克的文件夹没有 place.json；维克有一份手写的 place.json（格式与应用写的不同）。
+ * 其余同 writeInbox：Iceland 与 Torshavn 按文件夹名解析，Faroe Islands 经旧 country.json 解析。
+ */
+const writeManualInbox = async (paths) => {
+  await writeInbox(paths)
+  await rm(path.join(paths.inboxRoot, 'Iceland', 'Reykjavik', 'place.json'))
+  await writeFile(path.join(paths.inboxRoot, 'Iceland', 'Vik', 'place.json'), `{"placeId":"${ID.vik}","note":"hand-written"}`, 'utf8')
+}
+
+const PINNED_FOLDERS = [
+  ['Iceland', ID.iceland],
+  ['Iceland/Reykjavik', ID.reykjavik],
+  ['Faroe Islands', ID.faroe],
+  ['Faroe Islands/Torshavn', ID.torshavn],
+]
+
+const placeJsonOf = (paths, folder) => path.join(paths.inboxRoot, ...folder.split('/'), 'place.json')
+
+test('固定归属（RFC ID-6）：按文件夹名或旧 country.json 匹配成功的文件夹，预检不写；--apply 写入正确的 place.json；已有的不动；改名后再导入 id、路径、归属都不变', async () => {
+  await withV2Root(async ({ root, paths }) => {
+    await writeManualInbox(paths)
+    const vikPlaceJson = await readFile(placeJsonOf(paths, 'Iceland/Vik'), 'utf8')
+    const countryJson = await readFile(path.join(paths.inboxRoot, 'Faroe Islands', 'country.json'), 'utf8')
+
+    // 预检：列出将要固定的文件夹，但一个 place.json 都不写。
+    const preflight = runImportCli(root)
+    assert.equal(preflight.status, 0, preflight.stderr)
+    assert.match(preflight.stdout, /导入时将在 4 个按名称匹配的收件箱文件夹写入 place\.json，固定为地点 id/)
+    for (const [folder] of PINNED_FOLDERS) assert.equal(existsSync(placeJsonOf(paths, folder)), false, `预检不写 ${folder}/place.json`)
+
+    // 第一次 --apply：国家与城市文件夹都写入指向正确地点的 place.json；手写的与旧 country.json 不动。
+    const first = runImportCli(root, ['--apply'])
+    assert.equal(first.status, 0, first.stderr)
+    assert.match(first.stdout, /已在 4 个按名称匹配的收件箱文件夹写入 place\.json，固定为地点 id/)
+    for (const [folder, placeId] of PINNED_FOLDERS) {
+      assert.equal(await readFile(placeJsonOf(paths, folder), 'utf8'), `${JSON.stringify({ placeId }, null, 2)}\n`, folder)
+    }
+    assert.equal(await readFile(placeJsonOf(paths, 'Iceland/Vik'), 'utf8'), vikPlaceJson, '已有的 place.json 不动')
+    assert.equal(await readFile(path.join(paths.inboxRoot, 'Faroe Islands', 'country.json'), 'utf8'), countryJson, '旧 country.json 不动')
+    const catalogBefore = await readFile(paths.v2FilePaths.media, 'utf8')
+    const indexBefore = await readFile(paths.v2MediaSourceIndexPath, 'utf8')
+
+    // 注册表里把雷克雅未克改名为 Reykjavík City、把法罗群岛改名为 Faroes：文件夹名都对不上了，但归属已按 id 固定。
+    const places = placesFile()
+    places.places.find((place) => place.id === ID.reykjavik).names.en = 'Reykjavík City'
+    places.places.find((place) => place.id === ID.faroe).names = { 'zh-Hans': '法罗', en: 'Faroes' }
+    places.places.find((place) => place.id === ID.torshavn).names = { 'zh-Hans': '托尔斯港市', en: 'Tórshavn Town' }
+    await writeJson(paths.v2FilePaths.places, places)
+    const second = runImportCli(root, ['--apply'])
+    assert.equal(second.status, 0, second.stderr)
+    assert.doesNotMatch(second.stdout, /写入 place\.json/, '已经固定，不再写')
+    assert.equal(withoutGeneratedAt(await readFile(paths.v2FilePaths.media, 'utf8')), withoutGeneratedAt(catalogBefore), 'id、路径、归属都不变')
+    assert.equal(withoutGeneratedAt(await readFile(paths.v2MediaSourceIndexPath, 'utf8')), withoutGeneratedAt(indexBefore))
+    const catalog = await readJsonFile(paths.v2FilePaths.media)
+    assert.equal(itemByFile(catalog, 'harbour.jpg').placeId, ID.reykjavik)
+    assert.equal(itemByFile(catalog, 'bay.jpg').placeId, ID.torshavn)
+  })
+})
+
+test('固定归属之前：同样的改名会让按名称匹配的文件夹找不到城市，整次导入被拦下（这正是要固定的原因）', async () => {
+  await withV2Root(async ({ paths }) => {
+    await writeManualInbox(paths)
+    const places = placesFile()
+    places.places.find((place) => place.id === ID.reykjavik).names.en = 'Reykjavík City'
+    await writeJson(paths.v2FilePaths.places, places)
+    const result = await importDirect(paths)
+    assert.equal(result.code, 1)
+    assert.match(result.output, /在 Iceland 中找不到城市：Reykjavik。/)
+    assert.equal(existsSync(placeJsonOf(paths, 'Iceland')), false, '有错误时一个 place.json 都不写')
+  })
+})
+
+test('搬家（手动文件夹，已固定）：照片从雷克雅未克的文件夹挪到托尔斯港的文件夹，id 与路径不变，placeId 变为托尔斯港', async () => {
+  await withV2Root(async ({ paths }) => {
+    await writeManualInbox(paths)
+    assert.equal((await importDirect(paths)).code, 0)
+    const before = itemByFile(await readJsonFile(paths.v2FilePaths.media), 'cover-church.jpg')
+    assert.equal(before.placeId, ID.reykjavik)
+
+    const places = placesFile()
+    places.places.find((place) => place.id === ID.reykjavik).names.en = 'Reykjavík City'
+    await writeJson(paths.v2FilePaths.places, places)
+    await mkdir(path.join(paths.inboxRoot, 'Faroe Islands', 'Torshavn', 'photos'), { recursive: true })
+    await rename(
+      path.join(paths.inboxRoot, 'Iceland', 'Reykjavik', 'photos', 'cover-church.jpg'),
+      path.join(paths.inboxRoot, 'Faroe Islands', 'Torshavn', 'photos', 'cover-church.jpg'),
+    )
+    const result = await importDirect(paths)
+    assert.equal(result.code, 0, result.output)
+    const after = itemByFile(await readJsonFile(paths.v2FilePaths.media), 'cover-church.jpg')
+    assert.equal(after.id, before.id)
+    assert.equal(after.src, before.src)
+    assert.deepEqual(after.variants, before.variants)
+    assert.equal(after.placeId, ID.torshavn)
+    assert.deepEqual((await readJsonFile(paths.v2MediaSourceIndexPath)).sourcesById[after.id], ['Faroe Islands/Torshavn/photos/cover-church.jpg'])
   })
 })
 
