@@ -25,6 +25,12 @@
  *                             地点 id 是 UUID，不做映射。不看数据模式标记：总是读 data/v2/。与 --sample 同用是参数错误。
  *                             用途：证明浏览器里 V2 模式的 App 与 Node 里读同一份 V2 文件逐字节相同。
  *
+ * RFC-LOC-1 PR4 增加：
+ *   --path v2-sample          公开模式语义：读已提交的公开样例 src/data/v2-sample/ 的五个 V2 文件 → canonicalForInputs
+ *                             （V2 Reader，来源标为 sample，与 App 在公开模式和强制样例下完全相同）→ 基线。
+ *                             不读任何私人文件，所以 --sample 可给可不给，也没有隐私门。用途：浏览器里公开模式的快照
+ *                             与 Node 逐字节比对。`--verify --sample` 不变：仍是旧样例的 A / B / C。
+ *
  * 数据源选择与 App 在对应模式下的实际选择一致：
  * - 公开模式（--sample）：虚拟模块 virtual:starmap-private-data 不注入任何私有数据
  *   （local-editor-plugin.mjs 的 load()），所以足迹是样例、想去是样例（wantToGo.ts 规则 3），
@@ -52,6 +58,7 @@ import path from 'node:path'
 import { readJson } from './json-file.mjs'
 import { isAllowedPrivateOutput } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot, webRoot } from './private-profile.mjs'
+import { readV2SampleFiles, V2_SAMPLE_DIRECTORY } from './v2-sample.mjs'
 import { deriveAppData } from '../src/data/derive/appData.ts'
 import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
 import { isTravelMapExport } from '../src/data/derive/travelAtlas.ts'
@@ -68,6 +75,7 @@ const usage = [
   '  node scripts/legacy-baseline.mjs --sample --out <file> [--path legacy|canonical] [--normalize]',
   '  node scripts/legacy-baseline.mjs --out <file> [--path legacy|canonical] [--normalize]',
   '  node scripts/legacy-baseline.mjs --out <file> --path v2',
+  '  node scripts/legacy-baseline.mjs [--sample] --out <file> --path v2-sample',
   '  node scripts/legacy-baseline.mjs --verify [--sample] [--details] [--out-dir <dir>]',
   '  node scripts/legacy-baseline.mjs --compare <a.json> <b.json>',
 ].join('\n')
@@ -102,8 +110,8 @@ const parseArgs = (argv) => {
       out = valueAfter(index, '--out 后面需要一个文件路径。')
       index += 1
     } else if (arg === '--path' && derivePath === undefined) {
-      derivePath = valueAfter(index, '--path 后面需要 legacy、canonical 或 v2。')
-      if (!['legacy', 'canonical', 'v2'].includes(derivePath)) throw new UsageError('--path 只能是 legacy、canonical 或 v2。')
+      derivePath = valueAfter(index, '--path 后面需要 legacy、canonical、v2 或 v2-sample。')
+      if (!['legacy', 'canonical', 'v2', 'v2-sample'].includes(derivePath)) throw new UsageError('--path 只能是 legacy、canonical、v2 或 v2-sample。')
       index += 1
     } else if (arg === '--normalize' && !normalize) {
       normalize = true
@@ -129,6 +137,8 @@ const parseArgs = (argv) => {
   if (out === undefined) throw new UsageError('缺少 --out <file>。')
   if (normalize && derivePath !== undefined && derivePath !== 'legacy') throw new UsageError('--normalize 只用于 legacy 路径。')
   if (derivePath === 'v2' && sample) throw new UsageError('--path v2 只用于个人模式（读私人目录的 data/v2/），不能与 --sample 同用。')
+  // --path v2-sample 只读已提交的公开样例：公开模式语义，不碰私人目录（--sample 可给可不给）。
+  if (derivePath === 'v2-sample') return { mode: 'sample', action: 'generate', out, derivePath, normalize }
   return { mode, action: 'generate', out, derivePath: derivePath ?? 'legacy', normalize }
 }
 
@@ -312,6 +322,15 @@ const canonicalBaseline = (raw) => baselineText(deriveAppDataFromCanonical(legac
 /** V2 路径（PR3b-1）：canonicalForInputs（V2 Reader）→ deriveAppDataFromCanonical。与 App 的 V2 数据模式相同。 */
 const v2Baseline = (inputs) => baselineText(deriveAppDataFromCanonical(canonicalForInputs(inputs), { now: BASELINE_NOW }))
 
+/** --path v2-sample（PR4）：已提交的公开样例，来源标为 sample——与 App 在公开模式和强制样例下读的输入相同（src/data/rawInputs.ts）。 */
+const loadV2SampleInputs = () => {
+  try {
+    return { dataMode: 'v2', v2Files: readV2SampleFiles(), source: 'sample' }
+  } catch (error) {
+    throw new ReadError(`读取失败：${V2_SAMPLE_DIRECTORY}（${describeReadFailure(error)}）`)
+  }
+}
+
 const writeText = async (filePath, text) => {
   const outPath = path.resolve(filePath)
   await mkdir(path.dirname(outPath), { recursive: true })
@@ -325,9 +344,11 @@ const generate = async ({ mode, out, derivePath, normalize }) => {
   checkPrivacyGate(mode, out)
   const text = derivePath === 'v2'
     ? v2Baseline(await loadV2Inputs())
-    : derivePath === 'canonical'
-      ? canonicalBaseline(await loadRawInputs(mode))
-      : legacyBaseline(await loadRawInputs(mode), { normalize })
+    : derivePath === 'v2-sample'
+      ? v2Baseline(loadV2SampleInputs())
+      : derivePath === 'canonical'
+        ? canonicalBaseline(await loadRawInputs(mode))
+        : legacyBaseline(await loadRawInputs(mode), { normalize })
   const outPath = await writeText(out, text)
   console.log(`已写入 ${outPath}（${describeText(text)}）。`)
   return 0

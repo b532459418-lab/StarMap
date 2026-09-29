@@ -140,7 +140,7 @@ export const baselineExportNames = {
     data: ['travelAtlasEditorState'],
     evaluated: [],
     // orderBySavedIds：与数据无关的通用排序工具，它对数据的作用已体现在 countries / 城市照片等结果里。
-    // localEditorAvailable：由运行模式（DEV && personal）决定，不是从数据派生的。
+    // localEditorAvailable：由运行模式（开发服务器、个人配置、且不是强制样例）决定，不是从数据派生的。
     notCaptured: ['orderBySavedIds', 'localEditorAvailable'],
   },
   mediaCatalog: {

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "country:iceland": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+    "country:faroe-islands": "01a0ed02-3f47-772d-946a-07690eff25e1",
+    "city:iceland__reykjavik": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+    "city:iceland__vik": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+    "city:iceland__akureyri": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+    "city:faroe-islands__torshavn": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+    "city:faroe-islands__gjogv": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+    "iso:GL": "01a0ed02-3f48-72d6-8d06-2972508952dc",
+    "wtg:wtg_2026-08-12_nuuk": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+    "iso:NO": "01a0ed02-3f48-7c63-a473-3c1e3c94883d",
+    "wtg:wtg_2026-08-12_tromso": "01a0ed02-3f48-7581-bb37-85d4ee0268e9"
+  },
+  "sourceHash": "4a344c37424add361b5d85a620564af2dcb5a2ac7a7d988972e943841473b241",
+  "plannedAt": "2026-08-12T00:00:00.000Z"
+}

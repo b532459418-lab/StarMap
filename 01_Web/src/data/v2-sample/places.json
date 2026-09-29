@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-12T00:00:00.000Z",
+  "places": [
+    {
+      "id": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "subtype": "country",
+      "names": {
+        "zh-Hans": "冰岛",
+        "en": "Iceland"
+      },
+      "externalIds": {
+        "iso3166Alpha2": "IS"
+      },
+      "legacyKeys": [
+        "country:iceland"
+      ],
+      "location": {
+        "lat": 64.4179,
+        "lng": -19.691599999999998
+      }
+    },
+    {
+      "id": "01a0ed02-3f47-772d-946a-07690eff25e1",
+      "subtype": "country",
+      "names": {
+        "zh-Hans": "法罗群岛",
+        "en": "Faroe Islands"
+      },
+      "externalIds": {
+        "iso3166Alpha2": "FO"
+      },
+      "legacyKeys": [
+        "country:faroe-islands"
+      ],
+      "location": {
+        "lat": 62.16645,
+        "lng": -6.865
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+      "subtype": "city",
+      "names": {
+        "zh-Hans": "雷克雅未克",
+        "en": "Reykjavik"
+      },
+      "partOf": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "legacyKeys": [
+        "city:iceland__reykjavik"
+      ],
+      "location": {
+        "lat": 64.1466,
+        "lng": -21.9426
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+      "subtype": "city",
+      "names": {
+        "zh-Hans": "维克",
+        "en": "Vik"
+      },
+      "partOf": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "legacyKeys": [
+        "city:iceland__vik"
+      ],
+      "location": {
+        "lat": 63.4186,
+        "lng": -19.006
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "subtype": "city",
+      "names": {
+        "zh-Hans": "阿克雷里",
+        "en": "Akureyri"
+      },
+      "partOf": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "legacyKeys": [
+        "city:iceland__akureyri"
+      ],
+      "location": {
+        "lat": 65.6885,
+        "lng": -18.1262
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+      "subtype": "city",
+      "names": {
+        "zh-Hans": "托尔斯港",
+        "en": "Torshavn"
+      },
+      "partOf": "01a0ed02-3f47-772d-946a-07690eff25e1",
+      "legacyKeys": [
+        "city:faroe-islands__torshavn"
+      ],
+      "location": {
+        "lat": 62.0079,
+        "lng": -6.79
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+      "subtype": "city",
+      "names": {
+        "zh-Hans": "杰格夫",
+        "en": "Gjogv"
+      },
+      "partOf": "01a0ed02-3f47-772d-946a-07690eff25e1",
+      "legacyKeys": [
+        "city:faroe-islands__gjogv"
+      ],
+      "location": {
+        "lat": 62.325,
+        "lng": -6.94
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-72d6-8d06-2972508952dc",
+      "subtype": "country",
+      "names": {
+        "zh-Hans": "格陵兰",
+        "en": "Greenland"
+      },
+      "externalIds": {
+        "iso3166Alpha2": "GL"
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+      "subtype": "city",
+      "names": {
+        "zh-Hans": "努克",
+        "en": "Nuuk"
+      },
+      "partOf": "01a0ed02-3f48-72d6-8d06-2972508952dc",
+      "location": {
+        "lat": 64.1814,
+        "lng": -51.6941
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-7c63-a473-3c1e3c94883d",
+      "subtype": "country",
+      "names": {
+        "zh-Hans": "挪威",
+        "en": "Norway"
+      },
+      "externalIds": {
+        "iso3166Alpha2": "NO"
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+      "subtype": "city",
+      "names": {
+        "zh-Hans": "特罗姆瑟",
+        "en": "Tromsø"
+      },
+      "partOf": "01a0ed02-3f48-7c63-a473-3c1e3c94883d",
+      "location": {
+        "lat": 69.6492,
+        "lng": 18.9553
+      }
+    }
+  ]
+}

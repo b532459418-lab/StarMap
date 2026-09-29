@@ -4,7 +4,8 @@
  *   原始输入（./rawInputs.ts）──canonicalForInputs──> Canonical Model ──派生──> 六个数据模块的导出
  *
  * canonicalForInputs（./canonical/canonicalForInputs.ts）按数据模式选：legacy 模式走 Legacy Adapter（与 PR2 相同），
- * v2 模式走 V2 Reader（只读 data/v2/ 的文件，没有数据时为空，不回落到样例）。
+ * v2 模式走 V2 Reader（只读 data/v2/ 的文件，没有数据时为空，不回落到样例）。PR4 起公开模式与强制样例也走 V2 Reader，
+ * 读 src/data/v2-sample/ 的公开样例，来源标为 'sample'（选择见 ./rawInputs.ts）。
  *
  * 这里【不是】 StarMap Core：它经 ./rawInputs.ts 依赖 Vite 虚拟模块与 import.meta.env。
  * 模块级只算一次：适配器与派生都是纯函数，输入是模块级常量，所以导出的对象引用天然稳定
@@ -18,12 +19,15 @@
 
 import { canonicalForInputs, type DataMode } from './canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from './canonical/derive.ts'
-import { appInputs, rawAppInputs } from './rawInputs.ts'
+import { appInputs, sessionNow } from './rawInputs.ts'
 
 /** 模块加载时固定一次。适配器要求 options.now 必填且不读时钟，时间从这里注入。worldGraph.ts 以原名导出。 */
-export const worldGraphSessionNow: string = rawAppInputs.now
+export const worldGraphSessionNow: string = sessionNow
 
-/** 私人目录的数据模式（公开模式恒为 legacy）。V2 的空状态提示（components/DataModeNotice.tsx）据此判断。 */
+/**
+ * 本次读取走的数据模式：个人模式下是私人目录的数据模式；PR4 起公开模式与强制样例读 V2 样例，也是 v2。
+ * V2 的空状态提示（components/DataModeNotice.tsx）只在个人模式下看它；公开样例总有足迹（隐私审计保证），不会显示空状态。
+ */
 export const dataMode: DataMode = appInputs.dataMode
 
 const canonical = canonicalForInputs(appInputs)
@@ -34,7 +38,7 @@ if (import.meta.env.DEV) {
   const { wantToGoDataSource, wantToGoProblems } = appData.wantToGo
   if (wantToGoProblems.length > 0) {
     // 样例出现 problem 是构建缺陷：tracked 的样例由 npm run privacy:check 兜底，不该带坏数据。
-    const fileName = wantToGoDataSource === 'sample' ? 'want-to-go.sample.json（公开样例，属构建缺陷）' : 'want-to-go.local.json'
+    const fileName = wantToGoDataSource === 'sample' ? 'v2-sample/want-to-go.json（公开样例，属构建缺陷）' : 'want-to-go.local.json'
     console.warn(
       `[StarMap] ${fileName} 有 ${wantToGoProblems.length} 条记录被跳过：\n${wantToGoProblems.join('\n')}`,
     )

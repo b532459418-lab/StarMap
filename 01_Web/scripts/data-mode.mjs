@@ -1,23 +1,33 @@
 /**
- * 数据模式（RFC-LOC-1 PR3 总体方案决定 B、C；PR3b-1 规格 §2.1）：私人目录现在用旧文件（`legacy`）
- * 还是 `data/v2/` 下的 V2 文件（`v2`）。
+ * 数据模式（RFC-LOC-1 PR3 总体方案决定 B、C；PR3b-1 规格 §2.1；PR4 规格 §2.1、§2.2）：私人目录现在用旧文件
+ * （`legacy`）还是 `data/v2/` 下的 V2 文件（`v2`）。
  *
  * 插件（虚拟模块注入与写入端点）与各脚本都经这里的 `resolveDataMode` 判定，只有这一个判断。
  *
  * 判定顺序（决定 C）：
  * 1. 标记文件 `data/data-mode.local.json` 存在：内容必须恰好是 `{ "mode": "legacy" }` 或 `{ "mode": "v2" }`，
  *    否则抛错（写出文件路径与期望格式），不猜。开头的一个 UTF-8 BOM 容忍（Windows 自带工具默认会写）；
- * 2. 没有标记，但四个旧数据文件（travel-map / want-to-go / editor-state / user-media 的 .local.json）任一存在：`legacy`；
- * 3. 都没有（全新私人目录）：`freshProfileMode`，默认 `FRESH_PROFILE_MODE`。
+ * 2. 没有标记，但四个旧数据文件（travel-map / want-to-go / editor-state / user-media 的 .local.json）任一存在：`legacy`。
+ *    只看这四个确切的文件名：`atomicJsonWrite` 留下的 `.bak`、迁移清单、`data/v2/` 里的文件都不算旧数据；
+ * 3. 都没有（全新私人目录）：`freshProfileMode`，默认 `FRESH_PROFILE_MODE`（PR4 起为 `v2`）。
  *
  * 每次需要时现读，不做进程内缓存：标记文件改了，下一个请求 / 下一次加载就按新值走。
  * 错误信息不带文件内容。
+ *
+ * 写标记只经 `writeDataModeMarker`（`scripts/data-mode-cli.mjs` 与 `migrate-identity --apply --switch` 共用）：
+ * 原子写入（`atomicJsonWrite`：结尾换行，不带 BOM），且只写解析出的私人根目录之内的标记文件（隐私门）。
  */
 
 import { existsSync, readFileSync } from 'node:fs'
 
-/** 全新私人目录的数据模式。PR4 改为 'v2'（决定 C）；PR3b-1 不改，所以默认行为不变。 */
-export const FRESH_PROFILE_MODE = 'legacy'
+import { atomicJsonWrite } from './json-file.mjs'
+import { isAllowedPrivateOutput, isInsideDirectory } from './private-output.mjs'
+
+/**
+ * 全新私人目录的数据模式（决定 C）。PR4 起为 'v2'：没有旧数据的私人目录一出生就是新格式，不需要再迁移；
+ * 已有旧数据的私人目录不写标记就仍是 legacy（判定第 2 步），行为不变。
+ */
+export const FRESH_PROFILE_MODE = 'v2'
 
 export const DATA_MODES = Object.freeze(['legacy', 'v2'])
 
@@ -63,6 +73,12 @@ export const legacyDataPaths = (privatePaths) => [
   privatePaths.mediaCatalogPath,
 ]
 
+/** 私人目录里有旧数据：四个旧数据文件任一存在（只看确切的文件名，`.bak` 不算）。 */
+export const hasLegacyData = (privatePaths) => legacyDataPaths(privatePaths).some((filePath) => existsSync(filePath))
+
+/** `data/v2/` 里有 V2 文件：五个 V2 文件任一存在（只看确切的文件名，`.bak` 不算）。 */
+export const hasV2Data = (privatePaths) => Object.values(privatePaths.v2FilePaths).some((filePath) => existsSync(filePath))
+
 /**
  * 判定私人目录的数据模式。`privatePaths` 是 `getPrivatePaths()` 的结果。
  * @returns {{ mode: 'legacy' | 'v2', reason: 'marker' | 'legacy-data' | 'fresh-profile' }}
@@ -77,6 +93,39 @@ export function resolveDataMode(privatePaths, { freshProfileMode = FRESH_PROFILE
     if (error?.code !== 'ENOENT') throw new DataModeMarkerError(markerPath, `读取失败（${error?.code ?? '未知错误'}）`)
   }
   if (text !== undefined) return { mode: parseDataModeMarker(text, markerPath), reason: 'marker' }
-  if (legacyDataPaths(privatePaths).some((filePath) => existsSync(filePath))) return { mode: 'legacy', reason: 'legacy-data' }
+  if (hasLegacyData(privatePaths)) return { mode: 'legacy', reason: 'legacy-data' }
   return { mode: freshProfileMode, reason: 'fresh-profile' }
+}
+
+// ---- 写标记（PR4 规格 §2.2）----
+
+/** 隐私门拒绝写标记：标记文件不在解析出的私人根目录之内，或私人根是仓库本身 / 包含整个仓库。 */
+export class DataModeMarkerWriteRefused extends Error {
+  constructor(filePath) {
+    super(`拒绝写入数据模式标记 ${filePath}：只能写解析出的私人根目录之内的标记文件（私人根不能是仓库本身或包含仓库）。`)
+    this.name = 'DataModeMarkerWriteRefused'
+    this.filePath = filePath
+  }
+}
+
+/**
+ * 隐私门：标记文件必须在 `privatePaths.root` 之内，且按 private-output.mjs 的规则允许写（私人根包含整个仓库时不放行）。
+ * 不满足时抛 DataModeMarkerWriteRefused。只做路径判断，不碰文件。
+ */
+export function assertDataModeMarkerWritable(privatePaths) {
+  const target = privatePaths.dataModePath
+  if (!isInsideDirectory(target, privatePaths.root) || !isAllowedPrivateOutput(target, { STARMAP_PRIVATE_ROOT: privatePaths.root })) {
+    throw new DataModeMarkerWriteRefused(target)
+  }
+}
+
+/**
+ * 原子写入标记 `{ "mode": <mode> }`：`atomicJsonWrite` 先写临时文件再改名，结尾换行，不带 BOM；已有标记时留 `.bak`。
+ * 写之前过隐私门。返回写入的路径。
+ */
+export async function writeDataModeMarker(privatePaths, mode) {
+  if (!DATA_MODES.includes(mode)) throw new TypeError(`mode 只能是 ${DATA_MODES.join(' / ')}`)
+  assertDataModeMarkerWritable(privatePaths)
+  await atomicJsonWrite(privatePaths.dataModePath, { mode })
+  return privatePaths.dataModePath
 }

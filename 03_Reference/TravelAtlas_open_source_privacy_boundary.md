@@ -20,13 +20,16 @@ dev:personal / build:personal
         ↓
 加载 <private-root>/config/.env.local，
 以及私有层的旅行记录、想去、编辑状态与媒体文件
-（data/ 下的 travel-map / want-to-go / editor-state / user-media 四个 .local.json，与 media/user/）
+（V2 数据模式：data/v2/ 下的五个文件；旧数据模式：data/ 下的 travel-map / want-to-go / editor-state / user-media
+ 四个 .local.json；两种模式都另有 media/user/）
 
 dev:public / build:public
         ↓
 只加载 Git 跟踪的中性示例
-（src/data/travel-map.sample.json 与 src/data/want-to-go.sample.json）
+（src/data/v2-sample/ 的 V2 文件，由 src/data/travel-map.sample.json 与 src/data/want-to-go.sample.json 生成）
 ```
+
+私人目录用哪种数据模式，按 `data/data-mode.local.json` 标记 → 是否存在旧格式文件 → 全新目录用 V2 的顺序判定，详见 [Web 工作区说明](../01_Web/README.md#data-modes)。
 
 公共模式从不自动发现个人数据，即使私有层存在也不会读取。`npm run release:check` 还会只归档 Git 已跟踪文件，在系统临时目录中重新安装、Lint、运行测试和公共构建，确保检查过程看不到私有层。
 
@@ -35,14 +38,18 @@ dev:public / build:public
 | 内容 | 私人开发仓库 | 干净公开仓库 | 说明 |
 | --- | --- | --- | --- |
 | React / Cesium / UI 源码 | 保留 | 保留 | 产品主体 |
-| `travel-map.sample.json` | 保留 | 保留 | 中性可运行示例 |
-| `want-to-go.sample.json` | 保留 | 保留 | 中性可运行示例 |
-| `<private-root>/data/travel-map.local.json` | 外置私有层 | 不包含 | 个人国家、城市、路线和显示规则 |
-| `<private-root>/data/want-to-go.local.json` | 外置私有层 | 不包含 | 个人想去的城市、国家与备注 |
-| `<private-root>/data/editor-state.local.json` | 外置私有层 | 不包含 | 排序、隐藏、封面和媒体布局等本地编辑状态 |
+| `src/data/v2-sample/` | 保留 | 保留 | 公开模式读取的中性示例（五个 V2 文件与固定的迁移清单），`npm run sample:v2` 生成，`privacy:check` 检查 |
+| `travel-map.sample.json` | 保留 | 保留 | 旧格式的中性示例，V2 示例由它生成 |
+| `want-to-go.sample.json` | 保留 | 保留 | 旧格式的中性示例，V2 示例由它生成 |
+| `<private-root>/data/v2/` | 外置私有层 | 不包含 | V2 数据模式的个人数据：`places` / `travel-map` / `want-to-go` / `editor-state` / `user-media` 五个 `.local.json`，以及 `media-source-index.local.json` |
+| `<private-root>/data/migration/` | 外置私有层 | 不包含 | 旧数据迁移到 V2 时的迁移清单与决定文件 |
+| `<private-root>/data/data-mode.local.json` | 外置私有层 | 不包含 | 数据模式标记（`legacy` 或 `v2`） |
+| `<private-root>/data/travel-map.local.json` | 外置私有层 | 不包含 | 旧数据模式：个人国家、城市、路线和显示规则 |
+| `<private-root>/data/want-to-go.local.json` | 外置私有层 | 不包含 | 旧数据模式：个人想去的城市、国家与备注 |
+| `<private-root>/data/editor-state.local.json` | 外置私有层 | 不包含 | 旧数据模式：排序、隐藏、封面和媒体布局等本地编辑状态 |
 | `<private-root>/MediaInbox/<真实国家>/` | 外置私有层 | 不包含 | 原始媒体与私有旁车 |
 | `<private-root>/media/user/` | 外置私有层 | 不包含 | 网页使用的个人媒体副本 |
-| `<private-root>/data/user-media.local.json` | 外置私有层 | 不包含 | 个人媒体目录与无人机坐标 |
+| `<private-root>/data/user-media.local.json` | 外置私有层 | 不包含 | 旧数据模式：个人媒体目录与无人机坐标 |
 | `<private-root>/config/.env.local` | 外置私有层 | 不包含 | Token 与本地模式 |
 | Inbox 模板、Schema、导入脚本 | 保留 | 保留 | 供其他用户和 Agent 使用 |
 | 示例图片 | 可选 | 只包含明确授权或生成的样图 | 不得用个人照片占位 |
@@ -51,7 +58,7 @@ dev:public / build:public
 
 个人旅行记录、原图、网站衍生物、目录与环境配置全部进入外置私有层。`dev:personal` 显式注入这些文件，因此国家列表、城市、相机初始位置和 Drone Media 交互保持个人状态；`dev:public` 则明确忽略它们。
 
-公开用户克隆仓库后默认显示 North Atlantic 中性示例。用户把示例结构复制到自己的 `<private-root>/data/travel-map.local.json`，再按[媒体导入协议](TravelAtlas_media_import_protocol.md)投放照片；国家和城市列表会从其数据自动生成，不继承原作者列表。
+公开用户克隆仓库后默认显示 North Atlantic 中性示例。个人配置下，全新的私人目录使用 V2 数据模式，从空地图开始：用本地编辑器添加国家与城市，再按[媒体导入协议](TravelAtlas_media_import_protocol.md)投放照片；国家和城市列表会从其数据自动生成，不继承原作者列表，也不复制示例。
 
 ## GitHub 与网站公开性的区别
 
@@ -66,7 +73,7 @@ GitHub 不包含个人照片和旅行数据。若个人网站本身部署到公�
 
 公共 GitHub 只维护源码仓库中的已跟踪文件。允许范围包括：
 
-- 根目录 `README.md`、`README.zh.md`、`LICENSE`、`NOTICE.md`、`THIRD_PARTY_NOTICES.md`、`CONTRIBUTING.md`、`SECURITY.md`、`TRADEMARK.md`、`AGENTS.md`、`.gitignore` 与 `.github/`。
+- 根目录 `README.md`、`README.zh.md`、`LICENSE`、`NOTICE.md`、`THIRD_PARTY_NOTICES.md`、`CONTRIBUTING.md`、`SECURITY.md`、`TRADEMARK.md`、`AGENTS.md`、`.gitignore`、`.gitattributes` 与 `.github/`。
 - `docs/`：版本与许可说明（`editions.md`）、发布说明与产品图片。
 - `01_Web/` 中的源码、测试、脚本与 `.env.example`，不含任何私有层内容、构建输出和本地缓存。
 - `02_Assets/MediaInbox/README.md` 与 `_country-template/`。

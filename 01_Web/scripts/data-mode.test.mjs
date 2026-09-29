@@ -16,7 +16,15 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { DataModeMarkerError, FRESH_PROFILE_MODE, parseDataModeMarker, resolveDataMode } from './data-mode.mjs'
+import {
+  assertDataModeMarkerWritable,
+  DataModeMarkerError,
+  DataModeMarkerWriteRefused,
+  FRESH_PROFILE_MODE,
+  parseDataModeMarker,
+  resolveDataMode,
+  writeDataModeMarker,
+} from './data-mode.mjs'
 import { getPrivatePaths, V2_DATA_FILE_NAMES } from './private-profile.mjs'
 import { V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
 
@@ -139,24 +147,61 @@ test('没有标记、有任一旧数据文件 → legacy（reason: legacy-data�
   assert.deepEqual(resolveDataMode(paths), { mode: FRESH_PROFILE_MODE, reason: 'fresh-profile' })
 }))
 
-test('全新目录：默认参数下为 legacy（PR3b-1 不改 FRESH_PROFILE_MODE）；freshProfileMode: v2 时为 v2', () => withPrivateRoot(async ({ root, paths }) => {
-  assert.equal(FRESH_PROFILE_MODE, 'legacy')
-  assert.deepEqual(resolveDataMode(paths), { mode: 'legacy', reason: 'fresh-profile' })
-  assert.deepEqual(resolveDataMode(paths, { freshProfileMode: 'v2' }), { mode: 'v2', reason: 'fresh-profile' })
+test('全新目录：默认参数下为 v2（PR4 把 FRESH_PROFILE_MODE 改为 v2，决定 C）；freshProfileMode: legacy 时为 legacy', () => withPrivateRoot(async ({ root, paths }) => {
+  assert.equal(FRESH_PROFILE_MODE, 'v2')
+  assert.deepEqual(resolveDataMode(paths), { mode: 'v2', reason: 'fresh-profile' })
+  assert.deepEqual(resolveDataMode(paths, { freshProfileMode: 'legacy' }), { mode: 'legacy', reason: 'fresh-profile' })
   assert.throws(() => resolveDataMode(paths, { freshProfileMode: 'V2' }), TypeError)
   // 私人根下连 data/ 都没有也一样。
   await rm(path.join(root, 'data'), { recursive: true })
-  assert.deepEqual(resolveDataMode(paths), { mode: 'legacy', reason: 'fresh-profile' })
+  assert.deepEqual(resolveDataMode(paths), { mode: 'v2', reason: 'fresh-profile' })
+}))
+
+test('默认判定的三步（PR4）：全新目录 v2；有旧数据 legacy；标记优先于两者', () => withPrivateRoot(async ({ paths }) => {
+  assert.deepEqual(resolveDataMode(paths), { mode: 'v2', reason: 'fresh-profile' })
+  await writeFile(paths.wantToGoPath, '{"schema_version":1,"items":[]}', 'utf8')
+  assert.deepEqual(resolveDataMode(paths), { mode: 'legacy', reason: 'legacy-data' })
+  await writeMarker(paths, '{ "mode": "v2" }')
+  assert.deepEqual(resolveDataMode(paths), { mode: 'v2', reason: 'marker' })
+  await rm(paths.wantToGoPath)
+  await writeMarker(paths, '{ "mode": "legacy" }')
+  assert.deepEqual(resolveDataMode(paths), { mode: 'legacy', reason: 'marker' })
 }))
 
 test('每次现读，不缓存：标记改了，下一次判定就变', () => withPrivateRoot(async ({ paths }) => {
+  assert.equal(resolveDataMode(paths).mode, 'v2')
+  await writeMarker(paths, '{"mode":"legacy"}')
   assert.equal(resolveDataMode(paths).mode, 'legacy')
   await writeMarker(paths, '{"mode":"v2"}')
   assert.equal(resolveDataMode(paths).mode, 'v2')
   await writeMarker(paths, '{"mode":"legacy"}')
   assert.equal(resolveDataMode(paths).mode, 'legacy')
   await rm(paths.dataModePath)
-  assert.deepEqual(resolveDataMode(paths), { mode: 'legacy', reason: 'fresh-profile' })
+  assert.deepEqual(resolveDataMode(paths), { mode: 'v2', reason: 'fresh-profile' })
+}))
+
+test('writeDataModeMarker：原子写入 { "mode": … }，结尾换行、不带 BOM（字节层）；已有标记时留 .bak；隐私门只放行私人根之内', () => withPrivateRoot(async ({ root, paths }) => {
+  assert.equal(await writeDataModeMarker(paths, 'v2'), paths.dataModePath)
+  const bytes = await readFile(paths.dataModePath)
+  assert.deepEqual([...bytes.subarray(0, 3)], [...Buffer.from('{\n ', 'utf8')], '不以 BOM（EF BB BF）开头')
+  assert.equal(bytes.toString('utf8'), '{\n  "mode": "v2"\n}\n')
+  assert.deepEqual(resolveDataMode(paths), { mode: 'v2', reason: 'marker' })
+
+  await writeDataModeMarker(paths, 'legacy')
+  assert.equal(await readFile(paths.dataModePath, 'utf8'), '{\n  "mode": "legacy"\n}\n')
+  assert.equal(await readFile(path.join(root, 'data', 'data-mode.local.bak'), 'utf8'), '{\n  "mode": "v2"\n}\n', '上一版留作 .bak')
+  assert.deepEqual(resolveDataMode(paths), { mode: 'legacy', reason: 'marker' })
+  assert.deepEqual((await readdir(path.join(root, 'data'))).sort(), ['data-mode.local.bak', 'data-mode.local.json'], '没有留下临时文件')
+
+  await assert.rejects(writeDataModeMarker(paths, 'V2'), TypeError)
+  // 标记路径不在私人根之内（手工拼出的错误 paths），或私人根就是仓库：都拒绝，不写。
+  const outside = { ...paths, dataModePath: path.join(tmpdir(), 'starmap-not-private', 'data-mode.local.json') }
+  await assert.rejects(writeDataModeMarker(outside, 'v2'), DataModeMarkerWriteRefused)
+  assert.equal(existsSync(outside.dataModePath), false)
+  const repoPaths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: path.resolve(webRoot, '..') })
+  assert.throws(() => assertDataModeMarkerWritable(repoPaths), DataModeMarkerWriteRefused)
+  await assert.rejects(writeDataModeMarker(repoPaths, 'v2'), DataModeMarkerWriteRefused)
+  assert.equal(existsSync(repoPaths.dataModePath), false)
 }))
 
 // ---------------------------------------------------------------------------

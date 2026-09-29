@@ -58,18 +58,18 @@ Codex 固定使用端口 5173，DSH 固定使用端口 5174。启用 strict port
 - Treat any request about uploading, importing, organizing, or adding photos or drone media as a routed media-import task. Read `../02_Assets/MediaInbox/README.md` first, then `../03_Reference/TravelAtlas_media_import_protocol.md` before execution.
 - If the user only asks how to upload, explain the folder workflow and stop; do not modify files or run the import.
 - If any country, city, media type, date, coordinate, privacy status, or intended use is missing or uncertain, ask one focused question and stop. Without a reliable answer, never guess or import that item; a preflight warning about unresolved data remains blocking even when the command exits successfully.
-- Treat the external private layer's `MediaInbox/`, `media/user/`, `data/*.local.json`, and `config/.env.local` as private local data; never copy them into the source repository or add them to Git.
+- Treat the external private layer's `MediaInbox/`, `media/user/`, `data/*.local.json`, `data/v2/`, `data/migration/`, and `config/.env.local` as private local data; never copy them into the source repository or add them to Git.
 - Run `npm run media:check` before `npm run media:import`.
 - Never guess an unresolved country, city, or drone coordinate, and never delete source media or generated history without explicit confirmation.
 - Ordinary city photos feed City Info and City Photos. Selected drone files must be inspected immediately for embedded date, GPS, altitude, relative altitude, and camera metadata. File-derived values stay read-only; only missing values become editable. Date is required, while coordinates and altitude are optional. A drone item without coordinates may appear in Drone Media but must not create a map marker or camera target.
-- Source media in `MediaInbox` is immutable. The only Agent-writable Inbox files are `country.json` and city-level `media.json`; conversions and all other derivatives must stay outside Inbox.
+- Source media in `MediaInbox` is immutable. The only Agent-writable Inbox files are `place.json` (normally written by StarMap itself on upload and import), `country.json`, and city-level `media.json`; conversions and all other derivatives must stay outside Inbox.
 
 ## Public Template and Private Overlay
 
 - Read `../03_Reference/TravelAtlas_open_source_privacy_boundary.md` before changing travel data, publication structure, or deployment.
-- The tracked `src/data/travel-map.sample.json` must remain neutral, runnable, and free of owner data.
-- Personal countries, cities, routes, coordinates, and display rules belong only in external `06_private/data/travel-map.local.json` (or the standalone clone's configured private root).
-- Personal Want to Go items belong only in external `06_private/data/want-to-go.local.json` (or the standalone clone's configured private root). The tracked `src/data/want-to-go.sample.json` must remain neutral.
+- The tracked samples must remain neutral, runnable, and free of owner data: the V2 sample in `src/data/v2-sample/` that public mode reads, and the legacy-format `src/data/travel-map.sample.json` and `src/data/want-to-go.sample.json` it is generated from with `npm run sample:v2`.
+- Personal countries, cities, routes, coordinates, display rules, and Want to Go items belong only in the external private layer (`06_private/`, or the standalone clone's configured private root): in `data/v2/` for a private folder in V2 mode, which every new private folder uses, or in `data/travel-map.local.json` and `data/want-to-go.local.json` for a folder still in the legacy format.
+- The data mode is decided by `data/data-mode.local.json`, then by whether legacy files exist (see `README.md` in this directory). Never hand-edit the V2 data files, the identity manifest, or the marker; use the local editor, `npm run media:import`, `npm run identity:check`, and `npm run data-mode`. The only hand-written migration file is `data/migration/identity-decisions.local.json`, and it records decisions the user made; never decide for the user.
 - Do not add built-in personal items to `droneMedia.ts`, personal coordinate tables, or tracked public media paths.
 - Run `npm run release:check` before any public-release preparation. It audits privacy and rebuilds from a clean archive containing only Git-tracked files.
 - This repository is public. Every commit is published, so private data must never enter the working tree in the first place; `.gitignore` and `npm run release:check` are backstops, not the boundary.

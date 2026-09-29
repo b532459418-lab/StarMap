@@ -23,14 +23,30 @@ The Agent must explain the folder placement first. It must not modify files or r
 ```text
 MediaInbox/
 └─ Iceland/
-   ├─ country.json            optional Agent-authored country mapping
+   ├─ place.json              written by StarMap: binds the folder to a place id
+   ├─ country.json            optional legacy country mapping
    └─ Reykjavik/
+      ├─ place.json           written by StarMap: binds the folder to a place id
       ├─ photos/
       ├─ drone/
       └─ media.json           optional Agent-authored drone metadata
 ```
 
-Country and city folder names must match the active `<private-root>/data/travel-map.local.json`. A new country or city must be added to the private travel data in a separate task before its media can be imported.
+Country and city folders must refer to places that already exist in StarMap. Add a new country or city in StarMap first (for example with the local editor), then import its media.
+
+## How Folders Are Matched
+
+A private folder uses the V2 data format unless it still holds legacy data (see [Data Modes](../../01_Web/README.md#data-modes)). In V2 mode the importer matches folders against the place registry `<private-root>/data/v2/places.local.json`:
+
+- **Country folder**, in this order: `place.json` (`{ "placeId": "<country place id>" }`); a legacy `country.json` whose `countryId` is an old country key of that place; the folder name, compared with the country's Chinese name, English name, or ISO code.
+- **City folder**, in this order: `place.json`, which must name a city of that country; the folder name, compared with the Chinese and English names of that country's cities.
+- Names are compared after normalization: case, spaces, `_`, `-`, Unicode composition, and Latin accents are ignored, so `Vik` matches `Vík`.
+- No match or more than one match stops the import with a message. The importer never guesses and never creates a place.
+- When a folder was matched by name or by a legacy `country.json`, `npm run media:import` writes `place.json` into it, but only when the whole import has no errors; `npm run media:check` only lists these folders. From then on the folder stays bound to that place even if the place is renamed. Folders that already have `place.json` are left alone.
+- Uploads from the local editor put files into `MediaInbox/<country>/<city>/photos/` or `drone/` using the English name (or the Chinese name when there is none) and write `place.json` into new folders. When two cities in the same country have the same name, the second one gets the folder `<name> (<last 8 characters of its place id>)`.
+- Each media item's id is `media-` plus the first 16 hexadecimal characters of the SHA-256 of the source file, and its generated files live in `media/user/<same 16 characters>/`. Renaming a place, moving a file to another city folder, or changing a drone item's kind keeps its id and path, so its order, cover, and hidden state follow it. An explicit `id` in `media.json` still takes precedence.
+
+In legacy mode, folder names are matched against `<private-root>/data/travel-map.local.json` as before, and `country.json` may map an ambiguous country folder to an existing `countryId`.
 
 ## Agent Workflow
 
@@ -43,12 +59,13 @@ Country and city folder names must match the active `<private-root>/data/travel-
 
 ## Source Preservation and Sidecars
 
-Original media in `MediaInbox` is immutable by default: never move, rename, overwrite, delete, or edit it. The only deletion exception is an explicit, confirmed **Delete hidden media** action in the local editor; it removes the selected hidden source files, their generated web variants, sidecar entries, and catalog records. Two private control sidecars are the normal Agent-writable exceptions:
+Original media in `MediaInbox` is immutable by default: never move, rename, overwrite, delete, or edit it. The only deletion exception is an explicit, confirmed **Delete hidden media** action in the local editor; it removes the selected hidden source files, their generated web variants, sidecar entries, and catalog records. Three private control files are the only Agent-writable exceptions:
 
-- `<country>/country.json` maps an ambiguous country folder to an existing `countryId`.
-- `<country>/<city>/media.json` records drone type and capture metadata using `media.example.json` as the shape reference.
+- `<country>/place.json` and `<country>/<city>/place.json` bind a folder to a place id (`{ "placeId": "…" }`). StarMap normally writes them itself on upload and import. Write one by hand only to resolve a reported ambiguity, with a place id taken from `data/v2/places.local.json`.
+- `<country>/country.json` maps an ambiguous country folder to an existing legacy `countryId`.
+- `<country>/<city>/media.json` records drone type and capture metadata using `media.example.json` as the shape reference. In V2 mode an entry may also carry `placeId` (a city place id) to assign one file to another city; the legacy `countryId` + `cityId` pair is still accepted. Giving both and having them disagree is an error.
 
-These JSON files are metadata, not media derivatives. Converted, resized, optimized, or otherwise derived media must never be written into the Inbox.
+These JSON files are metadata, not media derivatives. Converted, resized, optimized, or otherwise derived media must never be written into the Inbox. The editor's `.bak` backups of these files are ignored by the importer.
 
 ## Supported Inputs and Stop Conditions
 
@@ -62,7 +79,7 @@ These JSON files are metadata, not media derivatives. Converted, resized, optimi
 
 - `<private-root>/MediaInbox/<real-country>/`: private source delivery and sidecars; physically outside the source Git repository.
 - `<private-root>/media/user/`: generated website media; physically outside the source Git repository.
-- `<private-root>/data/*.local.json`: generated personal catalogs and travel data; physically outside the source Git repository.
+- `<private-root>/data/`: personal travel data, editor state, and media catalogs (`data/v2/` in V2 mode, `data/*.local.json` in legacy mode); physically outside the source Git repository.
 - `_country-template/`, rules, schema, and scripts: safe to publish with the open-source repository.
 
 Never place credentials, tickets, identity documents, hotel addresses, booking references, or private family material in the Inbox. Never add private Inbox files, generated user media, or local catalogs to Git.
