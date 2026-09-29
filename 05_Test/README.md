@@ -38,6 +38,7 @@ Before a public release also run `npm run release:check` from PowerShell or cmd 
 - Fast mouse movement produces a direction-aware comet tail over the existing pointer glow; the tail does not intercept Cesium drag, zoom, country, or city interactions and is absent under reduced-motion preferences.
 - With the private local travel file present, the owner's country list and configured overview target remain unchanged.
 - With `VITE_TRAVEL_ATLAS_DATA_MODE=sample`, the application runs independently on the neutral North Atlantic sample and exposes no personal Drone Media.
+- Forced sample mode is a preview of the public site: in `dev:personal` with `?data=sample`, no editing control renders at all (no country edit toggle, no city photo upload input, no empty Drone Media card, no Want to Go write controls). Without the parameter the editing controls come back.
 - `npm run privacy:check` confirms no current private Inbox, local data, generated media, local catalog, or real environment file is tracked.
 
 ## Documentation

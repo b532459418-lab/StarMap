@@ -50,7 +50,7 @@ StarMap has two data layers:
 - `src/data/travel-map.sample.json` and `src/data/want-to-go.sample.json` are the same sample in the legacy format. The V2 sample is generated from them; the migration tool, the baseline tool, and the tests still read them.
 - `<private-root>/data/` is the external private layer containing the owner's countries, cities, routes, coordinates, display rules, Want to Go list, editor state, and media catalog. Its layout depends on the data mode described below.
 
-The private layer is considered only in the explicit personal profile. Public preview and public build ignore it even when it exists; they, and forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development), read `src/data/v2-sample/`. The sample is read-only: its travel and Want to Go sources are marked as sample, so no write control is rendered for it.
+The private layer is considered only in the explicit personal profile. Public preview and public build ignore it even when it exists; they, and forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development), read `src/data/v2-sample/`. Forced sample mode previews the public site: the local editor is off even in the personal profile, so the page renders exactly as in public mode, with no editing control, and nothing can be written to the private folder from it.
 
 In the personal profile, Want to Go never falls back to the sample: sample items are not in the private file, so the editor could not hide them. When the private Want to Go file does not exist yet, the list is empty. The add entry and the Hide button are rendered only for private data, in addition to the existing development-only editor gate.
 

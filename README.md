@@ -122,7 +122,7 @@ Once you have been to a place, **Mark as visited** (标记为去过) turns it in
 
 Your places are saved in `<private-root>/data/v2/want-to-go.local.json` (`<private-root>/data/want-to-go.local.json` in a private folder that still uses the legacy format), outside the source repository like the rest of your private data. If that file does not exist yet, the personal profile starts with an empty Want to Go layer rather than the sample. Travel records with `status: planned` in your travel data also appear on the Want to Go layer; apart from **Mark as visited** they are read-only there, so change anything else in the travel data itself.
 
-Public builds and `dev:public` show a neutral three-place sample instead (Nuuk, Tromsø, and Akureyri, which overlaps the sample journey to demonstrate the heart badge) and contain no add, hide, delete, or Mark as visited controls. Forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`) shows the same sample, with no Want to Go write controls.
+Public builds and `dev:public` show a neutral three-place sample instead (Nuuk, Tromsø, and Akureyri, which overlaps the sample journey to demonstrate the heart badge) and contain no add, hide, delete, or Mark as visited controls. Forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development) previews the public site: it shows the same sample, and the local editor is off even in the personal profile, so no editing control is rendered.
 
 ## Existing data in the legacy format
 

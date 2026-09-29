@@ -8,7 +8,7 @@
  *
  * 「选哪份数据」【不】在这里判断：App 里由六个原文件判断，基线工具里由 CLI
  * （`scripts/legacy-baseline.mjs`）判断，两边都把选好的原始值放进 `RawAppInputs`。
- * 只由运行模式决定、与数据无关的导出（editorState 的 `localEditorAvailable`）不在这里。
+ * 只由运行模式（开发服务器、个人配置、是否强制样例）决定、与数据无关的导出（editorState 的 `localEditorAvailable`）不在这里。
  */
 
 import { deriveDroneMedia, type DroneMediaDerived } from './droneMedia.ts'

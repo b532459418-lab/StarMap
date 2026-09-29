@@ -7,9 +7,10 @@
  *
  * 按顺序判定（PR4 起）：
  * 1. 公开模式，以及任何模式下的强制样例（VITE_TRAVEL_ATLAS_DATA_MODE=sample、开发时 ?data=sample）
- *    → 公开样例的 V2 文件 src/data/v2-sample/，经 V2 Reader，来源标为 'sample'：足迹与想去的写入门控
- *    （travelAtlasDataSource / wantToGoDataSource）因此照旧关闭编辑。editor-state 与媒体也取样例里的（空文件），
- *    不再叠加私人目录的值。
+ *    → 公开样例的 V2 文件 src/data/v2-sample/，经 V2 Reader，来源标为 'sample'。editor-state 与媒体也取样例里的
+ *    （空文件），不再叠加私人目录的值。强制样例是在个人配置里预览公开版，所以本地编辑器整个关闭：./editorState.ts 的
+ *    `localEditorAvailable` 看下面导出的 `forceSampleData`（RFC-LOC-1 PR4 审查补修），页面与公开模式渲染一致，
+ *    不会把写入落到私人目录。
  * 2. 个人模式 · v2（插件按私人目录的标记判定后注入，scripts/data-mode.mjs）→ 只读 data/v2/ 的五个文件；
  *    没有数据时为空，不回落到样例（决定 E）。
  * 3. 个人模式 · legacy → 与 PR4 之前的个人模式完全相同：足迹私有文件有效（有 records 数组）用私有，
@@ -38,8 +39,11 @@ import { isTravelMapExport, type TravelMapExport } from './derive/travelAtlas.ts
 /** 原 worldGraph.ts 的 worldGraphSessionNow：模块加载时固定一次，适配器要求 now 必填且不读时钟。 */
 export const sessionNow: string = new Date().toISOString()
 
-// 强制样例模式：环境变量，或开发时 ?data=sample。足迹与想去用同一个判断。
-const forceSampleData = import.meta.env.VITE_TRAVEL_ATLAS_DATA_MODE === 'sample'
+/**
+ * 强制样例模式：环境变量，或开发时 ?data=sample。全仓库只在这里判定一次：足迹、想去的数据选择用它，
+ * ./editorState.ts 的 `localEditorAvailable` 也用它（强制样例下不能编辑）。
+ */
+export const forceSampleData: boolean = import.meta.env.VITE_TRAVEL_ATLAS_DATA_MODE === 'sample'
   || (import.meta.env.DEV
     && typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('data') === 'sample')

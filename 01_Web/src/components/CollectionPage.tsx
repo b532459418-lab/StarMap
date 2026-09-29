@@ -31,7 +31,7 @@ const noteMaxLength = 200
 
 /**
  * 写入是否可用（PR7 规格 §1，沿用 PR6 双重门控）：私人模式的本地编辑器可用，【且】想去数据来自私有文件。
- * 公开构建里 localEditorAvailable 恒为 false，写入控件根本不渲染，不靠 CSS 隐藏（AC-10）。
+ * 公开构建与强制样例下 localEditorAvailable 恒为 false，写入控件根本不渲染，不靠 CSS 隐藏（AC-10）。
  */
 const writeAvailable = localEditorAvailable && wantToGoDataSource === 'local'
 
