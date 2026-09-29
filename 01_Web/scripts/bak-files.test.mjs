@@ -4,7 +4,7 @@
  * `atomicJsonWrite`（scripts/json-file.mjs）写入前把旧文件复制成 `<名字>.bak`：这是有意的安全网，保留。
  * 这里锁定它们无害——只测，不改代码：
  *   1. 私人目录 `data/` 与 `data/v2/` 里的 `.bak` 不影响「未迁移」的判定（scripts/legacy-data.mjs：不算旧数据，也不算 V2 文件），
- *      因而也不影响写入拒绝、导入器与迁移工具；
+ *      因而也不影响写入拒绝与导入器（PR5b 删除了迁移工具）；
  *   2. `data/v2/` 里的 `.bak` 不影响 V2 读取与校验（虚拟模块、基线工具、编辑状态接口只读五个确切的文件名）；
  *   3. 收件箱里的 `.bak` 不影响导入（导入器跳过它们）。
  * `.bak` 一律写成非法 JSON 或指向别处的内容：它们若被读到，结果一定会变。
@@ -67,7 +67,7 @@ const bakOf = (filePath) => filePath.replace(/\.json$/i, '.bak')
 // 1. 「未迁移」的判定
 // ---------------------------------------------------------------------------
 
-test('.bak 与「未迁移」：data/ 里只有四个旧文件（与 PR4 数据模式标记）的 .bak → 等于全新目录；不拒绝写入，迁移工具报「无需迁移」', () => withTemp(async (directory) => {
+test('.bak 与「未迁移」：data/ 里只有四个旧文件（与 PR4 数据模式标记）的 .bak → 等于全新目录；不拒绝写入', () => withTemp(async (directory) => {
   const root = path.join(directory, 'private')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
   await mkdir(paths.dataRoot, { recursive: true })
@@ -78,12 +78,6 @@ test('.bak 与「未迁移」：data/ 里只有四个旧文件（与 PR4 数据�
   assert.equal(hasLegacyData(paths), false)
   assert.deepEqual(legacyDataStateOf(paths), { legacyFiles: [], v2Files: [] })
   assert.equal(legacyWriteRefusal(legacyDataStateOf(paths)), undefined)
-
-  for (const args of [[], ['--apply']]) {
-    const migrate = runScript('migrate-identity.mjs', args, root)
-    assert.equal(migrate.status, 0, migrate.stderr)
-    assert.equal(migrate.stdout, '私人目录没有旧数据，无需迁移。\n')
-  }
 }))
 
 test('.bak 与「未迁移」：有旧数据、data/v2/ 里只有 .bak → 不算 V2 文件，仍是未迁移：写入拒绝（409），导入器拒绝（退出码 2），都不写', () => withTemp(async (directory) => {

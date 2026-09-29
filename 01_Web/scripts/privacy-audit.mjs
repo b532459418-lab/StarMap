@@ -114,7 +114,7 @@ if (wantToGoSample !== undefined) {
 
 // RFC-LOC-1 PR4: public mode reads the V2 sample in src/data/v2-sample/. The checks mirror the legacy sample
 // checks above (privacy_level, runnable records and items, wtg_ ids, no hidden or local-editor items), plus: only
-// the five V2 files and the fixed identity manifest may live there, and the five files must pass validateV2Files.
+// the five V2 files may live there (PR5b removed the identity manifest), and they must pass validateV2Files.
 // The legacy sample checks stay until PR5 removes the legacy samples.
 errors.push(...auditV2SampleDirectory())
 
