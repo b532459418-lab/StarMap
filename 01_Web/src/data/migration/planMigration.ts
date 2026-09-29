@@ -666,6 +666,25 @@ export function planFromCanonical(input: PlanFromCanonicalInput): MigrationPlan 
   const repeatedItemIds = [...itemIdCounts].filter(([, count]) => count > 1).map(([id]) => id)
   if (repeatedItemIds.length > 0) addInfo('I_WTG_DUPLICATE_ITEM_ID', `${repeatedItemIds.length} 个想去条目 id 出现了不止一次（各自保留）。`, repeatedItemIds)
 
+  // PR3b-3（09-29 作者决定：不保留旧格式媒体的 id 与路径）：V2 下媒体 id 与生成路径只由文件内容决定。迁移原样沿用旧 id，
+  // V2 模式下第一次导入媒体时它们会换成新 id，editor-state 里按旧 id 记的排序、隐藏与封面随之失效。只提示，不阻塞。
+  if (applied.media.items.length > 0) {
+    const mediaIds = new Set(applied.media.items.map((item) => item.id))
+    const state = applied.editorState
+    const references = [
+      ...Object.values(state.mediaOrderByCity).flat(),
+      ...Object.values(state.droneOrderByCity).flat(),
+      ...Object.values(state.coverMediaByCity),
+      ...state.hiddenMediaIds,
+      ...state.hiddenDroneMediaIds,
+    ].filter((id) => mediaIds.has(id)).length
+    addInfo(
+      'I_MEDIA_IDS_WILL_CHANGE',
+      `${mediaIds.size} 个媒体项迁移后沿用旧 id；V2 模式下第一次导入媒体时会按文件内容换成新 id，editor-state 里按旧 id 记的 ${references} 处排序、隐藏与封面随之失效（RFC-LOC-1 PR3b-3）。`,
+      [...mediaIds],
+    )
+  }
+
   // ---- 6. 分配 id：迁移清单只增不改 ----
   const sources: Record<string, string> = { ...(input.manifest ?? emptyManifest()).sources }
   const places: PlaceAssignment[] = applied.places.map((place) => {

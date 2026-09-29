@@ -49,5 +49,8 @@ export function getPrivatePaths(environment = process.env) {
     v2FilePaths: Object.fromEntries(
       Object.entries(V2_DATA_FILE_NAMES).map(([key, fileName]) => [key, path.join(v2DataRoot, fileName)]),
     ),
+    // RFC-LOC-1 PR3b-3：V2 的媒体源文件索引（媒体 id → 投递箱路径）。与旧模式的索引分开（两种模式的媒体 id 不同）；
+    // 它不属于 V2 的五个文件，不进 validateV2Files。文件名同 src/data/v2media/importPlan.ts 的 V2_MEDIA_SOURCE_INDEX_FILE_NAME。
+    v2MediaSourceIndexPath: path.join(v2DataRoot, 'media-source-index.local.json'),
   }
 }
