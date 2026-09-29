@@ -27,7 +27,7 @@ import type { JourneyViewMode } from './components/JourneyViewToggle'
 import { JourneyYearCards } from './components/JourneyYearCards'
 import type { DroneMediaItem } from './data/droneMedia'
 import { droneMediaById, hasDroneMedia } from './data/droneMedia'
-import { localEditorAvailable, mediaEditorAvailable } from './data/editorState'
+import { localEditorAvailable } from './data/editorState'
 import type { LocalConvertToTravelResult } from './data/localEditorApi'
 import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
 import { City3DToggle } from './extensions/City3DToggle'
@@ -180,9 +180,8 @@ function App() {
   const selectedCityHasDroneMedia = selectionMode === 'city' && selectedCityId
     ? hasDroneMedia(selectedCityId)
     : false
-  // 城市没有无人机影像时，无人机卡片只为媒体编辑（上传入口）而显示；V2 数据模式下媒体编辑仍关闭（RFC-LOC-1 PR3b-2 §2.7）。
   const shouldShowDronePanel = Boolean(
-    selectionMode === 'city' && selectedCityId && (selectedCityHasDroneMedia || mediaEditorAvailable),
+    selectionMode === 'city' && selectedCityId && (selectedCityHasDroneMedia || localEditorAvailable),
   )
   const activeTheme: ThemeMode = 'night'
   const imageryTuning = {
@@ -597,7 +596,7 @@ function App() {
           </div>
 
           <div className="pointer-events-none absolute inset-0 z-20">
-            {/* RFC-LOC-1 PR3b-1 / PR3b-2：个人模式 · V2 数据模式的说明与空状态；其他情况下组件什么都不渲染。 */}
+            {/* RFC-LOC-1 PR3b-1 / PR3b-3：个人模式 · V2 数据模式下没有任何足迹与想去时的空状态；其他情况下组件什么都不渲染。 */}
             {activePage === 'map' ? <DataModeNotice /> : null}
             <div
               className="atlas-overlay-frame absolute bottom-0"
