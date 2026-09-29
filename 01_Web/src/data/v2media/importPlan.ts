@@ -23,7 +23,7 @@
 
 import { EN, ZH, isoOf, namesOf } from '../canonical/reconstruct.ts'
 import type { CanonicalMediaItem, CanonicalPlace, PlaceId } from '../canonical/types.ts'
-import { MEDIA_SCHEMA_VERSION } from '../canonical/v2Schema.ts'
+import { MEDIA_SCHEMA_VERSION, type V2MediaFile } from '../canonical/v2Schema.ts'
 import { completeForWrite, integrityProblems, type V2FilesOrEmpty } from '../v2write/transaction.ts'
 
 export type MediaKind = 'photo' | 'panorama360' | 'aerialPhoto' | 'video'
@@ -469,11 +469,11 @@ export const sourcesByIdOf = (entries: readonly { id: string; sourcePath: string
 export const V2_MEDIA_SOURCE_INDEX_FILE_NAME = 'media-source-index.local.json'
 
 /** V2 媒体目录（`data/v2/user-media.local.json`）。 */
-export const mediaCatalogFileOf = (items: readonly V2MediaCatalogItem[], generatedAt: string) => ({
+export const mediaCatalogFileOf = (items: readonly V2MediaCatalogItem[], generatedAt: string): V2MediaFile => ({
   schemaVersion: MEDIA_SCHEMA_VERSION,
   generatedAt,
   privacyLevel: 'local-only',
-  items,
+  items: [...items],
 })
 
 /** V2 源文件索引（形状同旧模式的索引；id 空间不同，所以分开存）。 */

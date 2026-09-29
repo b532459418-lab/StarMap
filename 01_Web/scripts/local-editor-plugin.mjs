@@ -13,7 +13,6 @@ import { buildTravelRecordInput, convertPlannedRecord, resolveTravelCountry } fr
 import { resolveDataMode } from './data-mode.mjs'
 import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
 import {
-  editorDataModeRejection,
   PRIVATE_DATA_WATCH_EVENTS,
   privateDataModuleExports,
   privateDataSources,
@@ -22,6 +21,7 @@ import {
 } from './local-editor-data-mode.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { createV2WriteContext, readV2EditorState, runV2Write, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
+import { handleV2Import, handleV2MediaDelete, handleV2Upload, v2MediaRoute } from './v2-media-store.mjs'
 import { createWantToGoStore } from './want-to-go-store.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -1095,10 +1095,41 @@ const authorizeWrite = (request) => (
 )
 
 /**
- * RFC-LOC-1 PR3b-2：V2 数据模式下的写入。只经 v2-editor-store.mjs 的路由表分派（8 个非媒体写入端点），
- * 没列进去的接口回 404——V2 下绝不进入下面的旧模式分支。读写都只碰 data/v2/，不读旧文件、不回落样例。
+ * RFC-LOC-1 PR3b-3：V2 数据模式下的三个媒体端点（上传、导入、彻底删除隐藏媒体），交给 v2-media-store.mjs。
+ * 旧模式的辅助函数（文件名规则、接收上传、无人机 sidecar、运行导入器、删 sidecar 条目）原样传进去复用，本身一行不改。
+ * 上传的请求体是文件本身，不按 JSON 读。
+ */
+const handleV2Media = async (routeName, request, url) => {
+  const deps = {
+    safeSegment,
+    reserveDestination,
+    writeUpload,
+    updateDroneSidecar,
+    runImporter,
+    normalizeInboxRelativePath,
+    removeSidecarEntries,
+    isPathInside,
+  }
+  if (routeName === 'upload') return handleV2Upload({ privatePaths, query: url.searchParams, request, deps })
+  let input
+  try {
+    input = await readJsonBody(request)
+  } catch (error) {
+    return { status: 400, body: v2ErrorBody('E_REQUEST_INVALID', { reason: error instanceof Error ? error.message : '' }) }
+  }
+  const ctx = createV2WriteContext({ countryCatalog: countryCatalogByCode })
+  if (routeName === 'import') return handleV2Import({ privatePaths, input, ctx, deps })
+  return handleV2MediaDelete({ privatePaths, input, ctx, deps })
+}
+
+/**
+ * RFC-LOC-1 PR3b-2 / PR3b-3：V2 数据模式下的写入。三个媒体端点经 v2-media-store.mjs 的路由表，其余经 v2-editor-store.mjs 的
+ * 路由表（8 个非媒体写入端点）分派；两张表都没列的接口回 404——V2 下绝不进入下面的旧模式分支。
+ * 数据读写只碰 data/v2/（媒体另有收件箱与生成文件），不读旧文件、不回落样例。
  */
 const handleV2Write = async (request, url) => {
+  const mediaRoute = v2MediaRoute(request.method, url.pathname)
+  if (mediaRoute) return handleV2Media(mediaRoute, request, url)
   const route = v2EditorRoute(request.method, url.pathname)
   if (!route) return { status: 404, body: v2ErrorBody('E_UNKNOWN_ENDPOINT') }
   let input
@@ -1193,11 +1224,9 @@ export function travelAtlasLocalEditor(options = {}) {
           }
 
           if (!authorizeWrite(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话写入。' })
-          // RFC-LOC-1 PR3b-2：每个请求现读数据模式（不缓存）。V2 下媒体端点 409、不读写任何文件（PR3b-3 开放）；
+          // RFC-LOC-1 PR3b-2 / PR3b-3：每个请求现读数据模式（不缓存）。V2 下全部 11 个写入端点都走 V2 实现（handleV2Write）；
           // 标记文件不合法时 resolveDataMode 抛错，由外层按 400 返回错误信息。
           const dataMode = resolveDataMode(privatePaths).mode
-          const rejection = editorDataModeRejection({ dataMode, method: request.method, pathname: url.pathname })
-          if (rejection) return sendJson(response, rejection.status, rejection.body)
 
           editorMutationDepth += 1
           try {

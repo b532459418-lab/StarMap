@@ -1,8 +1,8 @@
 /**
- * scripts/local-editor-data-mode.mjs 的测试（RFC-LOC-1 PR3b-1 规格 §2.2、§2.3、§3「插件」；PR3b-2 规格 §2.7、§3）：
- * 虚拟模块的内容，V2 数据模式下编辑接口的拒绝（PR3b-2 起只拒绝媒体端点）与 V2 写入路由表，
- * 以及读插件源码的两条断言：V2 分派在旧分支之前，旧模式的写入逻辑与路由分支逐字未变。
- * 端到端（dev server + curl）在规格的浏览器验证里手工做；Node 端到端见 v2-editor-store.test.mjs。
+ * scripts/local-editor-data-mode.mjs 的测试（RFC-LOC-1 PR3b-1 规格 §2.2、§2.3、§3「插件」；PR3b-2 规格 §2.7、§3；PR3b-3 规格 §2.4）：
+ * 虚拟模块的内容，V2 数据模式下的两张写入路由表（非媒体端点与媒体端点；PR3b-3 起不再拒绝任何端点），
+ * 以及读插件源码的断言：V2 分派在旧分支之前，旧模式的写入逻辑与路由分支逐字未变。
+ * 端到端（dev server + curl）在规格的浏览器验证里手工做；Node 端到端见 v2-editor-store.test.mjs 与 v2-media-store.test.mjs。
  *
  * 运行方式：npm test。零依赖：只用 node:test + node:assert/strict + node:fs + node:crypto。不 import 插件本身。
  */
@@ -15,22 +15,21 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import * as dataModeModule from './local-editor-data-mode.mjs'
 import {
-  editorDataModeRejection,
   LEGACY_PRIVATE_EXPORTS,
   PRIVATE_DATA_WATCH_EVENTS,
   privateDataModuleExports,
   privateDataSources,
   renderPrivateDataModule,
   shouldHandlePrivateDataChange,
-  V2_MEDIA_ENDPOINTS,
-  V2_MEDIA_READ_ONLY_CODE,
-  V2_MEDIA_READ_ONLY_ERROR,
   V2_PRIVATE_FILE_KEYS,
 } from './local-editor-data-mode.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { V2_EDITOR_ROUTES, v2EditorRoute } from './v2-editor-store.mjs'
+import { V2_MEDIA_ROUTES, v2MediaRoute } from './v2-media-store.mjs'
 import { V2_FILE_KEYS } from '../src/data/canonical/v2Schema.ts'
+import { V2_WRITE_ERROR_CODES } from '../src/data/v2write/errors.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: path.join(tmpdir(), 'starmap-virtual-module-test') })
@@ -128,7 +127,7 @@ test('虚拟模块 · 个人模式 v2：四个旧导出为 undefined（即使传
 })
 
 // ---------------------------------------------------------------------------
-// 编辑接口的拒绝
+// 编辑接口的 V2 分派
 // ---------------------------------------------------------------------------
 
 /** 插件源码里全部 `request.method === 'X' && url.pathname === 'Y'` 分支。 */
@@ -168,27 +167,26 @@ const MEDIA_ENDPOINTS = [
 ]
 const NON_MEDIA_WRITE_ENDPOINTS = WRITE_ENDPOINTS.filter((endpoint) => !MEDIA_ENDPOINTS.includes(endpoint))
 
-test('V2 模式（RFC-LOC-1 PR3b-2）：只有三个媒体端点 409（新错误信息与码），其余写入端点、GET /editor/state 与目录搜索都放行', () => {
-  assert.deepEqual([...V2_MEDIA_ENDPOINTS], MEDIA_ENDPOINTS)
+test('V2 模式（RFC-LOC-1 PR3b-3）：不再拒绝任何端点——三个媒体端点经 V2_MEDIA_ROUTES，其余 8 个写入端点经 V2_EDITOR_ROUTES；两张表不相交，合起来正好是 11 个写入端点', () => {
   assert.equal(NON_MEDIA_WRITE_ENDPOINTS.length, 8)
-  for (const endpoint of MEDIA_ENDPOINTS) {
-    const [method, pathname] = endpoint.split(' ')
-    assert.deepEqual(
-      editorDataModeRejection({ dataMode: 'v2', method, pathname }),
-      { status: 409, body: { ok: false, error: V2_MEDIA_READ_ONLY_ERROR, code: V2_MEDIA_READ_ONLY_CODE } },
-      endpoint,
-    )
+  assert.deepEqual(Object.keys(V2_MEDIA_ROUTES).sort(), [...MEDIA_ENDPOINTS].sort())
+  assert.deepEqual(
+    [...Object.keys(V2_EDITOR_ROUTES), ...Object.keys(V2_MEDIA_ROUTES)].sort(),
+    [...WRITE_ENDPOINTS].sort(),
+  )
+  assert.deepEqual(Object.fromEntries(MEDIA_ENDPOINTS.map((endpoint) => [endpoint, v2MediaRoute(...endpoint.split(' '))])), {
+    'POST /__travelatlas/editor/upload': 'upload',
+    'POST /__travelatlas/editor/import': 'import',
+    'POST /__travelatlas/editor/media/delete': 'delete',
+  })
+  for (const endpoint of [...NON_MEDIA_WRITE_ENDPOINTS, 'GET /__travelatlas/editor/state', ...READ_ONLY_CATALOGS, 'GET /__travelatlas/editor/upload', 'POST /__travelatlas/editor/media']) {
+    assert.equal(v2MediaRoute(...endpoint.split(' ')), undefined, endpoint)
   }
-  for (const endpoint of [...NON_MEDIA_WRITE_ENDPOINTS, 'GET /__travelatlas/editor/state', ...READ_ONLY_CATALOGS]) {
-    const [method, pathname] = endpoint.split(' ')
-    assert.equal(editorDataModeRejection({ dataMode: 'v2', method, pathname }), undefined, endpoint)
+  // PR3b-2 的拒绝（409 与 E_V2_MEDIA_UNAVAILABLE）已删除。
+  for (const name of ['editorDataModeRejection', 'V2_MEDIA_ENDPOINTS', 'V2_MEDIA_READ_ONLY_CODE', 'V2_MEDIA_READ_ONLY_ERROR']) {
+    assert.equal(Object.hasOwn(dataModeModule, name), false, name)
   }
-  for (const { method, pathname } of pluginEndpoints()) {
-    const expected = MEDIA_ENDPOINTS.includes(`${method} ${pathname}`) ? 409 : undefined
-    assert.equal(editorDataModeRejection({ dataMode: 'v2', method, pathname })?.status, expected, `${method} ${pathname}`)
-  }
-  assert.equal(V2_MEDIA_READ_ONLY_ERROR, 'V2 数据模式下暂不能编辑照片与无人机影像（RFC-LOC-1 PR3b-3 开放）。')
-  assert.equal(V2_MEDIA_READ_ONLY_CODE, 'E_V2_MEDIA_UNAVAILABLE')
+  assert.equal(V2_WRITE_ERROR_CODES.includes('E_V2_MEDIA_UNAVAILABLE'), false)
 })
 
 test('V2 模式的写入路由表正好是 8 个非媒体写入端点；没列进去的接口（包括将来新加的、媒体端点、换了方法的）没有路由', () => {
@@ -321,9 +319,18 @@ test('插件对 add、change、unlink 三种事件注册同一个处理，且经
   assert.match(source, /if \(editorMutationDepth > 0 \|\| Date\.now\(\) < ignoreWatcherUntil\) return/)
 })
 
-test('legacy 模式：任何接口都不拒绝（旧行为不变）', () => {
-  for (const { method, pathname } of pluginEndpoints()) {
-    assert.equal(editorDataModeRejection({ dataMode: 'legacy', method, pathname }), undefined, `${method} ${pathname}`)
+test('插件不再按数据模式拒绝写入：没有 409、没有 editorDataModeRejection；V2 分派先看媒体路由（上传的请求体不按 JSON 读），再看非媒体路由', () => {
+  const source = pluginSource()
+  assert.doesNotMatch(source, /editorDataModeRejection|E_V2_MEDIA_UNAVAILABLE|\b409\b/)
+  const handleV2Write = sourceBetween(source, 'const handleV2Write = async (request, url) => {', 'export function travelAtlasLocalEditor', false)
+  assert.match(handleV2Write, /^const handleV2Write = async \(request, url\) => \{\n {2}const mediaRoute = v2MediaRoute\(request\.method, url\.pathname\)\n {2}if \(mediaRoute\) return handleV2Media\(mediaRoute, request, url\)\n {2}const route = v2EditorRoute/)
+  const handleV2Media = sourceBetween(source, 'const handleV2Media = async (routeName, request, url) => {', 'const handleV2Write = async', false)
+  assert.ok(
+    handleV2Media.indexOf("if (routeName === 'upload') return handleV2Upload(") < handleV2Media.indexOf('await readJsonBody(request)'),
+    '上传在读 JSON 请求体之前分出去',
+  )
+  // 旧模式的辅助函数原样传给 V2 媒体端点复用。
+  for (const name of ['safeSegment', 'reserveDestination', 'writeUpload', 'updateDroneSidecar', 'runImporter', 'normalizeInboxRelativePath', 'removeSidecarEntries', 'isPathInside']) {
+    assert.match(handleV2Media, new RegExp(`\\n {4}${name},\\n`), name)
   }
-  assert.equal(editorDataModeRejection({ dataMode: 'legacy', method: 'POST', pathname: '/__travelatlas/editor/unknown' }), undefined)
 })

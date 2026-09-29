@@ -60,7 +60,11 @@ test('错误码：旧模式有对应情形的码沿用旧文案（逐字）', ()
     messageFor('E_COUNTRY_HAS_MEDIA', { cities: [{ placeId: 'x', name: '雷克雅未克', count: 2 }] }),
     '以下城市仍有照片或无人机影像：雷克雅未克（2 个媒体）。请先在对应城市中彻底删除这些媒体。',
   )
-  assert.equal(messageFor('E_V2_MEDIA_UNAVAILABLE'), 'V2 数据模式下暂不能编辑照片与无人机影像（RFC-LOC-1 PR3b-3 开放）。')
+  // PR3b-3：媒体沿用旧模式上传、导入、删除的文案。
+  assert.equal(messageFor('E_MEDIA_LOCATION_NOT_FOUND'), '找不到对应的国家和城市，请先把城市加入旅行数据。')
+  assert.equal(messageFor('E_MEDIA_DELETE_NOT_HIDDEN'), '只能彻底删除当前城市中已经隐藏的照片或无人机影像。')
+  assert.equal(messageFor('E_MEDIA_SOURCE_MISSING', { id: 'media-0011223344556677' }), '找不到媒体 media-0011223344556677 对应的投递箱原图，已停止删除。')
+  assert.equal(messageFor('E_MEDIA_UPLOAD_REJECTED', { reason: '单个文件不能超过 250 MiB。' }), '单个文件不能超过 250 MiB。')
 })
 
 // ---------------------------------------------------------------------------
