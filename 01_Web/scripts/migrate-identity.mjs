@@ -1,24 +1,30 @@
 /**
  * 身份迁移工具（RFC-LOC-1 §3.5–§3.6，PR3a 规格 §3）：旧格式的私人数据 → V2 文件。
  *
- *   node scripts/migrate-identity.mjs --sample [--out-dir <dir>] [--apply]   公开样例；清单与决定只在内存里，除非另给路径
- *   node scripts/migrate-identity.mjs [--apply]                               私人目录
+ *   node scripts/migrate-identity.mjs --sample [--out-dir <dir>] [--apply] [--now <ISO 时间>]   公开样例；清单与决定只在内存里，除非另给路径
+ *   node scripts/migrate-identity.mjs [--apply [--switch]]                                     私人目录
  *     --manifest <path>    默认：私人目录 data/migration/identity-manifest.local.json
  *     --decisions <path>   默认：私人目录 data/migration/identity-decisions.local.json
  *     --out-dir <dir>      默认：私人目录 data/v2/（--sample 时 --apply 必须给出）
  *     --report <path>      把完整报告写成 JSON
  *     --details            摘要里列出记录 id 与地点旧 id
+ *     --switch             （RFC-LOC-1 PR4）只与 --apply 同用、只用于私人目录、输出目录只能是默认的 data/v2/：
+ *                          V2 文件写出并校验通过后，原子写入数据模式标记 `{ "mode": "v2" }`（scripts/data-mode.mjs 的
+ *                          writeDataModeMarker，不带 BOM），并打印如何回滚（`npm run data-mode -- legacy`）
+ *     --now <ISO 时间>     （RFC-LOC-1 PR4）只与 --sample 同用：固定规划时间（地点注册表的 generated_at、清单的 plannedAt），
+ *                          让 `npm run sample:v2` 的输出逐字节可复现。必须是 `2026-08-12T00:00:00.000Z` 这样的 UTC 时间
  *
  * 规划本身是纯函数 `planMigration`（src/data/migration/planMigration.ts）；本脚本只负责读文件、
  * 算旧文件的哈希、打印摘要、按门槛写文件。
  *
  * - 私人模式只读私人文件，【不】回落到样例：四个旧文件都不存在 → 无需迁移（退出码 0）；只缺几个 → 按空处理
- *   （足迹为 `{ schema_version: 1, records: [] }`，想去为没有文件）。
+ *   （足迹为 `{ schema_version: 1, records: [] }`，想去为没有文件）。「无需迁移」在隐私门之后、数据模式检查之前判断
+ *   （PR4 规格 §2.2，PR3b-1 发现 5）：PR4 起全新私人目录默认就是 V2，在上面跑迁移应当得到「无需迁移」，而不是被拒。
  * - dry-run（默认）：打印中文摘要。私人模式写回迁移清单（记录本次旧文件的哈希）；`--sample` 默认不写任何文件，
  *   给了 `--manifest` 才读写那个文件。
  * - `--apply`：canApply、迁移清单记录的哈希等于当前旧文件的哈希（`--sample` 且没给 `--manifest` 时清单只在内存里，
  *   不检查）、输出目录不存在或为空、输出目录在私人根目录之内或本仓库之外——全部满足才写出五个 V2 文件（各自原子写入），
- *   否则拒绝（退出码 2）。新分配了 UUID 时同时写回迁移清单。不写数据模式标记文件，不动任何旧文件。
+ *   否则拒绝（退出码 2）。新分配了 UUID 时同时写回迁移清单。不给 `--switch` 时不写数据模式标记文件；任何情况下都不动旧文件。
  *   私人模式下数据模式（scripts/data-mode.mjs）已经是 v2 时，`--apply` 直接拒绝（退出码 2，RFC-LOC-1 PR3b-1）：
  *   data/v2/ 是正在使用的数据；标记文件不合法时报错（退出码 1）。dry-run 不受影响。
  * - 隐私门（与 legacy-baseline.mjs 共用 private-output.mjs 的判断）：私人模式下 `--report` 与 `--out-dir`
@@ -33,9 +39,16 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { DataModeMarkerError, resolveDataMode } from './data-mode.mjs'
+import {
+  assertDataModeMarkerWritable,
+  DataModeMarkerError,
+  DataModeMarkerWriteRefused,
+  hasLegacyData,
+  resolveDataMode,
+  writeDataModeMarker,
+} from './data-mode.mjs'
 import { atomicJsonWrite } from './json-file.mjs'
-import { isAllowedPrivateOutput } from './private-output.mjs'
+import { canonicalPath, isAllowedPrivateOutput } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot, webRoot } from './private-profile.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files } from '../src/data/canonical/v2Schema.ts'
@@ -45,8 +58,8 @@ import { fileMetaFromRaw, planMigration } from '../src/data/migration/planMigrat
 
 const usage = [
   '用法：',
-  '  node scripts/migrate-identity.mjs --sample [--out-dir <dir>] [--apply] [--manifest <path>] [--decisions <path>] [--report <path>] [--details]',
-  '  node scripts/migrate-identity.mjs [--apply] [--manifest <path>] [--decisions <path>] [--out-dir <dir>] [--report <path>] [--details]',
+  '  node scripts/migrate-identity.mjs --sample [--out-dir <dir>] [--apply] [--now <ISO 时间>] [--manifest <path>] [--decisions <path>] [--report <path>] [--details]',
+  '  node scripts/migrate-identity.mjs [--apply [--switch]] [--manifest <path>] [--decisions <path>] [--out-dir <dir>] [--report <path>] [--details]',
 ].join('\n')
 
 class UsageError extends Error {}
@@ -54,15 +67,21 @@ class PrivacyGateError extends Error {}
 class ReadError extends Error {}
 class DataModeRefusal extends Error {}
 
+/** `--now` 只接受 `Date#toISOString()` 的写法（UTC、毫秒、Z），这样写进文件的值就是给出的原文。 */
+const isIsoTimestamp = (value) => {
+  const time = Date.parse(value)
+  return !Number.isNaN(time) && new Date(time).toISOString() === value
+}
+
 const parseArgs = (argv) => {
-  const options = { sample: false, apply: false, details: false }
+  const options = { sample: false, apply: false, details: false, switch: false }
   const valueAfter = (index, flag) => {
     const value = argv[index + 1]
-    if (!value || value.startsWith('--')) throw new UsageError(`${flag} 后面需要一个路径。`)
+    if (!value || value.startsWith('--')) throw new UsageError(`${flag} 后面需要一个${flag === '--now' ? '时间' : '路径'}。`)
     return value
   }
-  const flags = { '--sample': 'sample', '--apply': 'apply', '--details': 'details' }
-  const values = { '--manifest': 'manifest', '--decisions': 'decisions', '--out-dir': 'outDir', '--report': 'report' }
+  const flags = { '--sample': 'sample', '--apply': 'apply', '--details': 'details', '--switch': 'switch' }
+  const values = { '--manifest': 'manifest', '--decisions': 'decisions', '--out-dir': 'outDir', '--report': 'report', '--now': 'now' }
   const seen = new Set()
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
@@ -79,6 +98,13 @@ const parseArgs = (argv) => {
   }
   if (options.sample && options.apply && options.outDir === undefined) {
     throw new UsageError('--sample --apply 必须用 --out-dir 指定输出目录。')
+  }
+  // RFC-LOC-1 PR4 规格 §2.2：--switch 只用于私人目录的 --apply；--now 只用于 --sample。
+  if (options.switch && options.sample) throw new UsageError('--sample 不接受 --switch：公开样例不写数据模式标记。')
+  if (options.switch && !options.apply) throw new UsageError('--switch 只能与 --apply 同用。')
+  if (options.now !== undefined && !options.sample) throw new UsageError('--now 只能与 --sample 同用（用于固定公开样例的 generated_at）。')
+  if (options.now !== undefined && !isIsoTimestamp(options.now)) {
+    throw new UsageError('--now 必须是 UTC 的 ISO 8601 时间，写法同 Date#toISOString()，例如 2026-08-12T00:00:00.000Z。')
   }
   return options
 }
@@ -351,6 +377,21 @@ const run = async (options) => {
         throw new PrivacyGateError(`拒绝写入：${flag} ${path.resolve(target)} 位于 Git 仓库 ${sourceRoot} 之内（且不在私人根目录之内）。私人数据的迁移结果与报告只能写到私人根目录之内或仓库之外。`)
       }
     }
+    if (options.switch) {
+      // --switch 切换后 App 只读 data/v2/：输出写到别处再切，App 读到的是空目录或旧的 V2 文件。
+      if (options.outDir !== undefined && canonicalPath(options.outDir) !== canonicalPath(paths.v2DataRoot)) {
+        throw new UsageError(`--switch 只能把 V2 文件写到私人目录的 ${paths.v2DataRoot}（V2 模式下 App 只读那里），不能与其他 --out-dir 同用。`)
+      }
+      // 标记文件的隐私门也在写任何文件之前检查（DataModeMarkerWriteRefused，退出码 2）。
+      assertDataModeMarkerWritable(paths)
+    }
+    // RFC-LOC-1 PR4 规格 §2.2（PR3b-1 发现 5）：先看有没有旧数据。PR4 起全新私人目录默认就是 V2，
+    // 在上面跑迁移（包括 --apply）应当得到「无需迁移」（退出码 0），而不是被下面的 V2 检查拒绝。
+    // 这里只看四个旧文件在不在（existsSync），不读内容。
+    if (!hasLegacyData(paths)) {
+      console.log('私人目录没有旧数据，无需迁移。')
+      return 0
+    }
     // RFC-LOC-1 PR3b-1 §2.3：V2 数据模式下 data/v2/ 是正在使用的数据，--apply 不得运行（退出码 2）；dry-run 照常。
     // 标记文件不合法时 resolveDataMode 抛 DataModeMarkerError（退出码 1）。都在读取任何私人文件之前。
     if (options.apply && resolveDataMode(paths).mode === 'v2') {
@@ -369,7 +410,8 @@ const run = async (options) => {
     ? await readIdentityFile(decisionsPath, parseIdentityDecisions, { required: options.decisions !== undefined })
     : undefined
 
-  const now = new Date().toISOString()
+  // --now（只在 --sample 下可用，parseArgs 已检查）固定规划时间，让公开样例的生成逐字节可复现。
+  const now = options.now ?? new Date().toISOString()
   const raw = { ...loaded.raw, now }
   const result = planMigration({
     raw,
@@ -424,14 +466,21 @@ const run = async (options) => {
     await atomicJsonWrite(manifestPath, result.manifest)
     console.log(`迁移清单新分配了 ${allocated} 个 UUID，已写回 ${path.resolve(manifestPath)}。`)
   }
-  console.log('没有写数据模式标记文件，旧文件未改动。')
+  if (!options.switch) {
+    console.log('没有写数据模式标记文件，旧文件未改动。')
+    return 0
+  }
+  // --switch（RFC-LOC-1 PR4 规格 §2.2）：V2 文件已写出并从磁盘读回校验通过，再原子写入标记。
+  const markerPath = await writeDataModeMarker(paths, 'v2')
+  console.log(`已写入数据模式标记 ${markerPath}：{ "mode": "v2" }。App 与各脚本从现在起读写 data/v2/；旧文件未改动。`)
+  console.log('回滚：npm run data-mode -- legacy（切回旧文件；在 V2 模式下做的编辑不会带回旧文件）。')
   return 0
 }
 
 try {
   process.exitCode = await run(parseArgs(process.argv.slice(2)))
 } catch (error) {
-  if (error instanceof PrivacyGateError || error instanceof DataModeRefusal) {
+  if (error instanceof PrivacyGateError || error instanceof DataModeRefusal || error instanceof DataModeMarkerWriteRefused) {
     console.error(`[migrate-identity] ${error.message}`)
     process.exitCode = 2
   } else if (error instanceof DataModeMarkerError) {
