@@ -25,8 +25,13 @@
  * - `--apply`：canApply、迁移清单记录的哈希等于当前旧文件的哈希（`--sample` 且没给 `--manifest` 时清单只在内存里，
  *   不检查）、输出目录不存在或为空、输出目录在私人根目录之内或本仓库之外——全部满足才写出五个 V2 文件（各自原子写入），
  *   否则拒绝（退出码 2）。新分配了 UUID 时同时写回迁移清单。不给 `--switch` 时不写数据模式标记文件；任何情况下都不动旧文件。
+ *   「为空」不算 `--manifest` 指向的那个文件本身（RFC-LOC-1 PR4）：公开样例把固定的迁移清单放在输出目录里
+ *   （src/data/v2-sample/identity-manifest.json），重新生成时只删五个 V2 文件、保留清单。
  *   私人模式下数据模式（scripts/data-mode.mjs）已经是 v2 时，`--apply` 直接拒绝（退出码 2，RFC-LOC-1 PR3b-1）：
  *   data/v2/ 是正在使用的数据；标记文件不合法时报错（退出码 1）。dry-run 不受影响。
+ * - `--sample` 的输出（RFC-LOC-1 PR4 规格 §2.3）：文件名不带 `.local`（places.json、travel-map.json……，见 scripts/v2-sample.mjs），
+ *   因为那是公开样例而不是私人数据；隐私门在 `--sample` 下额外放行 `src/data/v2-sample/` 这一个目录（不含子目录），
+ *   仓库里的其他位置照旧拒绝。生成命令是 `npm run sample:v2`。
  * - 隐私门（与 legacy-baseline.mjs 共用 private-output.mjs 的判断）：私人模式下 `--report` 与 `--out-dir`
  *   只能在私人根目录之内（即使私人根在仓库里，例如独立克隆的 06_private/）或仓库之外（退出码 2），
  *   在读取任何私人文件之前检查。`--apply` 的输出目录用同一个判断。摘要只打印计数、键、id 与 JSON 路径，不打印名称与坐标；名称写在 `--report` 里。
@@ -50,6 +55,7 @@ import {
 import { atomicJsonWrite } from './json-file.mjs'
 import { canonicalPath, isAllowedPrivateOutput } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot, webRoot } from './private-profile.mjs'
+import { isV2SampleDirectory, V2_SAMPLE_FILE_NAMES } from './v2-sample.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files } from '../src/data/canonical/v2Schema.ts'
 import { isTravelMapExport } from '../src/data/derive/travelAtlas.ts'
@@ -319,7 +325,11 @@ const printSummary = (report, { mode, apply, details, dataLabel }) => {
 
 // ---- 写出 ----
 
-const isEmptyOrMissingDirectory = async (directory) => {
+/**
+ * 输出目录不存在或为空。`manifestPath` 若恰好在这个目录里（公开样例的固定清单），它本身不算（RFC-LOC-1 PR4）；
+ * 目录里的其他任何东西（包括清单的 `.bak`）都算非空。
+ */
+const isEmptyOrMissingDirectory = async (directory, manifestPath) => {
   let info
   try {
     info = await stat(directory)
@@ -328,7 +338,9 @@ const isEmptyOrMissingDirectory = async (directory) => {
     throw error
   }
   if (!info.isDirectory()) return false
-  return (await readdir(directory)).length === 0
+  const manifestHere = manifestPath !== undefined && canonicalPath(path.dirname(path.resolve(manifestPath))) === canonicalPath(directory)
+  const ignored = manifestHere ? path.basename(manifestPath) : undefined
+  return (await readdir(directory)).filter((name) => name !== ignored).length === 0
 }
 
 const writeText = async (filePath, text) => {
@@ -336,23 +348,24 @@ const writeText = async (filePath, text) => {
   await writeFile(filePath, text, 'utf8')
 }
 
-const applyFiles = async (outDir, files) => {
+/** 写出五个 V2 文件（`fileNames`：私人目录用 V2_FILE_NAMES，--sample 用不带 .local 的 V2_SAMPLE_FILE_NAMES），再从磁盘读回校验。 */
+const applyFiles = async (outDir, files, fileNames) => {
   await mkdir(outDir, { recursive: true })
-  for (const key of V2_FILE_KEYS) await atomicJsonWrite(path.join(outDir, V2_FILE_NAMES[key]), files[key])
+  for (const key of V2_FILE_KEYS) await atomicJsonWrite(path.join(outDir, fileNames[key]), files[key])
 
   // 从磁盘读回，逐个校验。
   const written = {}
   console.log(`已写入 ${path.resolve(outDir)}：`)
   for (const key of V2_FILE_KEYS) {
-    const filePath = path.join(outDir, V2_FILE_NAMES[key])
+    const filePath = path.join(outDir, fileNames[key])
     const bytes = await readFile(filePath)
     written[key] = JSON.parse(bytes.toString('utf8'))
-    console.log(`  ${V2_FILE_NAMES[key]}  ${bytes.length} 字节`)
+    console.log(`  ${fileNames[key]}  ${bytes.length} 字节`)
   }
   const problems = validateV2Files(written)
   if (problems.length > 0) {
     console.log(`写出的文件有 ${problems.length} 处没通过 V2 校验：`)
-    for (const problem of problems) console.log(`  ${V2_FILE_NAMES[problem.file]} ${problem.path}：${problem.message}`)
+    for (const problem of problems) console.log(`  ${fileNames[problem.file]} ${problem.path}：${problem.message}`)
     return false
   }
   console.log(`五个文件从磁盘读回后都通过 V2 校验（地点 ${written.places.places.length} 个）。`)
@@ -452,15 +465,17 @@ const run = async (options) => {
     if (!manifest) refusals.push(`没有迁移清单 ${path.resolve(manifestPath)}：请先 dry-run。`)
     else if (manifest.sourceHash !== loaded.sourceHash) refusals.push('迁移清单记录的旧文件哈希与当前不同（数据在上次 dry-run 之后变过）：请先重新 dry-run。')
   }
-  if (!(await isEmptyOrMissingDirectory(outDir))) refusals.push(`输出目录 ${path.resolve(outDir)} 不是空目录。`)
-  if (!isAllowedPrivateOutput(outDir)) refusals.push(`输出目录 ${path.resolve(outDir)} 位于 Git 仓库 ${sourceRoot} 之内（且不在私人根目录之内）。`)
+  if (!(await isEmptyOrMissingDirectory(outDir, manifestPath))) refusals.push(`输出目录 ${path.resolve(outDir)} 不是空目录。`)
+  // RFC-LOC-1 PR4：--sample 额外放行 src/data/v2-sample/ 这一个目录（公开样例，不含私人数据）；仓库内其他位置照旧拒绝。
+  const sampleDirectory = mode === 'sample' && isV2SampleDirectory(outDir)
+  if (!sampleDirectory && !isAllowedPrivateOutput(outDir)) refusals.push(`输出目录 ${path.resolve(outDir)} 位于 Git 仓库 ${sourceRoot} 之内（且不在私人根目录之内）。`)
   if (refusals.length > 0) {
     console.log('拒绝写出（--apply）：')
     for (const reason of refusals) console.log(`  - ${reason}`)
     return 2
   }
 
-  if (!(await applyFiles(outDir, result.files))) return 1
+  if (!(await applyFiles(outDir, result.files, mode === 'sample' ? V2_SAMPLE_FILE_NAMES : V2_FILE_NAMES))) return 1
   const allocated = report.places.filter((place) => place.allocated).length
   if (manifestPath && allocated > 0) {
     await atomicJsonWrite(manifestPath, result.manifest)

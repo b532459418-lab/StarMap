@@ -13,6 +13,10 @@
  *   五个都缺时得到空的 Canonical（没有地点、记录、想去、媒体，editor-state 为空）。
  *   【不】回落到样例（决定 E）。补齐后的五个文件先过 `validateV2Files`（V2 Reader 的前提），
  *   不合法就抛 `V2FilesInvalidError`，不猜。
+ * - v2 的来源（RFC-LOC-1 PR4 规格 §2.3）：`source` 默认 `'local'`（私人目录 `data/v2/`，与 PR3b 相同）；
+ *   公开样例（`src/data/v2-sample/`）传 `'sample'`，足迹与想去的来源都标为 `'sample'`，App 现有的写入门控
+ *   （`travelAtlasDataSource` / `wantToGoDataSource`）因此照旧关闭编辑。V2 Reader 本身不变：来源是运行时字段，
+ *   在读出之后换上。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
@@ -41,9 +45,12 @@ export type DataMode = 'legacy' | 'v2'
 /** `data/v2/` 下五个文件的原始 JSON 值；缺的文件为 undefined（或不出现）。 */
 export type V2FileInputs = Partial<Record<V2FileKey, unknown>>
 
+/** V2 文件从哪来：私人目录（默认）或公开样例。决定 Canonical 的 `travel.source` 与 `wantToGo.source`。 */
+export type V2Source = 'local' | 'sample'
+
 export type AppInputs =
   | (RawAppInputs & { dataMode: 'legacy' })
-  | { dataMode: 'v2'; v2Files: V2FileInputs | undefined }
+  | { dataMode: 'v2'; v2Files: V2FileInputs | undefined; source?: V2Source }
 
 /**
  * 地点注册表缺失时补上的 `generated_at`。schema 要求非空，V2 Reader 读时丢弃它，所以取一个固定值。
@@ -95,13 +102,20 @@ export class V2FilesInvalidError extends Error {
   }
 }
 
-/** 按数据模式取 Canonical。v2 模式只读 `inputs.v2Files`。 */
+/** 按数据模式取 Canonical。v2 模式只读 `inputs.v2Files`；`inputs.source` 缺省为 `'local'`。 */
 export function canonicalForInputs(inputs: AppInputs): CanonicalData {
   if (inputs.dataMode === 'v2') {
     const files = completeV2Files(inputs.v2Files)
     const problems = validateV2Files(files)
     if (problems.length > 0) throw new V2FilesInvalidError(problems)
-    return readV2(files as unknown as V2Files)
+    const canonical = readV2(files as unknown as V2Files)
+    const source = inputs.source ?? 'local'
+    if (source === 'local') return canonical
+    return {
+      ...canonical,
+      travel: { ...canonical.travel, source },
+      wantToGo: { ...canonical.wantToGo, source },
+    }
   }
   return legacyAdapter(inputs)
 }

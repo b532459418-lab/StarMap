@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 
 import { isUuidV7 } from '../src/data/canonical/uuidv7.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files } from '../src/data/canonical/v2Schema.ts'
+import { V2_SAMPLE_FILE_NAMES } from './v2-sample.mjs'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = path.join(webRoot, 'scripts', 'migrate-identity.mjs')
@@ -108,9 +109,10 @@ const readJson = async (filePath) => JSON.parse(await readFile(filePath, 'utf8')
 
 const manifestPath = (root) => path.join(root, 'data', 'migration', 'identity-manifest.local.json')
 
-const assertV2Files = async (directory) => {
-  assert.deepEqual((await readdir(directory)).sort(), Object.values(V2_FILE_NAMES).sort())
-  const files = Object.fromEntries(await Promise.all(V2_FILE_KEYS.map(async (key) => [key, await readJson(path.join(directory, V2_FILE_NAMES[key]))])))
+/** 目录里恰好是五个 V2 文件并都通过校验。私人目录的文件名带 .local；--sample 的输出不带（RFC-LOC-1 PR4，V2_SAMPLE_FILE_NAMES）。 */
+const assertV2Files = async (directory, fileNames = V2_FILE_NAMES) => {
+  assert.deepEqual((await readdir(directory)).sort(), Object.values(fileNames).sort())
+  const files = Object.fromEntries(await Promise.all(V2_FILE_KEYS.map(async (key) => [key, await readJson(path.join(directory, fileNames[key]))])))
   assert.deepEqual(validateV2Files(files), [])
   return files
 }
@@ -142,12 +144,13 @@ test('--sample --details：列出地点旧 id → 新 id，不打印名称与坐
   assert.doesNotMatch(result.stdout, /Reykjavik|雷克雅未克|64\.1466/)
 }))
 
-test('--sample --apply --out-dir：写出五个文件，都通过校验；地点 11 个；不写数据模式标记', () => withTemp(async ({ root, out }) => {
+test('--sample --apply --out-dir：写出五个文件（PR4 起文件名不带 .local），都通过校验；地点 11 个；不写数据模式标记', () => withTemp(async ({ root, out }) => {
   const target = path.join(out, 'v2')
   const result = runCli(['--sample', '--apply', '--out-dir', target], root)
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
   assert.match(result.stdout, /五个文件从磁盘读回后都通过 V2 校验（地点 11 个）/)
-  const files = await assertV2Files(target)
+  assert.match(result.stdout, /^ {2}places\.json {2}\d+ 字节$/m)
+  const files = await assertV2Files(target, V2_SAMPLE_FILE_NAMES)
   assert.equal(files.places.places.length, 11)
   assert.ok(files.places.places.every((place) => isUuidV7(place.id)))
   assert.equal(files.travel.schema_version, 2)
@@ -515,9 +518,9 @@ test('--sample --now：规划时间固定为给出的值（清单 plannedAt、�
     const target = path.join(out, name)
     const result = runCli(['--sample', '--apply', '--out-dir', target, '--manifest', manifest, '--now', now], root)
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-    const files = await assertV2Files(target)
+    const files = await assertV2Files(target, V2_SAMPLE_FILE_NAMES)
     assert.equal(files.places.generated_at, now)
-    outputs.push(Object.fromEntries(await Promise.all(V2_FILE_KEYS.map(async (key) => [key, await readFile(path.join(target, V2_FILE_NAMES[key]), 'utf8')]))))
+    outputs.push(Object.fromEntries(await Promise.all(V2_FILE_KEYS.map(async (key) => [key, await readFile(path.join(target, V2_SAMPLE_FILE_NAMES[key]), 'utf8')]))))
   }
   assert.deepEqual(outputs[0], outputs[1])
 }))

@@ -1,0 +1,4 @@
+# RFC-LOC-1 PR4: `npm run sample:v2` regenerates the V2 public sample byte for byte, with LF line endings.
+# Keep LF in every checkout (including `git archive` in `npm run release:check`) so the committed files and the
+# generator output stay identical on Windows clones with core.autocrlf=true.
+01_Web/src/data/v2-sample/*.json text eol=lf

@@ -551,3 +551,42 @@ test('--path v2：与 --sample、--normalize、--verify 同用是参数错误（
   assert.equal(existsSync(inside), false)
   assert.deepEqual(await readdir(out), [])
 }))
+
+// ---------------------------------------------------------------------------
+// RFC-LOC-1 PR4：--path v2-sample（公开模式读的 V2 样例）
+// ---------------------------------------------------------------------------
+
+test('--path v2-sample：读已提交的 src/data/v2-sample/（来源 sample），与进程内 canonicalForInputs → 派生 → 基线逐字节相同；--sample 可给可不给；不碰私人根', () => withTemp(async ({ root, out }) => {
+  await writePrivate(root, 'travel-map.local.json', '{ broken')
+  const first = path.join(out, 'v2-sample.json')
+  const result = runCli(['--path', 'v2-sample', '--out', first], root)
+  assert.equal(result.status, 0, result.stderr)
+  assert.doesNotMatch(result.stderr, /私人根目录/, '公开模式语义：不报私人根，也不读私人文件')
+  const second = path.join(out, 'v2-sample-with-sample-flag.json')
+  assert.equal(runCli(['--sample', '--out', second, '--path', 'v2-sample'], root).status, 0)
+  const text = await readFile(first, 'utf8')
+  assert.equal(await readFile(second, 'utf8'), text)
+
+  const { readV2SampleFiles } = await import('./v2-sample.mjs')
+  const canonical = canonicalForInputs({ dataMode: 'v2', v2Files: readV2SampleFiles(), source: 'sample' })
+  const expected = `${stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW }))}\n`
+  assert.equal(text, expected)
+  const baseline = JSON.parse(text)
+  assert.equal(baseline.modules.travelAtlas.travelAtlasDataSource, 'sample')
+  assert.equal(baseline.modules.wantToGo.wantToGoDataSource, 'sample')
+  assert.equal(baseline.modules.travelAtlas.cities.length, 5)
+}))
+
+test('--path v2-sample：与 --normalize、--verify 同用是参数错误（退出码 1）', () => withTemp(async ({ root, out }) => {
+  for (const args of [
+    ['--path', 'v2-sample', '--normalize', '--out', path.join(out, 'a.json')],
+    ['--verify', '--path', 'v2-sample'],
+    ['--verify', '--sample', '--path', 'v2-sample'],
+    ['--path', 'v2-sample'],
+  ]) {
+    const result = runCli(args, root)
+    assert.equal(result.status, 1, `${args.join(' ')}\n${result.stderr}`)
+    assert.match(result.stderr, /用法/)
+  }
+  assert.deepEqual(await readdir(out), [])
+}))

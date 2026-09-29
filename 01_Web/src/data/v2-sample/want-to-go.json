@@ -1,0 +1,32 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-08-12T00:00:00.000Z",
+  "privacy_level": "public-sample",
+  "intended_use": "Neutral open-source StarMap demonstration data.",
+  "items": [
+    {
+      "id": "wtg_2026-08-12_nuuk",
+      "placeId": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+      "addedAt": "2026-08-12",
+      "hidden": false,
+      "note": "格陵兰的首府，坐落在峡湾入海口，是世界上最北的首府之一。",
+      "source": "sample"
+    },
+    {
+      "id": "wtg_2026-08-12_tromso",
+      "placeId": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+      "addedAt": "2026-08-12",
+      "hidden": false,
+      "note": "北极圈以北的城市，冬季可以看极光，夏季有午夜阳光。",
+      "source": "sample"
+    },
+    {
+      "id": "wtg_2026-08-12_akureyri",
+      "placeId": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "addedAt": "2026-08-12",
+      "hidden": false,
+      "note": "冰岛北部最大的城镇，位于埃亚峡湾的深处。",
+      "source": "sample"
+    }
+  ]
+}

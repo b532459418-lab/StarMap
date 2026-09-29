@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { auditV2SampleDirectory, V2_SAMPLE_FILE_NAMES } from './v2-sample.mjs'
+
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const projectRoot = path.resolve(webRoot, '..')
 const publicFiles = process.argv.includes('--manifest-stdin')
@@ -31,6 +33,8 @@ const existingViolations = publicFiles.filter((filePath) =>
 // copy of the private want-to-go.local.json, is a violation even without `.local.`.
 const allowedWantToGoPaths = new Set([
   '01_Web/src/data/want-to-go.sample.json',
+  // RFC-LOC-1 PR4: the V2 public sample (checked by auditV2SampleDirectory below).
+  `01_Web/src/data/v2-sample/${V2_SAMPLE_FILE_NAMES.wantToGo}`,
   '03_Reference/want-to-go.schema.json',
   '01_Web/scripts/want-to-go-store.mjs',
   '01_Web/scripts/want-to-go-store.test.mjs',
@@ -110,6 +114,12 @@ if (wantToGoSample !== undefined) {
   if (editorItems) errors.push(`want-to-go.sample.json must not contain items written by the local editor (source = local-editor):\n${editorItems}`)
 }
 
+// RFC-LOC-1 PR4: public mode reads the V2 sample in src/data/v2-sample/. The checks mirror the legacy sample
+// checks above (privacy_level, runnable records and items, wtg_ ids, no hidden or local-editor items), plus: only
+// the five V2 files and the fixed identity manifest may live there, and the five files must pass validateV2Files.
+// The legacy sample checks stay until PR5 removes the legacy samples.
+errors.push(...auditV2SampleDirectory())
+
 // The drone media derivation lives in src/data/derive/droneMedia.ts (RFC-LOC-1 PR1);
 // src/data/droneMedia.ts only re-exports it. Both files get the same check.
 for (const droneFile of ['src/data/droneMedia.ts', 'src/data/derive/droneMedia.ts']) {
@@ -128,6 +138,7 @@ if (errors.length > 0) {
   console.log(`Tracked and unignored public files checked: ${publicFiles.length}`)
   console.log(`Neutral sample records: ${sampleData.records.length}`)
   console.log(`Neutral want-to-go sample items: ${wantToGoSampleItems.length}`)
+  console.log('V2 public sample (src/data/v2-sample/) passed its checks.')
   console.log('Required .gitignore safeguards are present.')
   console.log('Private Inbox, generated media, local catalogs, local travel data, and environment files are outside the tracked public boundary.')
   console.log('Note: this checks the current tree. Publish from a clean repository so earlier private Git history is not inherited.')
