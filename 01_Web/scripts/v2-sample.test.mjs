@@ -43,16 +43,11 @@ test('已提交的 V2 样例：五个文件通过 validateV2Files；目录里只
   assert.deepEqual(auditV2SampleDirectory(), [])
 })
 
-test('行尾：V2 样例与它的两份输入（旧足迹、旧想去样例）在任何检出里都是 LF——清单记录的是输入原文的 sha256，生成结果按字节比较', () => {
-  const attributes = readFileSync(path.join(webRoot, '..', '.gitattributes'), 'utf8')
-  for (const rule of ['01_Web/src/data/v2-sample/*.json text eol=lf', '01_Web/src/data/travel-map.sample.json text eol=lf', '01_Web/src/data/want-to-go.sample.json text eol=lf']) {
-    assert.ok(attributes.split(/\r?\n/).includes(rule), `.gitattributes 缺少：${rule}`)
-  }
-  const files = [
-    path.join(webRoot, 'src', 'data', 'travel-map.sample.json'),
-    path.join(webRoot, 'src', 'data', 'want-to-go.sample.json'),
-    ...V2_SAMPLE_ALLOWED_FILES.map((name) => path.join(V2_SAMPLE_DIRECTORY, name)),
-  ]
+test('行尾：V2 样例在任何检出里都是 LF（PR5b 删除了两份旧样例与它们的规则）', () => {
+  const rules = readFileSync(path.join(webRoot, '..', '.gitattributes'), 'utf8').split(/\r?\n/)
+  assert.ok(rules.includes('01_Web/src/data/v2-sample/*.json text eol=lf'), '.gitattributes 缺少 V2 样例的规则')
+  assert.equal(rules.some((rule) => rule.includes('.sample.json')), false, '旧样例的规则已删除')
+  const files = V2_SAMPLE_ALLOWED_FILES.map((name) => path.join(V2_SAMPLE_DIRECTORY, name))
   for (const file of files) assert.equal(readFileSync(file).includes(13), false, `${file} 含有 CR（检出时被改成了 CRLF？）`)
 })
 

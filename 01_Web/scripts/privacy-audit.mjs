@@ -32,8 +32,7 @@ const existingViolations = publicFiles.filter((filePath) =>
 // Only these tracked files may be named want-to-go*. Anything else, such as a renamed
 // copy of the private want-to-go.local.json, is a violation even without `.local.`.
 const allowedWantToGoPaths = new Set([
-  '01_Web/src/data/want-to-go.sample.json',
-  // RFC-LOC-1 PR4: the V2 public sample (checked by auditV2SampleDirectory below).
+  // RFC-LOC-1 PR4: the V2 public sample (checked by auditV2SampleDirectory below). PR5b removed the legacy sample.
   `01_Web/src/data/v2-sample/${V2_SAMPLE_FILE_NAMES.wantToGo}`,
   '03_Reference/want-to-go.schema.json',
 ])
@@ -44,7 +43,10 @@ const unexpectedWantToGoFiles = publicFiles.filter((filePath) => {
     && existsSync(path.join(projectRoot, filePath))
 })
 
-const samplePath = path.join(webRoot, 'src', 'data', 'travel-map.sample.json')
+// RFC-LOC-1 PR5b: the legacy-format travel sample now lives only as Core's test fixture (the input shape the Core
+// adapters take today). It is the one legacy-format file allowed in the tree and keeps the neutral-sample checks.
+const coreFixtureLabel = 'src/worldgraph/adapters/travel.fixture.source.json'
+const samplePath = path.join(webRoot, ...coreFixtureLabel.split('/'))
 const sampleData = JSON.parse(readFileSync(samplePath, 'utf8'))
 const errors = []
 const gitignore = readFileSync(path.join(projectRoot, '.gitignore'), 'utf8')
@@ -70,52 +72,20 @@ if (missingIgnoreRules.length > 0) {
   errors.push(`Required .gitignore safeguards are missing:\n${missingIgnoreRules.map((rule) => `  - ${rule}`).join('\n')}`)
 }
 if (sampleData.privacy_level !== 'public-sample') {
-  errors.push('travel-map.sample.json must declare privacy_level = public-sample.')
+  errors.push(`${coreFixtureLabel} must declare privacy_level = public-sample.`)
 }
 if (!Array.isArray(sampleData.records) || sampleData.records.length === 0) {
-  errors.push('travel-map.sample.json needs at least one runnable sample record.')
+  errors.push(`${coreFixtureLabel} needs at least one runnable sample record.`)
 }
 
 if (unexpectedWantToGoFiles.length > 0) {
   errors.push(`Only the neutral want-to-go sample, its schema, and the store scripts may be tracked:\n${unexpectedWantToGoFiles.map((filePath) => `  - ${filePath}`).join('\n')}`)
 }
 
-const wantToGoSamplePath = path.join(webRoot, 'src', 'data', 'want-to-go.sample.json')
-let wantToGoSample
-try {
-  wantToGoSample = JSON.parse(readFileSync(wantToGoSamplePath, 'utf8'))
-} catch (error) {
-  errors.push(`want-to-go.sample.json must exist and be valid JSON: ${error.message}`)
-}
-const wantToGoSampleItems = Array.isArray(wantToGoSample?.items) ? wantToGoSample.items : []
-if (wantToGoSample !== undefined) {
-  const describeItem = (item, index) => (typeof item?.id === 'string' ? item.id : `item ${index + 1}`)
-  const listItems = (predicate) => wantToGoSampleItems
-    .map((item, index) => (predicate(item) ? `  - ${describeItem(item, index)}` : undefined))
-    .filter(Boolean)
-    .join('\n')
-
-  if (wantToGoSample?.schema_version !== 1) {
-    errors.push('want-to-go.sample.json must declare schema_version = 1.')
-  }
-  if (wantToGoSample?.privacy_level !== 'public-sample') {
-    errors.push('want-to-go.sample.json must declare privacy_level = public-sample.')
-  }
-  if (wantToGoSampleItems.length === 0) {
-    errors.push('want-to-go.sample.json needs a non-empty items array.')
-  }
-  const badIds = listItems((item) => typeof item?.id !== 'string' || !item.id.startsWith('wtg_'))
-  if (badIds) errors.push(`want-to-go.sample.json item ids must start with wtg_:\n${badIds}`)
-  const hiddenItems = listItems((item) => item?.hidden === true)
-  if (hiddenItems) errors.push(`want-to-go.sample.json must not contain hidden items:\n${hiddenItems}`)
-  const editorItems = listItems((item) => item?.source === 'local-editor')
-  if (editorItems) errors.push(`want-to-go.sample.json must not contain items written by the local editor (source = local-editor):\n${editorItems}`)
-}
-
-// RFC-LOC-1 PR4: public mode reads the V2 sample in src/data/v2-sample/. The checks mirror the legacy sample
-// checks above (privacy_level, runnable records and items, wtg_ ids, no hidden or local-editor items), plus: only
-// the five V2 files may live there (PR5b removed the identity manifest), and they must pass validateV2Files.
-// The legacy sample checks stay until PR5 removes the legacy samples.
+// RFC-LOC-1 PR4: public mode reads the V2 sample in src/data/v2-sample/. The checks: privacy_level, runnable records
+// and items, wtg_ ids, no hidden or local-editor items, only the five V2 files in the directory (PR5b removed the
+// identity manifest), and the five files must pass validateV2Files. PR5b removed the legacy samples and their checks;
+// the V2 sample is now the only source and is maintained by hand.
 errors.push(...auditV2SampleDirectory())
 
 // The drone media derivation lives in src/data/derive/droneMedia.ts (RFC-LOC-1 PR1);
@@ -134,8 +104,7 @@ if (errors.length > 0) {
 } else {
   console.log('StarMap privacy audit passed.')
   console.log(`Tracked and unignored public files checked: ${publicFiles.length}`)
-  console.log(`Neutral sample records: ${sampleData.records.length}`)
-  console.log(`Neutral want-to-go sample items: ${wantToGoSampleItems.length}`)
+  console.log(`Neutral Core fixture records (${coreFixtureLabel}): ${sampleData.records.length}`)
   console.log('V2 public sample (src/data/v2-sample/) passed its checks.')
   console.log('Required .gitignore safeguards are present.')
   console.log('Private Inbox, generated media, local catalogs, local travel data, and environment files are outside the tracked public boundary.')

@@ -1,12 +1,13 @@
 /**
- * 样例数据 fixture —— travelAtlas.ts 对 tracked 的 src/data/travel-map.sample.json 的已知输出。
+ * 样例数据 fixture —— 旧 travelAtlas.ts 对 tracked 的 ./travel.fixture.source.json（RFC-LOC-1 PR5b 前是 src/data/travel-map.sample.json） 的已知输出。
+ * 那份 JSON 是 Core 今天的输入形状，PR5b 起作为 Core 自己的测试夹具放在这里，Core 切换时再换。
  *
  * 为什么手写而不是 import travelAtlas.ts：travelAtlas.ts import 了 Vite 虚拟模块
  * 'virtual:starmap-private-data' 并读 import.meta.env，两者在 Vite 之外都无法解析，
  * node --test 直接崩；FR-MOD 也禁止 Core 依赖它。
  *
  * 手写 fixture 的风险是会跟真实数据漂移，因此 travel.test.ts 里有一个专门的测试
- * （"fixture 与 tracked 的 travel-map.sample.json 保持一致"）把它逐字段钉回那份 JSON。
+ * （"fixture 与 tracked 的 travel.fixture.source.json 保持一致"）把它逐字段钉回那份 JSON。
  * 本文件由 travel.test.ts 抽出（PR3），供 travel.test.ts 与 query.parity.test.ts 共用；
  * 内容与抽出前逐字相同，改它等于同时改动那两处测试的前提。
  *
