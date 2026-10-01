@@ -2,7 +2,7 @@
  * 公开样例的 V2 文件 src/data/v2-sample/（RFC-LOC-1 PR4 规格 §2.3、§3「V2 样例」「隐私审计」；PR5b 决定 L）。
  *
  * PR5b 起这五个文件是唯一来源、手工维护：生成器（`sample:v2`）、固定的迁移清单与它们的「可复现」「shadow compare」用例
- * 随迁移工具删除；派生结果由 src/data/canonical/derive.test.ts 的基线锁定钉住（77cd872b…）。这里测：
+ * 随迁移工具删除；派生结果由 src/data/canonical/derive.test.ts 的基线锁定钉住（5cd7bf55…）。这里测：
  * - 已提交文件通过 validateV2Files，目录里只有五个文件；
  * - 行尾在任何检出里都是 LF；
  * - canonicalForInputs 的来源参数与 App 接线；

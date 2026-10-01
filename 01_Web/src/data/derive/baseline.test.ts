@@ -159,6 +159,8 @@ const makeExports = (now = NOW): AppDataExports => {
       hiddenWantToGoItems: wantToGoItems.filter((item) => item.hidden),
       wantToGoItemByEntityId: new Map([['place:wtg:GL:nuuk', wantToGoItems[0]]]),
       plannedRecordByEntityId: new Map([['place:planned:planned_bergen', plannedRecords[0]]]),
+      wantToGoItemById: new Map(wantToGoItems.map((item) => [item.id, item])),
+      plannedRecordById: new Map(plannedRecords.map((record) => [record.id, record])),
       wantToGoConvertBlockReason: (item: WantToGoItem) => (item.place.kind === 'city' ? undefined : '整个国家'),
       plannedConvertBlockReason: () => undefined,
     },
@@ -260,6 +262,8 @@ test('module namespace 之类多出的导出被忽略', () => {
 test('Map 转成按插入顺序的 [key, value] 数组，函数按定义域求值', () => {
   const baseline = JSON.parse(baselineText(makeExports()))
   assert.deepEqual(baseline.modules.wantToGo.wantToGoItemByEntityId.map(([key]: [string]) => key), ['place:wtg:GL:nuuk'])
+  assert.deepEqual(baseline.modules.wantToGo.wantToGoItemById.map(([key]: [string]) => key), ['wtg_nuuk', 'wtg_iceland'])
+  assert.deepEqual(baseline.modules.wantToGo.plannedRecordById.map(([key]: [string]) => key), ['planned_bergen'])
   assert.deepEqual(baseline.modules.wantToGo.wantToGoConvertBlockReason, [['wtg_nuuk', null], ['wtg_iceland', '整个国家']])
   assert.deepEqual(baseline.modules.mediaCatalog.getMediaSource[0], [
     'photo_a',

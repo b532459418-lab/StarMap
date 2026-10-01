@@ -8,14 +8,13 @@
  * 不 import JSON、虚拟模块或 import.meta。
  */
 
-import type { City, Country, CountryId, TravelMapRecord } from '../../types/travel.ts'
+import type { City, TravelMapRecord } from '../../types/travel.ts'
 
 export type WantToGoDataSource = 'local' | 'sample' | 'none'
 
 /** 想去派生要用到的足迹派生结果（见 `../canonical/derive.ts`）。 */
 export interface WantToGoTravelInput {
   cities: City[]
-  countryById: Record<CountryId, Country>
   plannedRecords: TravelMapRecord[]
 }
 

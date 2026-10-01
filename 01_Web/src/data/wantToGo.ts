@@ -42,6 +42,12 @@ export const wantToGoItemByEntityId = derived.wantToGoItemByEntityId
 /** EntityId → planned 旅行记录（FR-WTG-7，只读），给详情卡用。 */
 export const plannedRecordByEntityId = derived.plannedRecordByEntityId
 
+/** 想去条目 id → 想去条目（同一 id 第一条胜出）。Collection 与转足迹对话框按成员关系的 recordId 查它。 */
+export const wantToGoItemById = derived.wantToGoItemById
+
+/** planned 旅行记录 id → 记录（FR-WTG-7，只读）。Collection 与转足迹对话框按成员关系的 recordId 查它。 */
+export const plannedRecordById = derived.plannedRecordById
+
 // ---- 想去 → 足迹（PR9）的前置条件：返回 undefined 表示可以转换，规则见 ./canonical/derive.ts 与 ./derive/wantToGo.ts ----
 
 export const wantToGoConvertBlockReason = derived.wantToGoConvertBlockReason

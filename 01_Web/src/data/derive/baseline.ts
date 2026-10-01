@@ -92,6 +92,8 @@ export interface AppDataExports {
     hiddenWantToGoItems: unknown
     wantToGoItemByEntityId: unknown
     plannedRecordByEntityId: unknown
+    wantToGoItemById: unknown
+    plannedRecordById: unknown
     wantToGoConvertBlockReason(item: WantToGoItem): string | undefined
     plannedConvertBlockReason(record: TravelMapRecord): string | undefined
   }
@@ -161,6 +163,8 @@ export const baselineExportNames = {
       'hiddenWantToGoItems',
       'wantToGoItemByEntityId',
       'plannedRecordByEntityId',
+      'wantToGoItemById',
+      'plannedRecordById',
     ],
     evaluated: ['wantToGoConvertBlockReason', 'plannedConvertBlockReason'],
     notCaptured: [],

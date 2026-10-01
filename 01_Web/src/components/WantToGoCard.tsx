@@ -65,6 +65,8 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
   const convertBlockReason = convertSource === 'want-to-go' && item
     ? wantToGoConvertBlockReason(item)
     : convertSource === 'planned' && planned ? plannedConvertBlockReason(planned) : undefined
+  // 「标记为去过」传卡片显示的那条记录的 id（想去条目或 planned 记录）。
+  const convertRecordId = item ? item.id : planned?.id
 
   const nameZh = item ? item.place.nameZh : planned?.city || planned?.city_en || ''
   const nameEn = item ? item.place.nameEn : planned?.city_en || ''
@@ -131,14 +133,14 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
               <span>{busy ? '正在隐藏…' : '隐藏'}</span>
             </button>
           ) : null}
-          {convertSource ? (
+          {convertSource && convertRecordId ? (
             <button
               type="button"
               className="atlas-wtg-card-convert"
               disabled={busy || convertBlockReason !== undefined}
               title={convertBlockReason}
               aria-describedby={convertBlockReason ? convertHintId : undefined}
-              onClick={() => onConvertToTravel?.({ source: convertSource, entityId })}
+              onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
               <Footprints aria-hidden="true" />
               <span>标记为去过</span>
