@@ -115,7 +115,7 @@ export const reconstructMediaItem = (item: CanonicalMediaItem, places: PlaceInde
 }
 
 /**
- * Canonical 想去条目 → Core 的 `WantToGoItem`（`parseWantToGoFile` 的输出形状）：
+ * Canonical 想去条目 → Core 的 `WantToGoItem`（Core 想去适配器 `wantToGoToWorldGraph` 的输入形状）：
  * `kind` ← subtype，名称 ← names，`countryCode` ← 自身（国家）或 partOf（城市）的 ISO，`lat` / `lng` ← location。
  */
 export const reconstructWantToGoItem = (item: CanonicalWantToGoItem, places: PlaceIndex): WantToGoItem => {

@@ -1,5 +1,5 @@
 /**
- * parseWantToGoFile / wantToGoToWorldGraph 的单元测试（PRD FR-WTG-1 / FR-WTG-2）。
+ * wantToGoToWorldGraph 的单元测试（PRD FR-WTG-1 / FR-WTG-2）。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
@@ -16,7 +16,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  parseWantToGoFile,
   wantToGoEntityId,
   wantToGoToWorldGraph,
   type WantToGoItem,
@@ -41,22 +40,6 @@ const greenlandItem = (): WantToGoItem => ({
   hidden: true,
 })
 
-const validFile = () => ({
-  schema_version: 1,
-  generated_at: '2026-09-18T00:00:00.000Z',
-  privacy_level: 'local-only',
-  items: [
-    {
-      id: 'wtg_2026-09-17_nuuk',
-      place: { kind: 'city', nameZh: '努克', nameEn: 'Nuuk', countryCode: 'GL', lat: 64.18, lng: -51.72 },
-      note: '格陵兰首府',
-      addedAt: '2026-09-17',
-      hidden: false,
-      source: 'local-editor',
-    },
-  ],
-})
-
 const deepFreeze = <T>(value: T): T => {
   if (value !== null && typeof value === 'object') {
     for (const key of Object.keys(value as Record<string, unknown>)) {
@@ -68,102 +51,7 @@ const deepFreeze = <T>(value: T): T => {
 }
 
 // ---------------------------------------------------------------------------
-// 1. parseWantToGoFile —— 整份文件级别的容错
-// ---------------------------------------------------------------------------
-
-test('parse：不是对象时退化为空列表并记录 problem', () => {
-  for (const value of [undefined, null, 42, 'x', []]) {
-    const result = parseWantToGoFile(value)
-    assert.deepEqual(result.items, [])
-    assert.equal(result.problems.length, 1)
-  }
-})
-
-test('parse：schema_version 不是 1 时退化为空列表', () => {
-  const result = parseWantToGoFile({ schema_version: 2, items: [{ id: 'a' }] })
-  assert.deepEqual(result.items, [])
-  assert.match(result.problems[0], /schema_version/)
-})
-
-test('parse：items 不是数组时退化为空列表', () => {
-  const result = parseWantToGoFile({ schema_version: 1, items: { a: 1 } })
-  assert.deepEqual(result.items, [])
-  assert.match(result.problems[0], /items/)
-})
-
-test('parse：合法文件逐字段解析成功，且没有 problem', () => {
-  const result = parseWantToGoFile(validFile())
-  assert.deepEqual(result.problems, [])
-  assert.deepEqual(result.items, [nuukItem()])
-})
-
-// ---------------------------------------------------------------------------
-// 2. parseWantToGoFile —— 单条级别的容错（坏条目被丢弃，好条目保留）
-// ---------------------------------------------------------------------------
-
-const withItems = (items: unknown[]) => ({ schema_version: 1, items })
-
-test('parse：坏条目被丢弃，同一份文件里的好条目仍然保留', () => {
-  const good = validFile().items[0]
-  const result = parseWantToGoFile(withItems([
-    'not-an-object',
-    { place: good.place, addedAt: '2026-09-17' },
-    { id: 'wtg_no_place', addedAt: '2026-09-17' },
-    { id: 'wtg_bad_kind', place: { ...good.place, kind: 'poi' }, addedAt: '2026-09-17' },
-    { id: 'wtg_no_name', place: { ...good.place, nameEn: '  ' }, addedAt: '2026-09-17' },
-    { id: 'wtg_bad_cc', place: { ...good.place, countryCode: 'GRL' }, addedAt: '2026-09-17' },
-    { id: 'wtg_half_coord', place: { ...good.place, lng: undefined }, addedAt: '2026-09-17' },
-    { id: 'wtg_nan_coord', place: { ...good.place, lat: Number.NaN }, addedAt: '2026-09-17' },
-    { id: 'wtg_bad_date', place: good.place, addedAt: '2026/09/17' },
-    good,
-  ]))
-
-  assert.deepEqual(result.items, [nuukItem()])
-  assert.equal(result.problems.length, 9)
-})
-
-test('parse：hidden 缺省为 false，非布尔值也按 false 处理', () => {
-  const good = validFile().items[0]
-  const result = parseWantToGoFile(withItems([
-    { ...good, id: 'wtg_a', hidden: undefined },
-    { ...good, id: 'wtg_b', place: { ...good.place, nameEn: 'Ilulissat' }, hidden: 'yes' },
-    { ...good, id: 'wtg_c', place: { ...good.place, nameEn: 'Sisimiut' }, hidden: true },
-  ]))
-  assert.deepEqual(result.problems, [])
-  assert.deepEqual(result.items.map((item) => item.hidden), [false, false, true])
-})
-
-test('parse：没有坐标的条目是合法的（D06），countryCode 与名称会被规范化', () => {
-  const result = parseWantToGoFile(withItems([
-    { id: 'wtg_x', place: { kind: 'country', nameEn: '  Greenland ', countryCode: 'gl' }, addedAt: '2026-09-18' },
-  ]))
-  assert.deepEqual(result.problems, [])
-  assert.deepEqual(result.items[0].place, {
-    kind: 'country',
-    // nameZh 缺省回落为 nameEn，而不是空串。
-    nameZh: 'Greenland',
-    nameEn: 'Greenland',
-    countryCode: 'GL',
-  })
-  assert.equal('lat' in result.items[0].place, false)
-})
-
-test('parse：空备注不写进条目', () => {
-  const good = validFile().items[0]
-  const result = parseWantToGoFile(withItems([{ ...good, note: '   ' }]))
-  assert.equal('note' in result.items[0], false)
-})
-
-test('parse：不修改输入，也不抛异常', () => {
-  const input = deepFreeze(validFile())
-  const first = parseWantToGoFile(input)
-  const second = parseWantToGoFile(input)
-  assert.deepEqual(first, second)
-  assert.deepEqual(input, validFile())
-})
-
-// ---------------------------------------------------------------------------
-// 3. wantToGoToWorldGraph
+// wantToGoToWorldGraph
 // ---------------------------------------------------------------------------
 
 test('空输入产出一个四个数组都为空的快照', () => {
@@ -202,6 +90,7 @@ test('有坐标的 city 条目：Entity / Anchor / Membership 逐字段正确', 
   assert.deepEqual(snapshot.memberships, [{
     entityId,
     layerId: 'want_to_go',
+    recordId: 'wtg_2026-09-17_nuuk',
     addedBy: 'user',
     addedAt: '2026-09-17',
     metadata: { hidden: false, source: 'want-to-go', note: '格陵兰首府' },
@@ -270,4 +159,15 @@ test('ID 规则遵循 PRD §8.2：place:wtg:<CC>:<slug>', () => {
   assert.equal(wantToGoEntityId('GL', 'Nuuk'), 'place:wtg:GL:nuuk')
   assert.equal(wantToGoEntityId('gl', 'Nuuk'), 'place:wtg:GL:nuuk')
   assert.equal(wantToGoEntityId('JP', 'Kyoto (Kansai)'), 'place:wtg:JP:kyoto-kansai')
+})
+
+test('每条 membership 的 recordId 是它背后想去条目的 id（Core 方案 C3）', () => {
+  const snapshot = wantToGoToWorldGraph([nuukItem(), greenlandItem()], { now: NOW })
+  assert.deepEqual(
+    snapshot.memberships.map((membership) => [membership.entityId, membership.recordId]),
+    [
+      [wantToGoEntityId('GL', 'Nuuk'), 'wtg_2026-09-17_nuuk'],
+      [wantToGoEntityId('GL', 'Greenland'), 'wtg_2026-09-18_greenland'],
+    ],
+  )
 })

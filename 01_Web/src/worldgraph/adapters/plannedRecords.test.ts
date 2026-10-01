@@ -120,6 +120,7 @@ test('planned 记录的 Entity / Anchor / Membership 逐字段正确', () => {
   assert.deepEqual(snapshot.memberships, [{
     entityId,
     layerId: 'want_to_go',
+    recordId: 'planned-nuuk',
     addedBy: 'rule',
     addedAt: '2027-06-01',
     metadata: { source: 'travel-map:planned', readOnly: true, note: '冰岛之后的下一站' },
@@ -210,6 +211,7 @@ test('同一个 record id 出现两次时第一条胜出', () => {
   )
   assert.equal(snapshot.entities.length, 1)
   assert.equal(snapshot.entities[0].title.zh, '努克')
+  assert.deepEqual(snapshot.memberships.map((membership) => membership.recordId), ['planned-nuuk'])
 })
 
 test('纯函数：不修改输入，相同输入产出逐字段相同的快照', () => {

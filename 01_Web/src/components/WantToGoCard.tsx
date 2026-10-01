@@ -46,6 +46,7 @@ const regionNameZh = (countryCode: string) => {
  * 「隐藏」只在私人模式、且条目来自私有文件（wantToGoDataSource === 'local'）时渲染（FR-PUB-2）：
  * 样例条目不在私有文件里，隐藏请求必然失败。写入只走 localEditorApi（D26）。
  * 「标记为去过」的门控：想去条目同「隐藏」；planned 条目写的是旅行记录，看 travelAtlasDataSource。
+ * 转换对话框收到的是卡片所显示那条记录的 id（想去条目的 id 或 planned 记录的 id），对话框按记录 id 查找。
  */
 export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoCardProps) {
   const convertHintId = useId()
@@ -65,6 +66,8 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
   const convertBlockReason = convertSource === 'want-to-go' && item
     ? wantToGoConvertBlockReason(item)
     : convertSource === 'planned' && planned ? plannedConvertBlockReason(planned) : undefined
+  // 「标记为去过」传卡片显示的那条记录的 id（想去条目或 planned 记录）。
+  const convertRecordId = item ? item.id : planned?.id
 
   const nameZh = item ? item.place.nameZh : planned?.city || planned?.city_en || ''
   const nameEn = item ? item.place.nameEn : planned?.city_en || ''
@@ -131,14 +134,14 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
               <span>{busy ? '正在隐藏…' : '隐藏'}</span>
             </button>
           ) : null}
-          {convertSource ? (
+          {convertSource && convertRecordId ? (
             <button
               type="button"
               className="atlas-wtg-card-convert"
               disabled={busy || convertBlockReason !== undefined}
               title={convertBlockReason}
               aria-describedby={convertBlockReason ? convertHintId : undefined}
-              onClick={() => onConvertToTravel?.({ source: convertSource, entityId })}
+              onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
               <Footprints aria-hidden="true" />
               <span>标记为去过</span>

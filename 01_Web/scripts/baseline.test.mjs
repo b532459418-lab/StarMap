@@ -28,7 +28,7 @@ const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = path.join(webRoot, 'scripts', 'baseline.mjs')
 const NOW = '2000-01-01T00:00:00.000Z'
 /** 公开 V2 样例的派生基线（RFC-LOC-1 PR4 起公布）。 */
-const V2_SAMPLE_BASELINE_SHA256 = '3b30ae9cc31d6d646546dadf048809edb1dfa4609c7045288f3402be9a96fbd4'
+const V2_SAMPLE_BASELINE_SHA256 = '5cd7bf55f6b9fa61774c0f7f22d1a2db3a5eb845b6757abd13cd32dc0a6a9756'
 
 /** 临时目录：root 充当 STARMAP_PRIVATE_ROOT，out 放输出。 */
 const withTemp = async (run) => {
@@ -95,7 +95,7 @@ const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 // --sample：公开 V2 样例
 // ---------------------------------------------------------------------------
 
-test('--sample：读已提交的 src/data/v2-sample/（来源 sample），两次输出逐字节相同、末尾换行，等于进程内的同一条管线，sha256 为公布的 3b30ae9c…', () => withTemp(async ({ root, out }) => {
+test('--sample：读已提交的 src/data/v2-sample/（来源 sample），两次输出逐字节相同、末尾换行，等于进程内的同一条管线，sha256 为公布的 5cd7bf55…', () => withTemp(async ({ root, out }) => {
   const first = path.join(out, 'a.json')
   const second = path.join(out, 'b.json')
   const runFirst = runCli(['--sample', '--out', first], root)

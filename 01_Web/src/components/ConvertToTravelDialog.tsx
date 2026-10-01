@@ -4,13 +4,15 @@ import { X } from 'lucide-react'
 import { convertLocalWantToGoToTravel, reloadAfterLocalSave } from '../data/localEditorApi'
 import type { LocalConvertToTravelInput, LocalConvertToTravelResult } from '../data/localEditorApi'
 import { travelAtlasCountryCodes } from '../data/travelAtlas'
-import { plannedRecordByEntityId, wantToGoItemByEntityId } from '../data/wantToGo'
-import type { EntityId } from '../worldgraph/types'
+import { plannedRecordById, wantToGoItemById } from '../data/wantToGo'
 
-/** 要转换的条目：想去条目，或来自旅行记录的 planned 条目（FR-WTG-7）。 */
+/**
+ * 要转换的条目：想去条目，或来自旅行记录的 planned 条目（FR-WTG-7）。
+ * `recordId` 是那条记录自己的 id（想去条目的 `item.id`、planned 记录的 `record.id`），即成员关系的 recordId。
+ */
 export type ConvertToTravelTarget =
-  | { source: 'want-to-go'; entityId: EntityId }
-  | { source: 'planned'; entityId: EntityId }
+  | { source: 'want-to-go'; recordId: string }
+  | { source: 'planned'; recordId: string }
 
 type ConvertToTravelDialogProps = {
   /** undefined 表示对话框关闭。 */
@@ -52,7 +54,7 @@ const regionNameZh = (countryCode: string) => {
 export function ConvertToTravelDialog({ target, onClose, onConverted }: ConvertToTravelDialogProps) {
   return target ? (
     <ConvertToTravelDialogContent
-      key={`${target.source}:${target.entityId}`}
+      key={`${target.source}:${target.recordId}`}
       target={target}
       onClose={onClose}
       onConverted={onConverted}
@@ -76,8 +78,8 @@ function ConvertToTravelDialogContent({
   const [notice, setNotice] = useState('')
   const [needsReload, setNeedsReload] = useState(false)
 
-  const item = target.source === 'want-to-go' ? wantToGoItemByEntityId.get(target.entityId) : undefined
-  const planned = target.source === 'planned' ? plannedRecordByEntityId.get(target.entityId) : undefined
+  const item = target.source === 'want-to-go' ? wantToGoItemById.get(target.recordId) : undefined
+  const planned = target.source === 'planned' ? plannedRecordById.get(target.recordId) : undefined
 
   // 打开时焦点进入第一个输入框（到访日期）。
   useEffect(() => {

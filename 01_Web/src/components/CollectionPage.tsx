@@ -5,10 +5,10 @@ import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } 
 import { travelAtlasDataSource } from '../data/travelAtlas'
 import {
   plannedConvertBlockReason,
-  plannedRecordByEntityId,
+  plannedRecordById,
   wantToGoConvertBlockReason,
   wantToGoDataSource,
-  wantToGoItemByEntityId,
+  wantToGoItemById,
 } from '../data/wantToGo'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
 import { filterCollection } from '../worldgraph/collection'
@@ -80,6 +80,9 @@ const regionNameZh = (countryCode: string) => {
 }
 
 const isFromTravelLog = (entry: CollectionEntry) => entry.readOnly && entry.source === PLANNED_SOURCE
+
+/** 列表里每一行的 key：同一实体在想去图层可以有几条记录，所以连同 recordId 一起（与 Core 的成员关系去重键同一口径）。 */
+const collectionEntryKey = (entry: CollectionEntry) => JSON.stringify([entry.entityId, entry.recordId ?? ''])
 
 /**
  * Collection 视图（PRD R10，PR7 规格 §3.4）：以列表管理想去图层的全部条目，
@@ -217,7 +220,7 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
             <ul className="collection-grid">
               {visibleEntries.map((entry) => (
                 <CollectionCard
-                  key={entry.entityId}
+                  key={collectionEntryKey(entry)}
                   entry={entry}
                   onViewOnMap={onViewOnMap}
                   onConvertToTravel={onConvertToTravel}
@@ -245,10 +248,12 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   const [editingNote, setEditingNote] = useState(false)
   const [noteDraft, setNoteDraft] = useState('')
 
-  const item = wantToGoItemByEntityId.get(entry.entityId)
+  const fromTravelLog = isFromTravelLog(entry)
+  // 按这一行背后的记录 id 查（Core 方案 C3）：想去条目只查想去表，planned 条目只查 planned 表。
+  const item = !fromTravelLog && entry.recordId !== undefined ? wantToGoItemById.get(entry.recordId) : undefined
+  const planned = fromTravelLog && entry.recordId !== undefined ? plannedRecordById.get(entry.recordId) : undefined
   const nameZh = entry.title.zh
   const nameEn = entry.title.en
-  const fromTravelLog = isFromTravelLog(entry)
   const isSample = item?.source === 'sample'
   // 写入 id 只能来自私有想去文件里的条目；planned 记录查不到，就不渲染任何写入按钮。
   const writableId = writeAvailable && !entry.readOnly ? item?.id : undefined
@@ -256,7 +261,6 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
 
   // 「标记为去过」（PR9 规格 §3.6）：未隐藏的想去条目看想去的写入门控，planned 条目看足迹的写入门控。
   // 整个国家 / 无坐标的条目仍显示按钮，但禁用并写明原因。
-  const planned = fromTravelLog ? plannedRecordByEntityId.get(entry.entityId) : undefined
   const convertSource: ConvertToTravelTarget['source'] | undefined = onConvertToTravel === undefined
     ? undefined
     : writableId && item && !entry.hidden
@@ -265,6 +269,8 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   const convertBlockReason = convertSource === 'want-to-go' && item
     ? wantToGoConvertBlockReason(item)
     : convertSource === 'planned' && planned ? plannedConvertBlockReason(planned) : undefined
+  // 「标记为去过」传这一行背后那条记录的 id。
+  const convertRecordId = convertSource === 'want-to-go' ? item?.id : convertSource === 'planned' ? planned?.id : undefined
   const showConvert = convertSource !== undefined && !editingNote
 
   const countryName = entry.countryCode ? regionNameZh(entry.countryCode) : ''
@@ -390,7 +396,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
             </button>
           ) : null}
 
-          {showConvert && convertSource ? (
+          {showConvert && convertSource && convertRecordId ? (
             <button
               type="button"
               className="collection-action"
@@ -399,7 +405,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
               title={convertBlockReason}
               aria-label={`标记为去过：${nameZh}`}
               aria-describedby={convertBlockReason ? convertHintId : undefined}
-              onClick={() => onConvertToTravel?.({ source: convertSource, entityId: entry.entityId })}
+              onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
               <Footprints aria-hidden="true" />
               <span>标记为去过</span>

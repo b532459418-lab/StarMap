@@ -87,11 +87,17 @@ export interface Entity {
 
 /**
  * D14：Entity 与 Layer 的多对多成员关系。
- * 复合主键是 (entityId, layerId)，没有独立 id（PRD §8.2）。
+ * 没有独立 id（PRD §8.2）；复合主键是 (entityId, layerId, recordId)，没有 recordId 时按空串算
+ * （RFC-LOC-1 Core 方案 C3：同一对 (实体, 图层) 可以有多条成员关系，每条对应一条记录）。
  */
 export interface LayerMembership {
   entityId: EntityId
   layerId: LayerId
+  /**
+   * 这条成员关系背后的记录 id：想去条目为 `item.id`，planned 足迹为 `record.id`。
+   * 足迹层的城市 / 国家成员关系没有记录，不写。
+   */
+  recordId?: string
   addedBy: 'user' | 'rule'
   addedAt: string
   /** want_to_go: { note?: string; hidden?: boolean; source?: string } */

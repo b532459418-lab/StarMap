@@ -123,7 +123,7 @@ test('entities / anchors / relations 按 id 去重，先到先得', () => {
   assert.equal(merged.relations[0].provenance, 'rule')
 })
 
-test('memberships 按复合键 (entityId, layerId) 去重，先到先得（D14）', () => {
+test('没有 recordId 的 memberships 按 (entityId, layerId) 去重，先到先得（D14）', () => {
   const merged = mergeWorldGraphSnapshots(
     snapshotOf({ memberships: [membership('place:city:a', 'want_to_go', 'user')] }),
     snapshotOf({
@@ -138,6 +138,31 @@ test('memberships 按复合键 (entityId, layerId) 去重，先到先得（D14�
   assert.equal(merged.memberships.length, 2)
   assert.equal(merged.memberships[0].addedBy, 'user')
   assert.deepEqual(merged.memberships.map((item) => item.layerId), ['want_to_go', 'travel'])
+})
+
+test('memberships 的去重键含 recordId：同一 (entityId, layerId) 的不同记录各留一条（Core 方案 C3）', () => {
+  const withRecord = (recordId: string | undefined, addedBy: LayerMembership['addedBy']): LayerMembership => (
+    recordId === undefined
+      ? membership('place:city:a', 'want_to_go', addedBy)
+      : { ...membership('place:city:a', 'want_to_go', addedBy), recordId }
+  )
+  const merged = mergeWorldGraphSnapshots(
+    snapshotOf({ memberships: [withRecord('wtg_1', 'user'), withRecord(undefined, 'user')] }),
+    snapshotOf({
+      memberships: [
+        // 同一条记录：被丢弃，先到先得
+        withRecord('wtg_1', 'rule'),
+        // 同一实体、同一图层的另一条记录：保留
+        withRecord('planned_1', 'rule'),
+        // 没有 recordId 按空串算：与第一份里没有 recordId 的那条同键，被丢弃
+        withRecord(undefined, 'rule'),
+      ],
+    }),
+  )
+  assert.deepEqual(
+    merged.memberships.map((item) => [item.recordId, item.addedBy]),
+    [['wtg_1', 'user'], [undefined, 'user'], ['planned_1', 'rule']],
+  )
 })
 
 test('不修改输入快照，也不与输出共享数组', () => {

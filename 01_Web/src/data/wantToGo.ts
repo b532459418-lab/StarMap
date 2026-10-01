@@ -2,8 +2,8 @@
  * Want to Go 应用数据层（PRD FR-WTG-2 / FR-PUB-1）。
  *
  * 这里【不是】 StarMap Core：它经 ./appData.ts 依赖 Vite 虚拟模块与 import.meta.env，
- * 只能在 Vite 里跑。解析与投影的纯逻辑都在 src/worldgraph/adapters/wantToGo.ts；
- * 解析之后的应用侧派生（隐藏条目、按 EntityId 反查条目的两张表、「想去 → 足迹」的禁用原因）
+ * 只能在 Vite 里跑。读取与校验在 V2 Reader（./canonical/），投影的纯逻辑在 src/worldgraph/adapters/wantToGo.ts；
+ * 应用侧派生（隐藏条目、按 EntityId 反查条目的两张表、按记录 id 反查条目的两张表、「想去 → 足迹」的禁用原因）
  * 经 Canonical 计算（./canonical/derive.ts；PR1 的旧派生 deriveWantToGo 在 PR5b 删除）。
  * 本文件只以原名导出；开发时报告被跳过的坏数据在 ./appData.ts。
  *
@@ -41,6 +41,12 @@ export const wantToGoItemByEntityId = derived.wantToGoItemByEntityId
 
 /** EntityId → planned 旅行记录（FR-WTG-7，只读），给详情卡用。 */
 export const plannedRecordByEntityId = derived.plannedRecordByEntityId
+
+/** 想去条目 id → 想去条目（同一 id 第一条胜出）。Collection 与转足迹对话框按成员关系的 recordId 查它。 */
+export const wantToGoItemById = derived.wantToGoItemById
+
+/** planned 旅行记录 id → 记录（FR-WTG-7，只读）。Collection 与转足迹对话框按成员关系的 recordId 查它。 */
+export const plannedRecordById = derived.plannedRecordById
 
 // ---- 想去 → 足迹（PR9）的前置条件：返回 undefined 表示可以转换，规则见 ./canonical/derive.ts 与 ./derive/wantToGo.ts ----
 

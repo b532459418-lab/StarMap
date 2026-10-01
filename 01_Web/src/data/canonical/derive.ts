@@ -22,7 +22,6 @@
 
 import { plannedEntityId } from '../../worldgraph/adapters/plannedRecords.ts'
 import { wantToGoEntityId, type WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
-import { slugify as coreSlugify } from '../../worldgraph/slug.ts'
 import type { EntityId } from '../../worldgraph/types.ts'
 import { deriveDroneMedia, type DroneMediaDerived } from '../derive/droneMedia.ts'
 import { orderBySavedIds, type TravelAtlasEditorState } from '../derive/editorState.ts'
@@ -338,10 +337,8 @@ const deriveTravelAtlasFromCanonical = (
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
-const footprintCityKey = (countryCode: string, nameEn: string) => `${countryCode.toUpperCase()}:${coreSlugify(nameEn)}`
-
 const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceIndex, travel: WantToGoTravelInput) => {
-  const { cities, countryById, plannedRecords } = travel
+  const { cities, plannedRecords } = travel
 
   const wantToGoItems: WantToGoItem[] = wantToGo.items.map((item) => reconstructWantToGoItem(item, places))
 
@@ -363,15 +360,30 @@ const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceI
     if (!plannedRecordByEntityId.has(entityId)) plannedRecordByEntityId.set(entityId, record)
   }
 
-  const footprintCityKeys = new Set(cities.flatMap((city) => {
-    const countryCode = city.countryId ? countryById[city.countryId]?.flagCode : undefined
-    return countryCode && city.nameEn ? [footprintCityKey(countryCode, city.nameEn)] : []
-  }))
+  // 按记录 id 的两张表（Core 方案 C3 / C5）：成员关系的 recordId 就是这里的键。同一 id 第一条胜出。
+  const wantToGoItemById = new Map<string, WantToGoItem>()
+  for (const item of wantToGoItems) {
+    if (!wantToGoItemById.has(item.id)) wantToGoItemById.set(item.id, item)
+  }
+
+  const plannedRecordById = new Map<string, TravelMapRecord>()
+  for (const record of plannedRecords) {
+    if (!plannedRecordById.has(record.id)) plannedRecordById.set(record.id, record)
+  }
+
+  // 「这个城市已经在足迹里了」按地点 id 判断（Core 方案 C5）：V2 下足迹城市的 id 就是地点 id。
+  // 想去条目的 placeId 取自 Canonical 条目（Core 的 WantToGoItem 不带它），同一 id 第一条胜出。
+  const footprintCityIds = new Set(cities.map((city) => city.id))
+  const placeIdByWantToGoId = new Map<string, PlaceId>()
+  for (const item of wantToGo.items) {
+    if (!placeIdByWantToGoId.has(item.id)) placeIdByWantToGoId.set(item.id, item.placeId)
+  }
 
   const wantToGoConvertBlockReason = (item: WantToGoItem): string | undefined => {
     if (item.place.kind !== 'city') return '整个国家的想去需要先具体到城市，暂不支持直接转为足迹。'
     if (!isFiniteNumber(item.place.lat) || !isFiniteNumber(item.place.lng)) return '这个地点没有坐标，无法转为足迹。'
-    if (footprintCityKeys.has(footprintCityKey(item.place.countryCode, item.place.nameEn))) {
+    const placeId = placeIdByWantToGoId.get(item.id)
+    if (placeId !== undefined && footprintCityIds.has(placeId)) {
       return '这个城市已经在足迹里了。如果只是想从想去列表移除，请使用隐藏或彻底删除。'
     }
     return undefined
@@ -383,6 +395,8 @@ const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceI
     hiddenWantToGoItems,
     wantToGoItemByEntityId,
     plannedRecordByEntityId,
+    wantToGoItemById,
+    plannedRecordById,
     wantToGoConvertBlockReason,
     plannedConvertBlockReason,
   }

@@ -113,7 +113,7 @@ export interface CanonicalWantToGoItem {
 export interface CanonicalWantToGo {
   source: WantToGoDataSource
   items: CanonicalWantToGoItem[]
-  /** 解析时被丢弃的坏数据说明（同 Core `parseWantToGoFile`）。 */
+  /** 被丢弃的坏数据说明。V2 Reader 读出的恒为空：V2 文件先整体校验，不合格就整份拒绝（`canonicalForInputs`），不逐条丢弃。 */
   problems: string[]
 }
 

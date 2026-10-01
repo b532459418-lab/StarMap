@@ -7,7 +7,8 @@
  *
  * 去重键：
  * - entities / anchors / relations：`id`
- * - memberships：复合键 `(entityId, layerId)`（D14：membership 没有独立 id）
+ * - memberships：复合键 `(entityId, layerId, recordId ?? '')`（D14：membership 没有独立 id；
+ *   recordId 见 types.ts 的 LayerMembership——同一对 (实体, 图层) 的不同记录各留一条）
  *
  * 冲突时【先到先得】：先传入的快照胜出。这不是随意选的——调用方按"权威程度"排列输入，
  * 例如用户手动维护的想去条目应排在从旅行记录推导出来的 planned 条目之前。
@@ -23,11 +24,11 @@ export const emptyWorldGraphSnapshot = (): WorldGraphSnapshot => ({
 })
 
 /**
- * 复合键要能无歧义地还原成两段：entityId 里本来就有冒号（`place:wtg:GL:nuuk`），
- * 直接用分隔符拼接会有碰撞风险，所以用 JSON 数组做键。
+ * 复合键要能无歧义地还原成三段：entityId 里本来就有冒号（`place:wtg:GL:nuuk`），
+ * 直接用分隔符拼接会有碰撞风险，所以用 JSON 数组做键。没有 recordId 时按空串算。
  */
-const membershipKey = (entityId: string, layerId: string): string =>
-  JSON.stringify([entityId, layerId])
+const membershipKey = (entityId: string, layerId: string, recordId: string | undefined): string =>
+  JSON.stringify([entityId, layerId, recordId ?? ''])
 
 export const mergeWorldGraphSnapshots = (
   ...snapshots: readonly WorldGraphSnapshot[]
@@ -45,7 +46,7 @@ export const mergeWorldGraphSnapshots = (
       merged.entities.push(entity)
     }
     for (const membership of snapshot.memberships ?? []) {
-      const key = membershipKey(membership.entityId, membership.layerId)
+      const key = membershipKey(membership.entityId, membership.layerId, membership.recordId)
       if (seenMembershipKeys.has(key)) continue
       seenMembershipKeys.add(key)
       merged.memberships.push(membership)

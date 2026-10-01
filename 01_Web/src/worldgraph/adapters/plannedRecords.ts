@@ -61,7 +61,7 @@ const isFiniteNumber = (value: unknown): value is number =>
  * - Entity：`place:planned:<recordId>`，`type: 'place'`，`subtype: 'city'`
  * - Anchor：lat / lng 都是有限数时产出 location Anchor（`precision: 'exact'`）；
  *   travel-map 的坐标可以是 null（schema 允许），这时只有 Entity 没有 Anchor（D06）
- * - Membership：`want_to_go`，`addedBy: 'rule'`，`metadata.readOnly = true`
+ * - Membership：`want_to_go`，`recordId` 取记录的 id，`addedBy: 'rule'`，`metadata.readOnly = true`
  * - Relation：不产出
  *
  * 同一个 record id 出现两次时第一条胜出；不修改输入。
@@ -131,6 +131,7 @@ export const plannedRecordsToWorldGraph = (
     memberships.push({
       entityId,
       layerId: WANT_TO_GO_LAYER_ID,
+      recordId: record.id,
       addedBy: 'rule',
       addedAt: record.start_date,
       metadata: membershipMetadata,
