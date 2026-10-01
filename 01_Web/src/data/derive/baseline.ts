@@ -26,6 +26,9 @@ import type { City, CityId, Country, CountryId, TravelMapRecord } from '../../ty
  * - @2（RFC-LOC-1 PR3b-1 §2.5）：`travelAtlas.evaluated` 增加 `countryIdOfCity`，定义域为
  *   「城市级函数的定义域 ∪ editor-state 的 hiddenCityIds」。其余与 @1 逐字节相同：
  *   删掉这一项、`format` 改回 @1，得到的就是 @1 基线（测试见 `../canonical/derive.test.ts`）。
+ *   RFC-LOC-1 Core-A A1 在 @2 上只做了加法，格式标识不变（Core-A A2 升为 @3）：快照成员关系与想去 Collection 条目上的
+ *   `recordId`，想去模块的 `wantToGoItemById` / `plannedRecordById`。另有一处求值口径的变化：「这个城市已经在足迹里了」
+ *   改为按地点 id 判断，只影响「同名但不是同一地点」的想去城市（见 `../canonical/derive.test.ts`）。
  */
 export const BASELINE_FORMAT = 'starmap-legacy-baseline@2'
 

@@ -6,7 +6,8 @@
  * 前面几节的输入是手写的「六个模块导出」形状（travel 部分复用 Core 的 travel.fixture.ts，
  * 快照用 Core 适配器现算），不依赖派生层；最后一节用 App 的派生（deriveAppDataFromCanonical）核对基线覆盖了全部导出。
  * 最后一节的输入原来是旧派生 deriveAppData 跑公开旧样例；RFC-LOC-1 PR5b 删除旧派生后，改为冻结的同一份数据的
- * Canonical（旧 id 空间，../canonical/frozen.fixture.ts 的 `sample`），派生结果与原来逐字节相同（公布的基线 8caf2cfb…）。
+ * Canonical（旧 id 空间，../canonical/frozen.fixture.ts 的 `sample`），派生结果与原来逐字节相同（公布的基线 8caf2cfb…；
+ * RFC-LOC-1 Core-A A1 之后的值与两者的关系见 ../canonical/derive.test.ts）。
  *
  * 下面这行 reference 不能删，理由见 src/worldgraph/adapters/travel.test.ts 文件头。
  */

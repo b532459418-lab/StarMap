@@ -46,6 +46,7 @@ const regionNameZh = (countryCode: string) => {
  * 「隐藏」只在私人模式、且条目来自私有文件（wantToGoDataSource === 'local'）时渲染（FR-PUB-2）：
  * 样例条目不在私有文件里，隐藏请求必然失败。写入只走 localEditorApi（D26）。
  * 「标记为去过」的门控：想去条目同「隐藏」；planned 条目写的是旅行记录，看 travelAtlasDataSource。
+ * 转换对话框收到的是卡片所显示那条记录的 id（想去条目的 id 或 planned 记录的 id），对话框按记录 id 查找。
  */
 export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoCardProps) {
   const convertHintId = useId()
