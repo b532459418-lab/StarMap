@@ -153,7 +153,7 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
     assert.deepEqual(privateDataModuleExports({ profile: 'personal', v2Values }).privateV2Files, files, label)
     assert.deepEqual(await readV2EditorState({ privatePaths: paths }), expectedState, label)
     const target = path.join(out, `${label}.json`)
-    const result = runScript('legacy-baseline.mjs', ['--path', 'v2', '--out', target], root)
+    const result = runScript('baseline.mjs', ['--path', 'v2', '--out', target], root)
     assert.equal(result.status, 0, `${label}\n${result.stderr}`)
     assert.equal(await readFile(target, 'utf8'), expected, label)
   }

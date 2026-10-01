@@ -25,7 +25,7 @@ import { deriveAppData } from '../src/data/derive/appData.ts'
 import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const cliPath = path.join(webRoot, 'scripts', 'legacy-baseline.mjs')
+const cliPath = path.join(webRoot, 'scripts', 'baseline.mjs')
 const NOW = '2000-01-01T00:00:00.000Z'
 /**
  * 公开样例基线哈希；旧路径与 PR2 的新路径必须产出同一份。格式 @2（RFC-LOC-1 PR3b-1 增加 countryIdOfCity；

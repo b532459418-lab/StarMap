@@ -213,7 +213,7 @@ test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2
 
   // 最后：legacy-baseline --path v2 能正常产出，城市与国家 id 都是 UUID。
   const target = path.join(out, 'v2-baseline.json')
-  const baseline = runScript('legacy-baseline.mjs', ['--path', 'v2', '--out', target], root)
+  const baseline = runScript('baseline.mjs', ['--path', 'v2', '--out', target], root)
   assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr)
   const { modules } = JSON.parse(await readFile(target, 'utf8'))
   const cityNames = modules.travelAtlas.cities.map((city) => city.nameEn).sort()
@@ -246,7 +246,7 @@ test('端到端 · 全新私人目录：从空白开始写；生成合法的 dat
   assert.ok(!text.includes('sample') && !text.includes('Faroe'), '没有复制样例')
 
   const target = path.join(out, 'fresh.json')
-  const baseline = runScript('legacy-baseline.mjs', ['--path', 'v2', '--out', target], root)
+  const baseline = runScript('baseline.mjs', ['--path', 'v2', '--out', target], root)
   assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr)
   assert.deepEqual(JSON.parse(await readFile(target, 'utf8')).modules.travelAtlas.cities.map((city) => city.nameEn), ['Reykjavik'])
 }))
