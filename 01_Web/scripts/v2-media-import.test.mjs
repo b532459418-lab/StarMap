@@ -429,7 +429,7 @@ test('未迁移：私人目录只有旧数据、data/v2/ 没有 V2 文件 → me
       assert.equal(result.status, 2, `${args.join(' ')}\n${result.stdout}${result.stderr}`)
       assert.equal(result.stdout, '')
       assert.match(result.stderr, /^\[import-media\] 私人目录里有旧格式的数据，还没有迁移，没有导入任何媒体。/)
-      assert.match(result.stderr, /npm run identity:check -- --apply/)
+      assert.match(result.stderr, /检出 StarMap 的提交 4fd32a9/)
     }
     assert.deepEqual((await readdir(root, { recursive: true })).sort(), before, '不写 data/v2/、生成文件与 place.json')
     assert.equal(existsSync(paths.v2DataRoot), false)

@@ -155,7 +155,7 @@ test('写入拒绝（纯函数）：未迁移时 409 与 E_LEGACY_UNMIGRATED，�
   }
 })
 
-test('文案：中文说明怎么迁移（两条命令）与怎么放弃旧数据；编辑器与导入器共用同一段步骤；与页面的迁移提示用同样的命令和文件名', () => {
+test('文案：中文说明怎么迁移（检出提交 4fd32a9，步骤见 README）与怎么放弃旧数据；编辑器与导入器共用同一段步骤；与页面的迁移提示用同样的提交号、README 小节和文件名', () => {
   assert.match(LEGACY_UNMIGRATED_WRITE_MESSAGE, /^私人目录里有旧格式的数据，还没有迁移，这次修改没有保存。/)
   assert.match(LEGACY_UNMIGRATED_IMPORT_MESSAGE, /^私人目录里有旧格式的数据，还没有迁移，没有导入任何媒体。/)
   for (const message of [LEGACY_UNMIGRATED_WRITE_MESSAGE, LEGACY_UNMIGRATED_IMPORT_MESSAGE]) {
@@ -163,12 +163,13 @@ test('文案：中文说明怎么迁移（两条命令）与怎么放弃旧数�
   }
   const notice = LEGACY_UNMIGRATED_NOTICE.join('\n')
   for (const fragment of [
-    'npm run identity:check 查看迁移摘要（不改任何数据）',
-    '确认无误后运行 npm run identity:check -- --apply，然后刷新页面',
+    '这个版本不再带迁移工具，请先检出 StarMap 的提交 4fd32a9（最后一个带迁移工具的版本）完成迁移，再回到最新版本',
+    '步骤见 README 的 Private Data Format 一节',
     '把私人目录 data/ 下的四个旧文件（travel-map、want-to-go、editor-state、user-media 的 .local.json）移到别处',
   ]) {
     assert.ok(LEGACY_MIGRATION_STEPS.includes(fragment), fragment)
     assert.ok(notice.includes(fragment), fragment)
   }
-  assert.doesNotMatch(LEGACY_MIGRATION_STEPS, /数据模式|data-mode|--switch/)
+  // PR5b：迁移工具已删除，不能再让人运行 identity:check。
+  for (const text of [LEGACY_MIGRATION_STEPS, notice]) assert.doesNotMatch(text, /identity:check|数据模式|data-mode|--switch/)
 })

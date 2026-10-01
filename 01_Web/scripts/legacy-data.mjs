@@ -2,13 +2,14 @@
  * 私人目录里的旧格式数据（RFC-LOC-1 PR5a 规格决定 I、§4.2）。
  *
  * PR5a 起 App、本地编辑器与媒体导入只读写 `data/v2/`，没有数据模式，也没有回滚开关。旧格式的四个文件
- * （travel-map / want-to-go / editor-state / user-media 的 `.local.json`）App 不再读取；只有迁移工具
- * （`npm run identity:check`）还读它们。这里只看文件在不在，从不读内容：
+ * （travel-map / want-to-go / editor-state / user-media 的 `.local.json`）App 不再读取。PR5b 删除了迁移工具：
+ * 旧格式的数据要先检出 StarMap 的提交 4fd32a9（最后一个带迁移工具的版本）迁移，步骤见 README 的 Private Data Format 一节。
+ * 这里只看文件在不在，从不读内容：
  *
  * - **未迁移**：四个旧数据文件任一存在（只看确切的文件名，`atomicJsonWrite` 留下的 `.bak` 不算），
  *   且 `data/v2/` 下五个 V2 文件都不存在。此时个人模式显示迁移提示，本地编辑器的全部写入端点返回 409
  *   `E_LEGACY_UNMIGRATED`，`media:check` / `media:import` 拒绝运行（退出码 2）——否则 `data/v2/` 被写出后，
- *   迁移工具的 `--apply` 会因为输出目录非空而拒绝运行。
+ *   4fd32a9 里迁移工具的 `--apply` 会因为输出目录非空而拒绝运行。
  * - **残留**（旧文件与 V2 文件都在）：已经迁移过；旧文件是 App 不再读取的残留，删留随意，一切照常。
  * - **全新**（都没有）与只有 V2 文件：一切照常。
  * - PR4 的数据模式标记 `data/data-mode.local.json` 不再读、不再写；存在也被忽略。
@@ -27,7 +28,7 @@ export const LEGACY_UNMIGRATED_CODE = 'E_LEGACY_UNMIGRATED'
 export const LEGACY_UNMIGRATED_STATUS = 409
 
 /** 怎么迁移、或怎么放弃旧数据（编辑器的拒绝与导入器的拒绝共用这一段）。 */
-export const LEGACY_MIGRATION_STEPS = '迁移：在 01_Web/ 下运行 npm run identity:check 查看迁移摘要（不改任何数据），确认无误后运行 npm run identity:check -- --apply，然后刷新页面。不需要这些旧数据的话，把私人目录 data/ 下的四个旧文件（travel-map、want-to-go、editor-state、user-media 的 .local.json）移到别处。'
+export const LEGACY_MIGRATION_STEPS = '迁移：这个版本不再带迁移工具，请先检出 StarMap 的提交 4fd32a9（最后一个带迁移工具的版本）完成迁移，再回到最新版本，步骤见 README 的 Private Data Format 一节。不需要这些旧数据的话，把私人目录 data/ 下的四个旧文件（travel-map、want-to-go、editor-state、user-media 的 .local.json）移到别处。'
 
 /** 本地编辑器写入被拒时的说明（响应里的 `error`）。 */
 export const LEGACY_UNMIGRATED_WRITE_MESSAGE = `私人目录里有旧格式的数据，还没有迁移，这次修改没有保存。${LEGACY_MIGRATION_STEPS}`
