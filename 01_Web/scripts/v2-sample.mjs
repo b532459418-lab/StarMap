@@ -1,21 +1,18 @@
 /**
- * 公开样例的 V2 文件（RFC-LOC-1 PR4 规格 §2.3）：`src/data/v2-sample/`。
+ * 公开样例的 V2 文件（RFC-LOC-1 PR4 规格 §2.3；PR5b 决定 L）：`src/data/v2-sample/`。
  *
- * 目录里只有六个文件：五个 V2 文件（文件名不带 `.local`——它们是公开样例，不是私人数据）与一份固定的迁移清单
- * `identity-manifest.json`（保证每次生成的 UUID 相同）。公开模式与强制样例经 V2 Reader 读这五个文件
+ * 目录里只有五个 V2 文件（文件名不带 `.local`——它们是公开样例，不是私人数据）。公开模式与强制样例经 V2 Reader 读它们
  * （src/data/rawInputs.ts 静态 import，文件名同下面的 V2_SAMPLE_FILE_NAMES）。
  *
- * 生成：`npm run sample:v2`（migrate-identity --sample --apply，见 package.json 与 01_Web/README.md）。
- * 隐私门在 --sample 下只额外放行这一个目录（`isV2SampleDirectory`，不含它的子目录）。
+ * PR5b 起它们是唯一来源，手工维护：不再由迁移工具生成（`sample:v2` 与固定的迁移清单已删除）。改完运行
+ * `npm run privacy:check`，由下面的 `auditV2SampleDirectory` 校验格式与中立性。
  *
- * 本模块给 migrate-identity、legacy-baseline（`--path v2-sample`）、privacy-audit 与测试共用：目录与文件名、
- * 读五个文件，以及隐私审计的规则 `auditV2SampleDirectory`（与旧样例的规则一一对应）。
+ * 本模块给基线工具（`--sample`）、privacy-audit 与测试共用：目录与文件名、读五个文件，以及隐私审计的规则。
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 
-import { canonicalPath } from './private-output.mjs'
 import { webRoot } from './private-profile.mjs'
 import { V2_FILE_KEYS, validateV2Files } from '../src/data/canonical/v2Schema.ts'
 
@@ -30,14 +27,8 @@ export const V2_SAMPLE_FILE_NAMES = Object.freeze({
   media: 'user-media.json',
 })
 
-/** 固定的迁移清单（「稳定来源键 → UUID」），`npm run sample:v2` 经 `--manifest` 读它。 */
-export const V2_SAMPLE_MANIFEST_NAME = 'identity-manifest.json'
-
-/** 样例目录里允许出现的全部文件。 */
-export const V2_SAMPLE_ALLOWED_FILES = Object.freeze([...Object.values(V2_SAMPLE_FILE_NAMES), V2_SAMPLE_MANIFEST_NAME].sort())
-
-/** `target` 恰好是样例目录本身（两边都先规范化：解开符号链接、目录联接与大小写）。子目录不算。 */
-export const isV2SampleDirectory = (target) => canonicalPath(target) === canonicalPath(V2_SAMPLE_DIRECTORY)
+/** 样例目录里允许出现的全部文件：五个 V2 文件。 */
+export const V2_SAMPLE_ALLOWED_FILES = Object.freeze(Object.values(V2_SAMPLE_FILE_NAMES).sort())
 
 /** 读样例目录（或它的副本）里的五个 V2 文件：键 → JSON 值；缺的为 undefined。不合法的 JSON 抛 SyntaxError。 */
 export const readV2SampleFiles = (directory = V2_SAMPLE_DIRECTORY) => Object.fromEntries(V2_FILE_KEYS.map((key) => {
@@ -49,7 +40,7 @@ const isObject = (value) => typeof value === 'object' && value !== null && !Arra
 
 /**
  * 隐私审计对 V2 样例的规则（PR4 规格 §2.3，与旧样例的检查一一对应）：
- * - 目录里只允许六个文件（五个 V2 文件与迁移清单），没有子目录、`.bak` 或其他文件；
+ * - 目录里只允许五个 V2 文件，没有子目录、`.bak` 或其他文件（PR5b 起也没有迁移清单）；
  * - 五个 V2 文件都存在、是有效 JSON，并通过 `validateV2Files`；
  * - 足迹与想去文件的 `privacy_level` 为 `public-sample`；
  * - 至少一条足迹记录、至少一条想去条目；

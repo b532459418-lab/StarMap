@@ -1,9 +1,9 @@
 /**
- * editor-state 的纯派生（RFC-LOC-1 PR1）。
+ * editor-state 的类型、解析与排序（RFC-LOC-1 PR1 搬自 `src/data/editorState.ts`）。
  *
  * `src/data/derive/` 是 App 的纯派生层，【不是】 StarMap Core（`src/worldgraph/**`）。
- * 这里的逻辑原样搬自 `src/data/editorState.ts`；「读哪份数据」仍留在原文件
- * （虚拟模块 `virtual:starmap-private-data` 与 import.meta.env 只能在 Vite 里用）。
+ * `parseEditorState` 给 V2 写入读旧形状的 editor-state（`../canonical/reconstruct.ts`），`orderBySavedIds` 给派生排序。
+ * RFC-LOC-1 PR5b 删除了只给旧派生用的 `deriveEditorState` 与 `emptyEditorState`。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`，
  * 不 import JSON、虚拟模块或 import.meta。
@@ -35,20 +35,6 @@ export type TravelAtlasEditorState = {
   droneOrderByCity: Record<CityId, string[]>
   hiddenDroneMediaIds: string[]
   updatedAt?: string
-}
-
-export const emptyEditorState: TravelAtlasEditorState = {
-  schemaVersion: 1,
-  addedCountries: [],
-  countryOrder: [],
-  hiddenCountryIds: [],
-  cityOrderByCountry: {},
-  hiddenCityIds: [],
-  mediaOrderByCity: {},
-  hiddenMediaIds: [],
-  coverMediaByCity: {},
-  droneOrderByCity: {},
-  hiddenDroneMediaIds: [],
 }
 
 const isStringArray = (value: unknown): value is string[] =>
@@ -97,10 +83,6 @@ export const parseEditorState = (value: unknown): TravelAtlasEditorState | undef
     updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : undefined,
   }
 }
-
-/** 原始值（私有文件内容，或不存在时的 undefined）→ editor-state；解析不了就是空状态。 */
-export const deriveEditorState = (value: unknown): TravelAtlasEditorState =>
-  parseEditorState(value) ?? emptyEditorState
 
 export const orderBySavedIds = <T extends { id: string }>(items: T[], savedOrder?: string[]) => {
   if (!savedOrder?.length) return items

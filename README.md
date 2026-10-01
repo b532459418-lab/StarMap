@@ -126,14 +126,21 @@ Public builds and `dev:public` show a neutral three-place sample instead (Nuuk, 
 
 ## Existing data in the legacy format
 
-The personal profile reads only the current (V2) data format in `<private-root>/data/v2/`, and a new private folder starts with an empty map. A private folder created before that holds its data in the legacy format, which StarMap no longer reads. Until you migrate it, the map shows a migration notice, the local editor refuses to save, and the media import refuses to run, so nothing is written next to the unmigrated data. StarMap never migrates, moves, or rewrites your files by itself. From `01_Web/`:
+The personal profile reads only the current (V2) data format in `<private-root>/data/v2/`, and a new private folder starts with an empty map. A private folder created before that holds its data in the legacy format, which StarMap no longer reads. Until you migrate it, the map shows a migration notice, the local editor refuses to save, and the media import refuses to run, so nothing is written next to the unmigrated data. StarMap never migrates, moves, or rewrites your files by itself.
+
+The current version no longer contains the migration tool; commit `4fd32a9` is the last version that has it. Migrate there, then return to the latest version:
 
 ```powershell
-npm run identity:check                  # dry run: report only, nothing is migrated
-npm run identity:check -- --apply       # write the V2 files, then refresh the page
+git checkout 4fd32a9
+cd 01_Web
+npm ci
+npm run identity:check                  # dry run: read the report, nothing is migrated
+npm run identity:check -- --apply       # write the V2 files
+git checkout main
+npm ci                                  # back on the latest version, then refresh the page
 ```
 
-Resolve everything the dry run asks you to decide before applying. After the migration the legacy files, and the `data/data-mode.local.json` marker of earlier versions, are leftovers that StarMap ignores; keep or delete them. If you do not need the old data at all, move the four legacy files out of `data/` instead. The full steps, the decisions file, and what the migration means for media are in [01_Web/README.md](01_Web/README.md#legacy-format-data).
+Resolve everything the dry run asks you to decide before applying. After the migration the legacy files, and the `data/data-mode.local.json` marker of earlier versions, are leftovers that StarMap ignores; keep or delete them. If you do not need the old data at all, move the four legacy files out of `data/` instead. The full steps, the decisions file, and what the migration means for media are in [01_Web/README.md](01_Web/README.md#migrate-legacy-format-data) (Private Data Format).
 
 ## Build and verify
 

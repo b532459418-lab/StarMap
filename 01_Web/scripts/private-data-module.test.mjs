@@ -47,7 +47,7 @@ const evaluateModule = async (source) => import(`data:text/javascript,${encodeUR
 // 私人目录的路径与 V2 文件名
 // ---------------------------------------------------------------------------
 
-test('getPrivatePaths：V2 文件在 data/v2/ 下，文件名与 v2Schema.ts 的 V2_FILE_NAMES 相同；键与 V2_FILE_KEYS 相同；没有数据模式标记的路径', () => {
+test('getPrivatePaths：V2 文件在 data/v2/ 下，文件名与 v2Schema.ts 的 V2_FILE_NAMES 相同；键与 V2_FILE_KEYS 相同；没有数据模式标记与旧格式媒体源文件索引的路径', () => {
   assert.deepEqual(V2_DATA_FILE_NAMES, V2_FILE_NAMES)
   assert.deepEqual(V2_PRIVATE_FILE_KEYS, V2_FILE_KEYS)
   assert.equal(paths.v2DataRoot, path.join(root, 'data', 'v2'))
@@ -56,6 +56,7 @@ test('getPrivatePaths：V2 文件在 data/v2/ 下，文件名与 v2Schema.ts 的
     Object.fromEntries(Object.entries(V2_FILE_NAMES).map(([key, name]) => [key, path.join(root, 'data', 'v2', name)])),
   )
   assert.equal(Object.hasOwn(paths, 'dataModePath'), false)
+  assert.equal(Object.hasOwn(paths, 'mediaSourceIndexPath'), false, 'PR5b 删除')
 })
 
 // ---------------------------------------------------------------------------
@@ -133,7 +134,7 @@ test('文件事件：PR4 的数据模式标记、迁移清单、旧格式的 .ba
     path.join(paths.dataRoot, 'migration', 'identity-manifest.local.json'),
     path.join(paths.dataRoot, 'travel-map.local.bak'),
     path.join(paths.dataRoot, 'travel-map.local.json.1234.tmp'),
-    paths.mediaSourceIndexPath,
+    path.join(paths.dataRoot, 'media-source-index.local.json'),
     paths.dataRoot,
     path.join(paths.root, 'config', '.env.local'),
     path.join(paths.root, 'MediaInbox', 'Iceland', 'Reykjavik', 'photos', 'a.jpg'),

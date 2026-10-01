@@ -2,9 +2,10 @@
  * 从 Canonical Model 派生 App 今天的全部导出（RFC-LOC-1 PR2 规格 §2.4）。
  *
  * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。`deriveAppDataFromCanonical` 的结果与 PR1 的
- * `deriveAppData`（`../derive/appData.ts`）【同名、同形状】（`AppData`），UI 与 Core 一行不改。
+ * 旧派生 `deriveAppData` 【同名、同形状】（`AppData`，PR5b 删除旧派生时从 `../derive/appData.ts` 移到本文件），
+ * UI 与 Core 一行不改。
  *
- * 规则与计算逐条对应 `../derive/*.ts` 的现有实现，只是「按名字」换成「按地点」：
+ * 规则与计算逐条对应 PR1 旧派生（`../derive/*.ts`，PR5b 删除）的实现，只是「按名字」换成「按地点」：
  * - 分组（国家 / 城市）、editor 隐藏、城市所属国家、行程日与路线的城市 id —— 按地点 id；
  * - 分类与导航隐藏 —— 按 Canonical 显示规则里的地点 id（`./classify.ts`）；
  * - 国旗 —— 地点的 ISO；国家中心、城市坐标 —— 地点的 location；
@@ -23,10 +24,9 @@ import { plannedEntityId } from '../../worldgraph/adapters/plannedRecords.ts'
 import { wantToGoEntityId, type WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
 import { slugify as coreSlugify } from '../../worldgraph/slug.ts'
 import type { EntityId } from '../../worldgraph/types.ts'
-import type { AppData } from '../derive/appData.ts'
-import { deriveDroneMedia } from '../derive/droneMedia.ts'
+import { deriveDroneMedia, type DroneMediaDerived } from '../derive/droneMedia.ts'
 import { orderBySavedIds, type TravelAtlasEditorState } from '../derive/editorState.ts'
-import { deriveMediaCatalog, getMediaSource } from '../derive/mediaCatalog.ts'
+import { deriveMediaCatalog, getMediaSource, type MediaCatalogDerived } from '../derive/mediaCatalog.ts'
 import {
   coordinateForRecord,
   countryAccent,
@@ -34,8 +34,8 @@ import {
   formatDateRange,
   unique,
 } from '../derive/travelAtlas.ts'
-import { plannedConvertBlockReason, type WantToGoTravelInput } from '../derive/wantToGo.ts'
-import { deriveWorldGraph } from '../derive/worldGraph.ts'
+import { plannedConvertBlockReason, type WantToGoDataSource, type WantToGoTravelInput } from '../derive/wantToGo.ts'
+import { deriveWorldGraph, type WorldGraphDerived } from '../derive/worldGraph.ts'
 import type { City, CityId, Country, CountryId, JourneyDay, Route, TravelMapRecord } from '../../types/travel.ts'
 import { classifyByPlace, displaySets, hiddenFromHomeFor } from './classify.ts'
 import {
@@ -56,6 +56,22 @@ export interface CanonicalDeriveOptions {
   now: string
 }
 
+/** 足迹派生的全部导出（`travelAtlasDataSource` 除外：它是 Canonical 的来源）。 */
+export type TravelAtlasDerived = ReturnType<typeof deriveTravelAtlasFromCanonical>
+
+/** 想去派生的全部导出（`wantToGoDataSource` 除外）。 */
+export type WantToGoDerived = ReturnType<typeof deriveWantToGoFromCanonical>
+
+/** 六个模块今天的全部导出（名字相同），按模块分组（RFC-LOC-1 PR1 §2.3）。 */
+export interface AppData {
+  travelAtlas: { travelAtlasDataSource: 'local' | 'sample' } & TravelAtlasDerived
+  editorState: { travelAtlasEditorState: TravelAtlasEditorState; orderBySavedIds: typeof orderBySavedIds }
+  mediaCatalog: { getMediaSource: typeof getMediaSource } & MediaCatalogDerived
+  droneMedia: DroneMediaDerived
+  wantToGo: { wantToGoDataSource: WantToGoDataSource } & WantToGoDerived
+  worldGraph: { worldGraphSessionNow: string } & WorldGraphDerived
+}
+
 /** 显示中的一条记录：重建后的记录 + 它的城市与国家地点 id。 */
 interface PlacedRecord {
   record: TravelMapRecord
@@ -63,7 +79,7 @@ interface PlacedRecord {
   countryId: PlaceId
 }
 
-/** 与 `../derive/travelAtlas.ts` 的 `deriveTravelAtlas` 逐条对应；分组按地点 id。 */
+/** 与 PR1 旧派生 `deriveTravelAtlas`（PR5b 删除）逐条对应；分组按地点 id。 */
 const deriveTravelAtlasFromCanonical = (
   canonical: CanonicalData,
   places: PlaceIndex,
@@ -318,7 +334,7 @@ const deriveTravelAtlasFromCanonical = (
   }
 }
 
-// ---- 想去（照抄 ../derive/wantToGo.ts 解析之后的部分；解析已在 Legacy Adapter 里做过）----
+// ---- 想去（照抄 PR1 旧派生 deriveWantToGo 解析之后的部分；PR5b 删除了旧派生，解析在 V2 Reader 里）----
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
@@ -373,7 +389,7 @@ const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceI
 }
 
 /**
- * Canonical → App 今天的全部导出（与 `deriveAppData` 同名、同形状）。依赖顺序与 PR1 相同：
+ * Canonical → App 今天的全部导出（与 PR1 旧派生 `deriveAppData` 同名、同形状）。依赖顺序与 PR1 相同：
  * editor-state → 足迹 → 媒体 → 无人机 → 想去 → World Graph。
  */
 export function deriveAppDataFromCanonical(canonical: CanonicalData, options: CanonicalDeriveOptions): AppData {

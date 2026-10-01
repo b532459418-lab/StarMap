@@ -1,6 +1,7 @@
 /**
- * editor-state 纯派生（derive/editorState.ts）的单元测试（RFC-LOC-1 PR1 §3.5）。
- * orderBySavedIds 的测试在 travelAtlas.test.ts（与它的使用处放在一起）。
+ * editor-state 的解析（derive/editorState.ts 的 parseEditorState）的单元测试（RFC-LOC-1 PR1 §3.5）。
+ * orderBySavedIds 的测试在 travelAtlas.test.ts。RFC-LOC-1 PR5b 删除了 `deriveEditorState` 与 `emptyEditorState`
+ * （只给旧派生用），这里原来对它们的两处断言随之去掉。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
@@ -12,12 +13,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { deriveEditorState, emptyEditorState, parseEditorState } from './editorState.ts'
+import { parseEditorState } from './editorState.ts'
 
-test('不是对象、或 schemaVersion 不是 1 时解析不出，派生结果是空状态（同一个对象）', () => {
+test('不是对象、或 schemaVersion 不是 1 时解析不出', () => {
   for (const value of [undefined, null, 'x', 1, {}, { schemaVersion: 2 }]) {
     assert.equal(parseEditorState(value), undefined)
-    assert.equal(deriveEditorState(value), emptyEditorState)
   }
 })
 
@@ -57,7 +57,8 @@ test('逐字段校验：形状不对的字段退回空值，addedCountries 只�
 
 test('合法字段原样保留（同一个数组 / 对象引用），updatedAt 是字符串时保留', () => {
   const countryOrder = ['b', 'a']
-  const parsed = deriveEditorState({ schemaVersion: 1, countryOrder, updatedAt: '2026-09-24T00:00:00.000Z' })
+  const parsed = parseEditorState({ schemaVersion: 1, countryOrder, updatedAt: '2026-09-24T00:00:00.000Z' })
+  assert.ok(parsed)
   assert.equal(parsed.countryOrder, countryOrder)
   assert.equal(parsed.updatedAt, '2026-09-24T00:00:00.000Z')
   assert.deepEqual(parsed.addedCountries, [])

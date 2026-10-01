@@ -4,7 +4,7 @@
  * `atomicJsonWrite`（scripts/json-file.mjs）写入前把旧文件复制成 `<名字>.bak`：这是有意的安全网，保留。
  * 这里锁定它们无害——只测，不改代码：
  *   1. 私人目录 `data/` 与 `data/v2/` 里的 `.bak` 不影响「未迁移」的判定（scripts/legacy-data.mjs：不算旧数据，也不算 V2 文件），
- *      因而也不影响写入拒绝、导入器与迁移工具；
+ *      因而也不影响写入拒绝与导入器（PR5b 删除了迁移工具）；
  *   2. `data/v2/` 里的 `.bak` 不影响 V2 读取与校验（虚拟模块、基线工具、编辑状态接口只读五个确切的文件名）；
  *   3. 收件箱里的 `.bak` 不影响导入（导入器跳过它们）。
  * `.bak` 一律写成非法 JSON 或指向别处的内容：它们若被读到，结果一定会变。
@@ -57,7 +57,8 @@ const writeJson = async (target, value) => {
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
 }
 
-const readSample = (name) => JSON.parse(readFileSync(path.join(webRoot, 'src', 'data', name), 'utf8'))
+/** 冻结的五个 V2 文件（./fixtures/，RFC-LOC-1 PR5b：删除迁移工具之前由 migrate-identity 现场生成）。 */
+const readFixture = (name) => JSON.parse(readFileSync(path.join(webRoot, 'scripts', 'fixtures', name), 'utf8'))
 
 /** `<目录>/<名字>.json` → `<目录>/<名字>.bak`，与 atomicJsonWrite 的命名相同。 */
 const bakOf = (filePath) => filePath.replace(/\.json$/i, '.bak')
@@ -66,7 +67,7 @@ const bakOf = (filePath) => filePath.replace(/\.json$/i, '.bak')
 // 1. 「未迁移」的判定
 // ---------------------------------------------------------------------------
 
-test('.bak 与「未迁移」：data/ 里只有四个旧文件（与 PR4 数据模式标记）的 .bak → 等于全新目录；不拒绝写入，迁移工具报「无需迁移」', () => withTemp(async (directory) => {
+test('.bak 与「未迁移」：data/ 里只有四个旧文件（与 PR4 数据模式标记）的 .bak → 等于全新目录；不拒绝写入', () => withTemp(async (directory) => {
   const root = path.join(directory, 'private')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
   await mkdir(paths.dataRoot, { recursive: true })
@@ -77,12 +78,6 @@ test('.bak 与「未迁移」：data/ 里只有四个旧文件（与 PR4 数据�
   assert.equal(hasLegacyData(paths), false)
   assert.deepEqual(legacyDataStateOf(paths), { legacyFiles: [], v2Files: [] })
   assert.equal(legacyWriteRefusal(legacyDataStateOf(paths)), undefined)
-
-  for (const args of [[], ['--apply']]) {
-    const migrate = runScript('migrate-identity.mjs', args, root)
-    assert.equal(migrate.status, 0, migrate.stderr)
-    assert.equal(migrate.stdout, '私人目录没有旧数据，无需迁移。\n')
-  }
 }))
 
 test('.bak 与「未迁移」：有旧数据、data/v2/ 里只有 .bak → 不算 V2 文件，仍是未迁移：写入拒绝（409），导入器拒绝（退出码 2），都不写', () => withTemp(async (directory) => {
@@ -119,17 +114,14 @@ const v2BaselineOf = (files) => `${stableStringify(buildBaseline(
   { now: BASELINE_NOW },
 ))}\n`
 
-test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响「未迁移」的判定、虚拟模块读的文件、V2 校验、编辑状态接口与 legacy-baseline --path v2', () => withTemp(async (directory) => {
+test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响「未迁移」的判定、虚拟模块读的文件、V2 校验、编辑状态接口与 scripts/baseline.mjs（个人模式）', () => withTemp(async (directory) => {
   const root = path.join(directory, 'private')
   const out = path.join(directory, 'out')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
-  const travel = readSample('travel-map.sample.json')
-  travel.privacy_level = 'local-only'
-  await writeJson(paths.localTravelMapPath, travel)
-  await writeJson(paths.wantToGoPath, readSample('want-to-go.sample.json'))
-  assert.equal(runScript('migrate-identity.mjs', [], root).status, 0)
-  const applied = runScript('migrate-identity.mjs', ['--apply'], root)
-  assert.equal(applied.status, 0, applied.stdout + applied.stderr)
+  // 迁移之后的私人根：data/v2/ 是公开旧样例的足迹与想去迁移后的五个文件（冻结），旧文件还在（内容无所谓，最小的 JSON）。
+  for (const [key, value] of Object.entries(readFixture('bak-files-v2.json'))) await writeJson(paths.v2FilePaths[key], value)
+  await writeJson(paths.localTravelMapPath, { schema_version: 1, records: [] })
+  await writeJson(paths.wantToGoPath, { schema_version: 1, items: [] })
 
   // 经插件用的同一个 IO 层做两次编辑：atomicJsonWrite 给被改写的文件留下 .bak（上一版）。
   const ctx = createV2WriteContext({ countryCatalog: CATALOG, newId: sequentialUuids(Date.UTC(2026, 8, 29)) })
@@ -161,7 +153,7 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
     assert.deepEqual(privateDataModuleExports({ profile: 'personal', v2Values }).privateV2Files, files, label)
     assert.deepEqual(await readV2EditorState({ privatePaths: paths }), expectedState, label)
     const target = path.join(out, `${label}.json`)
-    const result = runScript('legacy-baseline.mjs', ['--path', 'v2', '--out', target], root)
+    const result = runScript('baseline.mjs', ['--out', target], root)
     assert.equal(result.status, 0, `${label}\n${result.stderr}`)
     assert.equal(await readFile(target, 'utf8'), expected, label)
   }

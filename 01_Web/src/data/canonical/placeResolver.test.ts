@@ -2,8 +2,9 @@
  * 地点解析（canonical/placeResolver.ts）的单元测试（RFC-LOC-1 PR3b-2 规格 §2.2、§3）。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
- * PR3a 的 planMigration 测试（../migration/planMigration.test.ts）改为经本模块取合并键与距离后照常全部通过；
+ * PR3a 的迁移规划测试曾改为经本模块取合并键与距离（迁移工具与它的测试在 PR5b 删除）；
  * 这里另测两个解析函数，并用 PR3a 的对拍数据确认 `resolveCity` 与真实管线 `queryVisiblePlaces` 的合并一致。
+ * 对拍数据（旧 id 空间的 Canonical）PR5b 起是冻结的静态数据（./frozen.fixture.ts；删除 Legacy Adapter 之前用它生成）。
  */
 
 /// <reference types="node" />
@@ -13,8 +14,7 @@ import assert from 'node:assert/strict'
 
 import { queryVisiblePlaces } from '../../worldgraph/query.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
-import { NOW, consistentPersonalRaw, record, sampleRaw } from './legacy.fixture.ts'
-import { legacyAdapter } from './legacyAdapter.ts'
+import { legacyIdCanonical, type LegacyIdCanonicalName } from './frozen.fixture.ts'
 import {
   asCountryCode,
   distanceKm,
@@ -25,7 +25,11 @@ import {
   wantToGoTitle,
 } from './placeResolver.ts'
 import type { CanonicalData, CanonicalPlace } from './types.ts'
-import { REYKJAVIK, duplicateRaw, husavikRecord, personalRaw, reykjavikRecord, vikRecord, wantToGoItem } from '../migration/migration.fixture.ts'
+
+const NOW = '2000-01-01T00:00:00.000Z'
+
+/** 雷克雅未克的坐标（公开地理事实）。 */
+const REYKJAVIK = { lat: 64.1466, lng: -21.9426 }
 
 const country = (id: string, iso: string | undefined, en: string, zh = en): CanonicalPlace => ({
   id,
@@ -155,34 +159,22 @@ const resolvedPairs = (canonical: CanonicalData) => {
 }
 
 test('对拍（沿用 PR3a 的对拍数据）：resolveCity 复用的足迹城市，正是 queryVisiblePlaces 在地图上合并的', () => {
-  const fixtures: [string, ReturnType<typeof sampleRaw>][] = [
-    ['公开样例', sampleRaw()],
-    ['个人模式', consistentPersonalRaw()],
-    ['疑似重复', duplicateRaw()],
-    ['大小写、变音符、只有中文名', personalRaw({
-      records: [
-        reykjavikRecord(),
-        vikRecord({ city_en: '' }),
-        husavikRecord({ city_en: 'Húsavík' }),
-        record({ id: 'r_torshavn', country: '法罗群岛', country_en: 'Faroe Islands', country_code: 'fo', city: '托尔斯港', city_en: 'Tórshavn', start_date: '2025-06-06', lat: 62.0079, lng: -6.79 }),
-      ],
-      wantToGo: [
-        wantToGoItem('w_reykjavik_lower', { nameZh: '雷克雅未克', nameEn: 'reykjavik', countryCode: 'is', ...REYKJAVIK }),
-        wantToGoItem('w_vik_zh', { nameZh: '维克', nameEn: '维克', countryCode: 'IS', lat: 63.42, lng: -19.0 }),
-        wantToGoItem('w_husavik_plain', { nameZh: '胡萨维克', nameEn: 'Husavik', countryCode: 'IS', lat: 66.0449, lng: -17.3389 }),
-        wantToGoItem('w_torshavn_accent', { nameZh: '托尔斯港', nameEn: 'Tórshavn', countryCode: 'FO', lat: 62.01, lng: -6.77 }),
-        wantToGoItem('w_torshavn_other_country', { nameZh: '托尔斯港', nameEn: 'Tórshavn', countryCode: 'DK', lat: 62.01, lng: -6.77 }),
-      ],
-    })],
+  // 最后一份：足迹有雷克雅未克、维克（只有中文名）、胡萨维克（Húsavík）、托尔斯港（Tórshavn）；想去有
+  // 小写的 reykjavik、英文名写成中文的维克、不带变音符的 Husavik、带变音符的 Tórshavn（FO 与 DK 各一条）。
+  const fixtures: [string, LegacyIdCanonicalName][] = [
+    ['公开样例', 'sample'],
+    ['个人模式', 'personal'],
+    ['疑似重复', 'duplicate'],
+    ['大小写、变音符、只有中文名', 'caseAndDiacritic'],
   ]
-  for (const [name, raw] of fixtures) {
-    const canonical = legacyAdapter(raw)
+  for (const [name, key] of fixtures) {
+    const canonical = legacyIdCanonical(key)
     assert.deepEqual(resolvedPairs(canonical), mapMergedPairs(canonical), name)
   }
   // 公开样例：阿克雷里（足迹与想去同名同坐标）是唯一的一对。
-  assert.deepEqual(resolvedPairs(legacyAdapter(sampleRaw())), ['iceland__akureyri ← wtg_2026-08-12_akureyri'])
+  assert.deepEqual(resolvedPairs(legacyIdCanonical('sample')), ['iceland__akureyri ← wtg_2026-08-12_akureyri'])
   // 最后一个 fixture：大小写与「只有中文名」合并，变音符与别的国家不合并。
-  assert.deepEqual(resolvedPairs(legacyAdapter(fixtures[3][1])), [
+  assert.deepEqual(resolvedPairs(legacyIdCanonical(fixtures[3][1])), [
     'faroe-islands__tórshavn ← w_torshavn_accent',
     'iceland__reykjavik ← w_reykjavik_lower',
     'iceland__维克 ← w_vik_zh',

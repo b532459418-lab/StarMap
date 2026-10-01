@@ -190,7 +190,7 @@ test('V2 导入（CLI）：预检不写文件；--apply 写 V3 目录与 V2 源�
 
     // 五个 V2 文件通过完整性检查；没有写任何旧文件；投递箱里的源文件与 sidecar 没被改动。
     assert.deepEqual(integrityProblems(completeForWrite(await readV2Set(paths), NOW)), [])
-    for (const legacy of [paths.mediaCatalogPath, paths.mediaSourceIndexPath, paths.localTravelMapPath, paths.editorStatePath]) {
+    for (const legacy of [paths.mediaCatalogPath, path.join(paths.dataRoot, 'media-source-index.local.json'), paths.localTravelMapPath, paths.editorStatePath]) {
       assert.equal(existsSync(legacy), false, legacy)
     }
     assert.deepEqual(
@@ -429,7 +429,7 @@ test('未迁移：私人目录只有旧数据、data/v2/ 没有 V2 文件 → me
       assert.equal(result.status, 2, `${args.join(' ')}\n${result.stdout}${result.stderr}`)
       assert.equal(result.stdout, '')
       assert.match(result.stderr, /^\[import-media\] 私人目录里有旧格式的数据，还没有迁移，没有导入任何媒体。/)
-      assert.match(result.stderr, /npm run identity:check -- --apply/)
+      assert.match(result.stderr, /检出 StarMap 的提交 4fd32a9/)
     }
     assert.deepEqual((await readdir(root, { recursive: true })).sort(), before, '不写 data/v2/、生成文件与 place.json')
     assert.equal(existsSync(paths.v2DataRoot), false)
@@ -450,6 +450,6 @@ test('残留：旧文件与 V2 文件都在（已迁移）→ 照常由 V2 导�
     assert.equal(catalog.items.length, 4)
     assert.ok(catalog.items.every((item) => /^media-[0-9a-f]{16}$/.test(item.id)))
     assert.equal(existsSync(paths.mediaCatalogPath), false, '不写旧格式的媒体目录')
-    assert.equal(existsSync(paths.mediaSourceIndexPath), false, '不写旧格式的源文件索引')
+    assert.equal(existsSync(path.join(paths.dataRoot, 'media-source-index.local.json')), false, '不写旧格式的源文件索引')
   })
 })

@@ -1,7 +1,4 @@
-# RFC-LOC-1 PR4: `npm run sample:v2` regenerates the V2 public sample byte for byte, with LF line endings.
-# Keep LF in every checkout so the committed files and the generator output stay identical on Windows clones with
-# core.autocrlf=true. The two legacy samples are the generator's input: the fixed identity manifest records the
-# sha256 of their raw bytes, so their line endings must not depend on the checkout either.
+# RFC-LOC-1 PR4: the V2 public sample keeps LF line endings in every checkout, so the committed bytes are the same on
+# Windows clones with core.autocrlf=true. PR5b removed its generator and the two legacy samples it read; the five files
+# are maintained by hand and checked by `npm run privacy:check`.
 01_Web/src/data/v2-sample/*.json text eol=lf
-01_Web/src/data/travel-map.sample.json text eol=lf
-01_Web/src/data/want-to-go.sample.json text eol=lf

@@ -286,7 +286,7 @@ test('V2 媒体端点：上传（写 place.json）→ 导入（恢复与追加�
       'Iceland/Reykjavik/place.json',
       'Iceland/place.json',
     ].sort())
-    for (const legacy of [paths.mediaCatalogPath, paths.mediaSourceIndexPath, paths.editorStatePath, paths.localTravelMapPath]) {
+    for (const legacy of [paths.mediaCatalogPath, path.join(paths.dataRoot, 'media-source-index.local.json'), paths.editorStatePath, paths.localTravelMapPath]) {
       assert.equal(existsSync(legacy), false, legacy)
     }
   })

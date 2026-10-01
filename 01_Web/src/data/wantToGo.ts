@@ -4,7 +4,7 @@
  * 这里【不是】 StarMap Core：它经 ./appData.ts 依赖 Vite 虚拟模块与 import.meta.env，
  * 只能在 Vite 里跑。解析与投影的纯逻辑都在 src/worldgraph/adapters/wantToGo.ts；
  * 解析之后的应用侧派生（隐藏条目、按 EntityId 反查条目的两张表、「想去 → 足迹」的禁用原因）
- * 与 PR1 的纯派生层 ./derive/wantToGo.ts 相同，PR2 起经 Canonical 计算（./canonical/derive.ts）。
+ * 经 Canonical 计算（./canonical/derive.ts；PR1 的旧派生 deriveWantToGo 在 PR5b 删除）。
  * 本文件只以原名导出；开发时报告被跳过的坏数据在 ./appData.ts。
  *
  * 数据来源规则（FR-PUB-1）在 ./rawInputs.ts，按顺序判定：
@@ -42,7 +42,7 @@ export const wantToGoItemByEntityId = derived.wantToGoItemByEntityId
 /** EntityId → planned 旅行记录（FR-WTG-7，只读），给详情卡用。 */
 export const plannedRecordByEntityId = derived.plannedRecordByEntityId
 
-// ---- 想去 → 足迹（PR9）的前置条件：返回 undefined 表示可以转换，规则见 ./derive/wantToGo.ts ----
+// ---- 想去 → 足迹（PR9）的前置条件：返回 undefined 表示可以转换，规则见 ./canonical/derive.ts 与 ./derive/wantToGo.ts ----
 
 export const wantToGoConvertBlockReason = derived.wantToGoConvertBlockReason
 

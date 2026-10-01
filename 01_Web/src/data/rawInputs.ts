@@ -3,7 +3,7 @@
  *
  * 这里【不是】 StarMap Core：它 import 了 Vite 虚拟模块、样例 JSON 与 import.meta.env，只能在 Vite 里跑。
  * 结果交给 ./appData.ts：canonicalForInputs（V2 Reader）→ Canonical → 派生。
- * 脚本 scripts/legacy-baseline.mjs 按同一套规则在 Node 里选数据（公开样例：`--path v2-sample`；私人目录：`--path v2`）。
+ * 脚本 scripts/baseline.mjs 按同一套规则在 Node 里选数据（公开样例：`--sample`；私人目录：默认）。
  *
  * PR5a 起只有两种输入，都是五个 V2 文件：
  * 1. 公开模式，以及任何模式下的强制样例（VITE_TRAVEL_ATLAS_DATA_MODE=sample、开发时 ?data=sample）
@@ -39,7 +39,7 @@ export const forceSampleData: boolean = import.meta.env.VITE_TRAVEL_ATLAS_DATA_M
 /** 读公开样例：公开模式，或任何模式下的强制样例（上面第 1 条）。 */
 const useSampleData = forceSampleData || import.meta.env.MODE !== 'personal'
 
-/** 公开样例的五个 V2 文件（`npm run sample:v2` 生成，scripts/v2-sample.mjs 列出文件名）。 */
+/** 公开样例的五个 V2 文件（手工维护，scripts/v2-sample.mjs 列出文件名，npm run privacy:check 校验）。 */
 const v2SampleFiles: V2FileInputs = {
   places: v2SamplePlaces,
   travel: v2SampleTravel,

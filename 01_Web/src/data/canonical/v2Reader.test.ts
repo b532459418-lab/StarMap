@@ -10,15 +10,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { consistentPersonalRaw, sampleRaw } from './legacy.fixture.ts'
-import { legacyAdapter } from './legacyAdapter.ts'
-import { toV2Space } from './v2.fixture.ts'
+import { v2SpaceCanonical, type V2SpaceCanonicalName } from './frozen.fixture.ts'
 import { readV2 } from './v2Reader.ts'
 import type { V2Files } from './v2Schema.ts'
 import { serializeV2 } from './v2Serializer.ts'
 
-const sampleFiles = (raw = sampleRaw()): V2Files => {
-  const { data } = toV2Space(legacyAdapter(raw))
+/** 冻结的 V2 id 空间 Canonical（公开样例或中性个人模式数据，./frozen.fixture.ts）写成的五个文件。 */
+const sampleFiles = (name: V2SpaceCanonicalName = 'sample'): V2Files => {
+  const data = v2SpaceCanonical(name)
   return JSON.parse(JSON.stringify(serializeV2(data, {
     placesGeneratedAt: '2026-09-26T00:00:00.000Z',
     wantToGo: { generated_at: '2026-08-12T00:00:00.000Z' },
@@ -68,7 +67,7 @@ test('省略坐标的记录用城市坐标填回；城市没有坐标时保持�
 })
 
 test('Canonical 里没有的文件级元数据读时丢弃；输出不与输入共享引用', () => {
-  const files = sampleFiles(consistentPersonalRaw())
+  const files = sampleFiles('personal')
   const read = readV2(files)
   assert.equal(JSON.stringify(read).includes('2026-09-26T00:00:00.000Z'), false)
   assert.equal(JSON.stringify(read).includes('2030-01-02T03:04:05.000Z'), false)

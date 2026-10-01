@@ -37,14 +37,15 @@ test('迁移提示优先于空状态（PR5a）：旧数据还没迁移时，没�
   assert.deepEqual(privateDataNotice({ personal: true, legacyUnmigrated: true, travelRecordCount: 2, wantToGoItemCount: 1 }), expected)
 })
 
-test('文案：空状态为决定 E 的完整文案；迁移提示说明旧数据没迁移、两条迁移命令与放弃旧数据的做法，不含数据模式的说法', () => {
+test('文案：空状态为决定 E 的完整文案；迁移提示说明旧数据没迁移、用提交 4fd32a9 迁移（步骤见 README）与放弃旧数据的做法，不含数据模式与已删除命令的说法', () => {
   assert.equal(V2_EMPTY_NOTICE, '还没有足迹，从添加第一个城市开始。')
   const text = LEGACY_UNMIGRATED_NOTICE.join('\n')
   assert.match(LEGACY_UNMIGRATED_NOTICE[0], /^私人目录里有旧格式的数据，还没有迁移。/)
-  assert.ok(text.includes('npm run identity:check 查看迁移摘要'), text)
-  assert.ok(text.includes('npm run identity:check -- --apply'), text)
+  assert.ok(text.includes('请先检出 StarMap 的提交 4fd32a9（最后一个带迁移工具的版本）完成迁移'), text)
+  assert.ok(text.includes('步骤见 README 的 Private Data Format 一节'), text)
+  assert.equal(LEGACY_UNMIGRATED_NOTICE.length, 3, '界面提示保持简短：完整步骤只在 README')
   for (const name of ['travel-map', 'want-to-go', 'editor-state', 'user-media']) assert.ok(text.includes(name), name)
   assert.ok(text.includes('.local.json'))
-  assert.doesNotMatch(text, /数据模式|data-mode|--switch/)
+  assert.doesNotMatch(text, /identity:check|数据模式|data-mode|--switch/)
   assert.ok(Object.isFrozen(LEGACY_UNMIGRATED_NOTICE))
 })

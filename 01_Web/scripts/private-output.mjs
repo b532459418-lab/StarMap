@@ -1,5 +1,5 @@
 /**
- * 私人数据可以写到哪里（隐私门）。`legacy-baseline.mjs` 与 `migrate-identity.mjs` 共用这一个判断。
+ * 私人数据可以写到哪里（隐私门）。基线工具 `baseline.mjs` 用这一个判断（PR5b 删除的迁移工具也曾用它）。
  *
  * 规则：
  * - 目标位于解析出的私人根目录（`resolvePrivateRoot()`，即 `getPrivatePaths().root`）之内：放行，

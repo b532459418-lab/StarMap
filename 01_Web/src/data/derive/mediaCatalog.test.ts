@@ -13,8 +13,23 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { deriveDroneMedia } from './droneMedia.ts'
-import { emptyEditorState, type TravelAtlasEditorState } from './editorState.ts'
+import type { TravelAtlasEditorState } from './editorState.ts'
 import { deriveMediaCatalog, getMediaSource, type ImportedMediaCatalogItem } from './mediaCatalog.ts'
+
+/** 空的 editor-state（原 derive/editorState.ts 的 emptyEditorState，RFC-LOC-1 PR5b 删除后搬到这里）。 */
+const emptyEditorState: TravelAtlasEditorState = {
+  schemaVersion: 1,
+  addedCountries: [],
+  countryOrder: [],
+  hiddenCountryIds: [],
+  cityOrderByCountry: {},
+  hiddenCityIds: [],
+  mediaOrderByCity: {},
+  hiddenMediaIds: [],
+  coverMediaByCity: {},
+  droneOrderByCity: {},
+  hiddenDroneMediaIds: [],
+}
 
 const editor = (overrides: Partial<TravelAtlasEditorState> = {}): TravelAtlasEditorState => ({
   ...emptyEditorState,

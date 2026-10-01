@@ -118,7 +118,7 @@ export interface V2SchemaProblem {
 const ISO_PATTERN = /^[A-Z]{2}$/
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const LEGACY_KEY_PATTERN = /^(country|city):.+$/
-/** 与 `ImportedMediaKind`（../derive/mediaCatalog.ts）相同的四种；不 import Legacy Adapter，因为 PR5 会删除它而 V2 留下。 */
+/** 与 `ImportedMediaKind`（../derive/mediaCatalog.ts）相同的四种；当初不 import Legacy Adapter，因为它会在 PR5 删除而 V2 留下。 */
 const MEDIA_KINDS: readonly string[] = ['photo', 'panorama360', 'aerialPhoto', 'video']
 
 const PLACE_KEYS = new Set(['id', 'subtype', 'names', 'originalLanguage', 'externalIds', 'partOf', 'location', 'legacyKeys'])

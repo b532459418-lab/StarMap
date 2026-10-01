@@ -2,7 +2,8 @@
  * 想去的 V2 写入（RFC-LOC-1 PR3b-2 规格 §2.3）：新增（`POST /wanttogo`）、改隐藏与备注（`POST /wanttogo/update`）、
  * 彻底删除已隐藏的条目（`POST /wanttogo/delete`）。
  *
- * `src/data/v2write/` 是 App 层，【不是】 StarMap Core。输入与校验、文案照抄旧的 scripts/want-to-go-store.mjs；
+ * `src/data/v2write/` 是 App 层，【不是】 StarMap Core。输入与校验、文案照抄旧的 scripts/want-to-go-store.mjs
+ * （RFC-LOC-1 PR5a 删除，见 PR5；今天以本文件为准）；
  * 条目改为引用地点（`placeId`），FR-WTG-8 查重改为「同一地点已在列表中」（RFC §3.2）。
  * 返回的 `item` 是客户端认识的旧形状（内联 `place`），由地点重建（../canonical/reconstruct.ts）。
  *

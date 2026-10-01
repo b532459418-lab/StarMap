@@ -2,7 +2,8 @@
  * V2 写入（RFC-LOC-1 PR3b-2）测试共用的数据与调用方式。不是测试文件，App 代码从不 import 它。
  *
  * - `migratedFiles()`：PR2 的中性个人模式数据（`consistentPersonalRaw`）经 PR3a 迁移得到的五个 V2 文件——
- *   与真实用户迁移后的形态相同（地点 id 为 UUIDv7，想去的阿克雷里已并进足迹城市）。内容：
+ *   与真实用户迁移后的形态相同（地点 id 为 UUIDv7，想去的阿克雷里已并进足迹城市）。PR5b 起是冻结的静态文件
+ *   `./fixtures/migrated-files.json`（删除迁移工具之前用当时的代码生成），每次读出新对象。内容：
  *   冰岛（雷克雅未克、维克〔editor 隐藏〕、阿克雷里〔也被想去引用〕）、法罗群岛（托尔斯港、杰格夫、克拉克斯维克）、
  *   挪威（卑尔根，只有一条 planned 记录；特罗姆瑟，只被隐藏的想去条目引用）、格陵兰（努克，只被想去引用）；
  *   雷克雅未克两张照片、托尔斯港一张航拍。
@@ -12,14 +13,13 @@
 /// <reference types="node" />
 
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
-import { consistentPersonalRaw } from '../canonical/legacy.fixture.ts'
 import { EN } from '../canonical/reconstruct.ts'
 import type { CanonicalPlace } from '../canonical/types.ts'
 import { sequentialUuids } from '../canonical/v2.fixture.ts'
 import type { V2FileKey, V2Files } from '../canonical/v2Schema.ts'
 import { jsonClone } from '../canonical/v2Serializer.ts'
-import { plan } from '../migration/migration.fixture.ts'
 import { V2WriteError, type V2WriteErrorCode } from './errors.ts'
 import { completeForWrite, integrityProblems, type CatalogCountry, type V2Write, type V2WriteContext } from './transaction.ts'
 
@@ -50,12 +50,9 @@ export const testContext = (overrides: Partial<V2WriteContext> = {}): V2WriteCon
   ...overrides,
 })
 
-/** 中性个人模式数据迁移后的五个 V2 文件（每次新对象）。 */
-export const migratedFiles = (): V2Files => {
-  const result = plan(consistentPersonalRaw())
-  if (!result.files) throw new Error('fixture：迁移没有产出 V2 文件')
-  return jsonClone(result.files)
-}
+/** 中性个人模式数据迁移后的五个 V2 文件（冻结的静态文件，每次新对象）。 */
+export const migratedFiles = (): V2Files =>
+  JSON.parse(readFileSync(new URL('./fixtures/migrated-files.json', import.meta.url), 'utf8')) as V2Files
 
 /** 按英文名（可限定类型）找地点。 */
 export const placeNamed = (files: V2Files, en: string, subtype?: 'country' | 'city'): CanonicalPlace => {

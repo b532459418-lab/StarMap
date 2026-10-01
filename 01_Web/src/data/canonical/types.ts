@@ -4,16 +4,17 @@
  * `src/data/canonical/` 是 App 层，【不是】 StarMap Core（`src/worldgraph/**`）。这些类型在 Core Model RFC
  * 定稿时再决定是否下沉进 Core。
  *
- * App 只读 Canonical，不知道磁盘上是哪种格式：
+ * App 只读 Canonical，不知道磁盘上是哪种格式（RFC-LOC-1 PR5a 起磁盘上只有 V2）：
  *
- *   legacy 模式：旧文件 ──Legacy Adapter（./legacyAdapter.ts）──> Canonical ──> 派生（./derive.ts）──> Core ──> UI
+ *   五个 V2 文件 ──V2 Reader（./v2Reader.ts）──> Canonical ──> 派生（./derive.ts）──> Core ──> UI
  *
  * 与旧格式的根本区别：地点只在 `places` 里定义一次（名称、国家代码、坐标）；足迹记录、想去条目、
  * 媒体与 editor-state 都只按地点 id 引用它，不再各自带一份名称。
  *
- * legacy 模式下地点 id 就是今天已存储的旧键（RFC §3.6、PR2 规格 §2.2）：足迹国家 = CountryId，
- * 足迹城市 = CityId，想去条目的地点 = `wtg:<item.id>`，想去城市所属的无足迹国家 = `iso:<CC>`。
- * 代码不得解析 id 的结构（RFC ID-1）；这些前缀只是保证 id 空间不相交。
+ * V2 里地点 id 是 UUIDv7。PR2 到 PR5a 还有 legacy 模式：Legacy Adapter 把旧文件读成 Canonical，地点 id 就是已存储的
+ * 旧键（足迹国家 = CountryId，足迹城市 = CityId，想去条目的地点 = `wtg:<item.id>`，想去城市所属的无足迹国家 = `iso:<CC>`）。
+ * PR5b 删除了 Legacy Adapter；只有冻结的测试夹具（./frozen.fixture.ts 的 `legacyIdCanonical`）还用那种 id。
+ * 代码不得解析 id 的结构（RFC ID-1）。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
@@ -38,15 +39,15 @@ export interface LocalizedText {
 export interface CanonicalPlace {
   id: PlaceId
   subtype: 'country' | 'city'
-  /** 只写非空值；legacy 模式下最多 `zh-Hans` 与 `en` 两项。 */
+  /** 只写非空值；从旧格式迁移来的地点最多 `zh-Hans` 与 `en` 两项。 */
   names: Record<LanguageTag, string>
-  /** 国家的 ISO 3166-1 alpha-2，大写。legacy 模式允许缺（缺代码是 PR3 迁移时的错误，RFC ID-5）。 */
+  /** 国家的 ISO 3166-1 alpha-2，大写。V2 文件里国家必须有（./v2Schema.ts 校验）；类型上可缺，是因为旧 id 空间的数据允许缺（RFC ID-5）。 */
   externalIds?: { iso3166Alpha2?: string }
   /** city → country。 */
   partOf?: PlaceId
   /** 地点的规范坐标（RFC Q8）。`approximate` 表示不是来自记录自身的坐标。 */
   location?: { lat: number; lng: number; approximate?: true }
-  /** 被持久化引用过的旧键（RFC ID-2）。legacy 模式下就是 id 本身；想去与 `iso:` 地点没有。 */
+  /** 被持久化引用过的旧键（RFC ID-2）。V2 里带命名空间前缀（`country:<旧键>` / `city:<旧键>`），照片导入经它认出旧的国家文件夹与覆盖；想去与 `iso:` 地点没有。 */
   legacyKeys?: string[]
 }
 
@@ -57,7 +58,7 @@ export type LegacyPlaceField = 'country' | 'country_en' | 'country_code' | 'city
  * 足迹记录：原记录的全部事实字段（含未知字段）去掉五个名称 / 代码字段，改为引用城市地点。
  * - 国家别名已应用：`region` 是归一后的值（含 `regionSuffix`）。
  * - 非 planned 记录的 `journeyId` 已按今天的分组规则写入（`journeyRules` 因此被消耗掉）。
- * - 记录自身的 `lat` / `lng` 在 legacy 模式下原样保留。
+ * - 记录自身的 `lat` / `lng` 原样保留（V2 文件里与城市坐标相同时省略，V2 Reader 读时用城市坐标填回）。
  */
 export type CanonicalTravelRecord = Omit<TravelMapRecord, LegacyPlaceField> & { placeId: PlaceId }
 
@@ -65,8 +66,8 @@ export type CanonicalTravelRecord = Omit<TravelMapRecord, LegacyPlaceField> & { 
  * 显示规则的 v2 形态：按地点 id 写。
  *
  * 旧规则按字符串匹配记录上的 `country_en` / 城市名；转换时先把同一地点的各种写法统一成地点名称，
- * 匹配不到任何地点的值丢弃（见 ./legacyAdapter.ts）。`countryAliases`、`journeyRules`、`countryCodes`
- * 不在这里：前两者在适配器里被消耗掉，后者进了地点的 ISO 代码。
+ * 匹配不到任何地点的值丢弃（这一步在 PR5b 删除的 Legacy Adapter 里，迁移时完成）。`countryAliases`、`journeyRules`、
+ * `countryCodes` 不在这里：前两者在转换时被消耗掉，后者进了地点的 ISO 代码。
  */
 export interface CanonicalDisplay {
   overviewTarget?: { lat: number; lng: number }
@@ -133,7 +134,7 @@ export interface CanonicalAddedCountry {
   center?: { lat: number; lng: number }
 }
 
-/** editor-state 的 v2 形态：键与值里的国家 / 城市都是地点 id（legacy 模式下与旧键相同）。 */
+/** editor-state 的 v2 形态：键与值里的国家 / 城市都是地点 id。 */
 export interface CanonicalEditorState {
   schemaVersion: 2
   addedCountries: CanonicalAddedCountry[]

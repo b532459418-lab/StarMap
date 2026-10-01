@@ -9,7 +9,7 @@
  * 一旦 query.ts 改变行为，这里就会变红。
  *
  * fixture 与 adapters/travel.test.ts 共用 adapters/travel.fixture.ts，
- * 那边有一个测试把 fixture 逐字段钉回 tracked 的 travel-map.sample.json。
+ * 那边有一个测试把 fixture 逐字段钉回 tracked 的 adapters/travel.fixture.source.json（原 src/data/travel-map.sample.json）。
  *
  * 下面这行 reference 不能删，理由同 adapters/travel.test.ts：
  * tsconfig.app.json 的 types 是 ["vite/client"]，不含 "node"。
@@ -267,7 +267,7 @@ test('对等：样例上的 N / M 与状态药丸一致', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * travel-map.sample.json 派生出来的 City 在 travelAtlas.ts 里是带 `records` 的
+ * travel.fixture.source.json 派生出来的 City 在旧 travelAtlas.ts 里是带 `records` 的
  * （travelAtlas.ts:`records: cityRecords`），但 fixture 为了钉住 JSON 只保留了展示字段。
  * legacy 的 `sharedJourneyId` 正是从 `city.records[].journeyId` 求交集而来，
  * query.ts 则改从 visited Relation 指向的 journey Entity 的 metadata.journeyId 求交集。

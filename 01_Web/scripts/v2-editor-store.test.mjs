@@ -1,10 +1,11 @@
 /**
  * V2 写入的端到端测试（RFC-LOC-1 PR3b-2 规格 §3「端到端（Node）」）：在临时私人根上
  *
- *   1. 中性旧数据 → migrate-identity 的 dry-run 与 --apply（PR5a 起没有数据模式，写出 V2 文件即生效）；
+ *   1. 迁移之后的私人根：中性旧数据迁移后的五个 V2 文件（冻结的 ./fixtures/editor-store-v2.json；RFC-LOC-1 PR5b 之前由
+ *      migrate-identity 的 dry-run 与 --apply 现场生成），旧文件作为残留还在；
  *   2. 经 scripts/v2-editor-store.mjs（插件用的同一个 IO 层：读 data/v2/ → 纯函数 → 按顺序原子写盘）执行一组编辑；
  *   3. 每一步之后，磁盘上的五个 V2 文件都通过 validateV2Files、没有悬空引用；四个旧文件逐字节不变；
- *   4. 最后 legacy-baseline --path v2 能正常产出。
+ *   4. 最后 scripts/baseline.mjs（个人模式） 能正常产出。
  *
  * 另测：全新私人目录从空白开始写，不复制样例；写盘中途失败时的错误码与说明。
  *
@@ -32,7 +33,6 @@ import { completeForWrite, integrityProblems } from '../src/data/v2write/transac
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const LEGACY_FILES = ['travel-map.local.json', 'want-to-go.local.json', 'editor-state.local.json', 'user-media.local.json']
 
-const readSample = (name) => JSON.parse(readFileSync(path.join(webRoot, 'src', 'data', name), 'utf8'))
 
 /** 中性的国家目录（形状同插件的 world-countries 目录）。 */
 const CATALOG = new Map([
@@ -65,39 +65,17 @@ const runScript = (script, args, privateRoot) => spawnSync(process.execPath, [pa
 
 const writePrivate = (root, name, value) => writeFile(path.join(root, 'data', name), `${JSON.stringify(value, null, 2)}\n`, 'utf8')
 
-/** 中性旧数据：公开样例的足迹（另加一条挪威卑尔根的 planned）与想去（特罗姆瑟隐藏），editor-state 与媒体各几条。 */
-const writeLegacyData = async (root) => {
-  const travel = readSample('travel-map.sample.json')
-  travel.privacy_level = 'local-only'
-  travel.display.countryCodes = { ...travel.display.countryCodes, Norway: 'no' }
-  travel.records.push({
-    id: 'planned_bergen', country: '挪威', country_en: 'Norway', country_code: 'no', city: '卑尔根', city_en: 'Bergen',
-    start_date: '2027-06-01', year: 2027, trip_title: '2027 Fjord Plan', status: 'planned', lat: 60.3913, lng: 5.3221,
-  })
-  const want = readSample('want-to-go.sample.json')
-  want.items[1].hidden = true
-  await writePrivate(root, 'travel-map.local.json', travel)
-  await writePrivate(root, 'want-to-go.local.json', want)
-  await writePrivate(root, 'editor-state.local.json', {
-    schemaVersion: 1,
-    countryOrder: ['faroe-islands', 'iceland'],
-    hiddenCityIds: ['iceland__vik'],
-    coverMediaByCity: { iceland__reykjavik: 'photo-1' },
-  })
-  await writePrivate(root, 'user-media.local.json', {
-    schemaVersion: 2,
-    generatedAt: '2026-09-01T00:00:00.000Z',
-    items: [
-      {
-        id: 'photo-1', kind: 'photo', scope: 'city', countryId: 'iceland', countryName: 'Iceland', cityId: 'iceland__reykjavik', cityName: 'Reykjavik',
-        src: '/media/user/sample/photo-1.jpg', originalFileName: 'photo-1.jpg', isCover: false, status: 'ready',
-      },
-      {
-        id: 'drone-1', kind: 'aerialPhoto', scope: 'city', countryId: 'faroe-islands', countryName: 'Faroe Islands', cityId: 'faroe-islands__torshavn', cityName: 'Torshavn',
-        src: '/media/user/sample/drone-1.jpg', originalFileName: 'drone-1.jpg', isCover: false, status: 'ready', date: '2025-06-06', resolution: '4000x3000',
-      },
-    ],
-  })
+/**
+ * 迁移之后的私人根：data/v2/ 是中性旧数据（公开样例的足迹另加一条挪威卑尔根的 planned，想去里特罗姆瑟隐藏，editor-state 与
+ * 媒体各几条）迁移后的五个文件（冻结的 ./fixtures/editor-store-v2.json）；四个旧文件作为残留还在（内容无所谓，最小的 JSON）。
+ */
+const writeMigratedRoot = async (root, paths) => {
+  const files = JSON.parse(readFileSync(path.join(webRoot, 'scripts', 'fixtures', 'editor-store-v2.json'), 'utf8'))
+  for (const key of V2_FILE_KEYS) await atomicJsonWrite(paths.v2FilePaths[key], files[key])
+  await writePrivate(root, 'travel-map.local.json', { schema_version: 1, records: [] })
+  await writePrivate(root, 'want-to-go.local.json', { schema_version: 1, items: [] })
+  await writePrivate(root, 'editor-state.local.json', { schemaVersion: 1 })
+  await writePrivate(root, 'user-media.local.json', { schemaVersion: 2, items: [] })
 }
 
 const sha256OfFile = async (filePath) => (existsSync(filePath) ? createHash('sha256').update(await readFile(filePath)).digest('hex') : null)
@@ -142,13 +120,8 @@ const getState = async (paths) => {
 
 const putState = (run, paths) => async (update, label) => run('PUT /__travelatlas/editor/state', update(await getState(paths)), label)
 
-test('端到端：旧数据 → migrate-identity → 一组编辑；每一步五个 V2 文件都合法、无悬空引用，旧文件不变；最后 legacy-baseline --path v2 正常产出', () => withTemp(async ({ root, out, paths }) => {
-  await writeLegacyData(root)
-  const dryRun = runScript('migrate-identity.mjs', [], root)
-  assert.equal(dryRun.status, 0, dryRun.stdout + dryRun.stderr)
-  assert.match(dryRun.stdout, /^canApply：true$/m)
-  const applied = runScript('migrate-identity.mjs', ['--apply'], root)
-  assert.equal(applied.status, 0, applied.stdout + applied.stderr)
+test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2 文件都合法、无悬空引用，旧文件不变；最后 scripts/baseline.mjs（个人模式） 正常产出', () => withTemp(async ({ root, out, paths }) => {
+  await writeMigratedRoot(root, paths)
   // 迁移之后是残留（旧文件与 V2 文件都在）：不算未迁移，写入照常。
   assert.equal(isLegacyUnmigrated(legacyDataStateOf(paths)), false)
   const legacyBefore = await legacySnapshot(root)
@@ -238,9 +211,9 @@ test('端到端：旧数据 → migrate-identity → 一组编辑；每一步五
   assert.equal(step.body.code, 'E_UNKNOWN_PLACE_REF')
   assert.deepEqual(await readDiskV2(paths), before)
 
-  // 最后：legacy-baseline --path v2 能正常产出，城市与国家 id 都是 UUID。
+  // 最后：scripts/baseline.mjs（个人模式） 能正常产出，城市与国家 id 都是 UUID。
   const target = path.join(out, 'v2-baseline.json')
-  const baseline = runScript('legacy-baseline.mjs', ['--path', 'v2', '--out', target], root)
+  const baseline = runScript('baseline.mjs', ['--out', target], root)
   assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr)
   const { modules } = JSON.parse(await readFile(target, 'utf8'))
   const cityNames = modules.travelAtlas.cities.map((city) => city.nameEn).sort()
@@ -273,7 +246,7 @@ test('端到端 · 全新私人目录：从空白开始写；生成合法的 dat
   assert.ok(!text.includes('sample') && !text.includes('Faroe'), '没有复制样例')
 
   const target = path.join(out, 'fresh.json')
-  const baseline = runScript('legacy-baseline.mjs', ['--path', 'v2', '--out', target], root)
+  const baseline = runScript('baseline.mjs', ['--out', target], root)
   assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr)
   assert.deepEqual(JSON.parse(await readFile(target, 'utf8')).modules.travelAtlas.cities.map((city) => city.nameEn), ['Reykjavik'])
 }))

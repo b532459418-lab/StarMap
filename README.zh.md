@@ -124,14 +124,21 @@ npm run media:import
 
 ## 已有旧格式数据的用户如何迁移
 
-个人配置只读 `<private-root>/data/v2/` 里的当前（V2）数据格式，全新的私人目录从空地图开始。在此之前建立的私人目录，数据是旧格式，StarMap 不再读取。迁移之前，地图上显示迁移提示，本地编辑器拒绝保存，媒体导入也拒绝运行，所以不会在没迁移的数据旁边写出任何东西。StarMap 不会自行迁移、移动或改写你的文件。在 `01_Web/` 中：
+个人配置只读 `<private-root>/data/v2/` 里的当前（V2）数据格式，全新的私人目录从空地图开始。在此之前建立的私人目录，数据是旧格式，StarMap 不再读取。迁移之前，地图上显示迁移提示，本地编辑器拒绝保存，媒体导入也拒绝运行，所以不会在没迁移的数据旁边写出任何东西。StarMap 不会自行迁移、移动或改写你的文件。
+
+当前版本已不再带迁移工具；提交 `4fd32a9` 是最后一个带迁移工具的版本。先在那里迁移，再回到最新版本：
 
 ```powershell
-npm run identity:check                  # dry-run：只出报告，不迁移
-npm run identity:check -- --apply       # 写出 V2 文件，然后刷新页面
+git checkout 4fd32a9
+cd 01_Web
+npm ci
+npm run identity:check                  # dry-run：看报告，不迁移
+npm run identity:check -- --apply       # 写出 V2 文件
+git checkout main
+npm ci                                  # 回到最新版本，然后刷新页面
 ```
 
-应用之前，先处理 dry-run 报告里需要你决定的项目。迁移之后，旧文件以及早期版本写下的 `data/data-mode.local.json` 标记都是 StarMap 不再理会的残留，删留随意。完全不需要旧数据的话，也可以直接把四个旧文件从 `data/` 移走。完整步骤、决定文件的写法，以及迁移对媒体的影响，见 [01_Web/README.md](01_Web/README.md#legacy-format-data)。
+应用之前，先处理 dry-run 报告里需要你决定的项目。迁移之后，旧文件以及早期版本写下的 `data/data-mode.local.json` 标记都是 StarMap 不再理会的残留，删留随意。完全不需要旧数据的话，也可以直接把四个旧文件从 `data/` 移走。完整步骤、决定文件的写法，以及迁移对媒体的影响，见 [01_Web/README.md](01_Web/README.md#migrate-legacy-format-data)（Private Data Format 一节）。
 
 ## 构建与检查
 

@@ -44,9 +44,9 @@ export function getPrivatePaths(environment = process.env) {
     editorStatePath: path.join(dataRoot, 'editor-state.local.json'),
     localTravelMapPath: path.join(dataRoot, 'travel-map.local.json'),
     mediaCatalogPath: path.join(dataRoot, 'user-media.local.json'),
-    mediaSourceIndexPath: path.join(dataRoot, 'media-source-index.local.json'),
     wantToGoPath: path.join(dataRoot, 'want-to-go.local.json'),
-    // RFC-LOC-1 PR3b-1：V2 文件。PR5a 起 App 只读它们；上面四个旧格式文件只有迁移工具读（未迁移的判定见 legacy-data.mjs）。
+    // RFC-LOC-1 PR3b-1：V2 文件。PR5a 起 App 只读它们；上面四个旧格式文件的路径只给 legacy-data.mjs 判定「未迁移」用
+    // （只看在不在，不读内容）。PR5b 删除了旧格式的媒体源文件索引路径。
     v2DataRoot,
     v2FilePaths: Object.fromEntries(
       Object.entries(V2_DATA_FILE_NAMES).map(([key, fileName]) => [key, path.join(v2DataRoot, fileName)]),

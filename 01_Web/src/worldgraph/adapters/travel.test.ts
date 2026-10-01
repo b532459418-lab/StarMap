@@ -6,7 +6,7 @@
  * 为什么 fixture 是手写的、而不是 import travelAtlas.ts：
  * travelAtlas.ts 第 2 行 import 了 Vite 虚拟模块 'virtual:starmap-private-data'，
  * 并在第 44-47 行读 import.meta.env。这两样在 Vite 之外都无法解析，node --test 直接崩。
- * 所以 fixture 是手写的 travelAtlas 对 src/data/travel-map.sample.json 的【已知输出】。
+ * 所以 fixture 是手写的 travelAtlas 对 ./travel.fixture.source.json（RFC-LOC-1 PR5b 前是 src/data/travel-map.sample.json） 的【已知输出】。
  * 手写 fixture 的风险是会跟真实数据漂移，因此下面有一个专门的测试
  * （"fixture 与 tracked 的样例数据保持一致"）把 fixture 逐字段钉回那份 JSON。
  * PR3 起 fixture 本身移到 ./travel.fixture.ts（内容逐字未变），与 query.parity.test.ts 共用；
@@ -25,7 +25,6 @@ import assert from 'node:assert/strict'
 
 import type { Country, Route } from '../../types/travel.ts'
 import type { Anchor, Entity, LayerMembership, Relation } from '../types.ts'
-import { cityCoordinates, countryCoordinates } from '../../data/geoCoordinates.ts'
 import {
   anchorId,
   cityEntityId,
@@ -37,6 +36,8 @@ import {
 } from './travel.ts'
 import {
   JOURNEY_ID,
+  cityCoordinates,
+  countryCoordinates,
   sampleCities,
   sampleCountries,
   sampleInput,
@@ -44,7 +45,7 @@ import {
   sampleRoutes,
 } from './travel.fixture.ts'
 
-import sample from '../../data/travel-map.sample.json' with { type: 'json' }
+import sample from './travel.fixture.source.json' with { type: 'json' }
 
 /** 固定时间戳：不传它输出就不可 deepEqual。 */
 const NOW = '2026-09-20T00:00:00.000Z'
@@ -544,8 +545,8 @@ test('缺少 journeyId 的 Route 不会在 metadata 里留下 undefined 键', ()
   assert.deepEqual(related[0].metadata, { kind: 'main', routeId: 'loose-leg' })
 })
 
-test('fixture 与 tracked 的 travel-map.sample.json 保持一致', () => {
-  // 这个测试的唯一职责：当有人改了 src/data/travel-map.sample.json 时，
+test('fixture 与 tracked 的 travel.fixture.source.json 保持一致', () => {
+  // 这个测试的唯一职责：当有人改了 ./travel.fixture.source.json 时，
   // 上面手写的 fixture 会立刻变红，而不是悄悄地和真实数据脱节。
   const records = sample.records
   assert.equal(records.length, 5)
@@ -575,8 +576,8 @@ test('fixture 与 tracked 的 travel-map.sample.json 保持一致', () => {
   })
 
   // 国家中心点是"该国全部有坐标记录的算术平均"，但这只在查表为空时成立：
-  // travelAtlas.ts 算的是 getCountryCoordinate(...) ?? mean(...)。
-  // 一旦有人往 geoCoordinates.ts 里加一条冰岛，下面的 centerLng 期望值就会和真实数据脱节，
+  // 旧 travelAtlas.ts 算的是「按国家名查坐标表 ?? mean(...)」。
+  // 一旦有人往那张坐标表（PR5b 起是 ./travel.fixture.ts 里的 countryCoordinates）里加一条冰岛，下面的 centerLng 期望值就会和真实数据脱节，
   // 所以先把"查表为空"这个前提本身钉住——它红了，说明该重算 fixture，而不是改这两行。
   assert.equal(
     Object.keys(countryCoordinates).length,

@@ -45,7 +45,7 @@ export type V2ErrorParams = Record<string, unknown>
 
 /** 码 → 文案。沿用旧文案的标注了出处；标「新」的是旧模式没有对应情形的码。 */
 export const V2_WRITE_MESSAGES = {
-  // ---- 输入校验（沿用插件 requireText / numberInRange / addTravelRecord / addCountry 与 want-to-go-store.mjs）----
+  // ---- 输入校验（沿用插件 requireText / numberInRange / addTravelRecord / addCountry 与 want-to-go-store.mjs；后两者的原实现已删除，见 PR5）----
   E_REQUIRED: (params: V2ErrorParams) => `请填写${label(params)}。`,
   E_DATE_FORMAT: (params: V2ErrorParams) => `${label(params)}必须使用 YYYY-MM-DD。`,
   E_DATE_ORDER: () => '结束日期不能早于到访日期。',

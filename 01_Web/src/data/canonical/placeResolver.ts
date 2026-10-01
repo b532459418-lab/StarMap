@@ -1,9 +1,8 @@
 /**
- * 地点解析（RFC-LOC-1 ID-6；PR3 总体方案 §3.1 第 3 条，PR3b-2 规格 §2.2）：迁移与 V2 写入共用的
- * 「这是不是同一个地点」的判断。
+ * 地点解析（RFC-LOC-1 ID-6；PR3 总体方案 §3.1 第 3 条，PR3b-2 规格 §2.2）：V2 写入用的
+ * 「这是不是同一个地点」的判断（PR3a 到 PR5a 迁移规划也用它，迁移工具在 PR5b 删除）。
  *
- * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。两处调用方：
- * - `../migration/planMigration.ts`：想去城市与足迹城市的 FR-MR-5 合并、疑似重复的距离；
+ * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。调用方：
  * - `../v2write/`（V2 写入）：新增足迹、国家、想去时「先找后建」——找到就引用已有地点，找不到才用 UUIDv7 新建。
  *
  * 名称只用来回答「可能是同一个地点吗」（匹配提示），结论落在地点 id 上（RFC ID-6），不按名字推导任何身份。
@@ -26,7 +25,7 @@ import type { CanonicalPlace, PlaceId } from './types.ts'
 // - 名称：Entity 的 title。足迹城市的 title 由 Core travel 适配器 `buildTitle(city.nameZh, city.nameEn)`
 //   得到，City 的名称由 ./derive.ts 从地点重建（nameZh = 中文名，nameEn = 英文名 || 中文名）；
 //   想去地点的 title 是 `{ zh: nameZh, en: nameEn }`，由 ./reconstruct.ts 从地点重建。
-// planMigration.test.ts 与 placeResolver.test.ts 用真实管线 queryVisiblePlaces 对拍这套判断。
+// placeResolver.test.ts 用真实管线 queryVisiblePlaces 对拍这套判断（PR5b 之前 planMigration.test.ts 也对拍）。
 
 export type EntityTitle = { zh: string; en?: string }
 

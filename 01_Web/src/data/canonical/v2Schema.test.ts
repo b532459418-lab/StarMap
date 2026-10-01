@@ -3,7 +3,8 @@
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
- * 合法样本：公开样例经 Legacy Adapter 后直接搬进 V2 的 id 空间（`toV2Space`，不合并）再写成五个文件。
+ * 合法样本：公开样例经 Legacy Adapter 后直接搬进 V2 的 id 空间（`toV2Space`，不合并）再写成五个文件；
+ * PR5b 起这份 Canonical 是冻结的静态数据（./frozen.fixture.ts 的 `v2SpaceCanonical`）。
  * 非法样本：在合法样本上逐项改坏，断言问题落在预期的文件与路径上。
  */
 
@@ -12,17 +13,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { consistentPersonalRaw, sampleRaw } from './legacy.fixture.ts'
-import { legacyAdapter } from './legacyAdapter.ts'
-import { toV2Space } from './v2.fixture.ts'
+import { v2SpaceCanonical, type V2SpaceCanonicalName } from './frozen.fixture.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files, type V2FileKey, type V2SchemaProblem } from './v2Schema.ts'
 import { serializeV2 } from './v2Serializer.ts'
 
 type LooseFiles = Record<V2FileKey, Record<string, unknown> & { [key: string]: unknown }>
 
 /** 合法的五个文件（JSON 值，可随意改）。 */
-const validFiles = (raw = sampleRaw()): LooseFiles => {
-  const { data } = toV2Space(legacyAdapter(raw))
+const validFiles = (name: V2SpaceCanonicalName = 'sample'): LooseFiles => {
+  const data = v2SpaceCanonical(name)
   const files = serializeV2(data, {
     placesGeneratedAt: '2026-09-26T00:00:00.000Z',
     wantToGo: { generated_at: '2026-08-12T00:00:00.000Z', privacy_level: 'public-sample' },
@@ -54,7 +53,7 @@ const assertProblem = (files: LooseFiles, file: V2FileKey, path: string, code: V
 
 test('合法样本：公开样例与个人模式 fixture 写成的五个文件都没有问题', () => {
   assert.deepEqual(validateV2Files(validFiles()), [])
-  assert.deepEqual(validateV2Files(validFiles(consistentPersonalRaw())), [])
+  assert.deepEqual(validateV2Files(validFiles('personal')), [])
 })
 
 test('文件名：与旧文件同名，另加 places.local.json', () => {
@@ -203,7 +202,7 @@ test('编辑状态：版本、addedCountries 不再有 countryCode / center、�
 })
 
 test('媒体：版本 3、kind、placeId 指向城市、不再有 cityId / titleZh 等旧字段、title 的形状', () => {
-  const files = validFiles(consistentPersonalRaw())
+  const files = validFiles('personal')
   assert.ok(itemsOf(files, 'media').length >= 2)
   files.media.schemaVersion = 2
   const [first, second] = itemsOf(files, 'media')
@@ -220,7 +219,7 @@ test('媒体：版本 3、kind、placeId 指向城市、不再有 cityId / title
   assertProblem(files, 'media', '$.items[1].title.names')
 
   // 旧文件的其他顶层字段允许保留。
-  assert.deepEqual(validateV2Files(validFiles(consistentPersonalRaw())), [])
+  assert.deepEqual(validateV2Files(validFiles('personal')), [])
 })
 
 test('整份文件不是对象、缺数组：每个文件各报一处，不抛异常', () => {

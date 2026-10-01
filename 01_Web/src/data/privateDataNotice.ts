@@ -14,10 +14,13 @@
 
 export const V2_EMPTY_NOTICE = '还没有足迹，从添加第一个城市开始。'
 
-/** 迁移提示，一行一段。命令与文件名同本地编辑器拒绝写入时的说明（scripts/legacy-data.mjs）。 */
+/**
+ * 迁移提示，一行一段，保持简短：完整步骤只写在 README（RFC-LOC-1 PR5b 删除迁移工具后，迁移要用提交 4fd32a9）。
+ * 提交号、README 小节与文件名同本地编辑器拒绝写入时的说明（scripts/legacy-data.mjs）。
+ */
 export const LEGACY_UNMIGRATED_NOTICE: readonly string[] = Object.freeze([
   '私人目录里有旧格式的数据，还没有迁移。迁移之前地图是空的，编辑也不会保存。',
-  '迁移：在 01_Web/ 下运行 npm run identity:check 查看迁移摘要（不改任何数据），确认无误后运行 npm run identity:check -- --apply，然后刷新页面。',
+  '迁移：这个版本不再带迁移工具，请先检出 StarMap 的提交 4fd32a9（最后一个带迁移工具的版本）完成迁移，再回到最新版本，步骤见 README 的 Private Data Format 一节。',
   '不需要这些旧数据的话，把私人目录 data/ 下的四个旧文件（travel-map、want-to-go、editor-state、user-media 的 .local.json）移到别处，然后刷新页面。',
 ])
 
