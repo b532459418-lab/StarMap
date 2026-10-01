@@ -24,6 +24,8 @@ import type { Anchor, AnchorPrecision, Entity, EntityId, LayerId, WorldGraphSnap
 export interface CollectionEntry {
   entityId: EntityId
   layerId: LayerId
+  /** membership.recordId：这一行背后的记录 id（想去条目 / planned 足迹）；成员关系没有时省略。 */
+  recordId?: string
   subtype: 'region' | 'country' | 'city' | undefined
   title: { zh: string; en?: string }
   /** 两位大写国家代码；取 entity.metadata.countryCode，形状不对或没有则省略。 */
@@ -75,15 +77,20 @@ const compareCodePoints = (left: string, right: string): number =>
 const compareNameZh = (left: CollectionEntry, right: CollectionEntry): number =>
   left.title.zh.localeCompare(right.title.zh, 'zh-CN')
 
-/** 默认顺序（'recent'）：addedAt 降序 → 同日按中文名升序 → 再按 entityId 升序，保证稳定。 */
+/** 最后的稳定键：entityId 升序，再按 recordId 升序（没有 recordId 按空串算）。 */
+const compareIdentity = (left: CollectionEntry, right: CollectionEntry): number =>
+  compareCodePoints(left.entityId, right.entityId) ||
+  compareCodePoints(left.recordId ?? '', right.recordId ?? '')
+
+/** 默认顺序（'recent'）：addedAt 降序 → 同日按中文名升序 → 再按 entityId、recordId 升序，保证稳定。 */
 const compareRecent = (left: CollectionEntry, right: CollectionEntry): number =>
   compareCodePoints(right.addedAt, left.addedAt) ||
   compareNameZh(left, right) ||
-  compareCodePoints(left.entityId, right.entityId)
+  compareIdentity(left, right)
 
-/** 'name'：中文名升序；同名按 entityId，保证稳定。 */
+/** 'name'：中文名升序；同名按 entityId、recordId，保证稳定。 */
 const compareName = (left: CollectionEntry, right: CollectionEntry): number =>
-  compareNameZh(left, right) || compareCodePoints(left.entityId, right.entityId)
+  compareNameZh(left, right) || compareIdentity(left, right)
 
 /** 'country'：国家代码升序，没有国家代码的排最后；同国再按 'name' 规则。 */
 const compareCountry = (left: CollectionEntry, right: CollectionEntry): number => {
@@ -105,7 +112,8 @@ const comparators: Record<CollectionSort, (left: CollectionEntry, right: Collect
  * 列出 `layerId` 图层的全部成员（含已隐藏、含无坐标），按默认顺序排好。
  *
  * - 只取 `type === 'place'` 且在快照里存在的 Entity；其余成员关系忽略。
- * - 同一 `(entityId, layerId)` 只取第一条成员关系（与 mergeWorldGraphSnapshots 的去重口径一致）。
+ * - 同一 `(entityId, layerId, recordId)` 只取第一条成员关系（没有 recordId 按空串算；与 mergeWorldGraphSnapshots 的去重口径一致）。
+ *   同一实体在这个图层有几条不同记录，就列几行。
  * - 返回的对象都是新造的，不与输入共享任何引用。
  */
 export const queryCollection = (snapshot: WorldGraphSnapshot, layerId: LayerId): CollectionEntry[] => {
@@ -121,12 +129,14 @@ export const queryCollection = (snapshot: WorldGraphSnapshot, layerId: LayerId):
     if (!locationByEntityId.has(anchor.entityId)) locationByEntityId.set(anchor.entityId, anchor)
   }
 
-  const seenEntityIds = new Set<EntityId>()
+  const seenMembershipKeys = new Set<string>()
   const entries: CollectionEntry[] = []
   for (const membership of snapshot.memberships) {
     if (membership.layerId !== layerId) continue
-    if (seenEntityIds.has(membership.entityId)) continue
-    seenEntityIds.add(membership.entityId)
+    // 与 snapshot.ts 的 membershipKey 同一写法：JSON 数组做键，避免 id 里的分隔符造成碰撞。
+    const key = JSON.stringify([membership.entityId, membership.layerId, membership.recordId ?? ''])
+    if (seenMembershipKeys.has(key)) continue
+    seenMembershipKeys.add(key)
 
     const entity = entityById.get(membership.entityId)
     if (!entity || entity.type !== 'place') continue
@@ -144,6 +154,7 @@ export const queryCollection = (snapshot: WorldGraphSnapshot, layerId: LayerId):
       hidden: metadata.hidden === true,
       readOnly: metadata.readOnly === true,
     }
+    if (membership.recordId !== undefined) entry.recordId = membership.recordId
 
     const countryCode = asCountryCode(entity.metadata.countryCode)
     if (countryCode !== undefined) entry.countryCode = countryCode

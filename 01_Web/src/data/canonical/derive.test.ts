@@ -46,17 +46,40 @@ const derive = (name: LegacyIdCanonicalName) => deriveAppDataFromCanonical(legac
 // 基线格式
 // ---------------------------------------------------------------------------
 
-/** PR1 公布的公开样例基线：@2（PR3b-1 增加 countryIdOfCity）与 @1。 */
-const SAMPLE_BASELINE_SHA256 = '8caf2cfb4e0a4c3180aa004e0f65c919f9dcca4424e6bb0445943175fe38ac34'
+/**
+ * 公开样例（旧 id 空间）的基线：今天的 @2、Core-A A1 之前的 @2（PR3b-1 增加 countryIdOfCity，PR1 起公布）与 @1。
+ */
+const SAMPLE_BASELINE_SHA256 = '094b7e86893b0954461674755bb970afd7bf69ecf33ee4753627ef783c0fd924'
+const SAMPLE_BASELINE_SHA256_BEFORE_A1 = '8caf2cfb4e0a4c3180aa004e0f65c919f9dcca4424e6bb0445943175fe38ac34'
 const SAMPLE_BASELINE_SHA256_V1 = 'eb91f172531f7c87280b07399af6ee80d1fc6e99a2ad38efa50b60b9afd299a4'
 
-test('基线 @2：删掉 countryIdOfCity、format 改回 @1 之后，公开样例仍等于 PR1 公布的 @1 哈希', () => {
-  const baseline = buildBaseline(derive('sample'), { now: NOW }) as {
-    format: string
-    modules: { travelAtlas: Record<string, unknown> }
+/** 基线 JSON 里与下面几项改动有关的部分（buildBaseline 返回 unknown）。 */
+interface BaselineShape {
+  format: string
+  modules: { travelAtlas: Record<string, unknown>; wantToGo: Record<string, unknown>; worldGraph: Record<string, unknown> }
+  queries: { collection: Record<string, Record<string, unknown>[]> }
+}
+
+const SNAPSHOT_EXPORT_NAMES = ['travelSnapshot', 'wantToGoSnapshot', 'plannedSnapshot', 'worldGraphSnapshot'] as const
+
+/**
+ * RFC-LOC-1 Core-A A1（成员关系带记录 id）对基线只做了加法，格式仍是 @2：快照成员关系与想去 Collection 条目上的
+ * `recordId`。去掉它们，得到的就是 A1 之前的 @2 基线。
+ */
+const removeA1Additions = (baseline: BaselineShape): void => {
+  for (const name of SNAPSHOT_EXPORT_NAMES) {
+    const snapshot = baseline.modules.worldGraph[name] as { memberships: Record<string, unknown>[] }
+    for (const membership of snapshot.memberships) delete membership.recordId
   }
+  for (const entry of baseline.queries.collection.want_to_go) delete entry.recordId
+}
+
+test('基线 @2：去掉 A1 的加法后等于 A1 之前的 8caf2cfb…；再删掉 countryIdOfCity、format 改回 @1，等于 PR1 公布的 @1 哈希', () => {
+  const baseline = buildBaseline(derive('sample'), { now: NOW }) as BaselineShape
   assert.equal(baseline.format, 'starmap-legacy-baseline@2')
   assert.equal(sha256(stableStringify(baseline)), SAMPLE_BASELINE_SHA256)
+  removeA1Additions(baseline)
+  assert.equal(sha256(stableStringify(baseline)), SAMPLE_BASELINE_SHA256_BEFORE_A1)
   assert.deepEqual(baseline.modules.travelAtlas.countryIdOfCity, [
     ['iceland__reykjavik', 'iceland'],
     ['iceland__vik', 'iceland'],
@@ -205,7 +228,8 @@ test('媒体：城市照片、封面、无人机、隐藏、悬空引用', () =>
 /**
  * 派生基线的 sha256：`stableStringify(buildBaseline(deriveAppDataFromCanonical(…)))` 加末尾换行，与 scripts 的基线工具
  * 写出的文件相同。冻结时（PR5b 第一个提交）旧 id 空间的每一份都等于旧路径 B（`deriveAppData(normalizeLegacy(原始数据))`），
- * 公开样例（旧 id）同时等于 PR1 起公布的 @2 基线 8caf2cfb…。派生代码改变了任何一处结果，这里就会变红。
+ * 公开样例（旧 id）同时等于 PR1 起公布的 @2 基线 8caf2cfb…。RFC-LOC-1 Core-A A1 只给基线做了加法（见文件开头的
+ * removeA1Additions），下面的值是 A1 之后的。派生代码改变了任何一处结果，这里就会变红。
  */
 const baselineSha256 = (canonical: CanonicalData) =>
   sha256(stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW })))
@@ -217,12 +241,12 @@ const v2FilesSha256 = (v2Files: V2FileInputs, source: 'local' | 'sample' = 'loca
   baselineSha256(canonicalForInputs({ v2Files, source }))
 
 const LEGACY_ID_LOCKS: Record<LegacyIdCanonicalName, string> = {
-  sample: '8caf2cfb4e0a4c3180aa004e0f65c919f9dcca4424e6bb0445943175fe38ac34',
-  personal: '54017d7029604e4c14db91c62e81f489130e0c24330db05eb39cb887ea1b2080',
-  personalDanglingMedia: '59f24d37bfbe782cb6eeaa7491fede350953f0f53b5b58eedae0baf2bcafc7fc',
+  sample: '094b7e86893b0954461674755bb970afd7bf69ecf33ee4753627ef783c0fd924',
+  personal: '59d28c1ec42747072a5141d86022007ca40620c2bf568b6f5d02e76f1c26517e',
+  personalDanglingMedia: 'a7e8bf02c5402e1a7c911108b93e6e5e99ed7af3920c274c45550561a99cb2de',
   nameInconsistency: '596ec87d2148602f68fcfe2098d2d957e0e69135a53defb122ef2f9a92c400b8',
-  countryOfCity: '0a0c03c87542a9220becd30a76182e11501723b9ff18e8502f9d713e91205c14',
-  alias: 'f16470d7cef8e6609d095709b6ede76e9d661811954a47dc14ee49083520eaac',
+  countryOfCity: 'd72807699b7649075c3154a05d9495ba17c33029fcc62dc8e2289bd76eccfb34',
+  alias: '4a190fc07dd6bf45639a2357869fa03ec19f1af21df3a8ed2eb8d747d05f6350',
   classification1: 'b1c2fd0a4c8d2a78716ddb9a82dbb950dd3bfba5a85053e451e70e47555131e9',
   classification2: '686f28fc21ba095c437be5fce32fc93712f8beabfcb73fea8c3eb2ab4f381e0b',
   classification3: '828e78e084264eae7b78430779e8d4353bb1df7ccb402e8c10dbb764ef112f28',
@@ -235,19 +259,19 @@ const LEGACY_ID_LOCKS: Record<LegacyIdCanonicalName, string> = {
   addedCountriesConsistent: '23ae8ba6c3dcbb0d3bffe547c8880d3b0f70f11202b21ff4982045e3eb2147e5',
   addedCountriesShown: 'aa4de009730b969c85e6208356651a7a19524209c7846079f0b2048ab92a4032',
   addedCountriesHomeHidden: '91172e94e507b4cc016d5e84072686bd42dc28742ef5d48578e85d5fd8e061a4',
-  planned: '8454afd13fe9b85896785f0b4446feab98274b8667980ea4a03e01525bfe8765',
+  planned: '733e440888d9463420216e3631e80c8f542f836b3f96d03ded318f6d0837795d',
   media: '456dd907354888a56cdbdbc9acae8cc89520e7b2b9d7427d2bcc074343aba80b',
-  combined: 'c104bb019f3601b5098bc125b26e1649294c440a53f9c4f2785b524200e7aee6',
-  duplicate: '5846a3ca5c77ff4eeee05cab8dab98729f14365c5c21674b26fe6a9b670f5bfc',
-  caseAndDiacritic: 'a34571380d635f1b2160a7021d058dacac366033f9be276c0fd563d2e5fc2ab2',
+  combined: '8a2cea0ae26c010a6bfb95331fb616e31e3ca008319d4dbaf1887e236c868616',
+  duplicate: '9a495edbf261aaf423a4fb27078501079051232df5e2204fd99b5de6fd7267fb',
+  caseAndDiacritic: '58694185c4354dedb131629d52730dba0a131994c2bf8d2f92ef287bb57912ba',
 }
 
 /**
  * 同一批中性数据在 V2 id 空间里：不合并直接搬进来的（v2Space）与迁移规划合并之后的 M（migrated）。
  * 两者、以及迁移后的五个文件派生出的基线相同（这批数据的合并不改变任何显示结果）。
  */
-const PERSONAL_V2_LOCK = '1e156a97bd16fd562509bbc9811668bfa41490c753183b65d73cd0571d9db3a2'
-const SAMPLE_V2_SPACE_LOCK = 'ded08902173649f676acca2cc3b340abd6e606684e9e45aa693d82363c206d61'
+const PERSONAL_V2_LOCK = 'bfba719d326dc8222383491af8c169df99baff0b70cc07aa8a3b09622d2e83b4'
+const SAMPLE_V2_SPACE_LOCK = '737fb0133a3eb7c3e037a48b97ff0ef5cc9a479f8540ea919caa3ddf8349e762'
 const NAME_INCONSISTENCY_V2_LOCK = '1884a1535046802bc4479c265841f7d2f8daf504b740fe8b6e5ce395533543f8'
 
 const V2_SPACE_LOCKS: Record<(typeof V2_SPACE_CANONICAL_NAMES)[number], string> = {
@@ -255,7 +279,7 @@ const V2_SPACE_LOCKS: Record<(typeof V2_SPACE_CANONICAL_NAMES)[number], string> 
   personal: PERSONAL_V2_LOCK,
   nameInconsistency: NAME_INCONSISTENCY_V2_LOCK,
   recordCoordinates: '519d94b7dfee2bcbabe4fb9657aa2a76ddfc36af57095f61f4307f8b35b6c6c7',
-  countryOfCity: '3ff79e8a82f77bfc5bfbe2b245d9664a4cb5a66378c2e6fad5fe9f93adf9b211',
+  countryOfCity: 'c2637a91eb57e26b8c4646e9fbede2c68b1144e2843c325df2ac24cf3a177144',
 }
 
 const MIGRATED_LOCKS: Record<(typeof MIGRATED_CANONICAL_NAMES)[number], string> = {
@@ -267,13 +291,13 @@ const MIGRATED_LOCKS: Record<(typeof MIGRATED_CANONICAL_NAMES)[number], string> 
 /** 冻结的五个 V2 文件（相对本文件的路径）。前两份是同一批中性个人数据迁移后的文件，后三份是三个脚本测试的私人根。 */
 const V2_FILES_LOCKS: [string, string][] = [
   ['../v2write/fixtures/migrated-files.json', PERSONAL_V2_LOCK],
-  ['../../../scripts/fixtures/bak-files-v2.json', '2716f03b2a629eb208545cd5fdd37cface7aba04815c2b2f24fcbedca4621647'],
-  ['../../../scripts/fixtures/baseline-v2.json', 'e2e50ba99ac26f074679118e4cede8dc63368e22162454946bd3ba3a4e7354db'],
-  ['../../../scripts/fixtures/editor-store-v2.json', '749c5d4d5d16e64b0eb2f461db82dc49e9ccf963734c29819d6c137fd809f961'],
+  ['../../../scripts/fixtures/bak-files-v2.json', '508f661afda27ada26046f8be8b9feb0bc239bf57de29c7849643eace886333c'],
+  ['../../../scripts/fixtures/baseline-v2.json', '6d98fee09caee25348ac0c6aac33e13f4333f2b66556a03527f045cc400e52e3'],
+  ['../../../scripts/fixtures/editor-store-v2.json', 'ea49b4da2b0ab15322eb4a421a96093e7b9eace5def711cb2fde2d9b9b6be4bc'],
 ]
 
 /** 公开 V2 样例的派生基线（RFC-LOC-1 PR4 起公布；`node scripts/baseline.mjs --sample` 的输出）。 */
-const V2_SAMPLE_BASELINE_SHA256 = '3b30ae9cc31d6d646546dadf048809edb1dfa4609c7045288f3402be9a96fbd4'
+const V2_SAMPLE_BASELINE_SHA256 = '77cd872b905b2053c70d1d9d4cae6f038df2d7d108f06a65c68c36b04bd90496'
 
 const V2_SAMPLE_FILE_NAMES = { places: 'places.json', travel: 'travel-map.json', wantToGo: 'want-to-go.json', editorState: 'editor-state.json', media: 'user-media.json' }
 
@@ -296,7 +320,7 @@ test('锁定：冻结的五个 V2 文件（canonicalForInputs、V2 写入与三�
   for (const [relative, lock] of V2_FILES_LOCKS) assert.equal(v2FilesSha256(readJsonFile(relative) as V2FileInputs), lock, relative)
 })
 
-test('锁定：公开 V2 样例（src/data/v2-sample/，来源 sample）的派生基线为 3b30ae9c…', () => {
+test('锁定：公开 V2 样例（src/data/v2-sample/，来源 sample）的派生基线为 77cd872b…', () => {
   const v2Files = Object.fromEntries(Object.entries(V2_SAMPLE_FILE_NAMES).map(([key, name]) => [key, readJsonFile(`../v2-sample/${name}`)]))
   assert.equal(v2FilesSha256(v2Files, 'sample'), V2_SAMPLE_BASELINE_SHA256)
 })

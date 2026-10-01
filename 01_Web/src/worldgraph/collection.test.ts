@@ -231,7 +231,7 @@ test('非 place 的 Entity 与快照里不存在的 Entity 被忽略', () => {
   assert.deepEqual(ids(queryCollection(snapshot, 'want_to_go')), ['a'])
 })
 
-test('同一 (entityId, layerId) 的重复成员关系只取第一条', () => {
+test('同一 (entityId, layerId, recordId) 的重复成员关系只取第一条（没有 recordId 按空串算）', () => {
   const snapshot = snapshotOf({
     entities: [place('a', '甲')],
     memberships: [
@@ -244,6 +244,31 @@ test('同一 (entityId, layerId) 的重复成员关系只取第一条', () => {
   assert.equal(entries[0].note, '第一条')
   assert.equal(entries[0].addedAt, '2026-01-01')
   assert.equal(entries[0].hidden, false)
+  assert.equal('recordId' in entries[0], false)
+})
+
+test('同一实体在这个图层的不同记录各列一行，recordId 写进条目（Core 方案 C3）', () => {
+  const withRecord = (recordId: string, addedAt: string, metadata: Record<string, unknown>): LayerMembership => ({
+    ...member('a', addedAt, metadata),
+    recordId,
+  })
+  const snapshot = snapshotOf({
+    entities: [place('a', '甲')],
+    memberships: [
+      withRecord('wtg_a', '2026-01-01', { note: '想去' }),
+      withRecord('planned_a', '2026-02-01', { readOnly: true }),
+      // 同一条记录的重复成员关系：只取第一条
+      withRecord('wtg_a', '2026-03-01', { note: '重复' }),
+    ],
+  })
+  const entries = queryCollection(snapshot, 'want_to_go')
+  assert.deepEqual(
+    entries.map((entry) => [entry.entityId, entry.recordId, entry.addedAt, entry.readOnly, entry.note]),
+    [
+      ['a', 'planned_a', '2026-02-01', true, undefined],
+      ['a', 'wtg_a', '2026-01-01', false, '想去'],
+    ],
+  )
 })
 
 test('重复的 Entity id 以第一个为准', () => {
@@ -276,6 +301,24 @@ test('默认顺序：addedAt 降序 → 同日按中文名 → 再按 entityId',
     ],
   })
   assert.deepEqual(ids(queryCollection(snapshot, 'want_to_go')), ['new', 'c-same', 'a-same', 'b-same', 'z-old'])
+})
+
+test('各排序在 entityId 之后以 recordId 作为最后的稳定键；没有 recordId 的排在前面', () => {
+  const withRecord = (recordId: string | undefined): LayerMembership => (
+    recordId === undefined ? member('a', '2026-03-01') : { ...member('a', '2026-03-01'), recordId }
+  )
+  const snapshot = snapshotOf({
+    entities: [place('a', '甲', { countryCode: 'IS' })],
+    memberships: [withRecord('r2'), withRecord('r1'), withRecord(undefined), withRecord('r10')],
+  })
+  const recordIds = (entries: readonly CollectionEntry[]) => entries.map((entry) => entry.recordId)
+  const expected = [undefined, 'r1', 'r10', 'r2']
+  const entries = queryCollection(snapshot, 'want_to_go')
+  assert.deepEqual(recordIds(entries), expected)
+  const reversed = [...entries].reverse()
+  for (const sort of ['recent', 'name', 'country'] as const) {
+    assert.deepEqual(recordIds(filterCollection(reversed, { sort })), expected, sort)
+  }
 })
 
 test('混合快照的默认顺序', () => {
@@ -482,6 +525,13 @@ test('集成：想去条目与 planned 记录合并后，同时出现在 want_to
     plannedEntityId('planned-bergen'),
     wantToGoEntityId('FO', 'Faroe Islands'),
     wantToGoEntityId('GL', 'Nuuk'),
+  ])
+  // 每一行都带着它背后的记录 id：想去条目的 item.id、planned 的 record.id。
+  assert.deepEqual(entries.map((entry) => entry.recordId), [
+    'planned-no-coords',
+    'planned-bergen',
+    'wtg_2026-09-11_faroe',
+    'wtg_2026-09-10_nuuk',
   ])
 
   const nuuk = byId.get(wantToGoEntityId('GL', 'Nuuk'))
