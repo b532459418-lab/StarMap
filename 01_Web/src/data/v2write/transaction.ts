@@ -130,7 +130,7 @@ export interface PlaceRef {
 }
 
 /**
- * 五个文件里【全部】地点引用（与 ../canonical/placeIds.ts 列的位置相同，另加 `partOf`）。
+ * 五个文件里【全部】地点引用（与原 ../canonical/placeIds.ts 列的位置相同，另加 `partOf`；那个模块随迁移工具在 PR5b 删除）。
  * 输入须已通过 `validateV2Files` 的结构检查。
  */
 export const placeRefs = (files: V2Files): PlaceRef[] => {

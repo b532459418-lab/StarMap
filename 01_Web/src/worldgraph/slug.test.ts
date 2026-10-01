@@ -1,5 +1,6 @@
 /**
- * slugify 的单元测试。规则必须与 scripts/want-to-go-store.mjs 的副本逐字一致，
+ * slugify 的单元测试。规则必须与 scripts/local-editor-plugin.mjs 的副本逐字一致（原来的另一份副本
+ * scripts/want-to-go-store.mjs 已删除，见 RFC-LOC-1 PR5），
  * 这里把几条会影响 EntityId 与 FR-MR-5 合并键的行为钉死。
  *
  * 下面这行 reference 不能删，理由同 adapters/travel.test.ts：

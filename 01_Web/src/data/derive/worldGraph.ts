@@ -15,7 +15,7 @@ import { wantToGoToWorldGraph, type WantToGoItem } from '../../worldgraph/adapte
 import { mergeWorldGraphSnapshots } from '../../worldgraph/snapshot.ts'
 import type { City, Country, JourneyDay, Route, TravelMapRecord } from '../../types/travel.ts'
 
-/** 快照要用到的足迹派生结果（见 `./travelAtlas.ts`）。 */
+/** 快照要用到的足迹派生结果（见 `../canonical/derive.ts`）。 */
 export interface WorldGraphTravelInput {
   countries: Country[]
   cities: City[]

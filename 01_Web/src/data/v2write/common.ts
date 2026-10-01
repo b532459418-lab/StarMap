@@ -3,7 +3,8 @@
  * 国家排序与行程 id。
  *
  * `src/data/v2write/` 是 App 层，【不是】 StarMap Core。输入校验的规则与文案照抄旧模式
- * （插件的 requireText / numberInRange、want-to-go-store.mjs、convert-to-travel.mjs），只是抛带码的 V2WriteError。
+ * （插件的 requireText / numberInRange，以及旧格式的写入模块 want-to-go-store.mjs、convert-to-travel.mjs——
+ * 这两个模块已在 RFC-LOC-1 PR5a 删除，见 PR5；规则与文案今天就以本目录为准），只是抛带码的 V2WriteError。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
@@ -55,7 +56,7 @@ export const numberInRange = (value: unknown, min: number, max: number, field: s
   return number
 }
 
-/** 旧 addTravelRecord / convert-to-travel 的日期规则：到访日期必填，结束日期可选，都是 YYYY-MM-DD，结束不早于开始。 */
+/** 旧 addTravelRecord / convert-to-travel（PR5 删除，规则留在这里）的日期规则：到访日期必填，结束日期可选，都是 YYYY-MM-DD，结束不早于开始。 */
 export const visitDates = (
   start: unknown,
   end: unknown,

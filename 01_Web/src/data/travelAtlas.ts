@@ -11,7 +11,7 @@ export const travelAtlasDataSource: string = derived.travelAtlasDataSource
 export const travelAtlasDisplay = derived.travelAtlasDisplay
 
 // FR-TA-5：planned 记录与国家代码表供调用方传给 Core 的 plannedRecords 适配器，
-// 说明见 ./derive/travelAtlas.ts 里 plannedRecords 的注释。
+// 说明见 ./canonical/derive.ts 里 plannedRecords 的注释。
 export const plannedRecords: TravelMapRecord[] = derived.plannedRecords
 export const travelAtlasCountryCodes: Record<string, string> = derived.travelAtlasCountryCodes
 

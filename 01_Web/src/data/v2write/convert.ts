@@ -4,7 +4,8 @@
  * `src/data/v2write/` 是 App 层，【不是】 StarMap Core。请求体二选一，与旧模式相同：
  * - `{ source: 'want-to-go', id, startDate, endDate?, tripTitle?, keepWantToGo? }`
  * - `{ source: 'planned', recordId, startDate, endDate? }`
- * 校验与拒绝文案沿用旧的 convert-to-travel.mjs 与插件；返回值形状同旧（`countryId` / `cityId` 为地点 id）。
+ * 校验与拒绝文案沿用旧的 convert-to-travel.mjs（RFC-LOC-1 PR5a 删除，见 PR5；今天以本文件为准）与插件；
+ * 返回值形状同旧（`countryId` / `cityId` 为地点 id）。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */

@@ -79,7 +79,7 @@ These JSON files are metadata, not media derivatives. Converted, resized, optimi
 
 - `<private-root>/MediaInbox/<real-country>/`: private source delivery and sidecars; physically outside the source Git repository.
 - `<private-root>/media/user/`: generated website media; physically outside the source Git repository.
-- `<private-root>/data/`: personal travel data, editor state, and media catalogs in `data/v2/` (legacy-format `data/*.local.json` files, if any, are read only by the migration tool); physically outside the source Git repository.
+- `<private-root>/data/`: personal travel data, editor state, and media catalogs in `data/v2/` (legacy-format `data/*.local.json` files, if any, are not read; they are migrated with the tool of commit `4fd32a9`, see [Legacy-format data](../../01_Web/README.md#legacy-format-data)); physically outside the source Git repository.
 - `_country-template/`, rules, schema, and scripts: safe to publish with the open-source repository.
 
 Never place credentials, tickets, identity documents, hotel addresses, booking references, or private family material in the Inbox. Never add private Inbox files, generated user media, or local catalogs to Git.

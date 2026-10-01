@@ -2,7 +2,7 @@
  * 地点解析（canonical/placeResolver.ts）的单元测试（RFC-LOC-1 PR3b-2 规格 §2.2、§3）。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
- * PR3a 的 planMigration 测试（../migration/planMigration.test.ts）改为经本模块取合并键与距离后照常全部通过；
+ * PR3a 的迁移规划测试曾改为经本模块取合并键与距离（迁移工具与它的测试在 PR5b 删除）；
  * 这里另测两个解析函数，并用 PR3a 的对拍数据确认 `resolveCity` 与真实管线 `queryVisiblePlaces` 的合并一致。
  * 对拍数据（旧 id 空间的 Canonical）PR5b 起是冻结的静态数据（./frozen.fixture.ts；删除 Legacy Adapter 之前用它生成）。
  */

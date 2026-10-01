@@ -6,10 +6,8 @@
  * `countryId` / `cityId` / 名称 / 标题、editor-state 的 `addedCountries`、`travelAtlasCountryCodes`）
  * 在这里一律由地点重建，不再从各条记录自带的写法里取。
  *
- * 本模块被两处共用：
- * - `./derive.ts`：新路径（Canonical → 派生）；
- * - `./normalizeLegacy.ts`：把旧数据里每个地点的写法统一成这里的重建值（PR2 的 B 基线）。
- * 两边用同一套重建，「B ≡ C」才有意义。
+ * 本模块给 `./derive.ts`（Canonical → 派生）与 V2 写入用。PR2 到 PR5a 它还被 normalizeLegacy 共用（把旧数据里
+ * 每个地点的写法统一成这里的重建值，作为「B ≡ C」里的 B 基线）；PR5b 删除了 normalizeLegacy。
  *
  * 这里只按地点 id 取值，不按名字推导任何身份。
  *
@@ -159,7 +157,7 @@ export const reconstructAddedCountry = (entry: CanonicalAddedCountry, places: Pl
   }
 }
 
-/** editor-state v2 → 今天 `parseEditorState` 的输出形状（v1）。legacy 模式下地点 id 就是旧键，其余字段原样。 */
+/** editor-state v2 → 今天 `parseEditorState` 的输出形状（v1）。键与值里的地点 id 原样，其余字段原样。 */
 export const reconstructEditorState = (state: CanonicalEditorState, places: PlaceIndex): TravelAtlasEditorState => ({
   schemaVersion: 1,
   addedCountries: state.addedCountries.map((entry) => reconstructAddedCountry(entry, places)),

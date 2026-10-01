@@ -2,8 +2,8 @@
  * V2 Reader（RFC-LOC-1 PR3a 规格 §2.2）：五个 V2 文件 → Canonical。
  *
  * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。与 V2 Serializer（`./v2Serializer.ts`）互逆。
- * PR3b 起 App 在 v2 模式下经它读数据（RFC §3.6：「v2 模式：新文件 ──V2 Reader──> Canonical」），
- * 之后的派生与 legacy 模式完全相同（`./derive.ts`）。
+ * PR3b 起 App 在 v2 模式下经它读数据（RFC §3.6：「v2 模式：新文件 ──V2 Reader──> Canonical」），PR5a 起只经它读；
+ * 之后的派生见 `./derive.ts`。
  *
  * - 省略坐标的足迹记录（`lat` / `lng` 两个键都不存在）用所属城市地点的 `location` 填回；城市没有
  *   `location` 时保持省略。只省略了一个键的记录原样读（Serializer 不会这样写）。

@@ -46,8 +46,8 @@ npm run release:check
 
 StarMap has two data layers:
 
-- `src/data/v2-sample/` is the tracked neutral North Atlantic demonstration used by a clean open-source clone: a five-city journey plus a Want to Go sample with three places (Nuuk, Tromsø, Akureyri). Akureyri is one place in both layers, so the public map shows the heart badge. The directory holds the five V2 data files and the fixed `identity-manifest.json` that keeps their ids stable (see [Regenerate the V2 sample](#regenerate-the-v2-sample)).
-- `src/data/travel-map.sample.json` and `src/data/want-to-go.sample.json` are the same sample in the legacy format. The V2 sample is generated from them; the migration tool, the baseline tool, and the tests still read them.
+- `src/data/v2-sample/` is the tracked neutral North Atlantic demonstration used by a clean open-source clone: a five-city journey plus a Want to Go sample with three places (Nuuk, Tromsø, Akureyri). Akureyri is one place in both layers, so the public map shows the heart badge. The directory holds only the five V2 data files, which are maintained by hand (see [Edit the V2 sample](#edit-the-v2-sample)).
+- `src/worldgraph/adapters/travel.fixture.source.json` is the same journey in the legacy format. It is only a test fixture of StarMap Core, whose adapters still take that input shape; the app never reads it.
 - `<private-root>/data/` is the external private layer containing the owner's countries, cities, routes, coordinates, display rules, Want to Go list, editor state, and media catalog. Its layout is described in [Private Data Format](#private-data-format).
 
 The private layer is considered only in the explicit personal profile. Public preview and public build ignore it even when it exists; they, and forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development), read `src/data/v2-sample/`. Forced sample mode previews the public site: the local editor is off even in the personal profile, so the page renders exactly as in public mode, with no editing control, and nothing can be written to the private folder from it.
@@ -58,7 +58,7 @@ In the personal profile, Want to Go never falls back to the sample: sample items
 
 The personal profile, the local editor, and the scripts read and write only the V2 files in `<private-root>/data/v2/`. Every country and city is a place with a permanent id in `data/v2/places.local.json`; travel records, Want to Go items, editor state, and media refer to places by id. The files are `data/v2/places.local.json`, `travel-map.local.json`, `want-to-go.local.json`, `editor-state.local.json`, and `user-media.local.json`, plus the media importer's `data/v2/media-source-index.local.json`.
 
-A new private folder starts with an empty map and the hint “还没有足迹，从添加第一个城市开始。”; nothing is copied from the sample. Do not edit the V2 files by hand; use the local editor, the media importer, or the migration command below. `.bak` files, which every write keeps as the previous version, never count as data files.
+A new private folder starts with an empty map and the hint “还没有足迹，从添加第一个城市开始。”; nothing is copied from the sample. Do not edit the V2 files by hand; use the local editor or the media importer. `.bak` files, which every write keeps as the previous version, never count as data files.
 
 ### Legacy-format data
 
@@ -72,27 +72,23 @@ StarMap never moves, rewrites, or migrates these files by itself. If you do not 
 
 ### Migrate legacy-format data
 
-Run these from `01_Web/`. None of them changes the legacy files.
+The current version no longer contains the migration tool. Commit `4fd32a9` is the last version that has it: check it out, migrate, and come back to the latest version. Run the npm commands from `01_Web/`; none of them changes the legacy files.
 
-1. **Dry run**: `npm run identity:check`. It prints counts, errors, items that need a decision, and whether the migration can be applied (`canApply`). It also writes `data/migration/identity-manifest.local.json`, which fixes the new id of every place so later runs reuse it. Add `-- --report <file>` to write the full report, including place names, to a file inside the private folder or outside the repository.
-2. **Decide**: if the dry run lists items that need a decision (possible duplicate places, name or coordinate differences between a visited city and a Want to Go place), write each decision into `data/migration/identity-decisions.local.json` under the key the report shows, then run the dry run again until `canApply` is `true`.
-3. **Apply**: `npm run identity:check -- --apply`. It writes the five V2 files to `data/v2/` and verifies them. Refresh the page to see the data; a running dev server usually reloads by itself.
+1. **Check out the migration version**: `git checkout 4fd32a9`.
+2. **Install its dependencies**: `npm ci` in `01_Web/`.
+3. **Dry run**: `npm run identity:check`, and read the report. It prints counts, errors, items that need a decision, and whether the migration can be applied (`canApply`). It also writes `data/migration/identity-manifest.local.json`, which fixes the new id of every place so later runs reuse it. Add `-- --report <file>` to write the full report, including place names, to a file inside the private folder or outside the repository. If the report lists items that need a decision (possible duplicate places, name or coordinate differences between a visited city and a Want to Go place), write each decision into `data/migration/identity-decisions.local.json` under the key the report shows, then run the dry run again until `canApply` is `true`.
+4. **Apply**: `npm run identity:check -- --apply`. It writes the five V2 files to `data/v2/` and verifies them. It refuses while `data/v2/` already holds V2 files.
+5. **Return to the latest version**: `git checkout main`, run `npm ci` again in `01_Web/`, and refresh the page.
 
-`--apply` refuses while `data/v2/` already holds V2 files. A private folder without legacy data needs no migration: `npm run identity:check` reports that and changes nothing. The `--switch` option and `npm run data-mode` of earlier versions no longer exist, and there is no switching back: after the migration the app reads only `data/v2/`.
+A private folder without legacy data needs no migration. There is no switching back: StarMap reads only `data/v2/`.
 
 After the migration the four legacy files are leftovers that StarMap does not read; keep or delete them. The same holds for `data/data-mode.local.json`, the data-mode marker written by earlier versions: it is ignored.
 
 Media keep their catalog entries through the migration. The first media import after the migration gives every item a new id based on its file content, so ordering, hiding, and covers saved for the old ids no longer apply; the dry run reports how many items are affected.
 
-### Regenerate the V2 sample
+### Edit the V2 sample
 
-The V2 sample is generated from the legacy samples with the same migration tool:
-
-```powershell
-npm run sample:v2
-```
-
-The command runs `migrate-identity --sample --apply` with a fixed planning time and the committed `src/data/v2-sample/identity-manifest.json`, so the output is identical byte for byte. `--apply` refuses a non-empty output directory, so first delete the five V2 files in `src/data/v2-sample/` and keep `identity-manifest.json`. If the legacy samples changed, `--apply` asks for a new dry run; run `node scripts/migrate-identity.mjs --sample --manifest src/data/v2-sample/identity-manifest.json --now 2026-08-12T00:00:00.000Z`, delete the `identity-manifest.bak` it leaves, and then run `npm run sample:v2`. Existing places keep their ids; new places get new ones. `npm run privacy:check` checks that the directory contains only these six files and that the V2 files are valid.
+The five V2 files in `src/data/v2-sample/` are the only source of the public sample and are maintained by hand; no tool generates them. After editing them, run `npm run privacy:check`: it checks that the directory holds only these five files, that they pass the V2 validation, and that the sample stays neutral (`privacy_level` is `public-sample`, Want to Go ids start with `wtg_`, no hidden or editor-written items). New places need new UUIDv7 ids. `npm test` also pins the sample's derived baseline (`node scripts/baseline.mjs --sample`), so a deliberate change to the sample updates that lock in `src/data/canonical/derive.test.ts` too.
 
 Run `npm run privacy:check` before every public release. See the [open-source privacy boundary](../03_Reference/TravelAtlas_open_source_privacy_boundary.md) for the boundary table and deployment options.
 
@@ -159,7 +155,8 @@ For each public update, bump the package version, create a matching semantic-ver
 - `src/components/AtlasGlobe.tsx` is the frozen legacy react-globe implementation.
 - `src/data/rawInputs.ts` chooses what the app reads: the tracked V2 sample in public and forced sample mode, otherwise the private V2 files injected by the profile-specific virtual module.
 - `src/data/travelAtlas.ts` exports the travel data derived from those inputs.
-- `scripts/legacy-data.mjs` decides whether a private folder still holds legacy-format data that has not been migrated; `scripts/migrate-identity.mjs` (`npm run identity:check`, `npm run sample:v2`) migrates legacy data to V2.
+- `scripts/legacy-data.mjs` decides whether a private folder still holds legacy-format data that has not been migrated (the migration itself runs on commit `4fd32a9`, see [Migrate legacy-format data](#migrate-legacy-format-data)).
+- `scripts/baseline.mjs` (`npm run baseline`) writes the derived baseline of the public V2 sample (`--sample`) or of the private `data/v2/` as byte-comparable JSON, and compares two baselines (`--compare`).
 - `src/data/wantToGo.ts` chooses the Want to Go source (tracked sample, private file, or none) and parses it through the Core adapter.
 - `src/data/worldGraph.ts` merges the travel, want-to-go, and planned-record snapshots into the single World Graph snapshot that the map queries.
 - `src/data/mediaCatalog.ts` receives personal media only in personal mode; `src/data/droneMedia.ts` contains no built-in user media.
