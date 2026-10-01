@@ -114,7 +114,7 @@ const v2BaselineOf = (files) => `${stableStringify(buildBaseline(
   { now: BASELINE_NOW },
 ))}\n`
 
-test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响「未迁移」的判定、虚拟模块读的文件、V2 校验、编辑状态接口与 legacy-baseline --path v2', () => withTemp(async (directory) => {
+test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响「未迁移」的判定、虚拟模块读的文件、V2 校验、编辑状态接口与 scripts/baseline.mjs（个人模式）', () => withTemp(async (directory) => {
   const root = path.join(directory, 'private')
   const out = path.join(directory, 'out')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
@@ -153,7 +153,7 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
     assert.deepEqual(privateDataModuleExports({ profile: 'personal', v2Values }).privateV2Files, files, label)
     assert.deepEqual(await readV2EditorState({ privatePaths: paths }), expectedState, label)
     const target = path.join(out, `${label}.json`)
-    const result = runScript('baseline.mjs', ['--path', 'v2', '--out', target], root)
+    const result = runScript('baseline.mjs', ['--out', target], root)
     assert.equal(result.status, 0, `${label}\n${result.stderr}`)
     assert.equal(await readFile(target, 'utf8'), expected, label)
   }

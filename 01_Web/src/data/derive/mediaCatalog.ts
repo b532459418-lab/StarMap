@@ -3,6 +3,7 @@
  *
  * `src/data/derive/` 是 App 的纯派生层，【不是】 StarMap Core（`src/worldgraph/**`）。
  * 这里的逻辑原样搬自 `src/data/mediaCatalog.ts`；「读哪份数据」仍留在原文件。
+ * `../canonical/derive.ts` 把由地点重建的媒体项包成 `{ schemaVersion: 2, items }` 交给 `deriveMediaCatalog`。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`，
  * 不 import JSON、虚拟模块或 import.meta。
@@ -58,7 +59,8 @@ type LocalMediaCatalog = {
   items: ImportedMediaCatalogItem[]
 }
 
-export const isCatalog = (value: unknown): value is LocalMediaCatalog => {
+/** RFC-LOC-1 PR5b 起不再导出：只剩 `deriveMediaCatalog` 自己用。 */
+const isCatalog = (value: unknown): value is LocalMediaCatalog => {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<LocalMediaCatalog>
   return (candidate.schemaVersion === 1 || candidate.schemaVersion === 2) && Array.isArray(candidate.items)

@@ -13,8 +13,7 @@
  *
  * travelAtlas.ts、editorState.ts、mediaCatalog.ts、droneMedia.ts、wantToGo.ts、worldGraph.ts
  * 从这里取值、以原名导出；导出名与类型不变，其他文件的 import 不改。
- * PR1 的 deriveAppData（./derive/appData.ts）仍保留，供 normalizeLegacy 与 scripts/legacy-baseline.mjs 比对用，
- * App 不再调用它。
+ * PR5b 删除了 PR1 的旧派生 deriveAppData；基线工具 scripts/baseline.mjs 与 App 走同一条管线。
  */
 
 import { canonicalForInputs } from './canonical/canonicalForInputs.ts'

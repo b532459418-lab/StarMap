@@ -3,8 +3,8 @@
  *
  * `src/data/derive/` 是 App 的纯派生层，【不是】 StarMap Core（`src/worldgraph/**`）。
  * 本文件只接收「六个数据模块的导出」这种形状（`AppDataExports`），因此同一个函数既能在浏览器里
- * 对真实运行的 App 调用（传入六个模块的 module namespace），也能在 Node 里对 `deriveAppData()`
- * 的结果调用。两边产出相同，就证明 Node 管线与 App 一致。
+ * 对真实运行的 App 调用（传入六个模块的 module namespace），也能在 Node 里对 `deriveAppDataFromCanonical()`
+ * （`../canonical/derive.ts`）的结果调用。两边产出相同，就证明 Node 管线与 App 一致。
  *
  * 约束：
  * - 只依赖 Core 的公开函数与类型；不 import 六个原文件（那样 Node 里加载不了）。
@@ -114,7 +114,7 @@ type ModuleName = keyof AppDataExports
 /**
  * 基线覆盖的导出名。`data` 原样放入；`evaluated` 是函数，按全集求值后放入；
  * `notCaptured` 是明确不进基线的导出及理由（见各项注释）。
- * 三者之并必须等于该模块今天的全部运行时导出——`baseline.test.ts` 用 `deriveAppData` 核对。
+ * 三者之并必须等于该模块今天的全部运行时导出——`baseline.test.ts` 用 `deriveAppDataFromCanonical` 核对。
  */
 export const baselineExportNames = {
   travelAtlas: {

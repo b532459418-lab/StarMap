@@ -5,7 +5,7 @@
  *      migrate-identity 的 dry-run 与 --apply 现场生成），旧文件作为残留还在；
  *   2. 经 scripts/v2-editor-store.mjs（插件用的同一个 IO 层：读 data/v2/ → 纯函数 → 按顺序原子写盘）执行一组编辑；
  *   3. 每一步之后，磁盘上的五个 V2 文件都通过 validateV2Files、没有悬空引用；四个旧文件逐字节不变；
- *   4. 最后 legacy-baseline --path v2 能正常产出。
+ *   4. 最后 scripts/baseline.mjs（个人模式） 能正常产出。
  *
  * 另测：全新私人目录从空白开始写，不复制样例；写盘中途失败时的错误码与说明。
  *
@@ -120,7 +120,7 @@ const getState = async (paths) => {
 
 const putState = (run, paths) => async (update, label) => run('PUT /__travelatlas/editor/state', update(await getState(paths)), label)
 
-test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2 文件都合法、无悬空引用，旧文件不变；最后 legacy-baseline --path v2 正常产出', () => withTemp(async ({ root, out, paths }) => {
+test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2 文件都合法、无悬空引用，旧文件不变；最后 scripts/baseline.mjs（个人模式） 正常产出', () => withTemp(async ({ root, out, paths }) => {
   await writeMigratedRoot(root, paths)
   // 迁移之后是残留（旧文件与 V2 文件都在）：不算未迁移，写入照常。
   assert.equal(isLegacyUnmigrated(legacyDataStateOf(paths)), false)
@@ -211,9 +211,9 @@ test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2
   assert.equal(step.body.code, 'E_UNKNOWN_PLACE_REF')
   assert.deepEqual(await readDiskV2(paths), before)
 
-  // 最后：legacy-baseline --path v2 能正常产出，城市与国家 id 都是 UUID。
+  // 最后：scripts/baseline.mjs（个人模式） 能正常产出，城市与国家 id 都是 UUID。
   const target = path.join(out, 'v2-baseline.json')
-  const baseline = runScript('baseline.mjs', ['--path', 'v2', '--out', target], root)
+  const baseline = runScript('baseline.mjs', ['--out', target], root)
   assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr)
   const { modules } = JSON.parse(await readFile(target, 'utf8'))
   const cityNames = modules.travelAtlas.cities.map((city) => city.nameEn).sort()
@@ -246,7 +246,7 @@ test('端到端 · 全新私人目录：从空白开始写；生成合法的 dat
   assert.ok(!text.includes('sample') && !text.includes('Faroe'), '没有复制样例')
 
   const target = path.join(out, 'fresh.json')
-  const baseline = runScript('baseline.mjs', ['--path', 'v2', '--out', target], root)
+  const baseline = runScript('baseline.mjs', ['--out', target], root)
   assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr)
   assert.deepEqual(JSON.parse(await readFile(target, 'utf8')).modules.travelAtlas.cities.map((city) => city.nameEn), ['Reykjavik'])
 }))

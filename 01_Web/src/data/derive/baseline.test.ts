@@ -4,7 +4,9 @@
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
  * 前面几节的输入是手写的「六个模块导出」形状（travel 部分复用 Core 的 travel.fixture.ts，
- * 快照用 Core 适配器现算），不依赖派生层；最后一节用 deriveAppData 核对基线覆盖了全部导出。
+ * 快照用 Core 适配器现算），不依赖派生层；最后一节用 App 的派生（deriveAppDataFromCanonical）核对基线覆盖了全部导出。
+ * 最后一节的输入原来是旧派生 deriveAppData 跑公开旧样例；RFC-LOC-1 PR5b 删除旧派生后，改为冻结的同一份数据的
+ * Canonical（旧 id 空间，../canonical/frozen.fixture.ts 的 `sample`），派生结果与原来逐字节相同（公布的基线 8caf2cfb…）。
  *
  * 下面这行 reference 不能删，理由见 src/worldgraph/adapters/travel.test.ts 文件头。
  */
@@ -13,7 +15,6 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 
 import type { City, TravelMapRecord } from '../../types/travel.ts'
 import { plannedRecordsToWorldGraph } from '../../worldgraph/adapters/plannedRecords.ts'
@@ -21,8 +22,8 @@ import { sampleCities, sampleCountries, sampleJourneyDays, sampleRoutes } from '
 import { travelToWorldGraph } from '../../worldgraph/adapters/travel.ts'
 import { wantToGoToWorldGraph, type WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
 import { mergeWorldGraphSnapshots } from '../../worldgraph/snapshot.ts'
-import { deriveAppData, type RawAppInputs } from './appData.ts'
-import type { TravelMapExport } from './travelAtlas.ts'
+import { deriveAppDataFromCanonical } from '../canonical/derive.ts'
+import { legacyIdCanonical } from '../canonical/frozen.fixture.ts'
 import {
   baselineExportNames,
   buildBaseline,
@@ -310,24 +311,14 @@ test('stableStringify 拒绝没转换的 Map / Set', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 与 deriveAppData 的对接（派生层存在之后）
+// 与 App 派生的对接
 // ---------------------------------------------------------------------------
 
-const readSample = (name: string): unknown =>
-  JSON.parse(readFileSync(new URL(`../${name}`, import.meta.url), 'utf8'))
+/** 公开模式语义：足迹样例、想去样例、editor-state 与媒体为空（公开旧样例的冻结 Canonical，来源 sample）。 */
+const publicAppData = () => deriveAppDataFromCanonical(legacyIdCanonical('sample'), { now: NOW })
 
-/** 公开模式语义：足迹样例、想去样例、editor-state 与媒体为空。 */
-const publicRaw = (): RawAppInputs => ({
-  travelMap: readSample('travel-map.sample.json') as TravelMapExport,
-  travelAtlasDataSource: 'sample',
-  editorState: undefined,
-  mediaCatalog: undefined,
-  wantToGo: { source: 'sample', value: readSample('want-to-go.sample.json') },
-  now: NOW,
-})
-
-test('deriveAppData 的每个导出都被基线覆盖，基线覆盖的每个名字 deriveAppData 都有', () => {
-  const appData = deriveAppData(publicRaw()) as unknown as Record<string, Record<string, unknown>>
+test('App 派生的每个导出都被基线覆盖，基线覆盖的每个名字 App 派生都有', () => {
+  const appData = publicAppData() as unknown as Record<string, Record<string, unknown>>
   assert.deepEqual(Object.keys(appData).sort(), Object.keys(baselineExportNames).sort())
   for (const [moduleName, names] of Object.entries(baselineExportNames)) {
     const actual = Object.keys(appData[moduleName])
@@ -339,9 +330,9 @@ test('deriveAppData 的每个导出都被基线覆盖，基线覆盖的每个名
   }
 })
 
-test('公开样例经 deriveAppData 的基线：两次字节相同，关键数量与来源正确', () => {
-  const first = stableStringify(buildBaseline(deriveAppData(publicRaw()), { now: NOW }))
-  const second = stableStringify(buildBaseline(deriveAppData(publicRaw()), { now: NOW }))
+test('公开样例经 App 派生的基线：两次字节相同，关键数量与来源正确', () => {
+  const first = stableStringify(buildBaseline(publicAppData(), { now: NOW }))
+  const second = stableStringify(buildBaseline(publicAppData(), { now: NOW }))
   assert.equal(first, second)
   assert.equal(first.includes(NOW), false)
 

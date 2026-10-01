@@ -1,19 +1,13 @@
 /**
- * Canonical 派生（canonical/derive.ts）的单元测试（RFC-LOC-1 PR2 规格 §2.1、§4）。
+ * Canonical 派生（canonical/derive.ts）的单元测试（RFC-LOC-1 PR2 规格 §2.1、§4；PR5b §4.1）。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
- * 三条路径（见 ./legacy.fixture.ts）：
- *   A = PR1 的 deriveAppData(原始数据)
- *   B = PR1 的 deriveAppData(normalizeLegacy(原始数据))
- *   C = deriveAppDataFromCanonical(legacyAdapter(原始数据))
- * - 公开样例：C ≡ A（字节），且等于公布的基线哈希（@2；去掉 PR3b-1 新增的 countryIdOfCity 后等于 PR1 的 @1 哈希）；
- * - 下面每个 fixture：B ≡ C（字节），没有任何条件；
- * - 没有不一致的 fixture 另外 A ≡ C。
- *
- * RFC-LOC-1 PR5b：每个 fixture 的 C 输入（旧 id 空间的 Canonical）冻结成静态数据（./frozen.fixture.ts），
- * 这里逐一断言冻结值就是 legacyAdapter(本文件的原始数据) 经 JSON 往返的结果；文件末尾的锁定测试钉住全部冻结夹具
- * 与公开 V2 样例的派生基线哈希（删除旧派生之后，由它们取代上面的 B ≡ C）。
+ * PR2 到 PR5a 这里用三条路径互相对照（A = 旧派生跑原始数据，B = 旧派生跑 normalizeLegacy 之后的数据，
+ * C = 新派生跑 Legacy Adapter 的输出），断言 B ≡ C。PR5b 删除了旧派生与 Legacy Adapter：
+ * - 每个 fixture 的 C 输入冻结成静态的 Canonical（旧 id 空间，./frozen.fixture.ts）；冻结时它们的派生基线都等于 B；
+ * - 文件末尾的锁定测试钉住全部冻结夹具与公开 V2 样例的派生基线哈希，取代 B ≡ C；
+ * - 下面只留对新派生本身的断言（countryIdOfCity、写法统一、分类、editor-state、planned、媒体），输入换成冻结的 Canonical。
  *
  * 下面这行 reference 不能删，理由见 src/worldgraph/adapters/travel.test.ts 文件头。
  */
@@ -25,9 +19,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
-import { deriveAppData, type RawAppInputs } from '../derive/appData.ts'
 import { buildBaseline, stableStringify } from '../derive/baseline.ts'
-import type { TravelMapRecord } from '../../types/travel.ts'
 import { canonicalForInputs, type V2FileInputs } from './canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
 import {
@@ -41,75 +33,25 @@ import {
   v2SpaceCanonical,
   type LegacyIdCanonicalName,
 } from './frozen.fixture.ts'
-import { legacyAdapter } from './legacyAdapter.ts'
-import {
-  NOW,
-  SAMPLE_BASELINE_SHA256,
-  SAMPLE_BASELINE_SHA256_V1,
-  baselineText,
-  consistentPersonalRaw,
-  nameInconsistencyRaw,
-  pathA,
-  rawInputs,
-  record,
-  sampleRaw,
-  sampleTravelMap,
-  sampleWantToGo,
-} from './legacy.fixture.ts'
-import { normalizeLegacy } from './normalizeLegacy.ts'
 import type { CanonicalData } from './types.ts'
-import { jsonClone } from './v2Serializer.ts'
 
-/** B：旧路径跑 normalizeLegacy(原始数据)。 */
-const pathB = (raw: RawAppInputs) => baselineText(deriveAppData(normalizeLegacy(raw).normalized))
-
-/** C：新路径跑原始数据。 */
-const pathC = (raw: RawAppInputs) => baselineText(deriveAppDataFromCanonical(legacyAdapter(raw), { now: NOW }))
-
-const assertBEqualsC = (raw: RawAppInputs) => {
-  const b = pathB(raw)
-  const c = pathC(raw)
-  assert.ok(b === c, 'B 与 C 不是逐字节相同')
-  return c
-}
-
-/** 两份基线之间不同的 JSON 路径（只用于断言差异落在哪里）。 */
-const diffPaths = (left: unknown, right: unknown, where = '$', out: string[] = []): string[] => {
-  if (Object.is(left, right)) return out
-  const isObject = (value: unknown) => typeof value === 'object' && value !== null
-  if (!isObject(left) || !isObject(right) || Array.isArray(left) !== Array.isArray(right)) {
-    out.push(where)
-    return out
-  }
-  const keys = new Set([...Object.keys(left as object), ...Object.keys(right as object)])
-  for (const key of keys) {
-    diffPaths((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key], `${where}.${key}`, out)
-  }
-  return out
-}
+const NOW = '2000-01-01T00:00:00.000Z'
 
 const sha256 = (text: string) => createHash('sha256').update(`${text}\n`).digest('hex')
 
-/** 冻结的旧 id 空间 Canonical 就是 legacyAdapter(原始数据) 经 JSON 往返的结果（PR5b 冻结时的对照）。 */
-const assertFrozenIs = (name: LegacyIdCanonicalName, raw: RawAppInputs) => {
-  assert.deepStrictEqual(legacyIdCanonical(name), jsonClone(legacyAdapter(raw)), `冻结的 ${name}`)
-}
+/** 冻结的 Canonical → 派生（与 App 相同的 now 注入方式）。 */
+const derive = (name: LegacyIdCanonicalName) => deriveAppDataFromCanonical(legacyIdCanonical(name), { now: NOW })
 
 // ---------------------------------------------------------------------------
-// 公开样例：C ≡ A
+// 基线格式
 // ---------------------------------------------------------------------------
 
-test('公开样例：C 与 A 逐字节相同，等于公布的基线（@2）', () => {
-  assertFrozenIs('sample', sampleRaw())
-  const a = pathA(sampleRaw())
-  const c = pathC(sampleRaw())
-  assert.ok(c === a, 'C 与 A 不是逐字节相同')
-  assert.equal(sha256(c), SAMPLE_BASELINE_SHA256)
-  assert.equal(pathB(sampleRaw()), c)
-})
+/** PR1 公布的公开样例基线：@2（PR3b-1 增加 countryIdOfCity）与 @1。 */
+const SAMPLE_BASELINE_SHA256 = '8caf2cfb4e0a4c3180aa004e0f65c919f9dcca4424e6bb0445943175fe38ac34'
+const SAMPLE_BASELINE_SHA256_V1 = 'eb91f172531f7c87280b07399af6ee80d1fc6e99a2ad38efa50b60b9afd299a4'
 
 test('基线 @2：删掉 countryIdOfCity、format 改回 @1 之后，公开样例仍等于 PR1 公布的 @1 哈希', () => {
-  const baseline = buildBaseline(deriveAppDataFromCanonical(legacyAdapter(sampleRaw()), { now: NOW }), { now: NOW }) as {
+  const baseline = buildBaseline(derive('sample'), { now: NOW }) as {
     format: string
     modules: { travelAtlas: Record<string, unknown> }
   }
@@ -128,26 +70,15 @@ test('基线 @2：删掉 countryIdOfCity、format 改回 @1 之后，公开样�
   assert.equal(sha256(stableStringify(baseline)), SAMPLE_BASELINE_SHA256_V1)
 })
 
-/**
- * countryIdOfCity 的数据：显示中的城市、被 editor 隐藏的城市、hiddenFromHome 的城市、只有 planned 的城市、
- * 国家别名（Faeroe Islands → Faroe Islands），另在 hiddenCityIds 里放一个陈旧 id（前缀是 iceland__，但没有这座城市）。
- */
-const countryOfCityRaw = () => rawInputs({
-  records: [
-    record({ id: 'shown' }),
-    record({ id: 'hidden-by-editor', city: '维克', city_en: 'Vik', start_date: '2025-06-02' }),
-    record({ id: 'hidden-from-home', city: '阿克雷里', city_en: 'Akureyri', start_date: '2025-06-03', hiddenFromHome: true }),
-    record({ id: 'planned-only', country: '挪威', country_en: 'Norway', country_code: 'no', city: '卑尔根', city_en: 'Bergen', status: 'planned', start_date: '2026-07-01' }),
-    record({ id: 'alias', country: '法羅群島', country_en: 'Faeroe Islands', country_code: 'fo', city: '克拉克斯维克', city_en: 'Klaksvik', start_date: '2025-06-04' }),
-  ],
-  display: {
-    countryAliases: { 'Faeroe Islands': { country: '法罗群岛', country_en: 'Faroe Islands' } },
-    countryCodes: { Iceland: 'is', Norway: 'no', 'Faroe Islands': 'fo' },
-  },
-  editorState: { schemaVersion: 1, hiddenCityIds: ['iceland__vik', 'iceland__atlantis'] },
-  wantToGo: sampleWantToGo(),
-})
+// ---------------------------------------------------------------------------
+// countryIdOfCity
+// ---------------------------------------------------------------------------
 
+/**
+ * countryIdOfCity 的数据（冻结的 `countryOfCity`）：显示中的城市、被 editor 隐藏的城市（维克）、hiddenFromHome 的城市
+ * （阿克雷里）、只有 planned 的城市（卑尔根）、国家别名（Faeroe Islands → Faroe Islands 的克拉克斯维克），
+ * 另在 hiddenCityIds 里放一个陈旧 id（前缀是 iceland__，但没有这座城市）。
+ */
 const COUNTRY_OF_CITY_EXPECTED: [string, string | undefined][] = [
   ['iceland__reykjavik', 'iceland'],
   ['iceland__vik', 'iceland'],
@@ -162,25 +93,20 @@ const COUNTRY_OF_CITY_EXPECTED: [string, string | undefined][] = [
   ['', undefined],
 ]
 
-test('countryIdOfCity（Canonical 路径）：显示中、被 editor 隐藏、hiddenFromHome、只有 planned 的城市都查得到；陈旧 id 为 undefined；与旧路径逐项相同', () => {
-  const raw = countryOfCityRaw()
-  assertFrozenIs('countryOfCity', raw)
-  const canonical = legacyAdapter(raw)
-  const derived = deriveAppDataFromCanonical(canonical, { now: NOW }).travelAtlas
-  const legacy = deriveAppData(raw).travelAtlas
+test('countryIdOfCity（Canonical 路径）：显示中、被 editor 隐藏、hiddenFromHome、只有 planned 的城市都查得到；陈旧 id 为 undefined', () => {
+  const data = derive('countryOfCity')
+  const derived = data.travelAtlas
   for (const [cityId, countryId] of COUNTRY_OF_CITY_EXPECTED) {
     assert.equal(derived.countryIdOfCity(cityId), countryId, `Canonical：${cityId}`)
-    assert.equal(legacy.countryIdOfCity(cityId), countryId, `旧路径：${cityId}`)
   }
   // 被隐藏的城市不在 cityById 里——这正是 InfoCard 不能用 cityById 的原因。
   assert.equal(derived.cityById.iceland__vik, undefined)
   assert.equal(derived.cityById.norway__bergen, undefined)
-  // 想去地点（legacy 模式下每个条目一个）也是城市地点，按 partOf 回答。
+  // 想去地点（旧 id 空间里每个条目一个）也是城市地点，按 partOf 回答。
   assert.equal(derived.countryIdOfCity('wtg:wtg_2026-08-12_akureyri'), 'iceland')
 
-  // 基线的定义域 = 城市级函数的定义域 ∪ hiddenCityIds；A ≡ B ≡ C。
-  const c = assertBEqualsC(raw)
-  assert.equal(pathA(raw), c)
+  // 基线的定义域 = 城市级函数的定义域 ∪ hiddenCityIds。
+  const c = stableStringify(buildBaseline(data, { now: NOW }))
   assert.deepEqual(JSON.parse(c).modules.travelAtlas.countryIdOfCity, [
     ['iceland__reykjavik', 'iceland'],
     ['faroe-islands__klaksvik', 'faroe-islands'],
@@ -190,7 +116,7 @@ test('countryIdOfCity（Canonical 路径）：显示中、被 editor 隐藏、hi
 })
 
 test('countryIdOfCity（V2 id 空间）：地点 id 换成 UUID 后按 partOf 回答，被隐藏的城市同样查得到', () => {
-  // 上一个测试的数据直接搬进 V2 的 id 空间（不合并），PR5b 起是冻结的静态数据。
+  // 上一个测试的数据直接搬进 V2 的 id 空间（不合并）。
   const data = v2SpaceCanonical('countryOfCity')
   const uuidOf = countryOfCityUuidOf()
   const derived = deriveAppDataFromCanonical(data, { now: NOW }).travelAtlas
@@ -203,24 +129,12 @@ test('countryIdOfCity（V2 id 空间）：地点 id 换成 UUID 后按 partOf �
   assert.equal(derived.countryIdOfCity('iceland__vik'), undefined)
 })
 
-test('公开样例：导出名与 PR1 的 deriveAppData 完全相同', () => {
-  const legacy = deriveAppData(sampleRaw())
-  const canonical = deriveAppDataFromCanonical(legacyAdapter(sampleRaw()), { now: NOW })
-  for (const moduleName of Object.keys(legacy) as (keyof typeof legacy)[]) {
-    assert.deepEqual(Object.keys(canonical[moduleName]).sort(), Object.keys(legacy[moduleName]).sort(), moduleName)
-  }
-})
-
 // ---------------------------------------------------------------------------
-// B ≡ C：各 fixture
+// 各 fixture 上的新派生
 // ---------------------------------------------------------------------------
 
-test('PR1 审查记录的名称不一致数据（七类）：B ≡ C；A 与 B 的差异来自统一写法', () => {
-  const raw = nameInconsistencyRaw()
-  assertFrozenIs('nameInconsistency', raw)
-  const c = assertBEqualsC(raw)
-  assert.notEqual(pathA(raw), c)
-  const canonical = deriveAppDataFromCanonical(legacyAdapter(raw), { now: NOW }).travelAtlas
+test('PR1 审查记录的名称不一致数据（七类）：写法统一成地点名称；拆分城市仍是两个城市；国旗取地点的代码', () => {
+  const canonical = derive('nameInconsistency').travelAtlas
   // 统一写法后：行程日标题用地点名称；拆分城市仍是两个城市。
   assert.equal(canonical.journeyDays.find((day) => day.id === 'mismatch_city_en_case')?.title, 'Reykjavik visit')
   assert.ok(canonical.cityById['faroe-islands__tórshavn'])
@@ -230,22 +144,8 @@ test('PR1 审查记录的名称不一致数据（七类）：B ≡ C；A 与 B �
   assert.equal(canonical.cityById['faroe-islands__gjogv'].records?.find((item) => item.id === 'mismatch_country_code')?.country_code, 'fo')
 })
 
-test('国家别名 + regionSuffix：B ≡ C ≡ A', () => {
-  const raw = rawInputs({
-    records: [
-      record({ id: 'a', country: '法罗群岛', country_en: 'Faroe Islands', country_code: 'fo', city: '托尔斯港', city_en: 'Torshavn', region: 'North Atlantic' }),
-      record({ id: 'b', country: '法羅群島', country_en: 'Faeroe Islands', country_code: 'fo', city: '克拉克斯维克', city_en: 'Klaksvik', start_date: '2025-06-02' }),
-      record({ id: 'c', country: '法羅群島', country_en: 'Faeroe Islands', country_code: 'fo', city: '维德', city_en: 'Vidoy', region: 'Islands', status: 'planned', start_date: '2026-01-01' }),
-    ],
-    display: {
-      countryAliases: { 'Faeroe Islands': { country: '法罗群岛', country_en: 'Faroe Islands', regionSuffix: 'Nordoyar' } },
-      countryCodes: { 'Faroe Islands': 'fo' },
-    },
-  })
-  assertFrozenIs('alias', raw)
-  const c = assertBEqualsC(raw)
-  assert.equal(pathA(raw), c)
-  const derived = deriveAppDataFromCanonical(legacyAdapter(raw), { now: NOW }).travelAtlas
+test('国家别名 + regionSuffix：别名并进同一国家，region 追加后缀，planned 记录同样', () => {
+  const derived = derive('alias').travelAtlas
   assert.deepEqual(derived.countries.map((country) => [country.id, country.cityIds, country.keywords]), [
     ['faroe-islands', ['faroe-islands__torshavn', 'faroe-islands__klaksvik'], ['North Atlantic', 'Nordoyar']],
   ])
@@ -253,110 +153,22 @@ test('国家别名 + regionSuffix：B ≡ C ≡ A', () => {
   assert.equal(derived.routes[0].type, 'main')
 })
 
-test('hiddenCountries / originCountries / regionMatchers 分类（含变体写法与 region 子串）：B ≡ C', () => {
-  const records: TravelMapRecord[] = [
-    record({ id: 'home', country: '丹麦', country_en: 'Denmark', country_code: 'dk', city: '哥本哈根', city_en: 'Copenhagen', start_date: '2025-05-30' }),
-    record({ id: 'is1' }),
-    record({ id: 'is2', country_en: 'iceland', city: '维克', city_en: 'Vik', start_date: '2025-06-02' }),
-    record({ id: 'fo', country: '法罗群岛', country_en: 'Faroe Islands', country_code: 'fo', city: '托尔斯港', city_en: 'Torshavn', region: 'North Atlantic', start_date: '2025-06-03' }),
-    record({ id: 'no', country: '挪威', country_en: 'Norway', country_code: 'no', city: '卑尔根', city_en: 'Bergen', region: 'Iceland Highlands', start_date: '2025-06-04' }),
-    record({ id: 'se', country: '瑞典', country_en: 'Sweden', country_code: 'se', city: '斯德哥尔摩', city_en: 'Stockholm', type: 'daytrip', start_date: '2025-06-05' }),
-    record({ id: 'override', country: '瑞典', country_en: 'Sweden', country_code: 'se', city: '哥德堡', city_en: 'Gothenburg', travelCategory: 'destination', hiddenFromHome: true, start_date: '2025-06-06' }),
-  ]
-  for (const [index, display] of [
-    { hiddenCountries: ['Denmark', 'iceland'], originCountries: ['Denmark'], regionMatchers: ['Atlantic', 'Sweden', 'Ghost'] },
-    { hiddenCountries: ['Iceland'], originCountries: ['iceland'], regionMatchers: ['iceland'] },
-    { regionMatchers: ['Iceland'] },
-    { hiddenCountries: ['Norway', 'Nowhere'], regionMatchers: ['Norway'], hiddenCityNames: ['Torshavn', '卑尔根', 'Atlantis'] },
-  ].entries()) {
-    assertFrozenIs(`classification${index + 1}` as LegacyIdCanonicalName, rawInputs({ records, display }))
-    assertBEqualsC(rawInputs({ records, display }))
-  }
-  // 一致的写法（没有变体、没有无效值，countryCodes 与记录一致）：A 也相同。
-  const consistent = rawInputs({
-    records: records.map((item) => (item.id === 'is2' ? { ...item, country_en: 'Iceland' } : item)),
-    display: {
-      hiddenCountries: ['Denmark'],
-      originCountries: ['Denmark'],
-      regionMatchers: ['Atlantic'],
-      hiddenCityNames: ['Torshavn'],
-      countryCodes: { Denmark: 'dk', Iceland: 'is', 'Faroe Islands': 'fo', Norway: 'no', Sweden: 'se' },
-    },
-  })
-  assertFrozenIs('classificationConsistent', consistent)
-  assert.equal(pathA(consistent), assertBEqualsC(consistent))
-  const derived = deriveAppDataFromCanonical(legacyAdapter(consistent), { now: NOW }).travelAtlas
+test('hiddenCountries / originCountries / regionMatchers 分类（一致写法）：不上首页的记录与分类；导航隐藏的城市', () => {
+  const derived = derive('classificationConsistent').travelAtlas
   assert.deepEqual(derived.hiddenHomeRecords.map((item) => [item.id, item.travelCategory]), [['home', 'origin'], ['override', 'destination']])
   assert.equal(derived.shouldHideCityFromNavigation(derived.cityById['faroe-islands__torshavn']), true)
   assert.equal(derived.shouldHideCityFromNavigation(derived.cityById['iceland__reykjavik']), false)
 })
 
-test('journeyRules（含空关键词、空 id）与 slug 回落：B ≡ C', () => {
-  const records = [
-    record({ id: 'a', trip_title: 'Ring Road 2025' }),
-    record({ id: 'b', trip_title: 'Ring Road 2025', city: '维克', city_en: 'Vik', start_date: '2025-06-02' }),
-    record({ id: 'c', trip_title: undefined, city: '阿克雷里', city_en: 'Akureyri', start_date: '2025-06-03' }),
-    record({ id: 'd', journeyId: 'own', start_date: '2025-06-04' }),
-    record({ id: 'e', trip_title: 'Harbour days', city: '胡萨维克', city_en: 'Husavik', start_date: '2025-06-05' }),
-  ]
-  for (const [index, journeyRules] of [
-    [{ includes: ['Ring'], id: 'ring' }],
-    [{ includes: [''], id: 'everything' }],
-    [{ includes: ['Harbour'], id: '' }, { includes: ['Ring'], id: 'ring' }],
-  ].entries()) {
-    const raw = rawInputs({ records, display: { journeyRules, countryCodes: { Iceland: 'is' } } })
-    assertFrozenIs(`journeyRules${index + 1}` as LegacyIdCanonicalName, raw)
-    assert.equal(pathA(raw), assertBEqualsC(raw))
-  }
-})
-
-test('editor 隐藏国家与城市、排序：B ≡ C ≡ A', () => {
-  const sample = sampleTravelMap()
-  const raw = rawInputs({
-    records: sample.records,
-    display: sample.display,
-    editorState: {
-      schemaVersion: 1,
-      countryOrder: ['faroe-islands', 'iceland'],
-      hiddenCountryIds: ['faroe-islands'],
-      cityOrderByCountry: { iceland: ['iceland__akureyri', 'iceland__reykjavik'] },
-      hiddenCityIds: ['iceland__vik'],
-    },
-  })
-  assertFrozenIs('editorHidden', raw)
-  const c = assertBEqualsC(raw)
-  assert.equal(pathA(raw), c)
-  const derived = deriveAppDataFromCanonical(legacyAdapter(raw), { now: NOW }).travelAtlas
+test('editor 隐藏国家与城市、排序', () => {
+  const derived = derive('editorHidden').travelAtlas
   assert.deepEqual(derived.countries.map((country) => [country.id, country.cityIds]), [['iceland', ['iceland__akureyri', 'iceland__reykjavik']]])
   assert.deepEqual(derived.cities.map((city) => city.id), ['iceland__reykjavik', 'iceland__akureyri'])
 })
 
-test('addedCountries：独立国家与同键国家（含国家全部隐藏时同键条目作为独立国家出现）：B ≡ C', () => {
-  const addedCountries = [
-    { id: 'greenland', nameZh: '格陵兰', nameEn: 'Greenland', countryCode: 'gl', centerLat: 72, centerLng: -40, region: 'Arctic', visitedDate: '2024-08-01' },
-    { id: 'norway', nameZh: '挪威', nameEn: 'Norway', countryCode: '', centerLat: 60, centerLng: 8 },
-    { id: 'iceland', nameZh: '冰岛（手动）', nameEn: 'Iceland', countryCode: 'IS', centerLat: 65, centerLng: -18 },
-  ]
-  const records = [
-    record({ id: 'a' }),
-    record({ id: 'n', country: '挪威', country_en: 'Norway', country_code: undefined, city: '卑尔根', city_en: 'Bergen', lat: null, lng: null }),
-  ]
-  const consistent = rawInputs({
-    records: [record({ id: 'a' })],
-    display: { countryCodes: { Iceland: 'is' } },
-    editorState: { schemaVersion: 1, addedCountries: [addedCountries[0]], countryOrder: ['greenland'] },
-  })
-  assertFrozenIs('addedCountriesConsistent', consistent)
-  assert.equal(pathA(consistent), assertBEqualsC(consistent))
-
+test('addedCountries：同键条目在国家全部隐藏时作为独立国家出现，名称、代码、坐标取自地点', () => {
   for (const hiddenFromHome of [false, true]) {
-    const raw = rawInputs({
-      records: records.map((item) => ({ ...item, hiddenFromHome })),
-      editorState: { schemaVersion: 1, addedCountries, countryOrder: ['iceland', 'greenland', 'norway'] },
-    })
-    assertFrozenIs(hiddenFromHome ? 'addedCountriesHomeHidden' : 'addedCountriesShown', raw)
-    assertBEqualsC(raw)
-    const derived = deriveAppDataFromCanonical(legacyAdapter(raw), { now: NOW }).travelAtlas
+    const derived = derive(hiddenFromHome ? 'addedCountriesHomeHidden' : 'addedCountriesShown').travelAtlas
     const standalone = derived.countries.filter((country) => country.records?.length === 0).map((country) => [country.id, country.nameZh, country.flagCode, country.centerLat])
     if (hiddenFromHome) {
       // 足迹记录都不上首页：同键条目作为独立国家出现，名称、代码、坐标取自地点（没有的才用条目自己的）。
@@ -367,61 +179,16 @@ test('addedCountries：独立国家与同键国家（含国家全部隐藏时同
   }
 })
 
-test('planned 记录：与 visited 同城、只有 planned 的城市与国家：B ≡ C ≡ A', () => {
-  const raw = rawInputs({
-    records: [
-      record({ id: 'visited' }),
-      record({ id: 'same-city', status: 'planned', start_date: '2026-03-01', notes: 'again' }),
-      record({ id: 'planned-only', country: '挪威', country_en: 'Norway', country_code: 'no', city: '卑尔根', city_en: 'Bergen', status: 'planned', lat: 60.39, lng: 5.32 }),
-      record({ id: 'planned-no-coordinate', country: '挪威', country_en: 'Norway', country_code: 'no', city: '奥斯陆', city_en: 'Oslo', status: 'planned', lat: null, lng: null }),
-    ],
-    display: { countryCodes: { Iceland: 'is', Norway: 'no' } },
-  })
-  assertFrozenIs('planned', raw)
-  const c = assertBEqualsC(raw)
-  assert.equal(pathA(raw), c)
-  const derived = deriveAppDataFromCanonical(legacyAdapter(raw), { now: NOW })
+test('planned 记录：与 visited 同城、只有 planned 的城市与国家', () => {
+  const derived = derive('planned')
   assert.deepEqual(derived.travelAtlas.plannedRecords.map((item) => item.id), ['same-city', 'planned-only', 'planned-no-coordinate'])
   assert.deepEqual(derived.travelAtlas.countries.map((country) => country.id), ['iceland'])
   assert.equal(derived.wantToGo.plannedConvertBlockReason(derived.travelAtlas.plannedRecords[2]), '这条旅行计划没有坐标，无法转为足迹。')
   assert.equal(derived.worldGraph.plannedSnapshot.entities.length, 3)
 })
 
-test('媒体：城市照片、封面、无人机、隐藏、悬空引用、坏条目：B ≡ C', () => {
-  const media = (overrides: Record<string, unknown>) => ({
-    kind: 'photo', scope: 'city', countryId: 'iceland', countryName: 'Iceland', cityId: 'iceland__reykjavik', cityName: 'Reykjavik',
-    src: '/m.jpg', originalFileName: 'm.jpg', isCover: false, status: 'ready', ...overrides,
-  })
-  const raw = rawInputs({
-    records: [record({ id: 'a' }), record({ id: 'b', city: '维克', city_en: 'Vik', start_date: '2025-06-02' })],
-    editorState: {
-      schemaVersion: 1,
-      mediaOrderByCity: { iceland__reykjavik: ['p3', 'p1'] },
-      coverMediaByCity: { iceland__reykjavik: 'p3' },
-      hiddenMediaIds: ['p2'],
-      droneOrderByCity: { iceland__vik: ['d2', 'd1'] },
-      hiddenDroneMediaIds: ['d3'],
-    },
-    mediaCatalog: {
-      schemaVersion: 2,
-      items: [
-        media({ id: 'p1', isCover: true, titleZh: '港口' }),
-        media({ id: 'p2' }),
-        media({ id: 'p3', variants: { thumb: { src: '/t.webp' }, original: { src: '/o.jpg' } } }),
-        media({ id: 'p4', status: 'needsMetadata' }),
-        media({ id: 'd1', kind: 'aerialPhoto', cityId: 'iceland__vik', cityName: 'Vik', date: '2025-06-02', resolution: '4K', titleEn: 'Coast' }),
-        media({ id: 'd2', kind: 'panorama360', cityId: 'iceland__vik', cityName: 'Vik', date: '2025-06-02', resolution: '8K', position: { lat: 63.4, lng: -19 } }),
-        media({ id: 'd3', kind: 'aerialPhoto', cityId: 'iceland__vik', cityName: 'Vik', date: '2025-06-02', resolution: '4K' }),
-        media({ id: 'v1', kind: 'video', cityId: 'iceland__vik', cityName: 'Vik' }),
-        media({ id: 'ghost', countryId: 'atlantis', countryName: 'Atlantis', cityId: 'atlantis__ghost', cityName: 'Ghost', kind: 'aerialPhoto', date: '2025-01-01', resolution: '4K' }),
-        null,
-        media({ id: 'weird', kind: 'sticker' }),
-      ],
-    },
-  })
-  assertFrozenIs('media', raw)
-  assertBEqualsC(raw)
-  const derived = deriveAppDataFromCanonical(legacyAdapter(raw), { now: NOW })
+test('媒体：城市照片、封面、无人机、隐藏、悬空引用', () => {
+  const derived = derive('media')
   assert.deepEqual(derived.mediaCatalog.getCityPhotos('iceland__reykjavik').map((item) => item.id), ['p3', 'p1'])
   assert.equal(derived.mediaCatalog.getCityCoverPhoto('iceland__reykjavik')?.id, 'p3')
   assert.deepEqual(derived.droneMedia.getDroneMediaForCity('iceland__vik').map((item) => item.id), ['d2', 'd1'])
@@ -429,40 +196,6 @@ test('媒体：城市照片、封面、无人机、隐藏、悬空引用、坏�
   const ghost = derived.droneMedia.droneMediaById.ghost
   assert.deepEqual([ghost.city, ghost.country], ['atlantis__ghost', undefined])
   assert.deepEqual(derived.mediaCatalog.allImportedMediaItems.map((item) => item.id), ['p1', 'p2', 'p3', 'p4', 'd1', 'd2', 'd3', 'v1', 'ghost'])
-})
-
-test('没有名称不一致的个人数据：A ≡ B ≡ C；只多一张悬空媒体时，A 与 C 只差在这张媒体上', () => {
-  const clean = consistentPersonalRaw()
-  assertFrozenIs('personal', clean)
-  assert.equal(pathA(clean), assertBEqualsC(clean))
-
-  const dangling = consistentPersonalRaw({ withDanglingMedia: true })
-  assertFrozenIs('personalDanglingMedia', dangling)
-  const c = assertBEqualsC(dangling)
-  // 悬空引用的媒体项（第 4 项、城市定义域里的第 6 个城市）删去国家 id 与名称（规格 §2.5），别的都不变。
-  const paths = diffPaths(JSON.parse(pathA(dangling)), JSON.parse(c)).sort()
-  const fields = ['cityName', 'countryId', 'countryName']
-  assert.deepEqual(paths, [
-    ...fields.map((field) => `$.modules.mediaCatalog.allImportedMediaItems.3.${field}`),
-    ...fields.map((field) => `$.modules.mediaCatalog.getCityCoverPhoto.5.1.${field}`),
-    ...fields.map((field) => `$.modules.mediaCatalog.getCityPhotos.5.1.0.${field}`),
-    ...fields.map((field) => `$.modules.mediaCatalog.importedMediaItems.3.${field}`),
-  ])
-})
-
-test('全部 fixture 合在一起（名称不一致 + 显示规则 + editor + 媒体 + 想去）：B ≡ C', () => {
-  const personal = consistentPersonalRaw({ withDanglingMedia: true })
-  const inconsistent = nameInconsistencyRaw()
-  const raw: RawAppInputs = {
-    ...personal,
-    travelMap: {
-      ...personal.travelMap,
-      records: [...personal.travelMap.records, ...inconsistent.travelMap.records.slice(5)],
-      display: { ...personal.travelMap.display, hiddenCountries: ['iceland'], regionMatchers: ['Nordoyar', 'Nowhere'], hiddenCityNames: ['Akureyri'] },
-    },
-  }
-  assertFrozenIs('combined', raw)
-  assertBEqualsC(raw)
 })
 
 // ---------------------------------------------------------------------------
