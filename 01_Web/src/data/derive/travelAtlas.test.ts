@@ -1,6 +1,6 @@
 /**
  * 足迹派生用到的小工具（derive/travelAtlas.ts 的 coordinateForRecord、derive/editorState.ts 的 orderBySavedIds）的单元测试
- * （RFC-LOC-1 PR1 §3.5）。
+ * （RFC-LOC-1 PR1 §3.5；PR5b §4.3：coordinateForRecord 不再按名字查坐标）。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
@@ -16,7 +16,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import type { TravelMapRecord } from '../../types/travel.ts'
-import { cityCoordinates, countryCoordinates } from '../geoCoordinates.ts'
 import { orderBySavedIds } from './editorState.ts'
 import { coordinateForRecord } from './travelAtlas.ts'
 
@@ -32,33 +31,16 @@ const record = (overrides: Partial<TravelMapRecord> & { id: string }): TravelMap
 })
 
 // ---------------------------------------------------------------------------
-// 坐标回落
+// 坐标
 // ---------------------------------------------------------------------------
 
-test('coordinateForRecord：记录坐标 > 城市英文名查表 > 城市名查表 > 国家名查表', () => {
-  // 内置坐标表今天是空的（见 geoCoordinates.ts），这里临时填几条再清掉，只为覆盖回落路径。
-  assert.equal(Object.keys(cityCoordinates).length, 0)
-  assert.equal(Object.keys(countryCoordinates).length, 0)
-  cityCoordinates['lookup city'] = { lat: 10, lng: 20, approximate: true }
-  cityCoordinates['alt name'] = { lat: 11, lng: 21, approximate: true }
-  countryCoordinates.beta = { lat: 30, lng: 40, approximate: true }
-  try {
-    const own = record({ id: 'own', country_en: 'Gamma', country: '丙', city_en: 'Lookup City', lat: 5, lng: 6 })
-    const byCityEn = record({ id: 'by-city-en', country_en: 'Gamma', country: '丙', city_en: 'Lookup City', lat: null, lng: null })
-    const byCity = record({ id: 'by-city', country_en: 'Gamma', country: '丙', city_en: 'Unknown', city: 'Alt Name', lat: null, lng: null })
-    const byCountry = record({ id: 'by-country', country_en: 'Beta', country: '乙', city_en: 'Nowhere', lat: null, lng: null })
-    const none = record({ id: 'none', country_en: 'Delta', country: '丁', city_en: 'Void', lat: null, lng: null })
-
-    assert.deepEqual(coordinateForRecord(own), { lat: 5, lng: 6, approximate: false })
-    assert.deepEqual(coordinateForRecord(byCityEn), { lat: 10, lng: 20, approximate: true })
-    assert.deepEqual(coordinateForRecord(byCity), { lat: 11, lng: 21, approximate: true })
-    assert.deepEqual(coordinateForRecord(byCountry), { lat: 30, lng: 40, approximate: true })
-    assert.equal(coordinateForRecord(none), undefined)
-  } finally {
-    delete cityCoordinates['lookup city']
-    delete cityCoordinates['alt name']
-    delete countryCoordinates.beta
-  }
+test('coordinateForRecord：只用记录自身的坐标；没有（或只有一半）时为 undefined，不按城市名、国家名查表（RFC-LOC-1 PR5b）', () => {
+  assert.deepEqual(coordinateForRecord(record({ id: 'own', lat: 5, lng: 6 })), { lat: 5, lng: 6, approximate: false })
+  assert.deepEqual(coordinateForRecord(record({ id: 'zero', lat: 0, lng: 0 })), { lat: 0, lng: 0, approximate: false })
+  assert.equal(coordinateForRecord(record({ id: 'none', lat: null, lng: null })), undefined)
+  assert.equal(coordinateForRecord(record({ id: 'half', lat: 5, lng: null })), undefined)
+  // PR5b 之前这里会按城市英文名、城市名、国家名去查一张（一直为空的）坐标表；现在名字不参与。
+  assert.equal(coordinateForRecord(record({ id: 'named', country_en: 'Iceland', city_en: 'Reykjavik', lat: null, lng: null })), undefined)
 })
 
 // ---------------------------------------------------------------------------

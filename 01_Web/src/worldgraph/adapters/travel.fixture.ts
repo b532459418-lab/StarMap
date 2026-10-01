@@ -217,3 +217,12 @@ export const sampleInput = () => ({
   journeyDays: sampleJourneyDays(),
   routes: sampleRoutes(),
 })
+
+/**
+ * 生成上面这些已知输出时，旧 travelAtlas.ts 的城市名 / 国家名坐标表（原 src/data/geoCoordinates.ts）。
+ * 两张表一直是空的，所以国家中心是各记录坐标的算术平均、城市坐标就是记录坐标。RFC-LOC-1 PR5b 删除了那张表与按名字
+ * 查坐标的回落（推导禁令），travel.test.ts 仍用这里的两张空表钉住 fixture 的这个前提。
+ */
+type FixtureCoordinate = { lat: number; lng: number; approximate?: boolean }
+export const countryCoordinates: Record<string, FixtureCoordinate> = {}
+export const cityCoordinates: Record<string, FixtureCoordinate> = {}

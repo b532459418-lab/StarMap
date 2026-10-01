@@ -25,7 +25,6 @@ import assert from 'node:assert/strict'
 
 import type { Country, Route } from '../../types/travel.ts'
 import type { Anchor, Entity, LayerMembership, Relation } from '../types.ts'
-import { cityCoordinates, countryCoordinates } from '../../data/geoCoordinates.ts'
 import {
   anchorId,
   cityEntityId,
@@ -37,6 +36,8 @@ import {
 } from './travel.ts'
 import {
   JOURNEY_ID,
+  cityCoordinates,
+  countryCoordinates,
   sampleCities,
   sampleCountries,
   sampleInput,
@@ -575,8 +576,8 @@ test('fixture 与 tracked 的 travel.fixture.source.json 保持一致', () => {
   })
 
   // 国家中心点是"该国全部有坐标记录的算术平均"，但这只在查表为空时成立：
-  // travelAtlas.ts 算的是 getCountryCoordinate(...) ?? mean(...)。
-  // 一旦有人往 geoCoordinates.ts 里加一条冰岛，下面的 centerLng 期望值就会和真实数据脱节，
+  // 旧 travelAtlas.ts 算的是「按国家名查坐标表 ?? mean(...)」。
+  // 一旦有人往那张坐标表（PR5b 起是 ./travel.fixture.ts 里的 countryCoordinates）里加一条冰岛，下面的 centerLng 期望值就会和真实数据脱节，
   // 所以先把"查表为空"这个前提本身钉住——它红了，说明该重算 fixture，而不是改这两行。
   assert.equal(
     Object.keys(countryCoordinates).length,
