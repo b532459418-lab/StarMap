@@ -1,0 +1,23 @@
+export const mediaImportResources = {
+  zh: {
+    received_other: '已接收 {{count}} 个文件。',
+    pending: '继续导入会使用已接收的文件，不会再次上传。请先解决下面诊断中的问题。',
+    partial: '本次选择的部分文件没有完成接收。完成已接收部分的导入后，再单独选择其余文件。',
+    retry: '继续导入已接收文件',
+    retrying: '正在继续导入…',
+    uncertain: '无法确认本次操作结果。请先刷新，核对投递箱和媒体列表，再决定下一步；不要重新上传同一批文件。',
+    reload: '刷新并核对结果',
+    failed: '媒体操作失败，请查看投递箱和媒体列表。',
+  },
+  en: {
+    received_one: '{{count}} file received.',
+    received_other: '{{count}} files received.',
+    pending: 'Continue importing the files already received without uploading them again. Resolve the issues in the diagnostics below first.',
+    partial: 'Some selected files were not fully received. Finish importing the received files, then select the remaining files separately.',
+    retry: 'Continue importing received files',
+    retrying: 'Continuing import…',
+    uncertain: 'The result of this operation is unknown. Reload and check the Inbox and media list before deciding what to do next. Do not upload the same batch again.',
+    reload: 'Reload and check the result',
+    failed: 'The media operation failed. Check the Inbox and media list.',
+  },
+}

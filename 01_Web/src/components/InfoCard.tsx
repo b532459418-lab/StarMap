@@ -2,7 +2,7 @@ import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource } from '../data/mediaCatalog'
@@ -13,7 +13,9 @@ import type { CityId, Country, CountryId, SelectionMode } from '../types/travel'
 import type { CityPhotoGalleryRequest } from './CityPhotoGalleryModal'
 import { LocationSearchField } from './LocationSearchField'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
+import { MediaImportRecovery } from './MediaImportRecovery'
 import { useFlipLayout } from './useFlipLayout'
+import { useMediaImportSession } from './useMediaImportSession'
 
 type InfoCardProps = {
   mode: SelectionMode
@@ -64,6 +66,15 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   const [showAddCity, setShowAddCity] = useState(false)
   const [editorNotice, setEditorNotice] = useLocalizedNotice()
   const [editorBusy, setEditorBusy] = useState(false)
+  const photoImportTarget = isCityMode ? JSON.stringify([country.id, city.id, 'photos']) : undefined
+  const mediaSession = useMediaImportSession(photoImportTarget)
+  const photoImportTargetRef = useRef<string | undefined>(undefined)
+  useLayoutEffect(() => {
+    photoImportTargetRef.current = photoImportTarget
+    return () => { photoImportTargetRef.current = undefined }
+  }, [photoImportTarget])
+  const photoImportLocked = mediaSession.state.phase !== 'idle'
+  const editorActionBusy = editorBusy || photoImportLocked
   const [draggedCityId, setDraggedCityId] = useState<CityId>()
   const [draggedPhotoId, setDraggedPhotoId] = useState<string>()
   const [draftCityIds, setDraftCityIds] = useState<CityId[]>(memoryCities.map((item) => item.id))
@@ -100,7 +111,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   }, [countryCode, t])
 
   const saveCityDraft = async () => {
-    if (!country) return
+    if (!country || editorActionBusy) return
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:savingCities' })
     try {
@@ -117,7 +128,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   }
 
   const savePhotoDraft = async () => {
-    if (!city) return
+    if (!city || editorActionBusy) return
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:savingPhotos' })
     try {
@@ -138,7 +149,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
 
   const addCity = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!country) return
+    if (!country || editorActionBusy) return
     if (!selectedCityOption && !isManualCityEntry) {
       setEditorNotice({ key: 'editor:chooseCity' })
       return
@@ -193,23 +204,41 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   }
 
   const uploadPhotos = async (files: FileList | null) => {
-    if (!files?.length || !country || !city) return
+    if (!files?.length || !localEditorAvailable || !isCityMode || !country || !city || editorActionBusy) return
+    const target = photoImportTarget
+    const countryId = country.id
+    const cityId = city.id
+    const isCurrentTarget = () => photoImportTargetRef.current === target
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:receivingPhotos', values: { count: files.length } })
     try {
-      const uploadedSourcePaths: string[] = []
-      for (const file of Array.from(files)) {
-        const uploaded = await uploadLocalMedia({ countryId: country.id, cityId: city.id, kind: 'photo', file })
-        uploadedSourcePaths.push(uploaded.sourcePath)
-      }
+      await mediaSession.upload(Array.from(files), (file) => uploadLocalMedia({ countryId, cityId, kind: 'photo', file }))
+      if (!isCurrentTarget()) return
       setEditorNotice({ key: 'editor:importingPhotos' })
-      await importLocalMedia(uploadedSourcePaths)
-      reloadAfterLocalSave()
-    } catch (error) {
-      setEditorNotice(editorErrorNotice(error, 'editor:photoImportFailed'))
-      setEditorBusy(false)
+      await mediaSession.importMedia(importLocalMedia)
+      if (isCurrentTarget()) reloadAfterLocalSave()
+    } catch {
+      if (isCurrentTarget()) setEditorNotice('')
     } finally {
-      if (photoInputRef.current) photoInputRef.current.value = ''
+      if (isCurrentTarget()) {
+        if (photoInputRef.current) photoInputRef.current.value = ''
+        setEditorBusy(false)
+      }
+    }
+  }
+  const retryPhotoImport = async () => {
+    if (editorBusy || mediaSession.state.phase !== 'pending') return
+    const target = photoImportTarget
+    const isCurrentTarget = () => photoImportTargetRef.current === target
+    setEditorBusy(true)
+    setEditorNotice({ key: 'editor:importingPhotos' })
+    try {
+      await mediaSession.importMedia(importLocalMedia)
+      if (isCurrentTarget()) reloadAfterLocalSave()
+    } catch {
+      if (isCurrentTarget()) setEditorNotice('')
+    } finally {
+      if (isCurrentTarget()) setEditorBusy(false)
     }
   }
   const visitedCityCount = country?.cityIds.length ?? 0
@@ -362,9 +391,10 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                 {localEditorAvailable ? (
                   <LocalEditorToolbar
                     editing={photoEditing}
-                    busy={editorBusy}
+                    busy={editorActionBusy}
                     label={t('editor:photos')}
                     onToggle={() => {
+                      if (editorActionBusy) return
                       setPhotoEditing((editing) => !editing)
                       setDraftPhotoIds(cityPhotos.map((photo) => photo.id))
                       setDraftHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
@@ -372,12 +402,15 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       setEditorNotice('')
                     }}
                     onReset={() => {
+                      if (editorActionBusy) return
                       setDraftPhotoIds(cityPhotos.map((photo) => photo.id))
                       setDraftHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
                       setDraftCoverPhotoId(cityCoverPhoto?.id)
                       setEditorNotice({ key: 'editor:undoPhotos' })
                     }}
-                    onAdd={() => photoInputRef.current?.click()}
+                    onAdd={() => {
+                      if (!editorActionBusy) photoInputRef.current?.click()
+                    }}
                     onSave={savePhotoDraft}
                   />
                 ) : null}
@@ -389,6 +422,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     type="file"
                     accept="image/jpeg,image/png,image/webp,image/avif"
                     multiple
+                    disabled={editorActionBusy}
                     onChange={(event) => void uploadPhotos(event.currentTarget.files)}
                   />
                 ) : null}
@@ -404,7 +438,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                 {localEditorAvailable ? (
                   <LocalEditorToolbar
                     editing={cityEditing}
-                    busy={editorBusy}
+                    busy={editorActionBusy}
                     label={t('editor:cities')}
                     onToggle={() => {
                       setCityEditing((editing) => !editing)
@@ -492,19 +526,24 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>{t('editor:attributionEnd')}
                   </p>
                 ) : null}
-                <button type="submit" disabled={editorBusy || (!isManualCityEntry && !selectedCityOption)}>{t('editor:confirmCity')}</button>
+                <button type="submit" disabled={editorActionBusy || (!isManualCityEntry && !selectedCityOption)}>{t('editor:confirmCity')}</button>
               </form>
             ) : null}
 
             {editorNotice ? <p className="atlas-local-editor-notice atlas-local-editor-notice-dark" role="status">{editorNotice}</p> : null}
 
+            {localEditorAvailable && isCityMode ? (
+              <MediaImportRecovery state={mediaSession.state} busy={editorBusy} onRetry={retryPhotoImport} />
+            ) : null}
+
             {isCountryGrid && cityEditing && hiddenCityIdsForCountry.length > 0 ? (
               <button
                 type="button"
                 className="atlas-local-editor-restore"
-                disabled={editorBusy}
+                disabled={editorActionBusy}
                 onClick={(event) => {
                   event.stopPropagation()
+                  if (editorActionBusy) return
                   setEditorBusy(true)
                   void updateLocalEditorState((current) => ({
                     ...current,
@@ -524,9 +563,10 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                 <button
                   type="button"
                   className="atlas-local-editor-restore"
-                  disabled={editorBusy}
+                  disabled={editorActionBusy}
                   onClick={(event) => {
                     event.stopPropagation()
+                    if (editorActionBusy) return
                     setEditorBusy(true)
                     void updateLocalEditorState((current) => ({
                       ...current,
@@ -542,9 +582,10 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                 <button
                   type="button"
                   className="atlas-local-editor-delete"
-                  disabled={editorBusy}
+                  disabled={editorActionBusy}
                   onClick={(event) => {
                     event.stopPropagation()
+                    if (editorActionBusy) return
                     const confirmed = window.confirm(t('editor:deletePhotosConfirm', { count: hiddenPhotoIdsForCity.length }))
                     if (!confirmed) return
                     setEditorBusy(true)
