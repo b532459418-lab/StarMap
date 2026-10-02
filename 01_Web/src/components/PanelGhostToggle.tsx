@@ -1,4 +1,5 @@
 import { Eye, EyeOff } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 type PanelGhostToggleProps = {
   active: boolean
@@ -11,11 +12,13 @@ export function PanelGhostToggle({
   onToggle,
   size = 'md',
 }: PanelGhostToggleProps) {
+  const { t } = useTranslation('appShell')
   return (
     <button
       type="button"
       aria-pressed={active}
-      title={active ? 'Show panel' : 'Hide panel'}
+      title={t(active ? 'showPanel' : 'hidePanel')}
+      aria-label={t(active ? 'showPanel' : 'hidePanel')}
       onClick={onToggle}
       className={`atlas-panel-ghost-toggle grid shrink-0 place-items-center rounded-full border shadow-lg transition duration-300 ${
         size === 'sm' ? 'size-10' : 'size-11'

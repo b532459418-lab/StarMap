@@ -667,8 +667,8 @@ function App() {
               type="button"
               className="atlas-dock-button atlas-sidebars-toggle pointer-events-auto"
               aria-pressed={sidebarsOpen}
-              aria-label={sidebarsOpen ? 'Hide both sidebars' : 'Show both sidebars'}
-              title={sidebarsOpen ? '隐藏侧边栏' : '显示侧边栏'}
+              aria-label={t(sidebarsOpen ? 'appShell:hideSidebars' : 'appShell:showSidebars')}
+              title={t(sidebarsOpen ? 'appShell:hideSidebars' : 'appShell:showSidebars')}
               onClick={() => setSidebarsOpen((open) => !open)}
             >
               <span className="atlas-sidebars-toggle-icons" aria-hidden="true">

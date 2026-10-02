@@ -1,3 +1,7 @@
+import { useTranslation } from 'react-i18next'
+import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { usePlaceNames } from '../i18n/usePlaceNames'
+import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { useMemo, useRef, useState } from 'react'
 import { Drone, GripVertical, Maximize2, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
@@ -23,6 +27,7 @@ type DroneFileDraft = {
   file: File
   status: 'reading' | 'ready'
   error?: string
+  errorKeys?: string[]
   date: string
   lat: string
   lng: string
@@ -81,13 +86,15 @@ const pendingDraft = (file: File, index: number): DroneFileDraft => ({
 })
 
 export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanorama }: DroneMediaCardProps) {
+  const { t } = useTranslation('droneEditor')
+  const { name } = usePlaceNames()
   const city = cityId ? cityById[cityId] : undefined
   const items = useMemo(() => getDroneMediaForCity(cityId), [cityId])
   const metadataRunRef = useRef(0)
   const [editing, setEditing] = useState(false)
   const [showUpload, setShowUpload] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useLocalizedNotice()
   const [draggedItemId, setDraggedItemId] = useState<string>()
   const [draftItemIds, setDraftItemIds] = useState(items.map((item) => item.id))
   const [draftHiddenIds, setDraftHiddenIds] = useState(travelAtlasEditorState.hiddenDroneMediaIds)
@@ -114,11 +121,12 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
 
   if (!city || (items.length === 0 && !localEditorAvailable)) return null
 
+  // Saved bilingual titles are stable metadata, independent of the interface language.
   const mediaTitle = `${city.nameZh}无人机影像`
 
   const saveDraft = async () => {
     setBusy(true)
-    setNotice('正在保存无人机影像布局…')
+    setNotice({ key: 'droneEditor:saving' })
     try {
       await updateLocalEditorState((current) => ({
         ...current,
@@ -127,7 +135,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
       }))
       reloadAfterLocalSave()
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '保存失败。')
+      setNotice(editorErrorNotice(error, 'droneEditor:saveFailed'))
       setBusy(false)
     }
   }
@@ -135,23 +143,23 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   const uploadDroneFiles = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!fileDrafts.length) {
-      setNotice('请先选择无人机图片。')
+      setNotice({ key: 'droneEditor:selectFirst' })
       return
     }
     if (fileDrafts.some((draft) => draft.status === 'reading')) {
-      setNotice('文件信息仍在读取，请稍候。')
+      setNotice({ key: 'droneEditor:waitReading' })
       return
     }
     if (fileDrafts.some((draft) => !/^\d{4}-\d{2}-\d{2}$/.test(draft.date))) {
-      setNotice('每个文件都必须有有效的拍摄日期。文件未记录日期时，请手动补充。')
+      setNotice({ key: 'droneEditor:dateRequired' })
       return
     }
     if (panoramaMismatchCount > 0) {
-      setNotice(`检测到 ${panoramaMismatchCount} 张图片不是常见的 2:1 全景比例。请改选“航拍照片”，或重新选择正确的 360 全景图。`)
+      setNotice({ key: 'droneEditor:panoramaMismatch', values: { count: panoramaMismatchCount } })
       return
     }
     setBusy(true)
-    setNotice(`正在接收 ${fileDrafts.length} 个无人机文件…`)
+    setNotice({ key: 'droneEditor:receiving', values: { count: fileDrafts.length } })
     try {
       const uploadedSourcePaths: string[] = []
       for (const draft of fileDrafts) {
@@ -174,11 +182,11 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
         })
         uploadedSourcePaths.push(uploaded.sourcePath)
       }
-      setNotice('文件已进入私有投递箱，正在生成三级网页资源…')
+      setNotice({ key: 'droneEditor:importing' })
       await importLocalMedia(uploadedSourcePaths)
       reloadAfterLocalSave()
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '无人机影像导入失败。')
+      setNotice(editorErrorNotice(error, 'droneEditor:importFailed'))
       setBusy(false)
     }
   }
@@ -194,7 +202,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
       return
     }
 
-    setNotice(`正在读取 ${pending.length} 个文件的日期、坐标和高度信息…`)
+    setNotice({ key: 'droneEditor:readingFiles', values: { count: pending.length } })
     const resolved = await Promise.all(pending.map(async (draft) => {
       try {
         const [metadataResult, dimensionsResult] = await Promise.allSettled([
@@ -204,9 +212,9 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
         const metadata = metadataResult.status === 'fulfilled' ? metadataResult.value : {}
         const dimensions = dimensionsResult.status === 'fulfilled' ? dimensionsResult.value : undefined
         const readErrors = [
-          metadataResult.status === 'rejected' ? '无法读取 EXIF/XMP 元数据' : undefined,
-          dimensionsResult.status === 'rejected' ? '无法读取图片尺寸' : undefined,
-        ].filter(Boolean)
+          metadataResult.status === 'rejected' ? 'readExifError' : undefined,
+          dimensionsResult.status === 'rejected' ? 'readDimensionsError' : undefined,
+        ].filter((key): key is string => key !== undefined)
         return {
           ...draft,
           status: 'ready' as const,
@@ -217,7 +225,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
           relativeAltitudeMeters: displayNumber(metadata.relativeAltitudeMeters),
           camera: metadata.camera,
           ...dimensions,
-          ...(readErrors.length > 0 ? { error: `${readErrors.join('；')}。` } : {}),
+          ...(readErrors.length > 0 ? { errorKeys: readErrors } : {}),
           fromFile: {
             date: metadata.date !== undefined,
             lat: metadata.lat !== undefined,
@@ -230,7 +238,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
         return {
           ...draft,
           status: 'ready' as const,
-          error: error instanceof Error ? error.message : '无法读取文件信息。',
+          ...(error instanceof Error ? { error: error.message } : { errorKeys: ['readFileError'] }),
         }
       }
     }))
@@ -239,8 +247,8 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
     setFileDrafts(resolved)
     const missingDates = resolved.filter((draft) => !draft.date).length
     setNotice(missingDates
-      ? `文件信息读取完成；${missingDates} 个文件没有拍摄日期，请补充日期后导入。`
-      : '文件信息读取完成；已读取到的字段已自动锁定，缺失字段可按需补充。')
+      ? { key: 'droneEditor:missingDates', values: { count: missingDates } }
+      : { key: 'droneEditor:lockedFields' })
   }
 
   const updateFileDraft = (
@@ -259,14 +267,14 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
             <Drone className="size-4" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase leading-4 tracking-[0.22em] text-white">Drone Media</p>
-            <h2 className="mt-1 truncate text-[22px] font-semibold leading-[1.15] tracking-normal text-slate-950">{mediaTitle}</h2>
+            <p className="text-[10px] font-semibold uppercase leading-4 tracking-[0.22em] text-white">{t('heading')}</p>
+            <h2 className="mt-1 truncate text-[22px] font-semibold leading-[1.15] tracking-normal text-slate-950">{t('cityHeading', { name: name(city) })}</h2>
           </div>
           {localEditorAvailable ? (
             <LocalEditorToolbar
               editing={editing}
               busy={busy}
-              label="无人机影像"
+              label={t('heading')}
               onToggle={() => {
                 setEditing((current) => !current)
                 setShowUpload(false)
@@ -280,7 +288,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                 setDraftHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
                 setShowUpload(false)
                 setFileDrafts([])
-                setNotice('已撤销本轮尚未保存的调整。')
+                setNotice({ key: 'droneEditor:undo' })
               }}
               onAdd={() => setShowUpload((open) => !open)}
               onSave={saveDraft}
@@ -290,29 +298,29 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
 
         {editing && showUpload ? (
           <form className="atlas-local-editor-form atlas-local-editor-form-dark" onSubmit={uploadDroneFiles}>
-            <p>选择文件后会先自动读取日期、GPS 坐标、海拔和相对高度。只有文件没有记录的字段才需要补充；其中仅拍摄日期必填。</p>
+            <p>{t('importHelp')}</p>
             <div className="atlas-local-editor-form-grid">
-              <select className="atlas-local-media-kind" value={uploadForm.kind} onChange={(event) => setUploadForm((form) => ({ ...form, kind: event.target.value as 'panorama360' | 'aerialPhoto' }))}>
-                <option value="panorama360">360° 全景</option>
-                <option value="aerialPhoto">航拍照片</option>
+              <select aria-label={t('kind')} className="atlas-local-media-kind" value={uploadForm.kind} onChange={(event) => setUploadForm((form) => ({ ...form, kind: event.target.value as 'panorama360' | 'aerialPhoto' }))}>
+                <option value="panorama360">{t('panorama')}</option>
+                <option value="aerialPhoto">{t('aerialPhoto')}</option>
               </select>
               <label className="atlas-local-file-picker">
-                <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/avif" aria-label="无人机图片" onChange={(event) => void readSelectedFiles(event.target.files)} />
-                <span className="atlas-local-file-picker-button">选择文件</span>
+                <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/avif" aria-label={t('images')} onChange={(event) => void readSelectedFiles(event.target.files)} />
+                <span className="atlas-local-file-picker-button">{t('chooseFiles')}</span>
                 <span className="atlas-local-file-picker-status" data-empty={fileDrafts.length === 0}>
                   {fileDrafts.length === 0
-                    ? '未选取'
-                    : fileDrafts.length === 1 ? fileDrafts[0].file.name : `已选取 ${fileDrafts.length} 个文件`}
+                    ? t('noFiles')
+                    : fileDrafts.length === 1 ? fileDrafts[0].file.name : t('selectedFiles', { count: fileDrafts.length })}
                 </span>
               </label>
             </div>
             {panoramaMismatchCount > 0 ? (
               <p className="atlas-local-editor-warning" role="alert">
-                检测到 {panoramaMismatchCount} 张图片不是常见的 2:1 等距柱状全景图，强行打开会产生明显拉伸。请把类型改为“航拍照片”，或重新选择正确的 360 全景图。
+                {t('panoramaWarning', { count: panoramaMismatchCount })}
               </p>
             ) : aerialPanoramaHintCount > 0 ? (
               <p className="atlas-local-editor-warning" role="status">
-                检测到 {aerialPanoramaHintCount} 张图片接近 2:1，可能是 360 全景图。如果它能水平环绕，请改选“360 全景”；如果只是普通宽幅航拍，可以继续导入。
+                {t('aerialPanoramaHint', { count: aerialPanoramaHintCount })}
               </p>
             ) : null}
             {fileDrafts.length > 0 ? (
@@ -324,36 +332,38 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                         <strong>{String(index + 1).padStart(2, '0')} · {draft.file.name}</strong>
                         <span>{(draft.file.size / 1024 / 1024).toFixed(2)} MiB{draft.camera ? ` · ${draft.camera}` : ''}</span>
                       </div>
-                      <span>{draft.status === 'reading' ? '读取中' : '读取完成'}</span>
+                      <span>{draft.status === 'reading' ? t('reading') : t('ready')}</span>
                     </header>
-                    {draft.error ? <p>未能解析元数据：{draft.error}。仍可补充日期后导入。</p> : null}
+                    {draft.error || draft.errorKeys?.length ? (
+                      <p>{t('parseWarning', { error: draft.error ?? draft.errorKeys?.map((key) => t(key)).join(t('errorSeparator')) })}</p>
+                    ) : null}
                     <div className="atlas-drone-metadata-fields">
                       <label>
-                        <span>拍摄日期 <em>{draft.fromFile.date ? '文件读取' : '缺失 · 必填'}</em></span>
+                        <span>{t('date')} <em>{draft.fromFile.date ? t('fromFile') : t('missingRequired')}</em></span>
                         <input type="date" required readOnly={draft.fromFile.date} value={draft.date} onChange={(event) => updateFileDraft(draft.id, 'date', event.target.value)} />
                       </label>
                       <label>
-                        <span>纬度 <em>{draft.fromFile.lat ? '文件读取' : '缺失 · 选填'}</em></span>
-                        <input type="number" step="any" min="-90" max="90" readOnly={draft.fromFile.lat} placeholder="未记录，可选填写" value={draft.lat} onChange={(event) => updateFileDraft(draft.id, 'lat', event.target.value)} />
+                        <span>{t('latitude')} <em>{draft.fromFile.lat ? t('fromFile') : t('missingOptional')}</em></span>
+                        <input type="number" step="any" min="-90" max="90" readOnly={draft.fromFile.lat} placeholder={t('optionalCoordinate')} value={draft.lat} onChange={(event) => updateFileDraft(draft.id, 'lat', event.target.value)} />
                       </label>
                       <label>
-                        <span>经度 <em>{draft.fromFile.lng ? '文件读取' : '缺失 · 选填'}</em></span>
-                        <input type="number" step="any" min="-180" max="180" readOnly={draft.fromFile.lng} placeholder="未记录，可选填写" value={draft.lng} onChange={(event) => updateFileDraft(draft.id, 'lng', event.target.value)} />
+                        <span>{t('longitude')} <em>{draft.fromFile.lng ? t('fromFile') : t('missingOptional')}</em></span>
+                        <input type="number" step="any" min="-180" max="180" readOnly={draft.fromFile.lng} placeholder={t('optionalCoordinate')} value={draft.lng} onChange={(event) => updateFileDraft(draft.id, 'lng', event.target.value)} />
                       </label>
                       <label>
-                        <span>海拔 <em>{draft.fromFile.altitudeMeters ? '文件读取' : '缺失 · 选填'}</em></span>
-                        <input type="number" step="any" readOnly={draft.fromFile.altitudeMeters} placeholder="米，可选填写" value={draft.altitudeMeters} onChange={(event) => updateFileDraft(draft.id, 'altitudeMeters', event.target.value)} />
+                        <span>{t('altitude')} <em>{draft.fromFile.altitudeMeters ? t('fromFile') : t('missingOptional')}</em></span>
+                        <input type="number" step="any" readOnly={draft.fromFile.altitudeMeters} placeholder={t('optionalMeters')} value={draft.altitudeMeters} onChange={(event) => updateFileDraft(draft.id, 'altitudeMeters', event.target.value)} />
                       </label>
                       <label>
-                        <span>相对高度 <em>{draft.fromFile.relativeAltitudeMeters ? '文件读取' : '缺失 · 选填'}</em></span>
-                        <input type="number" step="any" readOnly={draft.fromFile.relativeAltitudeMeters} placeholder="米，可选填写" value={draft.relativeAltitudeMeters} onChange={(event) => updateFileDraft(draft.id, 'relativeAltitudeMeters', event.target.value)} />
+                        <span>{t('relativeAltitude')} <em>{draft.fromFile.relativeAltitudeMeters ? t('fromFile') : t('missingOptional')}</em></span>
+                        <input type="number" step="any" readOnly={draft.fromFile.relativeAltitudeMeters} placeholder={t('optionalMeters')} value={draft.relativeAltitudeMeters} onChange={(event) => updateFileDraft(draft.id, 'relativeAltitudeMeters', event.target.value)} />
                       </label>
                     </div>
                   </article>
                 ))}
               </div>
             ) : null}
-            <button className="atlas-local-import-submit" type="submit" disabled={busy || panoramaMismatchCount > 0}>确认导入</button>
+            <button className="atlas-local-import-submit" type="submit" disabled={busy || panoramaMismatchCount > 0}>{t('confirmImport')}</button>
           </form>
         ) : null}
 
@@ -371,22 +381,22 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                   ...current,
                   hiddenDroneMediaIds: current.hiddenDroneMediaIds.filter((id) => !hiddenIdsForCity.includes(id)),
                 })).then(reloadAfterLocalSave).catch((error: unknown) => {
-                  setNotice(error instanceof Error ? error.message : '恢复失败。')
+                  setNotice(editorErrorNotice(error, 'droneEditor:restoreFailed'))
                   setBusy(false)
                 })
               }}
             >
-              恢复本城隐藏影像（{hiddenIdsForCity.length}）
+              {t('restoreHidden', { count: hiddenIdsForCity.length })}
             </button>
             <button
               type="button"
               className="atlas-local-editor-delete"
               disabled={busy}
               onClick={() => {
-                const confirmed = window.confirm(`确定永久删除本城已隐藏的 ${hiddenIdsForCity.length} 个影像吗？\n\n这会同时删除投递箱原图、生成后的网页文件和目录记录，无法恢复。`)
+                const confirmed = window.confirm(t('deleteConfirm', { count: hiddenIdsForCity.length }))
                 if (!confirmed) return
                 setBusy(true)
-                setNotice('正在彻底删除已隐藏影像…')
+                setNotice({ key: 'droneEditor:deleting' })
                 void updateLocalEditorState((current) => ({
                   ...current,
                   hiddenDroneMediaIds: [...new Set([...current.hiddenDroneMediaIds, ...hiddenIdsForCity])],
@@ -394,18 +404,18 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                   .then(() => deleteHiddenLocalMedia(city.id, hiddenIdsForCity))
                   .then(reloadAfterLocalSave)
                   .catch((error: unknown) => {
-                    setNotice(error instanceof Error ? error.message : '删除失败。')
+                    setNotice(editorErrorNotice(error, 'droneEditor:deleteFailed'))
                     setBusy(false)
                   })
               }}
             >
-              删除隐藏影像
+              {t('deleteHidden')}
             </button>
           </div>
         ) : null}
 
         {displayedItems.length === 0 ? (
-          <div className="atlas-local-editor-empty">暂无无人机影像。点击设置，再点＋即可导入。</div>
+          <div className="atlas-local-editor-empty">{t('emptyEditable')}</div>
         ) : (
           <div ref={droneGridRef} className="drone-media-track selector-scrollbar min-w-0 flex-1">
             {displayedItems.map((item, index) => {
@@ -422,6 +432,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                   data-dragging={draggedItemId === item.id}
                   data-active={item.id === activeItemId}
                   aria-pressed={item.id === activeItemId}
+                  aria-label={t('openItem', { name: name(city), number: itemNumber })}
                   onDragStart={(event) => {
                     if (!editing) return
                     setDraggedItemId(item.id)
@@ -452,10 +463,10 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                   className="drone-media-item-card drone-media-item-card-thumbnail rounded-xl border border-white/65 bg-white/52 p-2 shadow-[0_8px_18px_rgba(15,23,42,0.07)]"
                 >
                   <div className="drone-media-thumbnail-frame">
-                    <img src={`${item.thumbSrc}?starmapMedia=${encodeURIComponent(item.id)}`} alt={`${city.nameEn} drone media ${itemNumber}`} loading="lazy" decoding="async" />
+                    <img src={`${item.thumbSrc}?starmapMedia=${encodeURIComponent(item.id)}`} alt={t('previewAlt', { name: name(city), number: itemNumber })} loading="lazy" decoding="async" />
                     <span className="drone-media-thumbnail-shade" aria-hidden="true" />
                     {item.type === 'panorama360' ? (
-                      <span className="drone-media-panorama-badge" aria-label="360° 全景图" title="360° 全景图">
+                      <span className="drone-media-panorama-badge" aria-label={t('panoramaBadge')} title={t('panoramaBadge')}>
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                           <ellipse cx="12" cy="12" rx="9" ry="4.5" />
                           <path d="M3 12c0-4.4 4-8 9-8s9 3.6 9 8-4 8-9 8-9-3.6-9-8Z" />
@@ -468,12 +479,12 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                   <span className="drone-media-item-number drone-media-thumbnail-number">{itemNumber}</span>
                   {editing ? (
                     <span className="atlas-local-media-tools" onClick={(event) => event.stopPropagation()}>
-                      <span className="atlas-local-editor-drag" aria-label="拖动无人机影像排序"><GripVertical /></span>
+                      <span className="atlas-local-editor-drag" aria-label={t('drag')}><GripVertical /></span>
                       <span
                         role="button"
                         tabIndex={0}
-                        aria-label="隐藏无人机影像"
-                        title="隐藏（不删除原图）"
+                        aria-label={t('hide')}
+                        title={t('hideTitle')}
                         onClick={() => {
                           setDraftItemIds((current) => current.filter((id) => id !== item.id))
                           setDraftHiddenIds((current) => [...new Set([...current, item.id])])
@@ -487,10 +498,11 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                         event.stopPropagation()
                         onOpenPanorama(item)
                       }}
+                      aria-label={t('openViewer', { name: name(city), number: itemNumber })}
                       className="drone-media-view-button mt-1.5 inline-flex w-full items-center justify-center gap-1 rounded-lg bg-slate-950 px-1.5 py-1.5 font-semibold text-white transition hover:bg-sky-500 hover:text-slate-950"
                     >
                       <Maximize2 aria-hidden="true" />
-                      View
+                      {t('view')}
                     </button>
                   )}
                 </article>

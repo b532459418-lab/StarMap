@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Images, Rows3, X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { usePlaceNames } from '../i18n/usePlaceNames'
 import { getMediaSource } from '../data/mediaCatalog'
 import type { ImportedMediaCatalogItem } from '../data/mediaCatalog'
 
 export type CityPhotoGalleryRequest = {
   photos: ImportedMediaCatalogItem[]
   cityName: string
+  cityId?: string
   initialPhotoId?: string
   mode: 'grid' | 'viewer'
 }
@@ -17,10 +20,14 @@ type CityPhotoGalleryModalProps = CityPhotoGalleryRequest & {
 export function CityPhotoGalleryModal({
   photos,
   cityName,
+  cityId,
   initialPhotoId,
   mode: initialMode,
   onClose,
 }: CityPhotoGalleryModalProps) {
+  const { t } = useTranslation('mediaViewer')
+  const { name } = usePlaceNames()
+  const displayCityName = name({ id: cityId, nameZh: cityName, nameEn: cityName })
   const initialIndex = Math.max(0, photos.findIndex((photo) => photo.id === initialPhotoId))
   const [mode, setMode] = useState<'grid' | 'viewer'>(initialMode)
   const [activeIndex, setActiveIndex] = useState(initialIndex)
@@ -80,21 +87,21 @@ export function CityPhotoGalleryModal({
       <section className="city-photo-gallery-window" data-mode={mode}>
         <header className="city-photo-gallery-header">
           <div className="min-w-0">
-            <p className="city-photo-gallery-kicker">City Photos</p>
-            <h2 id={dialogTitleId}>{cityName}</h2>
-            <p>{photos.length} photos</p>
+            <p className="city-photo-gallery-kicker">{t('cityPhotos')}</p>
+            <h2 id={dialogTitleId}>{displayCityName}</h2>
+            <p>{t('photos', { count: photos.length })}</p>
           </div>
           <div className="city-photo-gallery-actions">
             <button
               type="button"
               className="city-photo-gallery-view-toggle"
-              aria-label={mode === 'grid' ? 'Open single photo view' : 'Open card view'}
+              aria-label={t(mode === 'grid' ? 'singlePhotoView' : 'cardView')}
               onClick={() => setMode((current) => current === 'grid' ? 'viewer' : 'grid')}
             >
               {mode === 'grid' ? <Rows3 aria-hidden="true" /> : <Images aria-hidden="true" />}
-              <span>{mode === 'grid' ? 'Viewer' : 'Cards'}</span>
+              <span>{t(mode === 'grid' ? 'viewer' : 'cards')}</span>
             </button>
-            <button type="button" className="city-photo-gallery-close" aria-label="Close photo gallery" onClick={onClose}>
+            <button type="button" className="city-photo-gallery-close" aria-label={t('closeGallery')} onClick={onClose}>
               <X aria-hidden="true" />
             </button>
           </div>
@@ -109,11 +116,11 @@ export function CityPhotoGalleryModal({
                   key={photo.id}
                   className="city-photo-gallery-grid-item"
                   onClick={() => showPhoto(index)}
-                  aria-label={`Open ${cityName} photo ${index + 1}`}
+                  aria-label={t('openPhoto', { name: displayCityName, number: index + 1 })}
                 >
                   <img
                     src={getMediaSource(photo, 'thumb')}
-                    alt={`${cityName} photo ${index + 1}`}
+                    alt={t('photoAlt', { name: displayCityName, number: index + 1 })}
                     width={photo.variants?.thumb?.width ?? photo.width}
                     height={photo.variants?.thumb?.height ?? photo.height}
                     loading="lazy"
@@ -130,7 +137,7 @@ export function CityPhotoGalleryModal({
               <button
                 type="button"
                 className="city-photo-gallery-nav city-photo-gallery-nav-prev"
-                aria-label="Previous photo"
+                aria-label={t('previousPhoto')}
                 onClick={() => setActiveIndex((current) => (current - 1 + photos.length) % photos.length)}
               >
                 <ChevronLeft aria-hidden="true" />
@@ -139,7 +146,7 @@ export function CityPhotoGalleryModal({
                 key={activePhoto.id}
                 className="city-photo-gallery-main-image"
                 src={getMediaSource(activePhoto, 'preview')}
-                alt={`${cityName} photo ${activeIndex + 1}`}
+                alt={t('photoAlt', { name: displayCityName, number: activeIndex + 1 })}
                 width={activePhoto.variants?.preview?.width ?? activePhoto.width}
                 height={activePhoto.variants?.preview?.height ?? activePhoto.height}
                 decoding="async"
@@ -147,7 +154,7 @@ export function CityPhotoGalleryModal({
               <button
                 type="button"
                 className="city-photo-gallery-nav city-photo-gallery-nav-next"
-                aria-label="Next photo"
+                aria-label={t('nextPhoto')}
                 onClick={() => setActiveIndex((current) => (current + 1) % photos.length)}
               >
                 <ChevronRight aria-hidden="true" />
@@ -157,7 +164,7 @@ export function CityPhotoGalleryModal({
               </span>
             </div>
 
-            <div className="city-photo-gallery-filmstrip selector-scrollbar" aria-label="Photo thumbnails">
+            <div className="city-photo-gallery-filmstrip selector-scrollbar" aria-label={t('thumbnails')}>
               {photos.map((photo, index) => (
                 <button
                   type="button"
@@ -165,7 +172,7 @@ export function CityPhotoGalleryModal({
                   ref={index === activeIndex ? activeThumbRef : undefined}
                   className="city-photo-gallery-thumb"
                   data-active={index === activeIndex}
-                  aria-label={`Show ${cityName} photo ${index + 1}`}
+                  aria-label={t('showPhoto', { name: displayCityName, number: index + 1 })}
                   aria-pressed={index === activeIndex}
                   onClick={() => setActiveIndex(index)}
                 >

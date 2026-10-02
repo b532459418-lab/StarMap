@@ -1,0 +1,43 @@
+/// <reference types="node" />
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { createInstance } from 'i18next'
+import { resources } from './resources.ts'
+import { DEFAULT_UI_LOCALE, EN_UI_LOCALE } from '../data/uiLocale.ts'
+import { LocalEditorError, editorErrorNotice, formatEditorError, localizedConversionReason } from './editorErrors.ts'
+import { V2_WRITE_ERROR_CODES, messageFor } from '../data/v2write/errors.ts'
+
+test('Every server write code has a translation; error notices follow language without changing recovery messages', async () => {
+  const i18n = createInstance()
+  await i18n.init({ resources, lng: EN_UI_LOCALE, fallbackLng: EN_UI_LOCALE, initAsync: false })
+  for (const code of V2_WRITE_ERROR_CODES) assert.ok(i18n.exists(`domainError:${code}`), code)
+  const error = new LocalEditorError({ error: messageFor('E_REQUIRED', { field: 'city' }), code: 'E_REQUIRED', params: { field: 'city' } })
+  assert.equal(editorErrorNotice(error, 'editor:saveFailed'), error)
+  assert.equal(formatEditorError(error, i18n.t), 'Enter Chinese city name.')
+  await i18n.changeLanguage(DEFAULT_UI_LOCALE)
+  assert.equal(formatEditorError(error, i18n.t), '请填写城市中文名。')
+  assert.equal(error.message, '请填写城市中文名。')
+  const partial = new LocalEditorError({ error: '足迹已创建，但想去记录未更新。', code: 'E_PARTIAL_WRITE', params: { message: '足迹已创建，但想去记录未更新。' }, details: 'diagnostic' })
+  assert.ok(partial.message.startsWith('足迹已创建，但'))
+  assert.ok(formatEditorError(partial, i18n.t).includes('diagnostic'))
+  assert.equal(formatEditorError(new LocalEditorError({ error: 'legacy error', code: 'E_FUTURE', details: 'raw details' }), i18n.t), 'legacy error\nraw details')
+  assert.equal(formatEditorError(new Error('network diagnostic'), i18n.t), 'network diagnostic')
+  assert.deepEqual(editorErrorNotice(null, 'editor:saveFailed'), { key: 'editor:saveFailed' })
+})
+
+test('Media summaries keep user names, correct counts and details, without mutating params', async () => {
+  const i18n = createInstance()
+  await i18n.init({ resources, lng: EN_UI_LOCALE, fallbackLng: EN_UI_LOCALE, initAsync: false })
+  const params = { cities: [{ name: '京都・Kyoto', count: 1 }, { name: 'Other', count: 2 }] }
+  const original = structuredClone(params)
+  const error = new LocalEditorError({ code: 'E_COUNTRY_HAS_MEDIA', params, details: 'raw importer output' })
+  const display = formatEditorError(error, i18n.t)
+  assert.match(display, /京都・Kyoto.*1 media item/)
+  assert.match(display, /Other.*2 media items/)
+  assert.ok(display.endsWith('raw importer output'))
+  assert.deepEqual(params, original)
+  const reason = messageFor('E_CONVERT_NO_COORDINATES')
+  assert.equal(localizedConversionReason(reason, i18n.t), 'This place has no coordinates and cannot be marked as visited.')
+  assert.equal(localizedConversionReason('external reason', i18n.t), 'external reason')
+  assert.equal(localizedConversionReason(undefined, i18n.t), undefined)
+})

@@ -1,3 +1,4 @@
+import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { EN_UI_LOCALE } from '../data/uiLocale'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
@@ -65,7 +66,7 @@ export function LocationSearchField<T extends SearchOption>({
       .catch((error: unknown) => {
         if (controller.signal.aborted || requestVersionRef.current !== requestVersion) return
         setResults([])
-        setNotice(error instanceof Error ? error.message : { key: 'editor:searchUnavailable' })
+        setNotice(editorErrorNotice(error, 'editor:searchUnavailable'))
         setIsOpen(true)
       })
       .finally(() => {

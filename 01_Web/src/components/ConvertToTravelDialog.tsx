@@ -1,3 +1,4 @@
+import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { worldGraphSnapshot } from '../data/worldGraph'
 import { WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
@@ -149,7 +150,7 @@ function ConvertToTravelDialogContent({
     } catch (error) {
       // 例如城市已在足迹里时服务端返回「这个城市已经在足迹里了……」，不写任何文件（规格 §2 第 3 条）。
       const message = error instanceof Error ? error.message : t('editor:convertFailed')
-      setNotice(error instanceof Error ? message : { key: 'editor:convertFailed' })
+      setNotice(editorErrorNotice(error, 'editor:convertFailed'))
       // 足迹已写入、后续步骤失败（规格 §2 第 1 条）：只能刷新，不能在过期数据上重试。
       setNeedsReload(message.startsWith('足迹已创建，但'))
       setBusy(false)

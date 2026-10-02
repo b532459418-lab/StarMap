@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import packageJson from '../../package.json'
 
 export type GitHubRelease = {
@@ -43,21 +44,18 @@ const isNewerVersion = (candidate: string, current: string) => {
   return false
 }
 
-const updatePrompt = (release: GitHubRelease) => `请帮我安全更新 StarMap 到 ${release.tag_name}。
-
-开始前先读取项目中的 AGENTS.md、README 和 Handoff（如果存在），检查我当前的 Git 状态、本地修改和私有数据边界。请从 StarMap 官方 Release ${release.html_url} 获取变更，先解释哪些文件会受影响，再以合并方式更新；不要覆盖我的 .env.local、私有旅行数据、个人媒体或未提交修改。若出现冲突，保留我的内容并逐项说明。完成后运行项目规定的 lint、build、privacy:check 和 media:check，并报告仍需我决定的事项。`
-
 export function useReleaseUpdates() {
+  const { t } = useTranslation('appShell')
   const [status, setStatus] = useState<UpdateStatus>(repositoryConfigured ? 'idle' : 'unconfigured')
   const [release, setRelease] = useState<GitHubRelease>()
   const [copied, setCopied] = useState(false)
-  const [message, setMessage] = useState('')
+  const [messageKey, setMessageKey] = useState('')
   const [hasUnseenUpdate, setHasUnseenUpdate] = useState(false)
 
   const checkForUpdates = useCallback(async (force = false) => {
     if (!repositoryConfigured) {
       setStatus('unconfigured')
-      setMessage('公共 GitHub 仓库尚未配置，当前版本仍可正常使用。')
+      setMessageKey('noRepository')
       return
     }
 
@@ -68,7 +66,7 @@ export function useReleaseUpdates() {
       if (!latestRelease) {
         setRelease(undefined)
         setStatus('current')
-        setMessage('仓库还没有发布 Release。')
+        setMessageKey('noRelease')
         setHasUnseenUpdate(false)
         return
       }
@@ -76,7 +74,7 @@ export function useReleaseUpdates() {
       const available = isNewerVersion(latestRelease.tag_name, currentVersion)
       setRelease(latestRelease)
       setStatus(available ? 'available' : 'current')
-      setMessage('')
+      setMessageKey('')
       setHasUnseenUpdate(
         available && window.localStorage.getItem(dismissedKey) !== latestRelease.tag_name,
       )
@@ -95,7 +93,7 @@ export function useReleaseUpdates() {
       }
 
       setStatus('checking')
-      setMessage('')
+      setMessageKey('')
       const response = await fetch(`https://api.github.com/repos/${repository}/releases/latest`, {
         headers: { Accept: 'application/vnd.github+json' },
       })
@@ -118,7 +116,7 @@ export function useReleaseUpdates() {
       applyRelease(latestRelease)
     } catch {
       setStatus('error')
-      setMessage('暂时无法连接 GitHub，请稍后再试。')
+      setMessageKey('connectionFailed')
     }
   }, [])
 
@@ -139,7 +137,7 @@ export function useReleaseUpdates() {
 
   const copyUpdatePrompt = async () => {
     if (!release) return
-    await navigator.clipboard.writeText(updatePrompt(release))
+    await navigator.clipboard.writeText(t('updatePrompt', { version: release.tag_name, url: release.html_url }))
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1800)
   }
@@ -151,7 +149,7 @@ export function useReleaseUpdates() {
     currentVersion,
     hasUnseenUpdate,
     markSeen,
-    message,
+    message: messageKey ? t(messageKey) : '',
     release,
     repositoryConfigured,
     status,

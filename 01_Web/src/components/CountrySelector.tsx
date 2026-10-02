@@ -1,3 +1,4 @@
+import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
@@ -117,7 +118,7 @@ export function CountrySelector({
       }))
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:saveFailed' })
+      setEditorNotice(editorErrorNotice(error, 'editor:saveFailed'))
       setIsSaving(false)
     }
   }
@@ -129,7 +130,7 @@ export function CountrySelector({
       await updateLocalEditorState((current) => ({ ...current, hiddenCountryIds: [] }))
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:restoreFailed' })
+      setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
       setIsSaving(false)
     }
   }
@@ -148,7 +149,7 @@ export function CountrySelector({
       await deleteHiddenLocalCountries(draftHiddenCountryIds)
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:deleteFailed' })
+      setEditorNotice(editorErrorNotice(error, 'editor:deleteFailed'))
       setIsSaving(false)
     }
   }
@@ -165,7 +166,7 @@ export function CountrySelector({
       await addLocalCountry(selectedCountryOption.countryCode, countryVisitedDate)
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:createFailed' })
+      setEditorNotice(editorErrorNotice(error, 'editor:createFailed'))
       setIsSaving(false)
     }
   }

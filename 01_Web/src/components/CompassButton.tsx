@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   isCameraAligned,
   requestOrientationReset,
@@ -8,30 +9,23 @@ import {
 import './compass.css'
 
 export function CompassButton() {
-  const buttonRef = useRef<HTMLButtonElement>(null)
+  const { t } = useTranslation('appShell')
+  const [aligned, setAligned] = useState(true)
   const roseRef = useRef<SVGGElement>(null)
 
   useEffect(() => subscribeCameraAttitude((attitude) => {
     const heading = wrapHeadingDegrees(attitude.headingDeg)
-    const aligned = isCameraAligned(attitude)
     roseRef.current?.setAttribute('transform', `rotate(${-heading} 16 16)`)
-
-    const button = buttonRef.current
-    if (!button) return
-
-    button.dataset.aligned = aligned ? 'true' : 'false'
-    button.setAttribute('aria-label', aligned ? '地图已正北' : '回正地图')
-    button.title = aligned ? '地图已正北' : '回正地图（正北）'
+    setAligned(isCameraAligned(attitude))
   }), [])
 
   return (
     <button
-      ref={buttonRef}
       type="button"
       className="atlas-dock-button atlas-compass-button pointer-events-auto"
-      aria-label="回正地图"
-      title="回正地图（正北）"
-      data-aligned="true"
+      aria-label={t(aligned ? 'northAligned' : 'resetOrientation')}
+      title={t(aligned ? 'northAligned' : 'resetOrientationHint')}
+      data-aligned={aligned ? 'true' : 'false'}
       onClick={requestOrientationReset}
     >
       <svg viewBox="0 0 32 32" aria-hidden="true" className="atlas-compass-icon">

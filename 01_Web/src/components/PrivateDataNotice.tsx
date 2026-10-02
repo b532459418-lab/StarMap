@@ -1,4 +1,5 @@
 import { privateDataNotice } from '../data/privateDataNotice'
+import { useTranslation } from 'react-i18next'
 import { legacyUnmigrated } from '../data/rawInputs'
 import { plannedRecords, travelAtlasMeta } from '../data/travelAtlas'
 import { wantToGoItems } from '../data/wantToGo'
@@ -18,7 +19,11 @@ const notice = privateDataNotice({
  * 与地图页的 glass-panel 主题变量。
  */
 export function PrivateDataNotice() {
+  const { t } = useTranslation('mapMenu')
   if (!notice) return null
+  const lines = notice.kind === 'legacy-unmigrated'
+    ? ['legacyUnmigrated', 'legacyMigration', 'legacyRemove']
+    : ['emptyPrivateData']
   return (
     <div
       className="glass-panel pointer-events-none absolute left-1/2 top-[calc(var(--atlas-overlay-top)+12px)] w-max max-w-[min(36rem,calc(100vw-32px))] -translate-x-1/2 px-2 pt-2"
@@ -26,7 +31,7 @@ export function PrivateDataNotice() {
       data-notice={notice.kind}
     >
       <div className="atlas-local-editor-empty space-y-1">
-        {notice.lines.map((line) => <p key={line}>{line}</p>)}
+        {lines.map((key) => <p key={key}>{t(key)}</p>)}
       </div>
     </div>
   )

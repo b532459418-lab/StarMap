@@ -1,3 +1,5 @@
+import { editorErrorNotice, localizedConversionReason } from '../i18n/editorErrors.ts'
+import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useId, useMemo, useState } from 'react'
 import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
@@ -238,7 +240,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   const noteId = useId()
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useLocalizedNotice()
   const [editingNote, setEditingNote] = useState(false)
   const [noteDraft, setNoteDraft] = useState('')
 
@@ -278,14 +280,14 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   if (fromTravelLog) tags.push({ id: 'travel-log', label: t('readOnlyTravel') })
   if (isSample) tags.push({ id: 'sample', label: t('sample') })
 
-  const runWrite = (action: () => Promise<unknown>, failureMessage: string) => {
+  const runWrite = (action: () => Promise<unknown>, failureKey: string) => {
     setBusy(true)
     setNotice('')
     void action()
       .then(reloadAfterLocalSave)
       .catch((error: unknown) => {
         // 失败留在卡片里说明，不刷新。
-        setNotice(error instanceof Error ? error.message : failureMessage)
+        setNotice(editorErrorNotice(error, `collection:${failureKey}`))
         setBusy(false)
       })
   }
@@ -299,23 +301,23 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   const saveNote = () => {
     if (!writableId) return
     // 空串即删除备注（端点负责 trim 与删除）。
-    runWrite(() => updateLocalWantToGo(writableId, { note: noteDraft }), t('saveFailed'))
+    runWrite(() => updateLocalWantToGo(writableId, { note: noteDraft }), 'saveFailed')
   }
 
   const hideEntry = () => {
     if (!writableId) return
-    runWrite(() => updateLocalWantToGo(writableId, { hidden: true }), t('hideFailed'))
+    runWrite(() => updateLocalWantToGo(writableId, { hidden: true }), 'hideFailed')
   }
 
   const restoreEntry = () => {
     if (!writableId) return
-    runWrite(() => updateLocalWantToGo(writableId, { hidden: false }), t('restoreFailed'))
+    runWrite(() => updateLocalWantToGo(writableId, { hidden: false }), 'restoreFailed')
   }
 
   const deleteEntry = () => {
     if (!writableId) return
     if (!window.confirm(t('deleteConfirm', { name }))) return
-    runWrite(() => deleteHiddenLocalWantToGo([writableId]), t('deleteFailed'))
+    runWrite(() => deleteHiddenLocalWantToGo([writableId]), 'deleteFailed')
   }
 
   return (
@@ -396,7 +398,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
               className="collection-action"
               data-blocked={convertBlockReason ? 'true' : undefined}
               disabled={busy || convertBlockReason !== undefined}
-              title={convertBlockReason}
+              title={localizedConversionReason(convertBlockReason, t)}
               aria-label={t('visitedFor', { name })}
               aria-describedby={convertBlockReason ? convertHintId : undefined}
               onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
@@ -459,7 +461,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
       ) : null}
 
       {showConvert && convertBlockReason ? (
-        <p id={convertHintId} className="collection-card-hint">{convertBlockReason}</p>
+        <p id={convertHintId} className="collection-card-hint">{localizedConversionReason(convertBlockReason, t)}</p>
       ) : null}
 
       {notice ? <p className="collection-card-notice" role="status">{notice}</p> : null}

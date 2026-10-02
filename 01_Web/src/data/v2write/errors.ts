@@ -4,9 +4,9 @@
  * `src/data/v2write/` 是 App 层（Node 写入端点用的纯函数），【不是】 StarMap Core。
  *
  * V2 写入的错误响应是 `{ ok: false, error: '<中文文案>', code: 'E_…', params?: {…} }`：
- * - `error` 仍是字符串，客户端 `parseResponse`（src/data/localEditorApi.ts）不用改，界面显示同样的话；
- * - `code` 与 `params` 是 MSG-2 的码与参数。RFC MSG-2 的完整形态（`error` 为 `{ code, params }`，由客户端
- *   按码翻译）随 i18n 落地——这是对 MSG-2 的有意分步。
+ * - `error` 仍是字符串，客户端保留原文供恢复逻辑判断；
+ * - `code` 与 `params` 是 MSG-2 的码与参数，客户端在显示时按码翻译。
+ *   响应结构保持兼容，诊断详情仍保留原文。
  *
  * 码表集中在这里：每个码配一句中文文案。能沿用旧模式原文的一律沿用（同一个操作，界面说同样的话）；
  * 旧模式没有对应情形的码（地点歧义、未知地点引用、完整性、部分写入等）才写新文案。

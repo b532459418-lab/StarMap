@@ -1,11 +1,19 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Check, ChevronDown, Footprints, Heart, Layers, Plus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { DEFAULT_UI_LOCALE } from '../data/uiLocale'
+import { useUiLocale } from '../i18n/useUiLocale'
+import { usePlaceNames } from '../i18n/usePlaceNames'
+import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { editorErrorNotice } from '../i18n/editorErrors'
 import { localEditorAvailable } from '../data/editorState'
 import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorApi'
 import { wantToGoDataSource } from '../data/wantToGo'
+import { worldGraphSnapshot } from '../data/worldGraph'
 import type { WantToGoItem } from '../data/derive/wantToGo'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
+import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
 import type { LayerId } from '../worldgraph/types'
 import type { LayerVisibility } from '../data/layerVisibility'
 
@@ -19,7 +27,11 @@ const layerIcons: Record<string, LucideIcon> = {
 // FR-LP-5：面板列出全部官方图层，顺序固定按 Registry 的 order。
 const panelLayers = [...officialLayers].sort((left, right) => left.order - right.order)
 
-const wantToGoLabel = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)?.label.zh ?? '想去'
+// Hidden items keep their record identity; use their registry title only for display.
+const wantToGoEntityIds = new Map(worldGraphSnapshot.memberships
+  .filter((membership) => membership.layerId === WANT_TO_GO_LAYER_ID
+    && membership.metadata?.source !== PLANNED_SOURCE && membership.recordId !== undefined)
+  .map((membership) => [membership.recordId, membership.entityId]))
 
 type LayerPanelProps = {
   visibility: LayerVisibility
@@ -30,17 +42,26 @@ type LayerPanelProps = {
   onAddWantToGo?: () => void
 }
 
-/** 隐藏项的名字：中文名 · 英文名；中英同名（没填中文名时）只写一次。后面再接加入日期。 */
-const hiddenItemNames = (item: WantToGoItem) =>
-  item.place.nameZh === item.place.nameEn
-    ? item.place.nameZh
-    : `${item.place.nameZh} · ${item.place.nameEn}`
-
 export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onAddWantToGo }: LayerPanelProps) {
+  const { t } = useTranslation('mapMenu')
+  const { locale } = useUiLocale()
+  const { name, subtitle } = usePlaceNames()
+  const layerLocale = locale === DEFAULT_UI_LOCALE ? 'zh' : 'en'
+  const wantToGoLabel = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)?.label[layerLocale] ?? ''
+  const hiddenPlace = (item: WantToGoItem) => ({
+    id: wantToGoEntityIds.get(item.id),
+    nameZh: item.place.nameZh,
+    nameEn: item.place.nameEn,
+  })
+  const hiddenItemName = (item: WantToGoItem) => name(hiddenPlace(item))
+  const hiddenItemNames = (item: WantToGoItem) => {
+    const place = hiddenPlace(item)
+    return [name(place), subtitle(place)].filter(Boolean).join(' · ')
+  }
   const [open, setOpen] = useState(false)
   const [hiddenListOpen, setHiddenListOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useLocalizedNotice()
   const shellRef = useRef<HTMLDivElement>(null)
   const hiddenListId = useId()
 
@@ -69,25 +90,25 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
   const showHiddenItems = localEditorAvailable && hiddenWantToGoItems.length > 0
   const showAddEntry = localEditorAvailable && wantToGoDataSource !== 'sample' && onAddWantToGo !== undefined
 
-  const runHiddenItemAction = (action: () => Promise<unknown>, failureMessage: string) => {
+  const runHiddenItemAction = (action: () => Promise<unknown>, failureKey: string) => {
     setBusy(true)
     setNotice('')
     void action()
       .then(reloadAfterLocalSave)
       .catch((error: unknown) => {
         // 失败留在面板里说明，不关闭面板。
-        setNotice(error instanceof Error ? error.message : failureMessage)
+        setNotice(editorErrorNotice(error, `mapMenu:${failureKey}`))
         setBusy(false)
       })
   }
 
   const restoreItem = (item: WantToGoItem) => {
-    runHiddenItemAction(() => updateLocalWantToGo(item.id, { hidden: false }), '恢复失败。')
+    runHiddenItemAction(() => updateLocalWantToGo(item.id, { hidden: false }), 'restoreFailed')
   }
 
   const deleteItem = (item: WantToGoItem) => {
-    if (!window.confirm(`确定彻底删除「${item.place.nameZh}」吗？此操作无法撤销。`)) return
-    runHiddenItemAction(() => deleteHiddenLocalWantToGo([item.id]), '彻底删除失败。')
+    if (!window.confirm(t('deleteConfirm', { name: hiddenItemName(item) }))) return
+    runHiddenItemAction(() => deleteHiddenLocalWantToGo([item.id]), 'deleteFailed')
   }
 
   return (
@@ -96,8 +117,8 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
         // 弹层本身是普通容器；role="menu" 只包住两个图层开关，这样下面的「已隐藏」与「添加」
         // 可以是普通按钮，而不会成为 menu 里不合法的子元素。
         <div className="atlas-layer-menu">
-          <p aria-hidden="true">地图图层</p>
-          <div className="atlas-layer-menu-items" role="menu" aria-label="地图图层">
+          <p aria-hidden="true">{t('layers')}</p>
+          <div className="atlas-layer-menu-items" role="menu" aria-label={t('layers')}>
             {panelLayers.map((layer) => {
               const Icon = layerIcons[layer.icon]
               const checked = visibility[layer.id] !== false
@@ -117,8 +138,8 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
                     {Icon ? <Icon /> : null}
                   </span>
                   <span className="atlas-layer-copy">
-                    <strong>{layer.label.zh}</strong>
-                    <small>{checked ? '显示中' : '已隐藏'}</small>
+                    <strong>{layer.label[layerLocale]}</strong>
+                    <small>{t(checked ? 'shown' : 'hidden')}</small>
                   </span>
                   {checked ? <Check aria-hidden="true" /> : null}
                 </button>
@@ -134,10 +155,10 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
                 className="atlas-layer-hidden-toggle"
                 aria-expanded={hiddenListOpen}
                 aria-controls={hiddenListId}
-                aria-label={`${wantToGoLabel}图层已隐藏 ${hiddenWantToGoItems.length} 项`}
+                aria-label={t('hiddenLayerCount', { layer: wantToGoLabel, count: hiddenWantToGoItems.length })}
                 onClick={() => setHiddenListOpen((value) => !value)}
               >
-                <span>已隐藏 {hiddenWantToGoItems.length} 项</span>
+                <span>{t('hiddenCount', { count: hiddenWantToGoItems.length })}</span>
                 <ChevronDown aria-hidden="true" />
               </button>
               {hiddenListOpen ? (
@@ -152,19 +173,19 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
                           type="button"
                           className="atlas-layer-hidden-restore"
                           disabled={busy}
-                          aria-label={`恢复${item.place.nameZh}`}
+                          aria-label={t('restorePlace', { name: hiddenItemName(item) })}
                           onClick={() => restoreItem(item)}
                         >
-                          恢复
+                          {t('restore')}
                         </button>
                         <button
                           type="button"
                           className="atlas-layer-hidden-delete"
                           disabled={busy}
-                          aria-label={`彻底删除${item.place.nameZh}`}
+                          aria-label={t('deletePlace', { name: hiddenItemName(item) })}
                           onClick={() => deleteItem(item)}
                         >
-                          彻底删除
+                          {t('delete')}
                         </button>
                       </span>
                     </li>
@@ -187,7 +208,7 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
                 }}
               >
                 <Plus aria-hidden="true" />
-                <span>添加想去的地方</span>
+                <span>{t('addWantToGo')}</span>
               </button>
             </>
           ) : null}
@@ -196,9 +217,9 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
       <button
         type="button"
         className="atlas-dock-button atlas-layer-button pointer-events-auto"
-        aria-label={`地图图层，${panelLayers.length} 层中显示 ${visibleCount} 层`}
+        aria-label={t('layerSummary', { total: panelLayers.length, visible: visibleCount })}
         aria-expanded={open}
-        title="地图图层"
+        title={t('layers')}
         onClick={() => setOpen((visible) => !visible)}
       >
         <Layers aria-hidden="true" />
