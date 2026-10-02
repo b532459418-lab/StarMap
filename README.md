@@ -95,7 +95,7 @@ VITE_TIANDITU_TOKEN=
 
 Development mode includes local editing controls. Use them to add or reorder countries and cities, hide or restore items, choose photo covers, and import city or drone media. Production builds do not include these write controls.
 
-Known editing and location-search failures follow the interface language. If an edit returns an unreadable response, its result may be unknown: reload to check your data before retrying. A partially saved conversion also requires a reload before another attempt. Diagnostic details retain their original text.
+Known editing and location-search failures follow the interface language. If an edit returns an unreadable response, its result may be unknown: reload to check your data before retrying. A partially saved conversion also requires a reload before another attempt. Media upload errors distinguish empty or oversized files, invalid images, unusable names and incorrect panorama ratios. Import errors identify preflight or import execution failures and preserve the original diagnostics. Check the Inbox and media list before uploading again after an import failure. Diagnostic details retain their original text.
 
 City creation uses Cesium ion geocoding first when the personal token is configured with the `geocode` public scope. If ion is unavailable, has no result, or exceeds nine seconds, StarMap falls back to an explicitly triggered, country-filtered OpenStreetMap lookup. The interface never spins indefinitely: users can retry with the local/English city name or switch to manual latitude and longitude entry.
 

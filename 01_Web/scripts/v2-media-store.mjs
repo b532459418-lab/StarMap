@@ -68,14 +68,13 @@ const failureResponse = (error, fallbackCode) => {
   return { status: 400, body: details ? { ...body, details } : body }
 }
 
-/** 运行导入器（插件的 runImporter：先预检，有未解决信息就停，再 --apply）。失败时换成带码的错误。 */
+/** 导入器已带码的错误原样保留；其它失败保留原因与诊断，不能从 details 或文案推断预检阻断。 */
 const runImporterOrFail = async (deps) => {
   try {
     return await deps.runImporter()
   } catch (error) {
-    const failure = typeof error?.details === 'string'
-      ? new V2WriteError('E_MEDIA_IMPORT_BLOCKED')
-      : new V2WriteError('E_MEDIA_IMPORT_FAILED', { reason: reasonOf(error) })
+    if (isV2WriteError(error)) throw error
+    const failure = new V2WriteError('E_MEDIA_IMPORT_FAILED', { reason: reasonOf(error) })
     if (typeof error?.details === 'string') failure.details = error.details
     throw failure
   }

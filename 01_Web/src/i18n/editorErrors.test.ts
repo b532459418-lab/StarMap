@@ -44,6 +44,40 @@ test('Media summaries keep user names, correct counts and details, without mutat
   assert.equal(localizedConversionReason(undefined, i18n.t), undefined)
 })
 
+test('Media validation and importer stages translate while preserving original diagnostics and dimensions', async () => {
+  const i18n = createInstance()
+  await i18n.init({ resources, lng: EN_UI_LOCALE, fallbackLng: false, initAsync: false })
+  const cases = [
+    { code: 'E_MEDIA_NAME_INVALID', params: { field: 'media_filename' }, en: 'File name is invalid.', zh: '文件名无效。' },
+    { code: 'E_MEDIA_UPLOAD_EMPTY', params: {}, en: 'No file content was received.', zh: '没有收到文件内容。' },
+    { code: 'E_MEDIA_UPLOAD_TOO_LARGE', params: { limitMiB: 250, limitBytes: 262144000 }, en: 'A file cannot exceed 250 MiB.', zh: '单个文件不能超过 250 MiB。' },
+    { code: 'E_MEDIA_PANORAMA_RATIO', params: { width: 64, height: 48 }, en: 'The selected image is 64 × 48', zh: '所选图片为 64 × 48' },
+    { code: 'E_MEDIA_IMAGE_INVALID', params: {}, en: 'The image dimensions could not be read', zh: '无法读取图片尺寸' },
+    { code: 'E_MEDIA_IMPORT_FAILED', params: { stage: 'preflight', reason: 'neutral executor failure' }, en: 'Media preflight failed.', zh: '媒体预检失败。' },
+    { code: 'E_MEDIA_IMPORT_FAILED', params: { stage: 'apply', reason: 'neutral executor failure' }, en: 'Media import failed.', zh: '媒体导入失败。' },
+    { code: 'E_MEDIA_IMPORT_FAILED', params: { stage: 'future-stage', reason: 'neutral executor failure' }, en: 'Media import failed.', zh: '媒体导入失败。' },
+  ]
+  for (const entry of cases) {
+    const params = structuredClone(entry.params)
+    const error = new LocalEditorError({ code: entry.code, params, error: 'original server message', details: 'raw stdout\r\nraw stderr\n' })
+    await i18n.changeLanguage(EN_UI_LOCALE)
+    const english = formatEditorError(error, i18n.t)
+    assert.ok(english.startsWith(entry.en), english)
+    assert.ok(english.endsWith(error.details!))
+    assert.ok(!english.includes('{{'), english)
+    await i18n.changeLanguage(DEFAULT_UI_LOCALE)
+    const chinese = formatEditorError(error, i18n.t)
+    assert.ok(chinese.startsWith(entry.zh), chinese)
+    assert.ok(chinese.endsWith(error.details!))
+    if ('reason' in entry.params && typeof entry.params.reason === 'string') {
+      assert.ok(english.includes(entry.params.reason))
+      assert.ok(chinese.includes(entry.params.reason))
+    }
+    assert.equal(error.message, 'original server message\nraw stdout\r\nraw stderr\n')
+    assert.deepEqual(params, entry.params)
+  }
+})
+
 test('Unmigrated-data refusals and empty response errors translate without changing server messages', async () => {
   const i18n = createInstance()
   await i18n.init({ resources, lng: EN_UI_LOCALE, fallbackLng: EN_UI_LOCALE, initAsync: false })

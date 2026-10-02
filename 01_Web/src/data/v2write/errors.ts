@@ -35,6 +35,9 @@ export const FIELD_LABELS: Readonly<Record<string, string>> = {
   id: '想去记录 id',
   recordId: '旅行计划 id',
   search_query: '城市名称',
+  media_filename: '文件名',
+  media_country: '国家名',
+  media_city: '城市名',
 }
 
 const label = (params: V2ErrorParams): string => {
@@ -95,6 +98,12 @@ export const V2_WRITE_MESSAGES = {
   E_MEDIA_EXTENSION: () => '当前网页编辑器只接收 JPG、PNG、WebP 或 AVIF 图片。',
   E_MEDIA_DRONE_DATE: () => '无人机影像必须填写有效日期。',
   E_MEDIA_COORDINATES_RANGE: () => '经纬度超出有效范围。',
+  E_MEDIA_NAME_INVALID: (params: V2ErrorParams) => `${label(params)}无效。`,
+  E_MEDIA_NAME_EXHAUSTED: () => '同名文件过多，请先整理文件名。',
+  E_MEDIA_UPLOAD_EMPTY: () => '没有收到文件内容。',
+  E_MEDIA_UPLOAD_TOO_LARGE: () => '单个文件不能超过 250 MiB。',
+  E_MEDIA_IMAGE_INVALID: () => '无法读取图片尺寸或文件内容无效。',
+  E_MEDIA_PANORAMA_RATIO: (params: V2ErrorParams) => `所选图片为 ${String(params.width ?? '')} × ${String(params.height ?? '')}，不是常见的 2:1 等距柱状全景图。请改选“航拍照片”，或上传正确的 360 全景图。`,
   /** 旧模式上传辅助函数（文件名、文件大小、图片尺寸、全景比例）拒绝时的原因，原样。 */
   E_MEDIA_UPLOAD_REJECTED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '上传失败。'),
   E_MEDIA_IMPORT_PATH_INVALID: () => '媒体源文件路径超出投递箱范围。',
