@@ -1,6 +1,7 @@
 import type { TravelAtlasEditorState } from './editorState'
 import type { WantToGoItem } from './derive/wantToGo.ts'
 import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
+import { parseMediaImportResponse, parseMediaUploadResponse } from './localMediaResponse.ts'
 
 const editorHeaders = {
   'content-type': 'application/json',
@@ -113,7 +114,7 @@ export const uploadLocalMedia = async (upload: LocalMediaUpload) => {
     },
     body: upload.file,
   })
-  return parseResponse<{ fileName: string; bytes: number; sourcePath: string }>(response)
+  return parseMediaUploadResponse(response)
 }
 
 export const importLocalMedia = async (sourcePaths: string[] = []) => {
@@ -122,7 +123,7 @@ export const importLocalMedia = async (sourcePaths: string[] = []) => {
     headers: editorHeaders,
     body: JSON.stringify({ sourcePaths }),
   })
-  return parseResponse<{ output: string; restoredMediaIds: string[] }>(response)
+  return parseMediaImportResponse(response, sourcePaths)
 }
 
 export const deleteHiddenLocalMedia = async (cityId: string, ids: string[]) => {

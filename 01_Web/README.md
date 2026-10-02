@@ -32,6 +32,8 @@ Local-editor errors use the compatible flat response `{ ok: false, error, code, 
 
 Online city lookup is explicit rather than autocomplete-on-every-keystroke. Each provider is limited to nine seconds, requests are cached in memory, and OpenStreetMap calls are serialized, country-filtered, visibly attributed, and follow the public [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/). Chinese Nominatim results accept exact names and equal-length simplified/traditional variants such as `波尔图` / `波爾圖`, while rejecting unrelated longer substring matches such as `赫本` inside another place name; retry with the local/English name or use manual coordinates when necessary. Cesium ion results may contain either a point or a bounding box; StarMap uses the box center when no point is supplied. Do not turn this path into bulk geocoding. The country catalog is supplied by the ODbL-licensed [`world-countries`](https://github.com/mledoze/countries) package and is used only by the loopback editor middleware, so it is not shipped in the public client bundle.
 
+Media success payloads are also checked at runtime: upload responses must confirm a filename, positive byte count and Inbox-relative path; import responses must include string output and a list of restored media IDs. Empty output is valid; the ID list may be empty only when no source paths were requested. A malformed success payload is an unknown outcome, so pending paths remain locked for manual verification.
+
 ## Verification
 
 ```powershell
