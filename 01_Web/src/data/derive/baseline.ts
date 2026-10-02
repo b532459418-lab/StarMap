@@ -13,7 +13,7 @@
  */
 
 import { queryCollection } from '../../worldgraph/collection.ts'
-import { UI_LOCALE } from '../uiLocale.ts'
+import { DEFAULT_UI_LOCALE } from '../uiLocale.ts'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../../worldgraph/layers.ts'
 import { queryVisiblePlaces } from '../../worldgraph/query.ts'
 import type { WantToGoItem } from './wantToGo.ts'
@@ -301,7 +301,7 @@ export function buildBaseline(exports: AppDataExports, options: BaselineOptions)
       const visibleLayerIds = visibleLayerIdsFor(visible)
       return { name, visibleLayerIds, result: queryVisiblePlaces(snapshot, visibleLayerIds) }
     }),
-    collection: { [WANT_TO_GO_LAYER_ID]: queryCollection(snapshot, WANT_TO_GO_LAYER_ID, UI_LOCALE) },
+    collection: { [WANT_TO_GO_LAYER_ID]: queryCollection(snapshot, WANT_TO_GO_LAYER_ID, DEFAULT_UI_LOCALE) },
   }
 
   return toPlain({ format: BASELINE_FORMAT, modules, queries }, options.now)

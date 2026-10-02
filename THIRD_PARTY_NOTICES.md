@@ -13,6 +13,7 @@ summary alone.
 | [Cesium](https://cesium.com/cesiumjs/) | Apache-2.0 | 3D globe engine. Bundles Natural Earth II imagery and the moon texture used by StarMap. Cesium's own `LICENSE.md` lists further third-party components. |
 | [Resium](https://github.com/reearth/resium) | MIT | React bindings for Cesium |
 | [React](https://react.dev/), react-dom | MIT | |
+| [i18next](https://www.i18next.com/), [react-i18next](https://react.i18next.com/) | MIT | App interface translations and language preferences |
 | [three](https://threejs.org/) | MIT | Used by the frozen legacy globe |
 | [react-globe.gl](https://github.com/vasturiano/react-globe.gl) | MIT | Frozen legacy globe implementation |
 | [Photo Sphere Viewer](https://photo-sphere-viewer.js.org/) (`@photo-sphere-viewer/core`) | MIT | 360° panorama viewer |

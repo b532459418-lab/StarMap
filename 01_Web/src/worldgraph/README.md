@@ -57,9 +57,12 @@ all names, country code and note with NFKC normalization and case folding.
 comparisons use `Intl.Collator(uiLocale)` with entity id and then record id as
 stable tie breakers; recent and country sorts use the same name comparator.
 
-The App currently supplies `UI_LOCALE` from `src/data/uiLocale.ts` (Simplified
-Chinese). Map labels and Cesium entity names follow it. The App's other bilingual
-domain fields and interface wording remain outside this Core name contract.
+The App supplies the current UI locale through its i18next provider (Simplified
+Chinese or English). Map labels, Cesium entity names, and Collection follow it.
+Deterministic data baselines always use `DEFAULT_UI_LOCALE` (Simplified Chinese),
+independent of browser preferences. Other domain fields and interface wording
+remain outside this Core name contract; their UI translation is being migrated
+in stages.
 
 ## The boundary, and why it is enforced
 

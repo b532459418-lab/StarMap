@@ -39,7 +39,7 @@ import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
 import { cities, cityById, countries, countryById, getCitiesForCountry, journeyDays, travelAtlasDisplay, travelAtlasMeta } from './data/travelAtlas'
 import { worldGraphSnapshot } from './data/worldGraph'
-import { UI_LOCALE } from './data/uiLocale'
+import { useUiLocale } from './i18n/useUiLocale'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
 import { hiddenWantToGoItems } from './data/wantToGo'
 import { queryCollection } from './worldgraph/collection'
@@ -83,6 +83,7 @@ const cameraScaleForDistance = (distance: number): CameraScale => {
 }
 
 function App() {
+  const { locale } = useUiLocale()
   const restoredViewState = useMemo(() => readAtlasViewState(), [])
   const restoredCityId = restoredViewState.selectedCityId && cityById[restoredViewState.selectedCityId]
     ? restoredViewState.selectedCityId
@@ -265,7 +266,6 @@ function App() {
   }
 
   useEffect(() => {
-    document.documentElement.lang = 'zh-CN'
     const mediaQuery = window.matchMedia(sidebarMediaQuery)
     const syncSidebarVisibility = (event: MediaQueryListEvent) => setSidebarsOpen(event.matches)
 
@@ -334,8 +334,8 @@ function App() {
   }
 
   // Collection 列表（PR7）：想去图层的全部条目，含已隐藏与无坐标，不受图层可见性影响（FR-LP-6）。
-  // 快照是模块级常量，算一次即可；写入后整页刷新，自然拿到新数据。
-  const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID, UI_LOCALE), [])
+  // 快照是模块级常量；语言切换时重算名称排序，写入后整页刷新拿到新数据。
+  const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID, locale), [locale])
 
   const atlasStats = useMemo(
     () => [
@@ -656,7 +656,7 @@ function App() {
                   />
                 ) : null}
 
-                <MouseControlGuide language="zh" />
+                <MouseControlGuide language={locale === 'en' ? 'en' : 'zh'} />
               </div>
 
             </div>
