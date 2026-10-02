@@ -283,8 +283,8 @@ test('Map 转成按插入顺序的 [key, value] 数组，函数按定义域求�
   const domain = baseline.modules.droneMedia.hasDroneMedia.map(([cityId]: [string]) => cityId)
   assert.deepEqual(domain, [...sampleCities().map((city) => city.id), 'elsewhere__city'])
   assert.deepEqual(baseline.modules.droneMedia.hasDroneMedia.at(-1), ['elsewhere__city', true])
-  // @2：countryIdOfCity 的定义域再并上 editor-state 的 hiddenCityIds（去重，按首次出现顺序）；undefined 写成 null。
-  assert.equal(baseline.format, 'starmap-legacy-baseline@2')
+  // @2 起：countryIdOfCity 的定义域再并上 editor-state 的 hiddenCityIds（去重，按首次出现顺序）；undefined 写成 null。
+  assert.equal(baseline.format, 'starmap-legacy-baseline@3')
   assert.deepEqual(baseline.modules.travelAtlas.countryIdOfCity, [
     ...sampleCities().map((city) => [city.id, city.countryId]),
     ['elsewhere__city', null],
