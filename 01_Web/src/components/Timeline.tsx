@@ -1,3 +1,5 @@
+import { usePlaceNames } from '../i18n/usePlaceNames'
+import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, Clock3, MapPin, Sparkles } from 'lucide-react'
 import { cityById, countryById, journeyDays } from '../data/travelAtlas'
 import type { CityId, JourneyDay } from '../types/travel'
@@ -13,16 +15,18 @@ const orderedDays = [...journeyDays].sort((left, right) =>
 )
 
 export function Timeline({ selectedDayId, onSelectDay, onHoverCity }: TimelineProps) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { name, subtitle } = usePlaceNames()
   return (
     <section id="stories" className="journey-view-section journey-timeline-section">
       <div className="journey-section-heading">
         <div>
-          <p className="journey-kicker">Latest first</p>
-          <h2>Journey timeline</h2>
+          <p className="journey-kicker">{t('journey:latestFirst')}</p>
+          <h2>{t('journey:timelineHeading')}</h2>
         </div>
         <div className="journey-order-note">
           <Clock3 aria-hidden="true" />
-          <span>Newest memories at the top</span>
+          <span>{t('journey:orderNote')}</span>
         </div>
       </div>
 
@@ -70,12 +74,12 @@ export function Timeline({ selectedDayId, onSelectDay, onHoverCity }: TimelinePr
                 <span className="journey-timeline-copy">
                   <span className="journey-timeline-place">
                     <MapPin aria-hidden="true" />
-                    <strong>{city.nameZh}</strong>
-                    <span>{city.nameEn}</span>
+                    <strong>{name(city)}</strong>
+                    <span>{subtitle(city)}</span>
                   </span>
                   <span className="journey-timeline-country-line">
-                    <strong>{country.nameZh}</strong>
-                    <span>{country.nameEn}</span>
+                    <strong>{name(country)}</strong>
+                    <span>{subtitle(country)}</span>
                   </span>
                 </span>
 
@@ -90,7 +94,7 @@ export function Timeline({ selectedDayId, onSelectDay, onHoverCity }: TimelinePr
 
       <div className="journey-public-note">
         <Sparkles aria-hidden="true" />
-        <span>Public view · travel records are presented as concise memory notes.</span>
+        <span>{t('journey:publicNote')}</span>
       </div>
     </section>
   )

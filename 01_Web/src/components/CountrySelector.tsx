@@ -1,3 +1,6 @@
+import { usePlaceNames } from '../i18n/usePlaceNames'
+import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { useTranslation } from 'react-i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Drone, GripVertical, MapPin, Plus, RotateCcw, Settings2, SlidersHorizontal, Undo2, X } from 'lucide-react'
 import { withoutListedCountries } from '../data/countrySearchFilter'
@@ -65,6 +68,8 @@ export function CountrySelector({
   onDistanceChange,
   onResetView,
 }: CountrySelectorProps) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { name, subtitle } = usePlaceNames()
   const selectedCountry = selectedCountryId ? countries.find((country) => country.id === selectedCountryId) : undefined
   const committedDistanceRef = useRef(globeDistance)
   const hasDraftDistanceChangeRef = useRef(false)
@@ -78,7 +83,7 @@ export function CountrySelector({
   const [draftHiddenCountryIds, setDraftHiddenCountryIds] = useState<CountryId[]>(travelAtlasEditorState.hiddenCountryIds)
   const [draggedCountryId, setDraggedCountryId] = useState<CountryId>()
   const [showAddCountry, setShowAddCountry] = useState(false)
-  const [editorNotice, setEditorNotice] = useState('')
+  const [editorNotice, setEditorNotice] = useLocalizedNotice()
   const [isSaving, setIsSaving] = useState(false)
   const [selectedCountryOption, setSelectedCountryOption] = useState<CountrySearchOption>()
   const [countryVisitedDate, setCountryVisitedDate] = useState('')
@@ -98,12 +103,12 @@ export function CountrySelector({
     setShowAddCountry(false)
     setSelectedCountryOption(undefined)
     setCountryVisitedDate('')
-    setEditorNotice('已撤销本轮尚未保存的调整。')
+    setEditorNotice({ key: 'editor:undoNotice' })
   }
 
   const saveCountryDraft = async () => {
     setIsSaving(true)
-    setEditorNotice('正在保存…')
+    setEditorNotice({ key: 'editor:saving' })
     try {
       await updateLocalEditorState((current) => ({
         ...current,
@@ -112,7 +117,7 @@ export function CountrySelector({
       }))
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : '保存失败。')
+      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:saveFailed' })
       setIsSaving(false)
     }
   }
@@ -124,17 +129,17 @@ export function CountrySelector({
       await updateLocalEditorState((current) => ({ ...current, hiddenCountryIds: [] }))
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : '恢复失败。')
+      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:restoreFailed' })
       setIsSaving(false)
     }
   }
 
   const deleteHiddenCountries = async () => {
     if (draftHiddenCountryIds.length === 0) return
-    const confirmed = window.confirm(`确定永久删除已隐藏的 ${draftHiddenCountryIds.length} 个国家吗？\n\n仅当这些国家的所有城市都没有照片或无人机影像时才能删除；已隐藏的媒体也必须先手动彻底删除。`)
+    const confirmed = window.confirm(t('editor:deleteCountriesConfirm', { count: draftHiddenCountryIds.length }))
     if (!confirmed) return
     setIsSaving(true)
-    setEditorNotice('正在彻底删除已隐藏国家…')
+    setEditorNotice({ key: 'editor:deletingCountries' })
     try {
       await updateLocalEditorState((current) => ({
         ...current,
@@ -143,7 +148,7 @@ export function CountrySelector({
       await deleteHiddenLocalCountries(draftHiddenCountryIds)
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : '删除失败。')
+      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:deleteFailed' })
       setIsSaving(false)
     }
   }
@@ -151,16 +156,16 @@ export function CountrySelector({
   const addCountry = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!selectedCountryOption) {
-      setEditorNotice('请先从候选列表中选择一个国家。')
+      setEditorNotice({ key: 'editor:chooseCountry' })
       return
     }
     setIsSaving(true)
-    setEditorNotice('正在创建国家…')
+    setEditorNotice({ key: 'editor:creatingCountry' })
     try {
       await addLocalCountry(selectedCountryOption.countryCode, countryVisitedDate)
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : '创建失败。')
+      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:createFailed' })
       setIsSaving(false)
     }
   }
@@ -242,19 +247,17 @@ export function CountrySelector({
       <div className="atlas-country-panel-heading mb-4 flex items-end justify-between gap-3">
         <div className="atlas-panel-body">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white">
-            Country Maps
-          </p>
+            {t('details:countryMaps')}</p>
           <h2 className="mt-1 text-xl font-semibold tracking-normal text-slate-950">
-            国家足迹
-          </h2>
+            {t('details:visitedCountries')}</h2>
         </div>
         {localEditorAvailable ? (
           <div className="atlas-local-editor-actions">
             {isEditingCountries ? (
               <>
-                <button type="button" onClick={resetCountryDraft} aria-label="撤销本轮国家调整" title="撤销本轮未保存调整"><Undo2 /></button>
-                <button type="button" onClick={() => setShowAddCountry((open) => !open)} aria-label="添加国家" title="添加国家"><Plus /></button>
-                <button type="button" data-primary="true" onClick={saveCountryDraft} disabled={isSaving} aria-label="保存国家调整" title="保存"><Check /></button>
+                <button type="button" onClick={resetCountryDraft} aria-label={t('editor:undoCountries')} title={t('editor:undoTitle')}><Undo2 /></button>
+                <button type="button" onClick={() => setShowAddCountry((open) => !open)} aria-label={t('editor:addCountry')} title={t('editor:addCountry')}><Plus /></button>
+                <button type="button" data-primary="true" onClick={saveCountryDraft} disabled={isSaving} aria-label={t('editor:saveCountries')} title={t('editor:save')}><Check /></button>
               </>
             ) : null}
             <button
@@ -264,8 +267,8 @@ export function CountrySelector({
                 if (isEditingCountries) resetCountryDraft()
                 setIsEditingCountries((editing) => !editing)
               }}
-              aria-label={isEditingCountries ? '退出国家编辑' : '编辑国家足迹'}
-              title={isEditingCountries ? '退出编辑' : '本地编辑'}
+              aria-label={isEditingCountries ? t('editor:exitCountries') : t('editor:editCountries')}
+              title={isEditingCountries ? t('editor:exitEdit') : t('editor:localEdit')}
             >
               {isEditingCountries ? <X /> : <Settings2 />}
             </button>
@@ -275,10 +278,10 @@ export function CountrySelector({
 
       {isEditingCountries && showAddCountry ? (
         <form className="atlas-local-editor-form" onSubmit={addCountry}>
-          <p>先创建国家；城市请在进入该国家后的 City Cards 中添加。</p>
+          <p>{t('editor:countryFirst')}</p>
           <LocationSearchField
-            label="国家名称"
-            placeholder="输入中文、English、CN…"
+            label={t('editor:countryName')}
+            placeholder={t('editor:countrySearch')}
             selected={selectedCountryOption}
             search={searchCountryOptions}
             onSelect={setSelectedCountryOption}
@@ -286,21 +289,20 @@ export function CountrySelector({
             getMeta={(option) => `${option.countryCode}${option.region ? ` · ${option.region}` : ''}`}
           />
           <label className="atlas-local-editor-date-field">
-            <span>首次到访日期</span>
+            <span>{t('editor:firstVisit')}</span>
             <input required type="date" value={countryVisitedDate} onChange={(event) => setCountryVisitedDate(event.target.value)} />
           </label>
-          <button type="submit" disabled={isSaving || !selectedCountryOption}>确认添加国家</button>
+          <button type="submit" disabled={isSaving || !selectedCountryOption}>{t('editor:confirmCountry')}</button>
         </form>
       ) : null}
 
       {isEditingCountries && draftHiddenCountryIds.length > 0 ? (
         <div className="atlas-local-editor-hidden-actions">
           <button type="button" className="atlas-local-editor-restore" onClick={restoreHiddenCountries} disabled={isSaving}>
-            恢复已隐藏国家（{draftHiddenCountryIds.length}）
+            {t('editor:restoreCountries', { count: draftHiddenCountryIds.length })}
           </button>
           <button type="button" className="atlas-local-editor-delete" onClick={deleteHiddenCountries} disabled={isSaving}>
-            彻底删除国家
-          </button>
+            {t('editor:deleteCountries')}</button>
         </div>
       ) : null}
       {editorNotice ? <p className="atlas-local-editor-notice" role="status">{editorNotice}</p> : null}
@@ -325,8 +327,8 @@ export function CountrySelector({
                   <button
                     type="button"
                     className="atlas-local-editor-drag"
-                    aria-label={`拖动${country.nameZh}排序`}
-                    title="按住后直接上下拖动；方向键也可调整"
+                    aria-label={t('editor:dragFor', { name: name(country) })}
+                    title={t('editor:dragHelp')}
                     onPointerDown={(event) => {
                       if (event.button !== 0) return
                       event.preventDefault()
@@ -362,10 +364,10 @@ export function CountrySelector({
                   <button
                     type="button"
                     className="atlas-local-editor-hide"
-                    aria-label={`隐藏${country.nameZh}`}
-                    title="隐藏（保存前可撤销）"
+                    aria-label={t('editor:hideFor', { name: name(country) })}
+                    title={t('editor:hideUndo')}
                     onClick={() => {
-                      if (!window.confirm(`从本地展示中隐藏“${country.nameZh}”？原始旅行记录不会删除。`)) return
+                      if (!window.confirm(t('editor:hideConfirm', { name: name(country) }))) return
                       setDraftCountryIds((current) => current.filter((id) => id !== country.id))
                       setDraftHiddenCountryIds((current) => [...new Set([...current, country.id])])
                     }}
@@ -412,9 +414,9 @@ export function CountrySelector({
                     )}
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold tracking-normal">{country.nameZh}</span>
+                    <span className="block truncate text-sm font-semibold tracking-normal">{name(country)}</span>
                     <span className={isSelected ? 'block truncate text-xs text-slate-300' : 'block truncate text-xs text-slate-400'}>
-                      {country.nameEn}
+                      {subtitle(country)}
                     </span>
                   </span>
                 </span>
@@ -434,8 +436,7 @@ export function CountrySelector({
                   <div className="relative ml-4 mt-2 space-y-1.5 border-l border-dashed border-slate-300/80 pb-1 pl-4 pr-1">
                     <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                       <MapPin className="size-3 text-sky-600" />
-                      Visited cities
-                    </div>
+                      {t('details:visitedCities')}</div>
 
                     {countryCities.map((city, index) => {
                       const isCitySelected = city.id === selectedCityId
@@ -469,16 +470,16 @@ export function CountrySelector({
                               }`}
                             >
                               <span className="min-w-0 truncate">
-                                {city.nameZh}{' '}
+                                {name(city)}{' '}
                                 <span className={`atlas-city-name-en ${isCitySelected ? 'text-sky-100' : 'font-medium text-slate-400'}`}>
-                                  {city.nameEn}
+                                  {subtitle(city)}
                                 </span>
                               </span>
                               {cityHasDroneMedia ? (
                                 <span
                                   className="drone-city-indicator grid size-6 shrink-0 place-items-center rounded-full"
-                                  title="Drone media available"
-                                  aria-label="Drone media available"
+                                  title={t('details:droneAvailable')}
+                                  aria-label={t('details:droneAvailable')}
                                 >
                                   <Drone className="size-3.5" />
                                 </span>
@@ -494,7 +495,7 @@ export function CountrySelector({
                               className="drone-media-entry ml-3 mt-1.5 flex w-[calc(100%-12px)] items-center gap-2 rounded-full border px-3 py-2 text-left text-[11px] font-semibold transition duration-200"
                             >
                               <Drone className="size-3.5 shrink-0" />
-                              <span className="truncate">{`\u65e0\u4eba\u673a / Drone Media`}</span>
+                              <span className="truncate">{t('details:droneMedia')}</span>
                             </button>
                           ) : null}
                         </div>
@@ -519,16 +520,15 @@ export function CountrySelector({
           >
             <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
               <SlidersHorizontal className="size-4 text-slate-500" />
-              Map Tuning
-            </span>
+              {t('details:mapTuning')}</span>
             <ChevronDown className={`atlas-accordion-chevron size-4 shrink-0 ${isImageTuningOpen ? '' : 'rotate-180'}`} />
           </button>
           {isImageTuningOpen ? (
             <button
-              aria-label="Reset Earth image tuning"
+              aria-label={t('details:resetTuning')}
               className="atlas-scale-reset grid size-9 shrink-0 place-items-center rounded-lg border"
               onClick={onResetImageryTuning}
-              title="Reset Earth image tuning"
+              title={t('details:resetTuning')}
               type="button"
             >
               <RotateCcw className="size-4" />
@@ -541,9 +541,9 @@ export function CountrySelector({
         {isImageTuningOpen ? (
           <div className="atlas-accordion-content" id="atlas-image-tuning-controls">
             <label className="atlas-image-control grid grid-cols-[68px_1fr_34px] items-center gap-2">
-              <span>Saturation</span>
+              <span>{t('details:saturation')}</span>
               <input
-                aria-label="Earth imagery saturation"
+                aria-label={t('details:saturationAria')}
                 className="atlas-image-slider atlas-slider w-full"
                 max="1.5"
                 min="0.5"
@@ -556,9 +556,9 @@ export function CountrySelector({
             </label>
 
             <label className="atlas-image-control grid grid-cols-[68px_1fr_34px] items-center gap-2">
-              <span>Contrast</span>
+              <span>{t('details:contrast')}</span>
               <input
-                aria-label="Earth imagery contrast"
+                aria-label={t('details:contrastAria')}
                 className="atlas-image-slider atlas-slider w-full"
                 max="1.4"
                 min="0.7"
@@ -571,9 +571,9 @@ export function CountrySelector({
             </label>
 
             <label className="atlas-image-control grid grid-cols-[68px_1fr_34px] items-center gap-2">
-              <span>Brightness</span>
+              <span>{t('details:brightness')}</span>
               <input
-                aria-label="Earth imagery brightness"
+                aria-label={t('details:brightnessAria')}
                 className="atlas-image-slider atlas-slider w-full"
                 max="1.4"
                 min="0.4"
@@ -599,15 +599,14 @@ export function CountrySelector({
           >
             <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
               <SlidersHorizontal className="size-4 text-slate-500" />
-              Globe Scale
-            </span>
+              {t('details:globeScale')}</span>
             <ChevronDown className={`atlas-accordion-chevron size-4 shrink-0 ${isGlobeScaleOpen ? '' : 'rotate-180'}`} />
           </button>
           {isGlobeScaleOpen ? (
             <button
               type="button"
-              aria-label="Reset globe to overview"
-              title="Reset globe to overview"
+              aria-label={t('details:resetGlobe')}
+              title={t('details:resetGlobe')}
               onClick={onResetView}
               className="atlas-scale-reset grid size-9 shrink-0 place-items-center rounded-lg border"
             >
@@ -620,7 +619,7 @@ export function CountrySelector({
         {isGlobeScaleOpen ? (
           <div className="atlas-accordion-content" id="atlas-globe-scale-controls">
             <input
-              aria-label="Globe scale"
+              aria-label={t('details:globeScaleAria')}
               className="atlas-slider w-full"
               defaultValue={globeDistance}
               key={globeDistance}
@@ -640,9 +639,9 @@ export function CountrySelector({
               onPointerUp={(event) => commitGlobeDistance(Number(event.currentTarget.value))}
             />
             <div className="mt-1 flex justify-between text-[11px] font-medium text-slate-400">
-              <span>City</span>
-              <span>Country</span>
-              <span>World</span>
+              <span>{t('details:city')}</span>
+              <span>{t('details:country')}</span>
+              <span>{t('details:world')}</span>
             </div>
           </div>
         ) : null}

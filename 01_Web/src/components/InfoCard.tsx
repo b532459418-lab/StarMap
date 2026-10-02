@@ -1,3 +1,6 @@
+import { usePlaceNames } from '../i18n/usePlaceNames'
+import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { useTranslation } from 'react-i18next'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
@@ -41,6 +44,8 @@ const getContinentName = (country?: Country) => {
 }
 
 export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity, onOpenCityPhotos }: InfoCardProps) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { name, subtitle } = usePlaceNames()
   const country = selectedCountryId ? countryById[selectedCountryId] : undefined
   const city = selectedCityId ? cityById[selectedCityId] : undefined
   const isCityMode = mode === 'city' && city && country
@@ -50,13 +55,13 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   const cityPhotos = useMemo(() => isCityMode ? getCityPhotos(city.id) : [], [city, isCityMode])
   const isCityPhotoGrid = isCityMode && cityPhotos.length > 0
   const usesMemoryGridPreview = isCountryGrid || Boolean(isCityMode)
-  const memorySectionLabel = isCityMode ? 'City photos' : 'City cards'
+  const memorySectionLabel = isCityMode ? t('details:cityPhotos') : t('details:cityCards')
   const cityCoverPhoto = useMemo(() => isCityMode ? getCityCoverPhoto(city.id) : undefined, [city, isCityMode])
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [cityEditing, setCityEditing] = useState(false)
   const [photoEditing, setPhotoEditing] = useState(false)
   const [showAddCity, setShowAddCity] = useState(false)
-  const [editorNotice, setEditorNotice] = useState('')
+  const [editorNotice, setEditorNotice] = useLocalizedNotice()
   const [editorBusy, setEditorBusy] = useState(false)
   const [draggedCityId, setDraggedCityId] = useState<CityId>()
   const [draggedPhotoId, setDraggedPhotoId] = useState<string>()
@@ -89,14 +94,14 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
     : []
   const countryCode = country?.flagCode
   const searchCityOptions = useCallback((query: string, signal: AbortSignal) => {
-    if (!countryCode) return Promise.reject(new Error('这个国家缺少 ISO 代码，暂时无法检索城市。'))
+    if (!countryCode) return Promise.reject(new Error(t('editor:noIso')))
     return searchLocalCities(query, countryCode, signal)
-  }, [countryCode])
+  }, [countryCode, t])
 
   const saveCityDraft = async () => {
     if (!country) return
     setEditorBusy(true)
-    setEditorNotice('正在保存城市布局…')
+    setEditorNotice({ key: 'editor:savingCities' })
     try {
       await updateLocalEditorState((current) => ({
         ...current,
@@ -105,7 +110,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       }))
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : '保存失败。')
+      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:saveFailed' })
       setEditorBusy(false)
     }
   }
@@ -113,7 +118,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   const savePhotoDraft = async () => {
     if (!city) return
     setEditorBusy(true)
-    setEditorNotice('正在保存照片布局…')
+    setEditorNotice({ key: 'editor:savingPhotos' })
     try {
       await updateLocalEditorState((current) => ({
         ...current,
@@ -125,7 +130,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       }))
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : '保存失败。')
+      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:saveFailed' })
       setEditorBusy(false)
     }
   }
@@ -134,7 +139,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
     event.preventDefault()
     if (!country) return
     if (!selectedCityOption && !isManualCityEntry) {
-      setEditorNotice('请先从候选列表中选择一个城市。')
+      setEditorNotice({ key: 'editor:chooseCity' })
       return
     }
     const manualLat = Number(manualCity.lat)
@@ -162,11 +167,11 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       || cityOption.lng < -180
       || cityOption.lng > 180
     ) {
-      setEditorNotice('请填写城市名称及有效经纬度。')
+      setEditorNotice({ key: 'editor:invalidCity' })
       return
     }
     setEditorBusy(true)
-    setEditorNotice('正在创建城市…')
+    setEditorNotice({ key: 'editor:creatingCity' })
     try {
       await addLocalTravelRecord({
         country: country.nameZh,
@@ -181,7 +186,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       })
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : '创建失败。')
+      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:createFailed' })
       setEditorBusy(false)
     }
   }
@@ -189,18 +194,18 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   const uploadPhotos = async (files: FileList | null) => {
     if (!files?.length || !country || !city) return
     setEditorBusy(true)
-    setEditorNotice(`正在接收 ${files.length} 张照片…`)
+    setEditorNotice({ key: 'editor:receivingPhotos', values: { count: files.length } })
     try {
       const uploadedSourcePaths: string[] = []
       for (const file of Array.from(files)) {
         const uploaded = await uploadLocalMedia({ countryId: country.id, cityId: city.id, kind: 'photo', file })
         uploadedSourcePaths.push(uploaded.sourcePath)
       }
-      setEditorNotice('照片已进入私有投递箱，正在生成三级网页资源…')
+      setEditorNotice({ key: 'editor:importingPhotos' })
       await importLocalMedia(uploadedSourcePaths)
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : '照片导入失败。')
+      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:photoImportFailed' })
       setEditorBusy(false)
     } finally {
       if (photoInputRef.current) photoInputRef.current.value = ''
@@ -211,26 +216,27 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
     if (!isCityPhotoGrid || !city) return
     onOpenCityPhotos?.({
       photos: cityPhotos,
-      cityName: city.nameZh ?? city.nameEn ?? 'City',
+      cityName: name(city),
       initialPhotoId,
       mode: galleryMode,
     })
   }
-  const eyebrowLabel = isOverview ? 'Overview' : isCityMode ? 'City info' : 'Selected country'
-  const title = isOverview ? 'StarMap' : isCityMode ? city.nameZh : country.nameZh
-  const continentName = getContinentName(country)
+  const eyebrowLabel = isOverview ? t('details:overview') : isCityMode ? t('details:cityInfo') : t('details:selectedCountry')
+  const title = isOverview ? 'StarMap' : isCityMode ? name(city) : name(country)
+  const continent = getContinentName(country)
+  const continentName = continent === '—' ? continent : t(`details:continent${continent.replaceAll(' ', '')}`)
   const titleDetail = isOverview
-    ? 'Journey map overview'
+    ? t('details:mapOverview')
     : isCityMode
-      ? `${city.nameZh} / ${city.nameEn}`
-      : `${country.nameZh} / ${country.nameEn}`
+      ? name(city)
+      : name(country)
   const dateLabel = isOverview
-    ? 'Select a country or city'
+    ? t('details:selectPlace')
     : isCityMode
       ? city.visitedDateRange
       : country.visitedDateRange
   const summary = isOverview
-    ? 'A soft overview of visited destinations, mapped routes and future story material.'
+    ? t('details:overviewDescription')
     : isCityMode
       ? city.summary
       : country.summary
@@ -251,7 +257,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
           {!isOverview ? (
             <>
               <p className="mt-1 text-sm font-medium text-slate-600">
-                {isCityMode ? city.nameEn : country.nameEn}
+                {isCityMode ? subtitle(city) : subtitle(country)}
               </p>
               <p className="mt-2 text-sm font-medium text-white">
                 {isCityMode ? city.visitedDateRange : country.visitedDateRange}
@@ -283,7 +289,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
             {cityCoverPhoto ? (
               <img
                 src={getMediaSource(cityCoverPhoto, 'thumb')}
-                alt={`${city.nameEn} travel preview`}
+                alt={t('details:travelPreview', { name: name(city) })}
                 className="h-24 w-full object-cover"
                 loading="lazy"
                 decoding="async"
@@ -296,9 +302,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
             )}
             <div className="flex items-center justify-between px-3 py-2">
               <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                Preview image
-              </span>
-              <span className="text-xs font-medium text-slate-500">{city.nameEn}</span>
+                {t('details:previewImage')}</span>
+              <span className="text-xs font-medium text-slate-500">{name(city)}</span>
             </div>
           </div>
         ) : null}
@@ -306,20 +311,20 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
         <div className="grid shrink-0 grid-cols-2 gap-3">
           <div className="atlas-info-metric rounded-[18px] border border-white/60 bg-white/55 p-3">
             <p className="text-xs text-slate-400">
-              {isOverview ? 'Mode' : isCityMode ? 'Country' : 'Visited Cities'}
+              {isOverview ? t('details:mode') : isCityMode ? t('details:country') : t('details:visitedCities')}
             </p>
             <p className="mt-1 text-sm font-semibold text-slate-900">
               {isOverview
-                ? 'Overview'
+                ? t('details:overview')
                 : isCityMode
-                  ? country.nameEn
-                  : `${visitedCityCount} ${visitedCityCount === 1 ? 'city' : 'cities'}`}
+                  ? name(country)
+                  : t('details:cityCount', { count: visitedCityCount })}
             </p>
           </div>
           <div className="atlas-info-metric rounded-[18px] border border-white/60 bg-white/55 p-3">
-            <p className="text-xs text-slate-400">{isOverview ? 'Keywords' : 'Continent'}</p>
+            <p className="text-xs text-slate-400">{isOverview ? t('details:keywords') : t('details:continent')}</p>
             <p className="mt-1 text-sm font-semibold text-slate-900">
-              {isOverview ? 'Travel / Games' : continentName}
+              {isOverview ? t('details:overviewKeywords') : continentName}
             </p>
           </div>
         </div>
@@ -356,7 +361,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                   <LocalEditorToolbar
                     editing={photoEditing}
                     busy={editorBusy}
-                    label="城市照片"
+                    label={t('editor:photos')}
                     onToggle={() => {
                       setPhotoEditing((editing) => !editing)
                       setDraftPhotoIds(cityPhotos.map((photo) => photo.id))
@@ -368,7 +373,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       setDraftPhotoIds(cityPhotos.map((photo) => photo.id))
                       setDraftHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
                       setDraftCoverPhotoId(cityCoverPhoto?.id)
-                      setEditorNotice('已撤销本轮尚未保存的照片调整。')
+                      setEditorNotice({ key: 'editor:undoPhotos' })
                     }}
                     onAdd={() => photoInputRef.current?.click()}
                     onSave={savePhotoDraft}
@@ -398,7 +403,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                   <LocalEditorToolbar
                     editing={cityEditing}
                     busy={editorBusy}
-                    label="城市列表"
+                    label={t('editor:cities')}
                     onToggle={() => {
                       setCityEditing((editing) => !editing)
                       setDraftCityIds(memoryCities.map((item) => item.id))
@@ -416,7 +421,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       setShowAddCity(false)
                       setSelectedCityOption(undefined)
                       setCityVisitDates({ startDate: '', endDate: '' })
-                      setEditorNotice('已撤销本轮尚未保存的城市调整。')
+                      setEditorNotice({ key: 'editor:undoCities' })
                     }}
                     onAdd={() => setShowAddCity((open) => !open)}
                     onSave={saveCityDraft}
@@ -430,26 +435,26 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                 {isManualCityEntry ? (
                   <div className="atlas-local-editor-form-grid">
                     <label className="atlas-local-editor-date-field">
-                      <span>城市名称</span>
+                      <span>{t('editor:cityName')}</span>
                       <input required value={manualCity.nameZh} onChange={(event) => setManualCity((value) => ({ ...value, nameZh: event.target.value }))} />
                     </label>
                     <label className="atlas-local-editor-date-field">
-                      <span>英文名（可选）</span>
+                      <span>{t('editor:englishName')}</span>
                       <input value={manualCity.nameEn} onChange={(event) => setManualCity((value) => ({ ...value, nameEn: event.target.value }))} />
                     </label>
                     <label className="atlas-local-editor-date-field">
-                      <span>纬度（-90～90）</span>
+                      <span>{t('editor:latitudeRange')}</span>
                       <input required type="number" min="-90" max="90" step="any" value={manualCity.lat} onChange={(event) => setManualCity((value) => ({ ...value, lat: event.target.value }))} />
                     </label>
                     <label className="atlas-local-editor-date-field">
-                      <span>经度（-180～180）</span>
+                      <span>{t('editor:longitudeRange')}</span>
                       <input required type="number" min="-180" max="180" step="any" value={manualCity.lng} onChange={(event) => setManualCity((value) => ({ ...value, lng: event.target.value }))} />
                     </label>
                   </div>
                 ) : (
                   <LocationSearchField
-                    label="城市名称"
-                    placeholder="输入中文或 English，至少 2 个字…"
+                    label={t('editor:cityName')}
+                    placeholder={t('editor:citySearch')}
                     selected={selectedCityOption}
                     search={searchCityOptions}
                     onSelect={setSelectedCityOption}
@@ -467,25 +472,25 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     setEditorNotice('')
                   }}
                 >
-                  {isManualCityEntry ? '返回在线检索' : '搜索不到？手动填写坐标'}
+                  {isManualCityEntry ? t('editor:onlineSearch') : t('editor:manualSearch')}
                 </button>
                 <div className="atlas-local-editor-form-grid">
                   <label className="atlas-local-editor-date-field">
-                    <span>到访日期</span>
+                    <span>{t('editor:visitDate')}</span>
                     <input required type="date" value={cityVisitDates.startDate} onChange={(event) => setCityVisitDates((dates) => ({ ...dates, startDate: event.target.value }))} />
                   </label>
                   <label className="atlas-local-editor-date-field">
-                    <span>结束日期（可选）</span>
+                    <span>{t('editor:endDate')}</span>
                     <input type="date" min={cityVisitDates.startDate || undefined} value={cityVisitDates.endDate} onChange={(event) => setCityVisitDates((dates) => ({ ...dates, endDate: event.target.value }))} />
                   </label>
                 </div>
                 {!isManualCityEntry ? (
                   <p className="atlas-local-editor-attribution">
-                    城市检索需要联网：优先使用 Cesium ion geocode；无权限、无结果或超时后回退{' '}
-                    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>。
+                    {t('editor:searchAttribution')}{' '}
+                    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>{t('editor:attributionEnd')}
                   </p>
                 ) : null}
-                <button type="submit" disabled={editorBusy || (!isManualCityEntry && !selectedCityOption)}>确认添加城市</button>
+                <button type="submit" disabled={editorBusy || (!isManualCityEntry && !selectedCityOption)}>{t('editor:confirmCity')}</button>
               </form>
             ) : null}
 
@@ -503,12 +508,12 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     ...current,
                     hiddenCityIds: current.hiddenCityIds.filter((id) => countryIdOfCity(id) !== country?.id),
                   })).then(reloadAfterLocalSave).catch((error: unknown) => {
-                    setEditorNotice(error instanceof Error ? error.message : '恢复失败。')
+                    setEditorNotice(error instanceof Error ? error.message : { key: 'editor:restoreFailed' })
                     setEditorBusy(false)
                   })
                 }}
               >
-                恢复本国已隐藏城市（{hiddenCityIdsForCountry.length}）
+                {t('editor:restoreCities', { count: hiddenCityIdsForCountry.length })}
               </button>
             ) : null}
 
@@ -525,12 +530,12 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       ...current,
                       hiddenMediaIds: current.hiddenMediaIds.filter((id) => !hiddenPhotoIdsForCity.includes(id)),
                     })).then(reloadAfterLocalSave).catch((error: unknown) => {
-                      setEditorNotice(error instanceof Error ? error.message : '恢复失败。')
+                      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:restoreFailed' })
                       setEditorBusy(false)
                     })
                   }}
                 >
-                  恢复本城隐藏照片（{hiddenPhotoIdsForCity.length}）
+                  {t('editor:restorePhotos', { count: hiddenPhotoIdsForCity.length })}
                 </button>
                 <button
                   type="button"
@@ -538,10 +543,10 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                   disabled={editorBusy}
                   onClick={(event) => {
                     event.stopPropagation()
-                    const confirmed = window.confirm(`确定永久删除本城已隐藏的 ${hiddenPhotoIdsForCity.length} 张照片吗？\n\n这会同时删除投递箱原图、生成后的网页文件和目录记录，无法恢复。`)
+                    const confirmed = window.confirm(t('editor:deletePhotosConfirm', { count: hiddenPhotoIdsForCity.length }))
                     if (!confirmed) return
                     setEditorBusy(true)
-                    setEditorNotice('正在彻底删除已隐藏照片…')
+                    setEditorNotice({ key: 'editor:deletingPhotos' })
                     void updateLocalEditorState((current) => ({
                       ...current,
                       hiddenMediaIds: [...new Set([...current.hiddenMediaIds, ...hiddenPhotoIdsForCity])],
@@ -549,18 +554,17 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       .then(() => deleteHiddenLocalMedia(city.id, hiddenPhotoIdsForCity))
                       .then(reloadAfterLocalSave)
                       .catch((error: unknown) => {
-                        setEditorNotice(error instanceof Error ? error.message : '彻底删除失败。')
+                        setEditorNotice(error instanceof Error ? error.message : { key: 'editor:deletePermanentlyFailed' })
                         setEditorBusy(false)
                       })
                   }}
                 >
-                  彻底删除隐藏照片
-                </button>
+                  {t('editor:deletePhotos')}</button>
               </div>
             ) : null}
 
             {isCityMode && displayedCityPhotos.length === 0 ? (
-              <div className="atlas-local-editor-empty">暂无城市照片。点击设置，再点＋即可从本机导入。</div>
+              <div className="atlas-local-editor-empty">{t('editor:emptyPhotos')}</div>
             ) : null}
             <div
               ref={memoryGridRef}
@@ -579,7 +583,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                   data-editing={photoEditing}
                   data-dragging={draggedPhotoId === photo.id}
                   draggable={photoEditing}
-                  aria-label={`Open ${city.nameEn} photo ${index + 1}`}
+                  aria-label={t('details:openPhoto', { name: name(city), number: index + 1 })}
                   onDragStart={(event) => {
                     if (!photoEditing) return
                     setDraggedPhotoId(photo.id)
@@ -603,19 +607,19 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                 >
                   <img
                     src={getMediaSource(photo, 'thumb')}
-                    alt={`${city.nameEn} city photo ${index + 1}`}
+                    alt={t('details:photoAlt', { name: name(city), number: index + 1 })}
                     loading="lazy"
                     decoding="async"
                   />
                   {photoEditing ? (
                     <span className="atlas-local-media-tools" onClick={(event) => event.stopPropagation()}>
-                      <span className="atlas-local-editor-drag" aria-label="拖动照片排序"><GripVertical /></span>
+                      <span className="atlas-local-editor-drag" aria-label={t('editor:dragPhotos')}><GripVertical /></span>
                       <span
                         role="button"
                         tabIndex={0}
                         data-active={draftCoverPhotoId === photo.id}
-                        aria-label="设为城市封面"
-                        title="设为城市封面"
+                        aria-label={t('editor:cityCover')}
+                        title={t('editor:cityCover')}
                         onClick={() => setDraftCoverPhotoId(photo.id)}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') setDraftCoverPhotoId(photo.id)
@@ -624,8 +628,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       <span
                         role="button"
                         tabIndex={0}
-                        aria-label="隐藏照片"
-                        title="隐藏（不删除原图）"
+                        aria-label={t('editor:hidePhoto')}
+                        title={t('editor:hideOriginal')}
                         onClick={() => {
                           setDraftPhotoIds((current) => current.filter((id) => id !== photo.id))
                           setDraftHiddenPhotoIds((current) => [...new Set([...current, photo.id])])
@@ -640,7 +644,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       ><X /></span>
                     </span>
                   ) : null}
-                  {draftCoverPhotoId === photo.id ? <span className="atlas-local-cover-badge">封面</span> : null}
+                  {draftCoverPhotoId === photo.id ? <span className="atlas-local-cover-badge">{t('editor:cover')}</span> : null}
                 </button>
               )}) : displayedMemoryCities.map((memoryCity, index) => {
                 if (!memoryCity) return null
@@ -686,7 +690,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     {memoryCoverPhoto ? (
                       <img
                         src={getMediaSource(memoryCoverPhoto, 'thumb')}
-                        alt={`${memoryCity.nameEn} travel memory`}
+                        alt={t('details:memoryAlt', { name: name(memoryCity) })}
                         className={`w-full object-cover ${usesMemoryGridPreview ? 'h-[52px]' : 'h-24'}`}
                         loading="lazy"
                         decoding="async"
@@ -700,7 +704,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     <div className="p-3">
                       {isCountryGrid ? (
                         <div className="memory-city-card-heading">
-                          <h4 className="memory-city-card-title text-sm font-semibold text-white">{memoryCity.nameZh}</h4>
+                          <h4 className="memory-city-card-title text-sm font-semibold text-white">{name(memoryCity)}</h4>
                           <p className="memory-city-card-index text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
                             {String(index + 1).padStart(2, '0')}
                           </p>
@@ -710,24 +714,24 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                           <p className="memory-city-card-index text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
                             {String(index + 1).padStart(2, '0')}
                           </p>
-                          <h4 className="memory-city-card-title mt-1 text-sm font-semibold text-white">{memoryCity.nameZh}</h4>
+                          <h4 className="memory-city-card-title mt-1 text-sm font-semibold text-white">{name(memoryCity)}</h4>
                         </>
                       )}
-                      <p className="memory-city-card-subtitle text-xs text-slate-300">{memoryCity.nameEn}</p>
+                      <p className="memory-city-card-subtitle text-xs text-slate-300">{subtitle(memoryCity)}</p>
                       <p className="memory-city-card-date mt-2 text-xs leading-5 text-slate-300">
-                        {memoryCity.visitedDateRange ?? 'Travel memory'}
+                        {memoryCity.visitedDateRange ?? t('details:travelMemory')}
                       </p>
                     </div>
                     {cityEditing ? (
                       <span className="atlas-local-media-tools atlas-local-city-tools" onClick={(event) => event.stopPropagation()}>
-                        <span className="atlas-local-editor-drag" aria-label="拖动城市排序"><GripVertical /></span>
+                        <span className="atlas-local-editor-drag" aria-label={t('editor:dragCities')}><GripVertical /></span>
                         <span
                           role="button"
                           tabIndex={0}
-                          aria-label={`隐藏${memoryCity.nameZh}`}
-                          title="隐藏（不删除旅行记录）"
+                          aria-label={t('editor:hideFor', { name: name(memoryCity) })}
+                          title={t('editor:hideRecords')}
                           onClick={() => {
-                            if (!window.confirm(`从本地展示中隐藏“${memoryCity.nameZh}”？原始旅行记录不会删除。`)) return
+                            if (!window.confirm(t('editor:hideConfirm', { name: name(memoryCity) }))) return
                             setDraftCityIds((current) => current.filter((id) => id !== memoryCity.id))
                             setDraftHiddenCityIds((current) => [...new Set([...current, memoryCity.id])])
                           }}
@@ -743,7 +747,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
 
         <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-slate-500">
           <Compass className="size-4" />
-          Focus: {isOverview ? 'World overview' : isCityMode ? city.nameEn : country.nameEn}
+          {t('details:focus', { name: isOverview ? t('details:worldOverview') : isCityMode ? name(city) : name(country) })}
         </div>
       </div>
     </aside>

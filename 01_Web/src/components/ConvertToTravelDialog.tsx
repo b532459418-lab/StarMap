@@ -1,3 +1,11 @@
+import { worldGraphSnapshot } from '../data/worldGraph'
+import { WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
+import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
+import { usePlaceNames } from '../i18n/usePlaceNames'
+import { useUiLocale } from '../i18n/useUiLocale'
+import { regionName } from '../i18n/placeNames'
+import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { useTranslation } from 'react-i18next'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { X } from 'lucide-react'
@@ -22,23 +30,6 @@ type ConvertToTravelDialogProps = {
   onConverted: (result: LocalConvertToTravelResult) => void
 }
 
-let regionNames: Intl.DisplayNames | undefined | null
-
-/** 两位国家代码 → 中文国家名；环境不支持或代码不认识时回落为代码本身（与 WantToGoCard 同一规则）。 */
-const regionNameZh = (countryCode: string) => {
-  if (regionNames === undefined) {
-    try {
-      regionNames = new Intl.DisplayNames(['zh-CN'], { type: 'region' })
-    } catch {
-      regionNames = null
-    }
-  }
-  try {
-    return regionNames?.of(countryCode) ?? countryCode
-  } catch {
-    return countryCode
-  }
-}
 
 /**
  * 「标记为去过」对话框（PRD S5 / R13，PR9 规格 §3.5）。只在私人模式下由 App 挂载一份。
@@ -67,6 +58,9 @@ function ConvertToTravelDialogContent({
   onClose,
   onConverted,
 }: ConvertToTravelDialogProps & { target: ConvertToTravelTarget }) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { locale } = useUiLocale()
+  const { name, subtitle } = usePlaceNames()
   const titleId = useId()
   const summaryId = useId()
   const formRef = useRef<HTMLFormElement>(null)
@@ -75,7 +69,7 @@ function ConvertToTravelDialogContent({
   const [tripTitle, setTripTitle] = useState('')
   const [keepWantToGo, setKeepWantToGo] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useLocalizedNotice()
   const [needsReload, setNeedsReload] = useState(false)
 
   const item = target.source === 'want-to-go' ? wantToGoItemById.get(target.recordId) : undefined
@@ -105,14 +99,20 @@ function ConvertToTravelDialogContent({
     ? item.place.countryCode
     : planned?.country_code || travelAtlasCountryCodes[planned?.country_en ?? ''] || ''
   const countryName = countryCode
-    ? regionNameZh(countryCode.toUpperCase())
-    : planned?.country || planned?.country_en || ''
-  const placeLabel = [nameZh, nameEn && nameEn !== nameZh ? nameEn : '', countryName].filter(Boolean).join(' · ')
+    ? regionName(countryCode, locale)
+    : name({ nameZh: planned?.country, nameEn: planned?.country_en })
+  const entityId = worldGraphSnapshot.memberships.find((member) => {
+    if (member.layerId !== WANT_TO_GO_LAYER_ID || member.recordId !== target.recordId) return false
+    return (member.metadata?.source === PLANNED_SOURCE) === (target.source === 'planned')
+  })?.entityId
+  const place = { id: entityId, nameZh, nameEn }
+  const displayName = name(place)
+  const placeLabel = [displayName, subtitle(place), countryName].filter(Boolean).join(' · ')
   const summary = item
     ? keepWantToGo
-      ? '会在足迹中新增这座城市，想去条目会保留。'
-      : '会在足迹中新增这座城市，并从想去列表移除。'
-    : '这条旅行计划会改为已去过，日期以你填写的为准。'
+      ? t('editor:convertKeep')
+      : t('editor:convertRemove')
+    : t('editor:convertPlanned')
   const fieldsDisabled = busy || needsReload
   const canSubmit = !fieldsDisabled && Boolean(startDate)
 
@@ -120,7 +120,7 @@ function ConvertToTravelDialogContent({
     event.preventDefault()
     if (!canSubmit) return
     if (endDate && endDate < startDate) {
-      setNotice('结束日期不能早于到访日期。')
+      setNotice({ key: 'editor:invalidDates' })
       return
     }
 
@@ -141,15 +141,15 @@ function ConvertToTravelDialogContent({
     }
 
     setBusy(true)
-    setNotice('正在保存…')
+    setNotice({ key: 'editor:saving' })
     try {
       const result = await convertLocalWantToGoToTravel(input)
       onConverted(result)
       reloadAfterLocalSave()
     } catch (error) {
       // 例如城市已在足迹里时服务端返回「这个城市已经在足迹里了……」，不写任何文件（规格 §2 第 3 条）。
-      const message = error instanceof Error ? error.message : '标记为去过失败。'
-      setNotice(message)
+      const message = error instanceof Error ? error.message : t('editor:convertFailed')
+      setNotice(error instanceof Error ? message : { key: 'editor:convertFailed' })
       // 足迹已写入、后续步骤失败（规格 §2 第 1 条）：只能刷新，不能在过期数据上重试。
       setNeedsReload(message.startsWith('足迹已创建，但'))
       setBusy(false)
@@ -172,14 +172,14 @@ function ConvertToTravelDialogContent({
       >
         <header className="atlas-wtg-dialog-header">
           <div className="min-w-0">
-            <p>{item ? '想去 · Want to Go' : '旅行计划 · Planned'}</p>
-            <h2 id={titleId}>标记为去过</h2>
+            <p>{item ? t('editor:wantToGo') : t('editor:planned')}</p>
+            <h2 id={titleId}>{t('editor:visited')}</h2>
             <p className="atlas-convert-place">{placeLabel}</p>
           </div>
           <button
             type="button"
             className="atlas-wtg-dialog-close"
-            aria-label="关闭标记为去过"
+            aria-label={t('editor:closeConvert')}
             disabled={busy}
             onClick={onClose}
           >
@@ -192,7 +192,7 @@ function ConvertToTravelDialogContent({
 
           <div className="atlas-local-editor-form-grid">
             <label className="atlas-local-editor-date-field">
-              <span>到访日期</span>
+              <span>{t('editor:visitDate')}</span>
               <input
                 required
                 type="date"
@@ -205,7 +205,7 @@ function ConvertToTravelDialogContent({
               />
             </label>
             <label className="atlas-local-editor-date-field">
-              <span>结束日期（可选）</span>
+              <span>{t('editor:endDate')}</span>
               <input
                 type="date"
                 disabled={fieldsDisabled}
@@ -222,11 +222,11 @@ function ConvertToTravelDialogContent({
           {item ? (
             <>
               <label className="atlas-local-editor-date-field">
-                <span>行程标题（可选）</span>
+                <span>{t('editor:tripTitle')}</span>
                 <input
                   disabled={fieldsDisabled}
                   value={tripTitle}
-                  placeholder={[countryName, nameZh].filter(Boolean).join(' · ')}
+                  placeholder={[countryName, displayName].filter(Boolean).join(' · ')}
                   onChange={(event) => setTripTitle(event.target.value)}
                 />
               </label>
@@ -237,7 +237,7 @@ function ConvertToTravelDialogContent({
                   checked={keepWantToGo}
                   onChange={(event) => setKeepWantToGo(event.target.checked)}
                 />
-                <span>保留在想去列表（还想再去）</span>
+                <span>{t('editor:keepWantToGo')}</span>
               </label>
             </>
           ) : null}
@@ -247,9 +247,9 @@ function ConvertToTravelDialogContent({
           {needsReload ? (
             // 被点击的提交按钮已经消失，焦点移到替代它的按钮上，键盘用户不会落到页面顶部。
             // 两个分支都是 <button>，不给不同的 key 时 React 会复用同一个元素，autoFocus 就不会生效。
-            <button key="reload" type="button" autoFocus onClick={() => reloadAfterLocalSave()}>刷新页面</button>
+            <button key="reload" type="button" autoFocus onClick={() => reloadAfterLocalSave()}>{t('editor:reload')}</button>
           ) : (
-            <button key="submit" type="submit" disabled={!canSubmit}>标记为去过</button>
+            <button key="submit" type="submit" disabled={!canSubmit}>{t('editor:visited')}</button>
           )}
         </form>
       </section>

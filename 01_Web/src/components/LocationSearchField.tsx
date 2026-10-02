@@ -1,3 +1,7 @@
+import { useUiLocale } from '../i18n/useUiLocale'
+import { EN_UI_LOCALE } from '../data/uiLocale'
+import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { useTranslation } from 'react-i18next'
 import { LoaderCircle, MapPin, Search } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
@@ -28,12 +32,19 @@ export function LocationSearchField<T extends SearchOption>({
   getMeta,
   searchOnSubmit = false,
 }: LocationSearchFieldProps<T>) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { locale } = useUiLocale()
+  const optionName = (option: SearchOption) => locale === EN_UI_LOCALE ? option.nameEn || option.nameZh : option.nameZh || option.nameEn
+  const otherName = (option: SearchOption) => {
+    const other = locale === EN_UI_LOCALE ? option.nameZh : option.nameEn
+    return other !== optionName(option) ? other : ''
+  }
   const listboxId = useId()
   const [query, setQuery] = useState(selected?.nameZh ?? '')
   const [results, setResults] = useState<T[]>([])
   const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useLocalizedNotice()
   const [activeIndex, setActiveIndex] = useState(0)
   const requestVersionRef = useRef(0)
   const activeControllerRef = useRef<AbortController | undefined>(undefined)
@@ -48,24 +59,24 @@ export function LocationSearchField<T extends SearchOption>({
         if (requestVersionRef.current !== requestVersion) return
         setResults(nextResults)
         setActiveIndex(0)
-        setNotice(nextResults.length === 0 ? '没有找到匹配地点，请换一个名称或代码。' : '')
+        setNotice(nextResults.length === 0 ? { key: 'editor:searchNoResults' } : '')
         setIsOpen(true)
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted || requestVersionRef.current !== requestVersion) return
         setResults([])
-        setNotice(error instanceof Error ? error.message : '地点检索暂时不可用。')
+        setNotice(error instanceof Error ? error.message : { key: 'editor:searchUnavailable' })
         setIsOpen(true)
       })
       .finally(() => {
         if (requestVersionRef.current === requestVersion) setIsLoading(false)
       })
-  }, [search])
+  }, [search, setNotice])
 
   const submitSearch = () => {
     const normalizedQuery = query.trim()
     if (normalizedQuery.length < minQueryLength) {
-      setNotice(`请至少输入 ${minQueryLength} 个字符。`)
+      setNotice({ key: 'editor:minimumQuery', values: { count: minQueryLength } })
       setIsOpen(true)
       return
     }
@@ -77,7 +88,7 @@ export function LocationSearchField<T extends SearchOption>({
 
   useEffect(() => {
     if (searchOnSubmit) return
-    if (selected && query === selected.nameZh) return
+    if (selected) return
     const normalizedQuery = query.trim()
     if (normalizedQuery.length < minQueryLength) return
 
@@ -95,7 +106,7 @@ export function LocationSearchField<T extends SearchOption>({
   }, [minQueryLength, query, runSearch, searchOnSubmit, selected])
 
   const choose = (option: T) => {
-    setQuery(option.nameZh)
+    setQuery(optionName(option))
     setResults([])
     setNotice('')
     setIsOpen(false)
@@ -110,7 +121,7 @@ export function LocationSearchField<T extends SearchOption>({
         <input
           id={`${listboxId}-input`}
           type="search"
-          value={query}
+          value={selected ? optionName(selected) : query}
           placeholder={placeholder}
           autoComplete="off"
           role="combobox"
@@ -153,19 +164,18 @@ export function LocationSearchField<T extends SearchOption>({
             if (event.key === 'Escape') setIsOpen(false)
           }}
         />
-        {isLoading ? <LoaderCircle className="atlas-location-search-spinner" aria-label="正在检索" /> : null}
+        {isLoading ? <LoaderCircle className="atlas-location-search-spinner" aria-label={t('editor:searching')} /> : null}
         {searchOnSubmit ? (
           <button type="button" className="atlas-location-search-submit" onMouseDown={(event) => event.preventDefault()} onClick={submitSearch}>
-            检索
-          </button>
+            {t('editor:search')}</button>
         ) : null}
       </div>
 
       {selected ? (
         <div className="atlas-location-search-selected">
           <MapPin aria-hidden="true" />
-          <span>{selected.nameZh}</span>
-          <span>{selected.nameEn}</span>
+          <span>{optionName(selected)}</span>
+          <span>{otherName(selected)}</span>
           {getMeta ? <span>{getMeta(selected)}</span> : null}
         </div>
       ) : null}
@@ -185,8 +195,8 @@ export function LocationSearchField<T extends SearchOption>({
               onMouseEnter={() => setActiveIndex(index)}
             >
               <span className="atlas-location-search-result-main">
-                <strong>{option.nameZh}</strong>
-                <span>{option.nameEn}</span>
+                <strong>{optionName(option)}</strong>
+                <span>{otherName(option)}</span>
               </span>
               {getMeta ? <span className="atlas-location-search-result-meta">{getMeta(option)}</span> : null}
             </button>
