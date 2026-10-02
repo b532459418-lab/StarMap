@@ -24,7 +24,7 @@ test('Bundled translations resolve immediately and apply English singular/plural
 
 test('Both languages cover every translation key and preserve interpolation arguments', () => {
   const normalize = (key: string) => key.replace(/_(one|other)$/, '')
-  for (const namespace of ['common', 'collection'] as const) {
+  for (const namespace of ['common', 'collection', 'editor', 'details', 'journey'] as const) {
     const zh = resources[DEFAULT_UI_LOCALE][namespace]
     const en = resources[EN_UI_LOCALE][namespace]
     const baseKeys = (dictionary: object) => [...new Set(Object.keys(dictionary).map(normalize))].sort()
@@ -35,4 +35,23 @@ test('Both languages cover every translation key and preserve interpolation argu
       assert.deepEqual(args(value), args(peer!), `${namespace}:${key}`)
     }
   }
+})
+
+
+test('Editor counts, confirmations and notices resolve in both languages without changing user values', async () => {
+  const i18n = createInstance()
+  await i18n.init({ resources, lng: EN_UI_LOCALE, fallbackLng: EN_UI_LOCALE, initAsync: false })
+  assert.equal(i18n.t('details:cityCount', { count: 1 }), '1 city')
+  assert.equal(i18n.t('details:cityCount', { count: 2 }), '2 cities')
+  assert.match(i18n.t('editor:deletePhotosConfirm', { count: 1 }), /1 hidden photo from/)
+  assert.match(i18n.t('editor:deletePhotosConfirm', { count: 2 }), /2 hidden photos from/)
+  for (const key of ['restoreCountries', 'restoreCities', 'restorePhotos']) {
+    assert.ok(!i18n.t(`editor:${key}`, { count: 1 }).includes(key))
+  }
+  const notice = { key: 'editor:minimumQuery', values: { count: 2 } }
+  assert.equal(i18n.t(notice.key, notice.values), 'Enter at least 2 characters.')
+  assert.equal(i18n.t('editor:hideConfirm', { name: '京都・Kyoto' }), 'Hide “京都・Kyoto” from this view? Your travel records will be kept.')
+  await i18n.changeLanguage(DEFAULT_UI_LOCALE)
+  assert.equal(i18n.t(notice.key, notice.values), '请至少输入 2 个字符。')
+  assert.equal(i18n.t('details:cityCount', { count: 1 }), '1 个城市')
 })

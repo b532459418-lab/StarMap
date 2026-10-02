@@ -1,3 +1,5 @@
+import { usePlaceNames } from '../i18n/usePlaceNames'
+import { useTranslation } from 'react-i18next'
 import { CalendarDays, MapPin } from 'lucide-react'
 import { cityById, countryById, journeyDays, shouldHideCityFromNavigation } from '../data/travelAtlas'
 import type { City, Country, CountryId, JourneyDay } from '../types/travel'
@@ -70,6 +72,8 @@ const buildYearGroups = (): YearGroup[] => {
 const yearGroups = buildYearGroups()
 
 export function JourneyYearCards() {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { name, subtitle } = usePlaceNames()
   return (
     <section className="journey-view-section mx-auto w-full max-w-7xl px-5 pb-24 sm:px-8">
       <div className="space-y-[18px]">
@@ -81,8 +85,7 @@ export function JourneyYearCards() {
               </span>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-                  Travel year
-                </p>
+                  {t('journey:travelYear')}</p>
                 <h3 className="text-3xl font-semibold tracking-normal text-slate-950">
                   {yearGroup.year}
                 </h3>
@@ -115,10 +118,10 @@ export function JourneyYearCards() {
                         </span>
                         <div className="min-w-0">
                           <h4 className="truncate text-xl font-semibold tracking-normal text-slate-950">
-                            {country.nameZh}
+                            {name(country)}
                           </h4>
                           <p className="mt-0.5 truncate text-sm font-medium text-slate-500">
-                            {country.nameEn}
+                            {subtitle(country)}
                           </p>
                         </div>
                       </div>
@@ -139,8 +142,8 @@ export function JourneyYearCards() {
                         >
                           <MapPin className="mt-0.5 size-3.5 shrink-0 text-sky-500" />
                           <p>
-                            <span className="font-semibold">{city.nameZh}</span>{' '}
-                            <span className="text-slate-400">{city.nameEn}</span>
+                            <span className="font-semibold">{name(city)}</span>{' '}
+                            <span className="text-slate-400">{subtitle(city)}</span>
                           </p>
                         </div>
                       ))}

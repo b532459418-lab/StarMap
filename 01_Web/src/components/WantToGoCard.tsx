@@ -1,3 +1,8 @@
+import { usePlaceNames } from '../i18n/usePlaceNames'
+import { useUiLocale } from '../i18n/useUiLocale'
+import { regionName } from '../i18n/placeNames'
+import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { useTranslation } from 'react-i18next'
 import { useId, useState } from 'react'
 import { EyeOff, Footprints, Heart, X } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
@@ -22,23 +27,6 @@ type WantToGoCardProps = {
   onConvertToTravel?: (target: ConvertToTravelTarget) => void
 }
 
-let regionNames: Intl.DisplayNames | undefined | null
-
-/** 两位国家代码 → 中文国家名；环境不支持或代码不认识时回落为代码本身。 */
-const regionNameZh = (countryCode: string) => {
-  if (regionNames === undefined) {
-    try {
-      regionNames = new Intl.DisplayNames(['zh-CN'], { type: 'region' })
-    } catch {
-      regionNames = null
-    }
-  }
-  try {
-    return regionNames?.of(countryCode) ?? countryCode
-  } catch {
-    return countryCode
-  }
-}
 
 /**
  * 想去详情卡（PRD FR-WTG-4 / §9.4），放在右侧栏最上方，与 InfoCard 并存。
@@ -52,9 +40,12 @@ const regionNameZh = (countryCode: string) => {
  * 转换对话框收到的是卡片所显示那条记录的 id（想去条目的 id 或 planned 记录的 id），对话框按记录 id 查找。
  */
 export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoCardProps) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { locale } = useUiLocale()
+  const { name, subtitle } = usePlaceNames()
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useLocalizedNotice()
   const record = wantToGoCardRecordOf(worldGraphSnapshot.memberships, entityId)
   const item = record?.source === 'want-to-go' ? wantToGoItemById.get(record.recordId) : undefined
   const planned = record?.source === 'planned' ? plannedRecordById.get(record.recordId) : undefined
@@ -75,8 +66,11 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
 
   const nameZh = item ? item.place.nameZh : planned?.city || planned?.city_en || ''
   const nameEn = item ? item.place.nameEn : planned?.city_en || ''
-  const countryName = item ? regionNameZh(item.place.countryCode) : planned?.country || planned?.country_en || ''
-  const dateLabel = item ? `${item.addedAt} 加入` : planned?.start_date ?? ''
+  const place = { id: entityId, nameZh, nameEn }
+  const displayName = name(place)
+  const originalName = subtitle(place)
+  const countryName = item ? regionName(item.place.countryCode, locale) : name({ nameZh: planned?.country, nameEn: planned?.country_en })
+  const dateLabel = item ? t('details:added', { date: item.addedAt }) : planned?.start_date ?? ''
   const note = item ? item.note : planned?.notes || undefined
 
   const hideItem = () => {
@@ -86,30 +80,29 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
     void updateLocalWantToGo(item.id, { hidden: true })
       .then(reloadAfterLocalSave)
       .catch((error: unknown) => {
-        setNotice(error instanceof Error ? error.message : '隐藏失败。')
+        setNotice(error instanceof Error ? error.message : { key: 'details:hideFailed' })
         setBusy(false)
       })
   }
 
   return (
-    <aside className="atlas-wtg-card glass-panel pointer-events-auto" aria-label={`想去：${nameZh}`}>
+    <aside className="atlas-wtg-card glass-panel pointer-events-auto" aria-label={t('details:wantToGoFor', { name: displayName })}>
       <div className="atlas-wtg-card-header">
         <div className="atlas-panel-body min-w-0">
           <p className="atlas-card-eyebrow text-xs font-semibold uppercase tracking-[0.24em] text-white">
-            想去 · Want to Go
-          </p>
+            {t('details:wantToGo')}</p>
           <h2 className="atlas-card-title mt-2 text-2xl font-semibold tracking-normal text-slate-950">
-            {nameZh}
+            {displayName}
           </h2>
-          {nameEn && nameEn !== nameZh ? (
-            <p className="mt-1 text-sm font-medium text-slate-600">{nameEn}</p>
+          {originalName ? (
+            <p className="mt-1 text-sm font-medium text-slate-600">{originalName}</p>
           ) : null}
         </div>
         <button
           type="button"
           className="atlas-wtg-card-close"
-          aria-label="关闭想去详情"
-          title="关闭"
+          aria-label={t('details:closeWantToGo')}
+          title={t('details:close')}
           onClick={onClose}
         >
           <X aria-hidden="true" />
@@ -123,7 +116,7 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
 
       {note ? <p className="atlas-wtg-card-note">“{note}”</p> : null}
 
-      {planned ? <p className="atlas-wtg-card-readonly">来自旅行记录（只读）</p> : null}
+      {planned ? <p className="atlas-wtg-card-readonly">{t('details:readOnlyTravel')}</p> : null}
 
       {canWriteItem || convertSource ? (
         <div className="atlas-wtg-card-actions">
@@ -135,7 +128,7 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
               onClick={hideItem}
             >
               <EyeOff aria-hidden="true" />
-              <span>{busy ? '正在隐藏…' : '隐藏'}</span>
+              <span>{busy ? t('details:hiding') : t('details:hide')}</span>
             </button>
           ) : null}
           {convertSource && convertRecordId ? (
@@ -148,7 +141,7 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
               onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
               <Footprints aria-hidden="true" />
-              <span>标记为去过</span>
+              <span>{t('details:visited')}</span>
             </button>
           ) : null}
         </div>

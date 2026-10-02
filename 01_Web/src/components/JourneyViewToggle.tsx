@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { CalendarRange, Rows3 } from 'lucide-react'
 
 export type JourneyViewMode = 'timeline' | 'yearCards'
@@ -8,17 +9,18 @@ type JourneyViewToggleProps = {
   className?: string
 }
 
-const options: { id: JourneyViewMode; label: string; icon: typeof Rows3 }[] = [
-  { id: 'yearCards', label: 'Year Cards', icon: CalendarRange },
-  { id: 'timeline', label: 'Timeline', icon: Rows3 },
+const options: { id: JourneyViewMode; icon: typeof Rows3 }[] = [
+  { id: 'yearCards', icon: CalendarRange },
+  { id: 'timeline', icon: Rows3 },
 ]
 
 export function JourneyViewToggle({ value, onChange, className = '' }: JourneyViewToggleProps) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
   return (
     <div
       className={`journey-view-toggle inline-flex items-center gap-1 rounded-full border border-white/70 bg-white/50 p-1 text-sm font-medium text-slate-500 shadow-sm backdrop-blur-xl ${className}`}
       role="group"
-      aria-label="Journey view"
+      aria-label={t('journey:view')}
     >
       {options.map((option) => {
         const Icon = option.icon
@@ -37,7 +39,7 @@ export function JourneyViewToggle({ value, onChange, className = '' }: JourneyVi
             }`}
           >
             <Icon className="size-3.5" />
-            {option.label}
+            {t(`journey:${option.id}`)}
           </button>
         )
       })}

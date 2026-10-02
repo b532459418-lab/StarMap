@@ -1,3 +1,5 @@
+import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { useTranslation } from 'react-i18next'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Search, X } from 'lucide-react'
@@ -27,6 +29,7 @@ export function WantToGoAddDialog({ open, onClose }: WantToGoAddDialogProps) {
 }
 
 function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
   const titleId = useId()
   const disabledCityInputId = useId()
   const formRef = useRef<HTMLFormElement>(null)
@@ -37,14 +40,14 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
   const [manualCity, setManualCity] = useState(emptyManualCity)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useLocalizedNotice()
   const countryCode = countryOption?.countryCode
 
   // 与 InfoCard 的城市检索同一个端点；国家代码来自上面选中的国家。
   const searchCityOptions = useCallback((query: string, signal: AbortSignal) => {
-    if (!countryCode) return Promise.reject(new Error('请先选择国家。'))
+    if (!countryCode) return Promise.reject(new Error(t('editor:selectCountryFirst')))
     return searchLocalCities(query, countryCode, signal)
-  }, [countryCode])
+  }, [countryCode, t])
 
   // 打开时焦点进入第一个输入框（国家检索）。
   useEffect(() => {
@@ -114,7 +117,7 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
         || city.lng < -180
         || city.lng > 180
       ) {
-        setNotice('请填写城市名称及有效经纬度。')
+        setNotice({ key: 'editor:invalidCity' })
         return
       }
       place = {
@@ -128,13 +131,13 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
     }
 
     setBusy(true)
-    setNotice('正在添加…')
+    setNotice({ key: 'editor:adding' })
     try {
       await addLocalWantToGo({ place, note: note.trim() || undefined })
       reloadAfterLocalSave()
     } catch (error) {
       // 例如重复添加时服务端返回「这个地方已在想去列表中。」（FR-WTG-8）。
-      setNotice(error instanceof Error ? error.message : '添加失败。')
+      setNotice(error instanceof Error ? error.message : { key: 'editor:addFailed' })
       setBusy(false)
     }
   }
@@ -149,13 +152,13 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
       <section className="atlas-wtg-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className="atlas-wtg-dialog-header">
           <div>
-            <p>想去 · Want to Go</p>
-            <h2 id={titleId}>添加想去的地方</h2>
+            <p>{t('editor:wantToGo')}</p>
+            <h2 id={titleId}>{t('editor:addWantToGo')}</h2>
           </div>
           <button
             type="button"
             className="atlas-wtg-dialog-close"
-            aria-label="关闭添加想去的地方"
+            aria-label={t('editor:closeAdd')}
             disabled={busy}
             onClick={onClose}
           >
@@ -164,8 +167,8 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
         </header>
 
         <form ref={formRef} className="atlas-local-editor-form atlas-wtg-dialog-form" onSubmit={submit}>
-          <div className="atlas-wtg-kind" role="radiogroup" aria-label="类型">
-            {([['city', '城市'], ['country', '整个国家']] as const).map(([value, label]) => (
+          <div className="atlas-wtg-kind" role="radiogroup" aria-label={t('editor:kind')}>
+            {([['city', t('editor:city')], ['country', t('editor:wholeCountry')]] as const).map(([value, label]) => (
               <button
                 key={value}
                 type="button"
@@ -184,8 +187,8 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
           </div>
 
           <LocationSearchField
-            label="国家"
-            placeholder="输入中文、English、CN…"
+            label={t('editor:country')}
+            placeholder={t('editor:countrySearch')}
             selected={countryOption}
             search={searchLocalCountries}
             onSelect={selectCountry}
@@ -196,19 +199,19 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
           {kind === 'city' && isManualCityEntry ? (
             <div className="atlas-local-editor-form-grid">
               <label className="atlas-local-editor-date-field">
-                <span>城市中文名</span>
+                <span>{t('editor:cityNameZh')}</span>
                 <input required disabled={cityFieldsDisabled} value={manualCity.nameZh} onChange={(event) => setManualCity((value) => ({ ...value, nameZh: event.target.value }))} />
               </label>
               <label className="atlas-local-editor-date-field">
-                <span>英文名（可选）</span>
+                <span>{t('editor:englishName')}</span>
                 <input disabled={cityFieldsDisabled} value={manualCity.nameEn} onChange={(event) => setManualCity((value) => ({ ...value, nameEn: event.target.value }))} />
               </label>
               <label className="atlas-local-editor-date-field">
-                <span>纬度（-90～90）</span>
+                <span>{t('editor:latitudeRange')}</span>
                 <input required disabled={cityFieldsDisabled} type="number" min="-90" max="90" step="any" value={manualCity.lat} onChange={(event) => setManualCity((value) => ({ ...value, lat: event.target.value }))} />
               </label>
               <label className="atlas-local-editor-date-field">
-                <span>经度（-180～180）</span>
+                <span>{t('editor:longitudeRange')}</span>
                 <input required disabled={cityFieldsDisabled} type="number" min="-180" max="180" step="any" value={manualCity.lng} onChange={(event) => setManualCity((value) => ({ ...value, lng: event.target.value }))} />
               </label>
             </div>
@@ -218,8 +221,8 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
             <LocationSearchField
               // 换国家时重置检索框里的文字与候选。
               key={countryOption.countryCode}
-              label="城市"
-              placeholder="输入中文或 English，至少 2 个字…"
+              label={t('editor:city')}
+              placeholder={t('editor:citySearch')}
               selected={cityOption}
               search={searchCityOptions}
               onSelect={setCityOption}
@@ -232,16 +235,16 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
           {kind === 'city' && !isManualCityEntry && !countryOption ? (
             // 未选国家时城市检索不可用：外观与 LocationSearchField 相同，但输入框禁用。
             <div className="atlas-location-search">
-              <label htmlFor={disabledCityInputId}>城市</label>
+              <label htmlFor={disabledCityInputId}>{t('editor:city')}</label>
               <div className="atlas-location-search-input-wrap">
                 <Search aria-hidden="true" />
-                <input id={disabledCityInputId} type="search" disabled placeholder="请先选择国家" />
+                <input id={disabledCityInputId} type="search" disabled placeholder={t('editor:chooseCountryPlaceholder')} />
               </div>
             </div>
           ) : null}
 
           {kind === 'city' && !countryOption ? (
-            <p className="atlas-wtg-hint">请先选择国家，再检索或填写城市。</p>
+            <p className="atlas-wtg-hint">{t('editor:chooseCountryHint')}</p>
           ) : null}
 
           {kind === 'city' ? (
@@ -256,24 +259,24 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
                 setNotice('')
               }}
             >
-              {isManualCityEntry ? '返回在线检索' : '搜索不到？手动填写坐标'}
+              {isManualCityEntry ? t('editor:onlineSearch') : t('editor:manualSearch')}
             </button>
           ) : null}
 
           {kind === 'city' && !isManualCityEntry ? (
             <p className="atlas-local-editor-attribution">
-              城市检索需要联网：优先使用 Cesium ion geocode；无权限、无结果或超时后回退{' '}
-              <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>。
+              {t('editor:searchAttribution')}{' '}
+              <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>{t('editor:attributionEnd')}
             </p>
           ) : null}
 
           <label className="atlas-local-editor-date-field atlas-wtg-note">
-            <span>备注（可选）</span>
+            <span>{t('editor:note')}</span>
             <textarea
               value={note}
               maxLength={noteMaxLength}
               rows={3}
-              placeholder="为什么想去？"
+              placeholder={t('editor:notePlaceholder')}
               onChange={(event) => setNote(event.target.value)}
             />
             <small>{note.length}/{noteMaxLength}</small>
@@ -281,7 +284,7 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
 
           {notice ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{notice}</p> : null}
 
-          <button type="submit" disabled={!canSubmit}>确认添加</button>
+          <button type="submit" disabled={!canSubmit}>{t('editor:confirmAdd')}</button>
         </form>
       </section>
     </div>

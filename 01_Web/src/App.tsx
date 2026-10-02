@@ -83,7 +83,7 @@ const cameraScaleForDistance = (distance: number): CameraScale => {
 }
 
 function App() {
-  const { locale } = useUiLocale()
+  const { locale, t } = useUiLocale()
   const restoredViewState = useMemo(() => readAtlasViewState(), [])
   const restoredCityId = restoredViewState.selectedCityId && cityById[restoredViewState.selectedCityId]
     ? restoredViewState.selectedCityId
@@ -339,12 +339,12 @@ function App() {
 
   const atlasStats = useMemo(
     () => [
-      { value: `${countries.length}`, label: 'Countries / 国家' },
-      { value: `${cities.length}`, label: 'Cities / 城市' },
-      { value: `${travelAtlasMeta.totalRecords}`, label: 'Records / 行程' },
-      { value: `${travelAtlasMeta.recordsWithCoordinates}`, label: 'Mapped / 坐标' },
+      { value: `${countries.length}`, label: t('journey:countries') },
+      { value: `${cities.length}`, label: t('journey:cities') },
+      { value: `${travelAtlasMeta.totalRecords}`, label: t('journey:records') },
+      { value: `${travelAtlasMeta.recordsWithCoordinates}`, label: t('journey:mapped') },
     ],
-    [],
+    [t],
   )
 
   const resetOverview = () => {
@@ -734,10 +734,10 @@ function App() {
               <div className="atlas-journey-shell mx-auto w-full max-w-7xl px-5 pb-20 sm:px-8">
                 <section className="journey-command-panel">
                   <div className="journey-command-copy">
-                    <p className="journey-kicker">Travel chronology</p>
-                    <h2>Places, in the order they became memories.</h2>
+                    <p className="journey-kicker">{t('journey:chronology')}</p>
+                    <h2>{t('journey:heading')}</h2>
                     <p>
-                      A living index of visited cities, arranged from the newest journey backwards.
+                      {t('journey:description')}
                     </p>
                   </div>
 
