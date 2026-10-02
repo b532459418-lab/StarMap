@@ -1,5 +1,5 @@
 import type { TravelAtlasEditorState } from './editorState'
-import type { WantToGoItem } from '../worldgraph/adapters/wantToGo.ts'
+import type { WantToGoItem } from './derive/wantToGo.ts'
 
 type EditorResponse<T> = {
   ok: boolean

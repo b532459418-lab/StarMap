@@ -18,6 +18,7 @@
  */
 
 import type { City, Country, JourneyDay, Route } from '../../types/travel.ts'
+import type { PlaceInput } from './places.ts'
 
 export const sampleCountries = (): Country[] => [
   {
@@ -217,6 +218,48 @@ export const sampleInput = () => ({
   journeyDays: sampleJourneyDays(),
   routes: sampleRoutes(),
 })
+
+const finiteLocation = (lat: number | null | undefined, lng: number | null | undefined) =>
+  typeof lat === 'number' && Number.isFinite(lat) && typeof lng === 'number' && Number.isFinite(lng)
+    ? { lat, lng }
+    : undefined
+
+/**
+ * 足迹领域对象对应的注册表地点（RFC-LOC-1 Core 方案 C2：地点实体只由 ./places.ts 构造）。
+ * 规则与 App 从注册表映射地点相同：国家代码取国旗代码的大写（城市取所属国家的），城市 partOf 所属国家，
+ * 坐标照搬；title 的 zh 缺时用 en，en 缺时省略。
+ */
+export const placesOf = (countries: readonly Country[], cities: readonly City[]): PlaceInput[] => {
+  const codeOf = new Map(countries.map((country) => [country.id, country.flagCode?.toUpperCase()]))
+  const titleOf = (zh: string | undefined, en: string | undefined) => (en ? { zh: zh || en, en } : { zh: zh || '' })
+  const place = (input: PlaceInput): PlaceInput => {
+    const result: PlaceInput = { id: input.id, subtype: input.subtype, title: input.title }
+    if (input.countryCode) result.countryCode = input.countryCode
+    if (input.partOf !== undefined) result.partOf = input.partOf
+    if (input.location) result.location = input.location
+    return result
+  }
+  return [
+    ...countries.map((country) => place({
+      id: country.id,
+      subtype: 'country',
+      title: titleOf(country.nameZh, country.nameEn),
+      countryCode: codeOf.get(country.id),
+      location: finiteLocation(country.centerLat, country.centerLng),
+    })),
+    ...cities.map((city) => place({
+      id: city.id,
+      subtype: 'city',
+      title: titleOf(city.nameZh, city.nameEn),
+      countryCode: city.countryId === undefined ? undefined : codeOf.get(city.countryId),
+      partOf: city.countryId,
+      location: finiteLocation(city.lat, city.lng),
+    })),
+  ]
+}
+
+/** 样例的注册表地点：两个国家、五个城市。 */
+export const samplePlaces = (): PlaceInput[] => placesOf(sampleCountries(), sampleCities())
 
 /**
  * 生成上面这些已知输出时，旧 travelAtlas.ts 的城市名 / 国家名坐标表（原 src/data/geoCoordinates.ts）。

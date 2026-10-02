@@ -15,7 +15,7 @@
 import { queryCollection } from '../../worldgraph/collection.ts'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../../worldgraph/layers.ts'
 import { queryVisiblePlaces } from '../../worldgraph/query.ts'
-import type { WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
+import type { WantToGoItem } from './wantToGo.ts'
 import type { LayerId, WorldGraphSnapshot } from '../../worldgraph/types.ts'
 import type { City, CityId, Country, CountryId, TravelMapRecord } from '../../types/travel.ts'
 

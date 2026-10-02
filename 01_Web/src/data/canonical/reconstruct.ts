@@ -14,7 +14,7 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import type { WantToGoItem, WantToGoPlace } from '../../worldgraph/adapters/wantToGo.ts'
+import type { WantToGoItem, WantToGoPlace } from '../derive/wantToGo.ts'
 import type { LocalEditorCountry, TravelAtlasEditorState } from '../derive/editorState.ts'
 import type { ImportedMediaCatalogItem } from '../derive/mediaCatalog.ts'
 import type { TravelMapRecord } from '../../types/travel.ts'
@@ -54,6 +54,22 @@ export const countryPlaceOf = (places: PlaceIndex, place: CanonicalPlace | undef
   if (!place) return undefined
   if (place.subtype === 'country') return place
   return place.partOf === undefined ? undefined : places.get(place.partOf)
+}
+
+/** Core 实体标题的形状（`Entity.title`；Core-B 改为 LocalizedText）。 */
+export type PlaceTitle = { zh: string; en?: string }
+
+/**
+ * 地点在 Core 里的标题（RFC-LOC-1 Core-A：Core 的地点实体由注册表构造，标题取这里）。
+ * 规则与今天构造足迹国家 / 城市实体标题的规则相同：领域对象的名称由地点重建（中文名；英文名，缺时用中文名），
+ * 再经 Core 足迹适配器原来的 buildTitle（中文名缺时用英文名，英文名为空时不写 en）。
+ */
+export const placeTitle = (place: Pick<CanonicalPlace, 'names'>): PlaceTitle => {
+  const nameZh = place.names[ZH] ?? ''
+  const nameEn = (place.names[EN] ?? '') || nameZh
+  const title: PlaceTitle = { zh: nameZh || nameEn || '' }
+  if (nameEn) title.en = nameEn
+  return title
 }
 
 /** 记录上的国家字段：中文名、英文名（没有则为空字符串）、国家代码（ISO 的小写；没有 ISO 就不写）。 */
@@ -115,7 +131,7 @@ export const reconstructMediaItem = (item: CanonicalMediaItem, places: PlaceInde
 }
 
 /**
- * Canonical 想去条目 → Core 的 `WantToGoItem`（Core 想去适配器 `wantToGoToWorldGraph` 的输入形状）：
+ * Canonical 想去条目 → UI 读到的 `WantToGoItem`（`../derive/wantToGo.ts`；Core 想去适配器直接收 Canonical 条目）：
  * `kind` ← subtype，名称 ← names，`countryCode` ← 自身（国家）或 partOf（城市）的 ISO，`lat` / `lng` ← location。
  */
 export const reconstructWantToGoItem = (item: CanonicalWantToGoItem, places: PlaceIndex): WantToGoItem => {

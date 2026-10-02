@@ -326,8 +326,7 @@ function App() {
   // 被 FR-MR-5 并进足迹地点的想去条目仍算在图上。按 React 文档"渲染期间根据新数据调整 state"的写法，
   // 不用 effect，避免先画出一帧过期的卡片。
   const selectedWantToGoIsMapped = selectedWantToGoEntityId !== undefined && layerData.places.some(
-    (place) => place.entityId === selectedWantToGoEntityId
-      || (place.mergedEntityIds?.includes(selectedWantToGoEntityId) ?? false),
+    (place) => place.entityId === selectedWantToGoEntityId,
   )
   if (selectedWantToGoEntityId !== undefined && !selectedWantToGoIsMapped) {
     setSelectedWantToGoEntityId(undefined)

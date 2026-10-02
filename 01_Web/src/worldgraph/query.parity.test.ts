@@ -23,17 +23,28 @@ import assert from 'node:assert/strict'
 import type { City, CityId, Country, CountryId, JourneyDay, Route, TravelMapRecord } from '../types/travel.ts'
 import {
   JOURNEY_ID,
+  placesOf,
   sampleCities,
   sampleCountries,
   sampleInput,
   sampleJourneyDays,
   sampleRoutes,
 } from './adapters/travel.fixture.ts'
-import { travelToWorldGraph } from './adapters/travel.ts'
+import { placesToWorldGraph } from './adapters/places.ts'
+import { travelToWorldGraph, type TravelWorldGraphInput } from './adapters/travel.ts'
 import { queryVisiblePlaces } from './query.ts'
 import { emptyWorldGraphSnapshot, mergeWorldGraphSnapshots } from './snapshot.ts'
 
 const NOW = '2026-09-20T00:00:00.000Z'
+
+/**
+ * RFC-LOC-1 Core-A 起地点实体只由 places 适配器构造：足迹快照前面拼上同一批国家与城市的地点快照，
+ * 与 App 的合并顺序（places → travel）相同。
+ */
+const travelWithPlaces = (input: TravelWorldGraphInput) => mergeWorldGraphSnapshots(
+  placesToWorldGraph(placesOf(input.countries ?? [], input.cities ?? []), { now: NOW }),
+  travelToWorldGraph(input, { now: NOW }),
+)
 
 // ---------------------------------------------------------------------------
 // PR3 之前的 Globe 逻辑（逐字复制，只把闭包变量改成参数）
@@ -204,7 +215,7 @@ const queryRouteShape = (routes: ReturnType<typeof queryVisiblePlaces>['routes']
   }))
 
 const querySnapshot = (input: ReturnType<typeof sampleInput>) =>
-  queryVisiblePlaces(travelToWorldGraph(input, { now: NOW }), ['travel'])
+  queryVisiblePlaces(travelWithPlaces(input), ['travel'])
 
 // ---------------------------------------------------------------------------
 // 1. 样例数据：城市 / 访问计数 / 路线 / 主色 四项全等
@@ -300,7 +311,7 @@ test('对等：没有 Route 时，两边都靠"两端共享的 journeyId"补出�
   const legacy = legacyRouteShape(legacyMappedRoutes(countries, cities, []))
   const actual = queryRouteShape(
     queryVisiblePlaces(
-      travelToWorldGraph({ countries, cities, journeyDays, routes: [] }, { now: NOW }),
+      travelWithPlaces({ countries, cities, journeyDays, routes: [] }),
       ['travel'],
     ).routes,
   )
@@ -327,7 +338,7 @@ test('对等：两端没有共享 journeyId 时，两边都丢弃该段', () => 
   const legacy = legacyRouteShape(legacyMappedRoutes(countries, cities, []))
   const actual = queryRouteShape(
     queryVisiblePlaces(
-      travelToWorldGraph({ countries, cities, journeyDays, routes: [] }, { now: NOW }),
+      travelWithPlaces({ countries, cities, journeyDays, routes: [] }),
       ['travel'],
     ).routes,
   )
@@ -341,7 +352,7 @@ test('对等：两端没有共享 journeyId 时，两边都丢弃该段', () => 
 // ---------------------------------------------------------------------------
 
 test('travel 关掉时 places 与 routes 都为空，等价于 PR2 的 showTravelLayer = false', () => {
-  const snapshot = travelToWorldGraph(sampleInput(), { now: NOW })
+  const snapshot = travelWithPlaces(sampleInput())
   const hidden = queryVisiblePlaces(snapshot, [])
   assert.deepEqual(hidden.places, [])
   assert.deepEqual(hidden.routes, [])
@@ -359,7 +370,7 @@ test('travel 关掉时 places 与 routes 都为空，等价于 PR2 的 showTrave
 // ---------------------------------------------------------------------------
 
 test('对等：travel 快照与两份空快照合并后，查询结果与只用 travel 快照完全相同', () => {
-  const travelSnapshot = travelToWorldGraph(sampleInput(), { now: NOW })
+  const travelSnapshot = travelWithPlaces(sampleInput())
   const merged = mergeWorldGraphSnapshots(travelSnapshot, emptyWorldGraphSnapshot(), emptyWorldGraphSnapshot())
 
   for (const visible of [['travel'], ['travel', 'want_to_go'], ['want_to_go'], []] as const) {

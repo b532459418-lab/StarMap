@@ -22,7 +22,7 @@
  */
 
 import { appData } from './appData'
-import type { WantToGoItem } from '../worldgraph/adapters/wantToGo.ts'
+import type { WantToGoItem } from './derive/wantToGo.ts'
 
 const derived = appData.wantToGo
 

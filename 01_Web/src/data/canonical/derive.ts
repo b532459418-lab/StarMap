@@ -20,8 +20,8 @@
  * 不 import JSON、虚拟模块或 import.meta。
  */
 
-import { plannedEntityId } from '../../worldgraph/adapters/plannedRecords.ts'
-import { wantToGoEntityId, type WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
+import type { PlaceInput } from '../../worldgraph/adapters/places.ts'
+import type { PlannedRecordInput } from '../../worldgraph/adapters/plannedRecords.ts'
 import type { EntityId } from '../../worldgraph/types.ts'
 import { deriveDroneMedia, type DroneMediaDerived } from '../derive/droneMedia.ts'
 import { orderBySavedIds, type TravelAtlasEditorState } from '../derive/editorState.ts'
@@ -33,7 +33,12 @@ import {
   formatDateRange,
   unique,
 } from '../derive/travelAtlas.ts'
-import { plannedConvertBlockReason, type WantToGoDataSource, type WantToGoTravelInput } from '../derive/wantToGo.ts'
+import {
+  plannedConvertBlockReason,
+  type WantToGoDataSource,
+  type WantToGoItem,
+  type WantToGoTravelInput,
+} from '../derive/wantToGo.ts'
 import { deriveWorldGraph, type WorldGraphDerived } from '../derive/worldGraph.ts'
 import type { City, CityId, Country, CountryId, JourneyDay, Route, TravelMapRecord } from '../../types/travel.ts'
 import { classifyByPlace, displaySets, hiddenFromHomeFor } from './classify.ts'
@@ -41,6 +46,7 @@ import {
   countryPlaceOf,
   indexPlaces,
   isoOf,
+  placeTitle,
   rebuildCountryCodes,
   reconstructEditorState,
   reconstructMediaItem,
@@ -48,7 +54,7 @@ import {
   reconstructWantToGoItem,
   type PlaceIndex,
 } from './reconstruct.ts'
-import type { CanonicalData, CanonicalWantToGo, PlaceId } from './types.ts'
+import type { CanonicalData, CanonicalPlace, CanonicalTravelRecord, CanonicalWantToGo, PlaceId } from './types.ts'
 
 export interface CanonicalDeriveOptions {
   /** 快照的 createdAt / updatedAt（App 里是 worldGraphSessionNow）。 */
@@ -337,7 +343,12 @@ const deriveTravelAtlasFromCanonical = (
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
-const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceIndex, travel: WantToGoTravelInput) => {
+const deriveWantToGoFromCanonical = (
+  wantToGo: CanonicalWantToGo,
+  places: PlaceIndex,
+  travel: WantToGoTravelInput,
+  canonicalPlannedRecords: readonly CanonicalTravelRecord[],
+) => {
   const { cities, plannedRecords } = travel
 
   const wantToGoItems: WantToGoItem[] = wantToGo.items.map((item) => reconstructWantToGoItem(item, places))
@@ -348,17 +359,17 @@ const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceI
     .filter((item) => item.hidden)
     .sort((left, right) => right.addedAt.localeCompare(left.addedAt))
 
+  // 过渡（RFC-LOC-1 Core-A A2 的第一个提交）：实体 id 已是地点 id，这两张表暂按地点 id 建（同一地点第一条胜出），
+  // 下一个提交（想去卡片改为按记录取）删除它们。重建的条目与 Canonical 条目一一对应、顺序相同。
   const wantToGoItemByEntityId = new Map<EntityId, WantToGoItem>()
-  for (const item of wantToGoItems) {
-    const entityId = wantToGoEntityId(item.place.countryCode, item.place.nameEn)
-    if (!wantToGoItemByEntityId.has(entityId)) wantToGoItemByEntityId.set(entityId, item)
-  }
+  wantToGo.items.forEach((item, index) => {
+    if (!wantToGoItemByEntityId.has(item.placeId)) wantToGoItemByEntityId.set(item.placeId, wantToGoItems[index])
+  })
 
   const plannedRecordByEntityId = new Map<EntityId, TravelMapRecord>()
-  for (const record of plannedRecords) {
-    const entityId = plannedEntityId(record.id)
-    if (!plannedRecordByEntityId.has(entityId)) plannedRecordByEntityId.set(entityId, record)
-  }
+  canonicalPlannedRecords.forEach((record, index) => {
+    if (!plannedRecordByEntityId.has(record.placeId)) plannedRecordByEntityId.set(record.placeId, plannedRecords[index])
+  })
 
   // 按记录 id 的两张表（Core 方案 C3 / C5）：成员关系的 recordId 就是这里的键。同一 id 第一条胜出。
   const wantToGoItemById = new Map<string, WantToGoItem>()
@@ -402,6 +413,28 @@ const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceI
   }
 }
 
+// ---- World Graph（RFC-LOC-1 Core-A：Core 的地点实体由注册表构造，想去与 planned 只按地点 id 引用它）----
+
+/**
+ * 注册表地点 → Core 的 `PlaceInput`：标题见 `placeTitle`；国家代码取 ISO（国家取自身，城市取所属国家，大写）；
+ * `partOf`、`location` 照搬（`location.approximate` 不进 Core）。
+ */
+const placeInputOf = (place: CanonicalPlace, places: PlaceIndex): PlaceInput => {
+  const input: PlaceInput = { id: place.id, subtype: place.subtype, title: placeTitle(place) }
+  const iso = isoOf(countryPlaceOf(places, place))
+  if (iso) input.countryCode = iso.toUpperCase()
+  if (place.partOf !== undefined) input.partOf = place.partOf
+  if (place.location) input.location = { lat: place.location.lat, lng: place.location.lng }
+  return input
+}
+
+/** planned 足迹记录 → Core 的 `PlannedRecordInput`：只要 id、地点、日期与备注（名称与坐标属于地点）。 */
+const plannedRecordInputOf = (record: CanonicalTravelRecord): PlannedRecordInput => {
+  const input: PlannedRecordInput = { id: record.id, placeId: record.placeId, start_date: record.start_date }
+  if (record.notes !== undefined) input.notes = record.notes
+  return input
+}
+
 /**
  * Canonical → App 今天的全部导出（与 PR1 旧派生 `deriveAppData` 同名、同形状）。依赖顺序与 PR1 相同：
  * editor-state → 足迹 → 媒体 → 无人机 → 想去 → World Graph。
@@ -415,8 +448,17 @@ export function deriveAppDataFromCanonical(canonical: CanonicalData, options: Ca
     travelAtlasEditorState,
   )
   const droneMedia = deriveDroneMedia(mediaCatalog.importedDroneMediaCatalogItems)
-  const wantToGo = deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas)
-  const worldGraph = deriveWorldGraph(travelAtlas, wantToGo.wantToGoItems, options.now)
+  const canonicalPlannedRecords = canonical.travel.records.filter((record) => record.status === 'planned')
+  const wantToGo = deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas, canonicalPlannedRecords)
+  const worldGraph = deriveWorldGraph({
+    places: canonical.places.map((place) => placeInputOf(place, places)),
+    countries: travelAtlas.countries,
+    cities: travelAtlas.cities,
+    journeyDays: travelAtlas.journeyDays,
+    routes: travelAtlas.routes,
+    wantToGoItems: canonical.wantToGo.items,
+    plannedRecords: canonicalPlannedRecords.map(plannedRecordInputOf),
+  }, options.now)
 
   return {
     travelAtlas: { travelAtlasDataSource: canonical.travel.source, ...travelAtlas },

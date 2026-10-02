@@ -12,6 +12,29 @@ import type { City, TravelMapRecord } from '../../types/travel.ts'
 
 export type WantToGoDataSource = 'local' | 'sample' | 'none'
 
+/**
+ * UI 读到的想去条目的地点：由注册表的地点重建（`../canonical/reconstruct.ts`）。
+ * RFC-LOC-1 Core-A 之前这是 Core 想去适配器的输入形状；Core 改为只收地点 id 之后，它留在 App 里，只给 UI 与写入用。
+ */
+export interface WantToGoPlace {
+  kind: 'city' | 'country'
+  nameZh: string
+  nameEn: string
+  countryCode: string
+  lat?: number
+  lng?: number
+}
+
+/** UI 读到的想去条目：Canonical 条目 + 由地点重建的内联 `place`。 */
+export interface WantToGoItem {
+  id: string
+  place: WantToGoPlace
+  note?: string
+  addedAt: string
+  hidden: boolean
+  source?: string
+}
+
 /** 想去派生要用到的足迹派生结果（见 `../canonical/derive.ts`）。 */
 export interface WantToGoTravelInput {
   cities: City[]

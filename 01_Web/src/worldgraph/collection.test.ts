@@ -11,10 +11,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import type { TravelMapRecord } from '../types/travel.ts'
-import { plannedEntityId, plannedRecordsToWorldGraph, PLANNED_SOURCE } from './adapters/plannedRecords.ts'
-import { wantToGoEntityId, wantToGoToWorldGraph, WANT_TO_GO_SOURCE } from './adapters/wantToGo.ts'
-import type { WantToGoItem } from './adapters/wantToGo.ts'
+import { placesToWorldGraph, type PlaceInput } from './adapters/places.ts'
+import { plannedRecordsToWorldGraph, PLANNED_SOURCE, type PlannedRecordInput } from './adapters/plannedRecords.ts'
+import { wantToGoToWorldGraph, WANT_TO_GO_SOURCE, type WantToGoInput } from './adapters/wantToGo.ts'
 import { filterCollection, queryCollection } from './collection.ts'
 import type { CollectionEntry } from './collection.ts'
 import { mergeWorldGraphSnapshots } from './snapshot.ts'
@@ -87,27 +86,27 @@ const ids = (entries: readonly CollectionEntry[]) => entries.map((entry) => entr
  */
 const mixedSnapshot = (): WorldGraphSnapshot => snapshotOf({
   entities: [
-    place('place:wtg:GL:nuuk', '努克', { en: 'Nuuk', countryCode: 'GL' }),
-    place('place:wtg:NO:tromsø', '特罗姆瑟', { en: 'Tromsø', countryCode: 'NO' }),
-    place('place:wtg:IS:akureyri', '阿克雷里', { en: 'Akureyri', countryCode: 'IS' }),
-    place('place:wtg:IS:iceland', '冰岛', { en: 'Iceland', subtype: 'country', countryCode: 'IS' }),
-    place('place:planned:bergen', '卑尔根', { en: 'Bergen', countryCode: 'NO' }),
-    place('place:city:iceland__reykjavik', '雷克雅未克', { en: 'Reykjavik' }),
+    place('p-nuuk', '努克', { en: 'Nuuk', countryCode: 'GL' }),
+    place('p-tromsø', '特罗姆瑟', { en: 'Tromsø', countryCode: 'NO' }),
+    place('p-akureyri', '阿克雷里', { en: 'Akureyri', countryCode: 'IS' }),
+    place('p-iceland', '冰岛', { en: 'Iceland', subtype: 'country', countryCode: 'IS' }),
+    place('p-bergen', '卑尔根', { en: 'Bergen', countryCode: 'NO' }),
+    place('p-reykjavik', '雷克雅未克', { en: 'Reykjavik' }),
   ],
   memberships: [
-    member('place:wtg:GL:nuuk', '2026-09-10', { hidden: false, source: 'want-to-go', note: '格陵兰的首府' }),
-    member('place:wtg:NO:tromsø', '2026-09-12', { hidden: true, source: 'want-to-go', note: '冬季看极光' }),
-    member('place:wtg:IS:akureyri', '2026-09-12', { hidden: false, source: 'want-to-go' }),
-    member('place:wtg:IS:iceland', '2026-09-01', { hidden: false, source: 'want-to-go' }),
-    member('place:planned:bergen', '2027-05-01', { source: PLANNED_SOURCE, readOnly: true }, 'want_to_go', 'rule'),
-    member('place:city:iceland__reykjavik', '2025-06-01', undefined, 'travel', 'rule'),
+    member('p-nuuk', '2026-09-10', { hidden: false, source: 'want-to-go', note: '格陵兰的首府' }),
+    member('p-tromsø', '2026-09-12', { hidden: true, source: 'want-to-go', note: '冬季看极光' }),
+    member('p-akureyri', '2026-09-12', { hidden: false, source: 'want-to-go' }),
+    member('p-iceland', '2026-09-01', { hidden: false, source: 'want-to-go' }),
+    member('p-bergen', '2027-05-01', { source: PLANNED_SOURCE, readOnly: true }, 'want_to_go', 'rule'),
+    member('p-reykjavik', '2025-06-01', undefined, 'travel', 'rule'),
   ],
   anchors: [
-    location('place:wtg:GL:nuuk', 64.18, -51.69),
-    location('place:wtg:NO:tromsø', 69.65, 18.96),
-    location('place:wtg:IS:iceland', 64.9, -18.6, 'region'),
-    location('place:planned:bergen', 60.39, 5.32),
-    location('place:city:iceland__reykjavik', 64.15, -21.94),
+    location('p-nuuk', 64.18, -51.69),
+    location('p-tromsø', 69.65, 18.96),
+    location('p-iceland', 64.9, -18.6, 'region'),
+    location('p-bergen', 60.39, 5.32),
+    location('p-reykjavik', 64.15, -21.94),
   ],
 })
 
@@ -123,16 +122,16 @@ test('只取指定图层的成员：想去清单里没有足迹城市，足迹�
   const snapshot = mixedSnapshot()
   const wantToGo = queryCollection(snapshot, 'want_to_go')
   assert.equal(wantToGo.length, 5)
-  assert.ok(!ids(wantToGo).includes('place:city:iceland__reykjavik'))
+  assert.ok(!ids(wantToGo).includes('p-reykjavik'))
   assert.ok(wantToGo.every((entry) => entry.layerId === 'want_to_go'))
 
-  assert.deepEqual(ids(queryCollection(snapshot, 'travel')), ['place:city:iceland__reykjavik'])
+  assert.deepEqual(ids(queryCollection(snapshot, 'travel')), ['p-reykjavik'])
 })
 
 test('已隐藏与没有坐标的条目都在清单里（FR-LP-6 / D06）', () => {
   const entries = queryCollection(mixedSnapshot(), 'want_to_go')
-  const tromso = entries.find((entry) => entry.entityId === 'place:wtg:NO:tromsø')
-  const akureyri = entries.find((entry) => entry.entityId === 'place:wtg:IS:akureyri')
+  const tromso = entries.find((entry) => entry.entityId === 'p-tromsø')
+  const akureyri = entries.find((entry) => entry.entityId === 'p-akureyri')
 
   assert.equal(tromso?.hidden, true)
   assert.deepEqual(tromso?.location, { lat: 69.65, lng: 18.96, precision: 'exact' })
@@ -145,8 +144,8 @@ test('逐字段取值：readOnly / note / source / countryCode / addedBy / subty
   const entries = queryCollection(mixedSnapshot(), 'want_to_go')
   const byId = new Map(entries.map((entry) => [entry.entityId, entry]))
 
-  assert.deepEqual(byId.get('place:wtg:GL:nuuk'), {
-    entityId: 'place:wtg:GL:nuuk',
+  assert.deepEqual(byId.get('p-nuuk'), {
+    entityId: 'p-nuuk',
     layerId: 'want_to_go',
     subtype: 'city',
     title: { zh: '努克', en: 'Nuuk' },
@@ -160,13 +159,13 @@ test('逐字段取值：readOnly / note / source / countryCode / addedBy / subty
     location: { lat: 64.18, lng: -51.69, precision: 'exact' },
   })
 
-  const bergen = byId.get('place:planned:bergen')
+  const bergen = byId.get('p-bergen')
   assert.equal(bergen?.readOnly, true)
   assert.equal(bergen?.addedBy, 'rule')
   assert.equal(bergen?.source, PLANNED_SOURCE)
   assert.equal(bergen && 'note' in bergen, false, '没有备注就不输出 note 键')
 
-  const iceland = byId.get('place:wtg:IS:iceland')
+  const iceland = byId.get('p-iceland')
   assert.equal(iceland?.subtype, 'country')
   assert.equal(iceland?.location?.precision, 'region')
 })
@@ -323,11 +322,11 @@ test('各排序在 entityId 之后以 recordId 作为最后的稳定键；没有
 
 test('混合快照的默认顺序', () => {
   assert.deepEqual(ids(queryCollection(mixedSnapshot(), 'want_to_go')), [
-    'place:planned:bergen',
-    'place:wtg:IS:akureyri',
-    'place:wtg:NO:tromsø',
-    'place:wtg:GL:nuuk',
-    'place:wtg:IS:iceland',
+    'p-bergen',
+    'p-akureyri',
+    'p-tromsø',
+    'p-nuuk',
+    'p-iceland',
   ])
 })
 
@@ -379,22 +378,22 @@ test('sort: country 按国家代码升序，没有国家代码的排最后，同
 
 test('文本搜索：中文名、英文名、国家代码、备注都参与匹配', () => {
   const entries = queryCollection(mixedSnapshot(), 'want_to_go')
-  assert.deepEqual(ids(filterCollection(entries, { text: '努克' })), ['place:wtg:GL:nuuk'])
-  assert.deepEqual(ids(filterCollection(entries, { text: 'bergen' })), ['place:planned:bergen'])
-  assert.deepEqual(ids(filterCollection(entries, { text: 'gl' })), ['place:wtg:GL:nuuk'])
-  assert.deepEqual(ids(filterCollection(entries, { text: '极光' })), ['place:wtg:NO:tromsø'])
+  assert.deepEqual(ids(filterCollection(entries, { text: '努克' })), ['p-nuuk'])
+  assert.deepEqual(ids(filterCollection(entries, { text: 'bergen' })), ['p-bergen'])
+  assert.deepEqual(ids(filterCollection(entries, { text: 'gl' })), ['p-nuuk'])
+  assert.deepEqual(ids(filterCollection(entries, { text: '极光' })), ['p-tromsø'])
 })
 
 test('文本搜索大小写不敏感，并先做 NFKC 规范化（全角字母也能匹配）', () => {
   const entries = queryCollection(mixedSnapshot(), 'want_to_go')
-  assert.deepEqual(ids(filterCollection(entries, { text: 'NUUK' })), ['place:wtg:GL:nuuk'])
-  assert.deepEqual(ids(filterCollection(entries, { text: 'ＮＵＵＫ' })), ['place:wtg:GL:nuuk'])
-  assert.deepEqual(ids(filterCollection(entries, { text: 'tromsø' })), ['place:wtg:NO:tromsø'])
+  assert.deepEqual(ids(filterCollection(entries, { text: 'NUUK' })), ['p-nuuk'])
+  assert.deepEqual(ids(filterCollection(entries, { text: 'ＮＵＵＫ' })), ['p-nuuk'])
+  assert.deepEqual(ids(filterCollection(entries, { text: 'tromsø' })), ['p-tromsø'])
 })
 
 test('文本搜索先 trim：前后空白不影响匹配，全是空白等于不过滤', () => {
   const entries = queryCollection(mixedSnapshot(), 'want_to_go')
-  assert.deepEqual(ids(filterCollection(entries, { text: '  nuuk \t' })), ['place:wtg:GL:nuuk'])
+  assert.deepEqual(ids(filterCollection(entries, { text: '  nuuk \t' })), ['p-nuuk'])
   assert.deepEqual(ids(filterCollection(entries, { text: '   ' })), ids(entries))
   assert.deepEqual(ids(filterCollection(entries, { text: '' })), ids(entries))
 })
@@ -402,8 +401,8 @@ test('文本搜索先 trim：前后空白不影响匹配，全是空白等于不
 test('国家代码参与匹配：搜 is 命中冰岛的两个条目', () => {
   const entries = queryCollection(mixedSnapshot(), 'want_to_go')
   assert.deepEqual(ids(filterCollection(entries, { text: 'is' })), [
-    'place:wtg:IS:akureyri',
-    'place:wtg:IS:iceland',
+    'p-akureyri',
+    'p-iceland',
   ])
 })
 
@@ -424,19 +423,19 @@ test('字段之间不会拼出假匹配', () => {
 test('状态筛选：all / visible / hidden', () => {
   const entries = queryCollection(mixedSnapshot(), 'want_to_go')
   assert.equal(filterCollection(entries, { status: 'all' }).length, 5)
-  assert.deepEqual(ids(filterCollection(entries, { status: 'hidden' })), ['place:wtg:NO:tromsø'])
+  assert.deepEqual(ids(filterCollection(entries, { status: 'hidden' })), ['p-tromsø'])
   assert.deepEqual(ids(filterCollection(entries, { status: 'visible' })), [
-    'place:planned:bergen',
-    'place:wtg:IS:akureyri',
-    'place:wtg:GL:nuuk',
-    'place:wtg:IS:iceland',
+    'p-bergen',
+    'p-akureyri',
+    'p-nuuk',
+    'p-iceland',
   ])
 })
 
 test('搜索、状态与排序可以组合', () => {
   const entries = queryCollection(mixedSnapshot(), 'want_to_go')
   assert.deepEqual(ids(filterCollection(entries, { text: 'no', status: 'visible', sort: 'name' })), [
-    'place:planned:bergen',
+    'p-bergen',
   ])
   assert.deepEqual(filterCollection(entries, { text: '极光', status: 'visible' }), [])
 })
@@ -450,8 +449,8 @@ test('queryCollection 不修改输入快照，输出不与输入共享对象', (
   const entries = queryCollection(snapshot, 'want_to_go')
   assert.deepEqual(queryCollection(snapshot, 'want_to_go'), entries)
 
-  const nuuk = entries.find((entry) => entry.entityId === 'place:wtg:GL:nuuk')
-  const entity = snapshot.entities.find((item) => item.id === 'place:wtg:GL:nuuk')
+  const nuuk = entries.find((entry) => entry.entityId === 'p-nuuk')
+  const entity = snapshot.entities.find((item) => item.id === 'p-nuuk')
   assert.ok(nuuk && entity)
   assert.notEqual(nuuk.title, entity.title)
 })
@@ -466,91 +465,80 @@ test('filterCollection 不修改输入数组与其中的对象，返回新数组
 })
 
 // ---------------------------------------------------------------------------
-// 7. 与 PR5 数据流一致的集成用例
+// 7. 与 App 数据流一致的集成用例
 // ---------------------------------------------------------------------------
 
-test('集成：想去条目与 planned 记录合并后，同时出现在 want_to_go 清单里，planned 只读', () => {
-  const items: WantToGoItem[] = [
-    {
-      id: 'wtg_2026-09-10_nuuk',
-      place: { kind: 'city', nameZh: '努克', nameEn: 'Nuuk', countryCode: 'GL', lat: 64.18, lng: -51.69 },
-      note: '格陵兰的首府',
-      addedAt: '2026-09-10',
-      hidden: false,
-    },
-    {
-      id: 'wtg_2026-09-11_faroe',
-      place: { kind: 'country', nameZh: '法罗群岛', nameEn: 'Faroe Islands', countryCode: 'FO' },
-      addedAt: '2026-09-11',
-      hidden: true,
-    },
+test('集成：title / countryCode / location 来自地点实体，记录级字段来自成员关系；想去与 planned 同在 want_to_go 清单里，planned 只读', () => {
+  const places: PlaceInput[] = [
+    { id: 'p-gl', subtype: 'country', title: { zh: '格陵兰', en: 'Greenland' }, countryCode: 'GL' },
+    { id: 'p-nuuk', subtype: 'city', title: { zh: '努克', en: 'Nuuk' }, countryCode: 'GL', partOf: 'p-gl', location: { lat: 64.18, lng: -51.69 } },
+    { id: 'p-fo', subtype: 'country', title: { zh: '法罗群岛', en: 'Faroe Islands' }, countryCode: 'FO' },
+    { id: 'p-no', subtype: 'country', title: { zh: '挪威', en: 'Norway' }, countryCode: 'NO' },
+    { id: 'p-bergen', subtype: 'city', title: { zh: '卑尔根', en: 'Bergen' }, countryCode: 'NO', partOf: 'p-no', location: { lat: 60.39, lng: 5.32 } },
+    { id: 'p-longyearbyen', subtype: 'city', title: { zh: '朗伊尔城', en: 'Longyearbyen' }, countryCode: 'NO', partOf: 'p-no' },
   ]
-  const records: TravelMapRecord[] = [
-    {
-      id: 'planned-bergen',
-      country: '挪威',
-      country_en: 'Norway',
-      country_code: 'NO',
-      city: '卑尔根',
-      city_en: 'Bergen',
-      start_date: '2027-05-01',
-      status: 'planned',
-      lat: 60.39,
-      lng: 5.32,
-    },
-    {
-      id: 'planned-no-coords',
-      country: '挪威',
-      country_en: 'Norway',
-      country_code: 'NO',
-      city: '朗伊尔城',
-      city_en: 'Longyearbyen',
-      start_date: '2027-07-01',
-      status: 'planned',
-      lat: null,
-      lng: null,
-    },
+  const items: WantToGoInput[] = [
+    { id: 'wtg_2026-09-10_nuuk', placeId: 'p-nuuk', note: '格陵兰的首府', addedAt: '2026-09-10', hidden: false },
+    { id: 'wtg_2026-09-11_faroe', placeId: 'p-fo', addedAt: '2026-09-11', hidden: true },
+  ]
+  const records: PlannedRecordInput[] = [
+    { id: 'planned-bergen', placeId: 'p-bergen', start_date: '2027-05-01' },
+    { id: 'planned-no-coords', placeId: 'p-longyearbyen', start_date: '2027-07-01' },
   ]
 
-  // 与 src/data/worldGraph.ts 的合并顺序一致：want-to-go 在 planned 之前。
+  // 与 App 的合并顺序一致：places → want-to-go → planned。
   const snapshot = mergeWorldGraphSnapshots(
-    wantToGoToWorldGraph(items, { now: NOW }),
-    plannedRecordsToWorldGraph(records, { now: NOW }),
+    placesToWorldGraph(places, { now: NOW }),
+    wantToGoToWorldGraph(items),
+    plannedRecordsToWorldGraph(records),
   )
   const entries = queryCollection(snapshot, 'want_to_go')
-  const byId = new Map(entries.map((entry) => [entry.entityId, entry]))
+  const byRecordId = new Map(entries.map((entry) => [entry.recordId, entry]))
 
-  assert.deepEqual(ids(entries), [
-    plannedEntityId('planned-no-coords'),
-    plannedEntityId('planned-bergen'),
-    wantToGoEntityId('FO', 'Faroe Islands'),
-    wantToGoEntityId('GL', 'Nuuk'),
-  ])
-  // 每一行都带着它背后的记录 id：想去条目的 item.id、planned 的 record.id。
-  assert.deepEqual(entries.map((entry) => entry.recordId), [
-    'planned-no-coords',
-    'planned-bergen',
-    'wtg_2026-09-11_faroe',
-    'wtg_2026-09-10_nuuk',
+  // 每一行都带着它背后的记录 id：想去条目的 item.id、planned 的 record.id；实体 id 是地点 id。
+  assert.deepEqual(entries.map((entry) => [entry.entityId, entry.recordId]), [
+    ['p-longyearbyen', 'planned-no-coords'],
+    ['p-bergen', 'planned-bergen'],
+    ['p-fo', 'wtg_2026-09-11_faroe'],
+    ['p-nuuk', 'wtg_2026-09-10_nuuk'],
   ])
 
-  const nuuk = byId.get(wantToGoEntityId('GL', 'Nuuk'))
-  assert.equal(nuuk?.readOnly, false)
-  assert.equal(nuuk?.source, WANT_TO_GO_SOURCE)
-  assert.equal(nuuk?.note, '格陵兰的首府')
+  assert.deepEqual(byRecordId.get('wtg_2026-09-10_nuuk'), {
+    entityId: 'p-nuuk',
+    layerId: 'want_to_go',
+    recordId: 'wtg_2026-09-10_nuuk',
+    subtype: 'city',
+    title: { zh: '努克', en: 'Nuuk' },
+    countryCode: 'GL',
+    addedAt: '2026-09-10',
+    addedBy: 'user',
+    hidden: false,
+    readOnly: false,
+    note: '格陵兰的首府',
+    source: WANT_TO_GO_SOURCE,
+    location: { lat: 64.18, lng: -51.69, precision: 'exact' },
+  })
 
-  const faroe = byId.get(wantToGoEntityId('FO', 'Faroe Islands'))
+  const faroe = byRecordId.get('wtg_2026-09-11_faroe')
   assert.equal(faroe?.hidden, true)
   assert.equal(faroe?.subtype, 'country')
   assert.equal(faroe && 'location' in faroe, false)
 
-  const bergen = byId.get(plannedEntityId('planned-bergen'))
+  const bergen = byRecordId.get('planned-bergen')
   assert.equal(bergen?.readOnly, true)
   assert.equal(bergen?.source, PLANNED_SOURCE)
   assert.equal(bergen?.countryCode, 'NO')
-  assert.deepEqual(bergen?.location, { lat: 60.39, lng: 5.32, precision: 'exact' })
+  assert.deepEqual(bergen?.location, { lat: 60.39, lng: 5.32, precision: 'exact' }, '地点的规范坐标')
 
-  const noCoords = byId.get(plannedEntityId('planned-no-coords'))
+  const noCoords = byRecordId.get('planned-no-coords')
   assert.equal(noCoords?.readOnly, true)
   assert.equal(noCoords && 'location' in noCoords, false)
+})
+
+test('集成：引用的地点不在快照里时，这条记录不进清单（成员关系悬空）', () => {
+  const snapshot = mergeWorldGraphSnapshots(
+    placesToWorldGraph([], { now: NOW }),
+    wantToGoToWorldGraph([{ id: 'wtg_orphan', placeId: 'p-missing', addedAt: '2026-09-10', hidden: false }]),
+  )
+  assert.deepEqual(queryCollection(snapshot, 'want_to_go'), [])
 })
