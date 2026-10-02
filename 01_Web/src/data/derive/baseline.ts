@@ -93,8 +93,6 @@ export interface AppDataExports {
     wantToGoItems: readonly WantToGoItem[]
     wantToGoProblems: unknown
     hiddenWantToGoItems: unknown
-    wantToGoItemByEntityId: unknown
-    plannedRecordByEntityId: unknown
     wantToGoItemById: unknown
     plannedRecordById: unknown
     wantToGoConvertBlockReason(item: WantToGoItem): string | undefined
@@ -164,8 +162,6 @@ export const baselineExportNames = {
       'wantToGoItems',
       'wantToGoProblems',
       'hiddenWantToGoItems',
-      'wantToGoItemByEntityId',
-      'plannedRecordByEntityId',
       'wantToGoItemById',
       'plannedRecordById',
     ],

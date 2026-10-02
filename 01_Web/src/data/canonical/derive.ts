@@ -22,7 +22,6 @@
 
 import type { PlaceInput } from '../../worldgraph/adapters/places.ts'
 import type { PlannedRecordInput } from '../../worldgraph/adapters/plannedRecords.ts'
-import type { EntityId } from '../../worldgraph/types.ts'
 import { deriveDroneMedia, type DroneMediaDerived } from '../derive/droneMedia.ts'
 import { orderBySavedIds, type TravelAtlasEditorState } from '../derive/editorState.ts'
 import { deriveMediaCatalog, getMediaSource, type MediaCatalogDerived } from '../derive/mediaCatalog.ts'
@@ -343,12 +342,7 @@ const deriveTravelAtlasFromCanonical = (
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
-const deriveWantToGoFromCanonical = (
-  wantToGo: CanonicalWantToGo,
-  places: PlaceIndex,
-  travel: WantToGoTravelInput,
-  canonicalPlannedRecords: readonly CanonicalTravelRecord[],
-) => {
+const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceIndex, travel: WantToGoTravelInput) => {
   const { cities, plannedRecords } = travel
 
   const wantToGoItems: WantToGoItem[] = wantToGo.items.map((item) => reconstructWantToGoItem(item, places))
@@ -359,19 +353,9 @@ const deriveWantToGoFromCanonical = (
     .filter((item) => item.hidden)
     .sort((left, right) => right.addedAt.localeCompare(left.addedAt))
 
-  // 过渡（RFC-LOC-1 Core-A A2 的第一个提交）：实体 id 已是地点 id，这两张表暂按地点 id 建（同一地点第一条胜出），
-  // 下一个提交（想去卡片改为按记录取）删除它们。重建的条目与 Canonical 条目一一对应、顺序相同。
-  const wantToGoItemByEntityId = new Map<EntityId, WantToGoItem>()
-  wantToGo.items.forEach((item, index) => {
-    if (!wantToGoItemByEntityId.has(item.placeId)) wantToGoItemByEntityId.set(item.placeId, wantToGoItems[index])
-  })
-
-  const plannedRecordByEntityId = new Map<EntityId, TravelMapRecord>()
-  canonicalPlannedRecords.forEach((record, index) => {
-    if (!plannedRecordByEntityId.has(record.placeId)) plannedRecordByEntityId.set(record.placeId, plannedRecords[index])
-  })
-
   // 按记录 id 的两张表（Core 方案 C3 / C5）：成员关系的 recordId 就是这里的键。同一 id 第一条胜出。
+  // 按实体 id 查条目的两张表在 RFC-LOC-1 Core-A 删除：实体 id 是地点 id，一个地点可以有几条记录；
+  // 想去卡片按地点取一条可见记录（../derive/wantToGo.ts 的 wantToGoCardRecordOf）。
   const wantToGoItemById = new Map<string, WantToGoItem>()
   for (const item of wantToGoItems) {
     if (!wantToGoItemById.has(item.id)) wantToGoItemById.set(item.id, item)
@@ -404,8 +388,6 @@ const deriveWantToGoFromCanonical = (
     wantToGoItems,
     wantToGoProblems,
     hiddenWantToGoItems,
-    wantToGoItemByEntityId,
-    plannedRecordByEntityId,
     wantToGoItemById,
     plannedRecordById,
     wantToGoConvertBlockReason,
@@ -449,7 +431,7 @@ export function deriveAppDataFromCanonical(canonical: CanonicalData, options: Ca
   )
   const droneMedia = deriveDroneMedia(mediaCatalog.importedDroneMediaCatalogItems)
   const canonicalPlannedRecords = canonical.travel.records.filter((record) => record.status === 'planned')
-  const wantToGo = deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas, canonicalPlannedRecords)
+  const wantToGo = deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas)
   const worldGraph = deriveWorldGraph({
     places: canonical.places.map((place) => placeInputOf(place, places)),
     countries: travelAtlas.countries,

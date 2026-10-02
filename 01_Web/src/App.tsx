@@ -322,11 +322,11 @@ function App() {
   )
   const layerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds), [visibleLayerIds])
 
-  // 详情卡对应的地点已不在地图上（图层被关掉、条目被隐藏）时关闭它。
-  // 被 FR-MR-5 并进足迹地点的想去条目仍算在图上。按 React 文档"渲染期间根据新数据调整 state"的写法，
-  // 不用 effect，避免先画出一帧过期的卡片。
+  // 详情卡对应的地点已不在地图的想去层上（图层被关掉、条目被隐藏）时关闭它。只看实体 id（地点 id）：
+  // 同一地点在足迹层也有标记时，它就是同一个实体（FR-MR-5 按身份合并，带心形徽标），仍算在图上。
+  // 按 React 文档"渲染期间根据新数据调整 state"的写法，不用 effect，避免先画出一帧过期的卡片。
   const selectedWantToGoIsMapped = selectedWantToGoEntityId !== undefined && layerData.places.some(
-    (place) => place.entityId === selectedWantToGoEntityId,
+    (place) => place.entityId === selectedWantToGoEntityId && place.layerIds.includes(WANT_TO_GO_LAYER_ID),
   )
   if (selectedWantToGoEntityId !== undefined && !selectedWantToGoIsMapped) {
     setSelectedWantToGoEntityId(undefined)

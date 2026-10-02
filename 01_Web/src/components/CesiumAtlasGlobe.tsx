@@ -883,7 +883,18 @@ export function CesiumAtlasGlobe({
   // 所以这两个 useMemo 的依赖不会每次渲染都变，下游的 useEffect 也不会被反复重建（AC-8）。
   // 访问次数原来是本地 journeyVisitCounts，现在是 LayerPlace.visitCount。
   const mappedCities = useMemo<LayerPlace[]>(() => layerData.places, [layerData])
-  // 状态药丸：足迹数字只数足迹地点，与 PR3 口径一致；想去数含 FR-MR-5 合并后的足迹地点。
+  // RFC-LOC-1 Core-A：每个地点标记在 Cesium Entity 的 properties 上带它的实体 id（地点 id），
+  // 按实体 id 比较地图上的标记集合（AC-8 的语义键）就不必依赖名字。心形徽标是同一地点的附属标记，
+  // 用另一个键 badgeForEntityId，不与地点标记混在一起计数。按地点缓存，引用随 layerData 稳定。
+  const placeMarkerProperties = useMemo(
+    () => new Map(mappedCities.map((city) => [city.entityId, { entityId: city.entityId }])),
+    [mappedCities],
+  )
+  const wantToGoBadgeProperties = useMemo(
+    () => new Map(mappedCities.map((city) => [city.entityId, { badgeForEntityId: city.entityId }])),
+    [mappedCities],
+  )
+  // 状态药丸：足迹数字只数足迹地点，与 PR3 口径一致；想去数含同时在足迹层的地点（FR-MR-5 按身份合并）。
   const travelPlaceCount = useMemo(
     () => mappedCities.filter((city) => city.layerIds.includes(TRAVEL_LAYER_ID)).length,
     [mappedCities],
@@ -1804,7 +1815,7 @@ export function CesiumAtlasGlobe({
         {mappedCities.map((city) => {
           // 纯想去地点（FR-MR-4 / PRD §9.3）：与足迹城市同尺寸的空心圆，想去 accent 描边。
           // 不参与国家高亮、悬停光晕与 isCountryCity 放大；非总览时与其他非本国城市一样变淡。
-          // 点击只打开详情卡（FR-WTG-4），sourceId 就是它的 entityId，半球裁剪照常生效。
+          // 点击只打开详情卡（FR-WTG-4），sourceId 就是它的 entityId（地点 id），半球裁剪照常生效。
           if (!city.layerIds.includes(TRAVEL_LAYER_ID)) {
             const isMuted = selectionMode !== 'overview'
             const title = city.title.en ?? city.title.zh ?? city.sourceId
@@ -1813,6 +1824,7 @@ export function CesiumAtlasGlobe({
               <Entity
                 key={city.sourceId}
                 name={`${title} · want to go`}
+                properties={placeMarkerProperties.get(city.entityId)}
                 show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
                 position={cityPosition(city.lng, city.lat)}
                 onClick={() => onSelectWantToGoPlace?.(city.entityId)}
@@ -1858,6 +1870,7 @@ export function CesiumAtlasGlobe({
             <Entity
               key={city.sourceId}
               name={`${city.title.en ?? city.title.zh ?? city.sourceId} · ${visitCount} visit records`}
+              properties={placeMarkerProperties.get(city.entityId)}
               show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
               position={cityPosition(city.lng, city.lat)}
               onClick={() => onSelectCity(city.sourceId)}
@@ -1927,6 +1940,7 @@ export function CesiumAtlasGlobe({
             <Entity
               key={`${city.sourceId}__want-to-go-badge`}
               name={`${city.title.en ?? city.title.zh ?? city.sourceId} · want to go`}
+              properties={wantToGoBadgeProperties.get(city.entityId)}
               show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
               position={cityPosition(city.lng, city.lat)}
               // 徽标属于足迹地点：点它与点足迹标记一样进入城市。
