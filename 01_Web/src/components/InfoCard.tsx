@@ -74,7 +74,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
     return () => { photoImportTargetRef.current = undefined }
   }, [photoImportTarget])
   const photoImportLocked = mediaSession.state.phase !== 'idle'
-  const editorActionBusy = editorBusy || photoImportLocked
+  const editorActionBusy = editorBusy || photoImportLocked || mediaSession.blocked
   const [draggedCityId, setDraggedCityId] = useState<CityId>()
   const [draggedPhotoId, setDraggedPhotoId] = useState<string>()
   const [draftCityIds, setDraftCityIds] = useState<CityId[]>(memoryCities.map((item) => item.id))
@@ -212,7 +212,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:receivingPhotos', values: { count: files.length } })
     try {
-      await mediaSession.upload(Array.from(files), (file) => uploadLocalMedia({ countryId, cityId, kind: 'photo', file }))
+      await mediaSession.upload(Array.from(files), (file, permit) => uploadLocalMedia({ countryId, cityId, kind: 'photo', file }, permit))
       if (!isCurrentTarget()) return
       setEditorNotice({ key: 'editor:importingPhotos' })
       await mediaSession.importMedia(importLocalMedia)
@@ -227,7 +227,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
     }
   }
   const retryPhotoImport = async () => {
-    if (editorBusy || mediaSession.state.phase !== 'pending') return
+    if (editorBusy || mediaSession.blocked || mediaSession.state.phase !== 'pending') return
     const target = photoImportTarget
     const isCurrentTarget = () => photoImportTargetRef.current === target
     setEditorBusy(true)
@@ -441,6 +441,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     busy={editorActionBusy}
                     label={t('editor:cities')}
                     onToggle={() => {
+                      if (editorActionBusy) return
                       setCityEditing((editing) => !editing)
                       setDraftCityIds(memoryCities.map((item) => item.id))
                       setDraftHiddenCityIds(travelAtlasEditorState.hiddenCityIds)
@@ -452,6 +453,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       setEditorNotice('')
                     }}
                     onReset={() => {
+                      if (editorActionBusy) return
                       setDraftCityIds(memoryCities.map((item) => item.id))
                       setDraftHiddenCityIds(travelAtlasEditorState.hiddenCityIds)
                       setShowAddCity(false)
@@ -459,7 +461,9 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       setCityVisitDates({ startDate: '', endDate: '' })
                       setEditorNotice({ key: 'editor:undoCities' })
                     }}
-                    onAdd={() => setShowAddCity((open) => !open)}
+                    onAdd={() => {
+                      if (!editorActionBusy) setShowAddCity((open) => !open)
+                    }}
                     onSave={saveCityDraft}
                   />
                 ) : null}
@@ -532,8 +536,14 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
 
             {editorNotice ? <p className="atlas-local-editor-notice atlas-local-editor-notice-dark" role="status">{editorNotice}</p> : null}
 
+            {localEditorAvailable && mediaSession.blocked ? (
+              <p className="atlas-local-editor-notice atlas-local-editor-notice-dark" role="status">
+                {t(mediaSession.otherWriting ? 'mediaImport:otherWriting' : 'mediaImport:otherPending')}
+              </p>
+            ) : null}
+
             {localEditorAvailable && isCityMode ? (
-              <MediaImportRecovery state={mediaSession.state} busy={editorBusy} onRetry={retryPhotoImport} />
+              <MediaImportRecovery state={mediaSession.state} busy={editorBusy || mediaSession.blocked} onRetry={retryPhotoImport} />
             ) : null}
 
             {isCountryGrid && cityEditing && hiddenCityIdsForCountry.length > 0 ? (

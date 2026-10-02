@@ -14,6 +14,7 @@ import { convertLocalWantToGoToTravel, reloadAfterLocalSave } from '../data/loca
 import type { LocalConvertToTravelInput, LocalConvertToTravelResult } from '../data/localEditorApi'
 import { travelAtlasCountryCodes } from '../data/travelAtlas'
 import { plannedRecordById, wantToGoItemById } from '../data/wantToGo'
+import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 
 /**
  * 要转换的条目：想去条目，或来自旅行记录的 planned 条目（FR-WTG-7）。
@@ -61,6 +62,7 @@ function ConvertToTravelDialogContent({
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { locale } = useUiLocale()
   const { name, subtitle } = usePlaceNames()
+  const coordination = useLocalEditorCoordination()
   const titleId = useId()
   const summaryId = useId()
   const formRef = useRef<HTMLFormElement>(null)
@@ -248,11 +250,12 @@ function ConvertToTravelDialogContent({
 
           {notice ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{notice}</p> : null}
           {showWriteResultWarning ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{t('editor:writeResultUnknown')}</p> : null}
+          {needsReload && coordination.blocked ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{t(coordination.otherPending ? 'mediaImport:otherPending' : 'mediaImport:otherWriting')}</p> : null}
 
           {needsReload ? (
             // 被点击的提交按钮已经消失，焦点移到替代它的按钮上，键盘用户不会落到页面顶部。
             // 两个分支都是 <button>，不给不同的 key 时 React 会复用同一个元素，autoFocus 就不会生效。
-            <button key="reload" type="button" autoFocus onClick={() => reloadAfterLocalSave()}>{t('editor:reload')}</button>
+            <button key="reload" type="button" autoFocus disabled={coordination.blocked} onClick={() => reloadAfterLocalSave()}>{t('editor:reload')}</button>
           ) : (
             <button key="submit" type="submit" disabled={!canSubmit}>{t('editor:visited')}</button>
           )}
