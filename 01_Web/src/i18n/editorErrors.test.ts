@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { createInstance } from 'i18next'
 import { resources } from './resources.ts'
 import { DEFAULT_UI_LOCALE, EN_UI_LOCALE } from '../data/uiLocale.ts'
-import { LocalEditorError, editorErrorNotice, formatEditorError, localizedConversionReason } from './editorErrors.ts'
+import { LocalEditorError, editorErrorNotice, formatEditorError, localizedConversionReason, requiresEditorReload } from './editorErrors.ts'
 import { V2_WRITE_ERROR_CODES, messageFor } from '../data/v2write/errors.ts'
 // @ts-expect-error The server refusal is an erasable JavaScript module without browser dependencies.
 import { legacyWriteRefusal } from '../../scripts/legacy-data.mjs'
@@ -63,4 +63,64 @@ test('Unmigrated-data refusals and empty response errors translate without chang
   assert.match(formatEditorError(error, i18n.t), /旧格式文件：travel-map.local.json/)
   assert.equal(formatEditorError(emptyError, i18n.t), '本地编辑操作失败。')
   assert.equal(error.message, refusal.body.error)
+})
+
+test('Recovery follows structured codes and written files, preserving raw messages and params', () => {
+  const params = { written: ['places'], failed: 'travelMap', reason: 'neutral disk failure' }
+  const partial = new LocalEditorError({ error: 'Partial save without Chinese prefix', code: 'E_PARTIAL_WRITE', params })
+  assert.ok(requiresEditorReload(partial))
+  assert.equal(partial.message, 'Partial save without Chinese prefix')
+  assert.equal(partial.params, params)
+  assert.ok(requiresEditorReload(new LocalEditorError({ code: 'E_WRITE_FAILED', params })))
+  assert.ok(requiresEditorReload(new LocalEditorError({ code: 'E_EDITOR_RESPONSE_INVALID', params: { status: 503 } })))
+  for (const written of [[], undefined, null, 'places']) {
+    assert.equal(requiresEditorReload(new LocalEditorError({ error: '足迹已创建，但来自错误原因的普通文字。', code: 'E_WRITE_FAILED', params: { written } })), false)
+  }
+  assert.equal(requiresEditorReload(new LocalEditorError({ error: '足迹已创建，但这是普通拒绝消息。', code: 'E_REQUIRED' })), false)
+  assert.equal(requiresEditorReload(new LocalEditorError({ error: '足迹已创建，但这是普通拒绝消息。', code: 'E_LEGACY_UNMIGRATED' })), false)
+  assert.ok(requiresEditorReload(new Error('足迹已创建，但想去条目没有移除。')))
+  assert.ok(requiresEditorReload(new LocalEditorError({ error: '足迹已创建，但想去条目没有移除。', code: 'E_FUTURE' })))
+  assert.equal(requiresEditorReload(new LocalEditorError({ error: 'future refusal', code: 'E_FUTURE' })), false)
+  assert.equal(requiresEditorReload(new Error('ordinary failure')), false)
+  assert.equal(requiresEditorReload(null), false)
+  assert.deepEqual(params, { written: ['places'], failed: 'travelMap', reason: 'neutral disk failure' })
+})
+
+test('Unknown write outcomes require reload without changing ordinary error handling or original errors', () => {
+  const unknownErrors = [
+    new TypeError('Failed to fetch'),
+    new DOMException('The operation was aborted.', 'AbortError'),
+    new Error('Unknown write failure'),
+    new LocalEditorError({ error: 'Future write failure', code: 'E_FUTURE' }),
+  ]
+  for (const error of unknownErrors) {
+    const message = error.message
+    assert.equal(requiresEditorReload(error), false)
+    assert.equal(requiresEditorReload(error, { afterWrite: true }), true)
+    assert.equal(editorErrorNotice(error, 'editor:convertFailed'), error)
+    assert.equal(error.message, message)
+  }
+  for (const error of [null, undefined, 'unknown rejection', {}]) {
+    assert.equal(requiresEditorReload(error), false)
+    assert.equal(requiresEditorReload(error, { afterWrite: true }), true)
+  }
+  for (const code of ['E_REQUIRED', 'E_LEGACY_UNMIGRATED', 'E_LOCAL_EDITOR_FAILED']) {
+    assert.equal(requiresEditorReload(new LocalEditorError({ error: 'Ordinary refusal', code }), { afterWrite: true }), false)
+  }
+  assert.equal(requiresEditorReload(new LocalEditorError({ code: 'E_WRITE_FAILED', params: { written: [] } }), { afterWrite: true }), false)
+  assert.equal(requiresEditorReload(new LocalEditorError({ code: 'E_WRITE_FAILED', params: { written: ['travel'] } }), { afterWrite: true }), true)
+})
+
+test('Unknown write result guidance follows the current language beside the unchanged transport diagnostic', async () => {
+  const i18n = createInstance()
+  await i18n.init({ resources, lng: EN_UI_LOCALE, fallbackLng: false, initAsync: false })
+  const error = new TypeError('Failed to fetch')
+  assert.ok(i18n.exists('editor:writeResultUnknown'))
+  const english = i18n.t('editor:writeResultUnknown')
+  assert.notEqual(english, 'editor:writeResultUnknown')
+  assert.equal(formatEditorError(error, i18n.t), 'Failed to fetch')
+  await i18n.changeLanguage(DEFAULT_UI_LOCALE)
+  assert.ok(i18n.exists('editor:writeResultUnknown'))
+  assert.notEqual(i18n.t('editor:writeResultUnknown'), english)
+  assert.equal(formatEditorError(error, i18n.t), 'Failed to fetch')
 })

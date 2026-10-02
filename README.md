@@ -95,6 +95,8 @@ VITE_TIANDITU_TOKEN=
 
 Development mode includes local editing controls. Use them to add or reorder countries and cities, hide or restore items, choose photo covers, and import city or drone media. Production builds do not include these write controls.
 
+Known editing and location-search failures follow the interface language. If an edit returns an unreadable response, its result may be unknown: reload to check your data before retrying. A partially saved conversion also requires a reload before another attempt. Diagnostic details retain their original text.
+
 City creation uses Cesium ion geocoding first when the personal token is configured with the `geocode` public scope. If ion is unavailable, has no result, or exceeds nine seconds, StarMap falls back to an explicitly triggered, country-filtered OpenStreetMap lookup. The interface never spins indefinitely: users can retry with the local/English city name or switch to manual latitude and longitude entry.
 
 When drone files are selected, StarMap immediately reads available EXIF/XMP metadata and displays it per file. Values found in the file are locked as file-derived facts. Only missing values become editable; a missing date must be supplied, while coordinates and altitude can be left blank.

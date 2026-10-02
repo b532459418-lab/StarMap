@@ -20,6 +20,8 @@ import {
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { createV2WriteContext, readV2EditorState, runV2Write, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
 import { handleV2Import, handleV2MediaDelete, handleV2Upload, v2MediaRoute } from './v2-media-store.mjs'
+import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 
 // RFC-LOC-1 PR5a：本地编辑器只读写 data/v2/（V2 写入层：v2-editor-store.mjs 与 v2-media-store.mjs）。旧格式的写入逻辑、
 // 数据模式与回滚开关都已删除。私人目录有没迁移的旧数据时（./legacy-data.mjs），全部写入端点返回 409 E_LEGACY_UNMIGRATED。
@@ -64,17 +66,6 @@ const sendJson = (response, status, body) => {
   response.setHeader('content-type', 'application/json; charset=utf-8')
   response.setHeader('cache-control', 'no-store')
   response.end(JSON.stringify(body))
-}
-
-const readJsonBody = async (request) => {
-  const chunks = []
-  let size = 0
-  for await (const chunk of request) {
-    size += chunk.length
-    if (size > 1024 * 1024) throw new Error('请求内容过大。')
-    chunks.push(chunk)
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
 }
 
 const slugify = (value) => value
@@ -295,11 +286,11 @@ const searchOpenStreetMapCityCatalog = async (query, country) => queueCitySearch
   })
 
 const searchCityCatalog = async (query, countryCode, requestReferer) => {
-  const normalizedQuery = requireText(query, '城市名称')
-  const normalizedCountryCode = requireText(countryCode, '国家代码').toUpperCase()
-  if (!/^[A-Z]{2}$/.test(normalizedCountryCode)) throw new Error('国家代码无效。')
+  const normalizedQuery = requireText(query, 'search_query')
+  const normalizedCountryCode = requireText(countryCode, 'country_code').toUpperCase()
+  if (!/^[A-Z]{2}$/.test(normalizedCountryCode)) throw new V2WriteError('E_NUMBER_INVALID', { field: 'country_code' })
   const country = countryCatalogByCode.get(normalizedCountryCode)
-  if (!country) throw new Error('没有找到这个国家，无法限制城市检索范围。')
+  if (!country) throw new V2WriteError('E_SEARCH_COUNTRY_NOT_FOUND')
   const cacheKey = `${cesiumAccessToken ? 'ion' : 'osm'}:${normalizedCountryCode}:${normalizedQuery.toLocaleLowerCase()}`
   const cached = citySearchCache.get(cacheKey)
   if (cached) return cached
@@ -323,16 +314,13 @@ const searchCityCatalog = async (query, countryCode, requestReferer) => {
     citySearchCache.set(cacheKey, openStreetMapResults)
     return openStreetMapResults
   } catch {
-    const providerSummary = cesiumError
-      ? 'Cesium ion 与 OpenStreetMap 均暂时不可用'
-      : 'OpenStreetMap 暂时不可用'
-    throw new Error(`${providerSummary}。请稍后重试，或改用手动坐标。`)
+    throw new V2WriteError(cesiumError ? 'E_CITY_SEARCH_ALL_UNAVAILABLE' : 'E_CITY_SEARCH_UNAVAILABLE')
   }
 }
 
-const requireText = (value, label) => {
+const requireText = (value, field) => {
   const text = typeof value === 'string' ? value.trim() : ''
-  if (!text) throw new Error(`请填写${label}。`)
+  if (!text) throw new V2WriteError('E_REQUIRED', { field })
   return text
 }
 
@@ -572,7 +560,7 @@ const handleV2Media = async (routeName, request, url) => {
   try {
     input = await readJsonBody(request)
   } catch (error) {
-    return { status: 400, body: v2ErrorBody('E_REQUEST_INVALID', { reason: error instanceof Error ? error.message : '' }) }
+    return { status: 400, body: normalizeLocalEditorError(error, 'E_REQUEST_INVALID') }
   }
   const ctx = createV2WriteContext({ countryCatalog: countryCatalogByCode })
   if (routeName === 'import') return handleV2Import({ privatePaths, input, ctx, deps })
@@ -592,7 +580,7 @@ const handleV2Write = async (request, url) => {
   try {
     input = await readJsonBody(request)
   } catch (error) {
-    return { status: 400, body: v2ErrorBody('E_REQUEST_INVALID', { reason: error instanceof Error ? error.message : '' }) }
+    return { status: 400, body: normalizeLocalEditorError(error, 'E_REQUEST_INVALID') }
   }
   return runV2Write({ privatePaths, route, input, ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }) })
 }
@@ -650,14 +638,14 @@ export function travelAtlasLocalEditor(options = {}) {
 
         try {
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
-            if (!isLoopbackRequest(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话读取。' })
+            if (!isLoopbackRequest(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
             // RFC-LOC-1 PR3b-2：读 data/v2/ 的 editor-state，转成 V1 形状返回。
             const result = await readV2EditorState({ privatePaths })
             return sendJson(response, result.status, result.body)
           }
 
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/catalog/countries') {
-            if (!isLoopbackRequest(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话读取。' })
+            if (!isLoopbackRequest(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
             return sendJson(response, 200, {
               ok: true,
               results: searchCountryCatalog(url.searchParams.get('q') ?? ''),
@@ -665,7 +653,7 @@ export function travelAtlasLocalEditor(options = {}) {
           }
 
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/catalog/cities') {
-            if (!isLoopbackRequest(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话读取。' })
+            if (!isLoopbackRequest(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
             const results = await searchCityCatalog(
               url.searchParams.get('q') ?? '',
               url.searchParams.get('countryCode') ?? '',
@@ -674,7 +662,7 @@ export function travelAtlasLocalEditor(options = {}) {
             return sendJson(response, 200, { ok: true, results })
           }
 
-          if (!authorizeWrite(request)) return sendJson(response, 403, { ok: false, error: '仅允许本机编辑会话写入。' })
+          if (!authorizeWrite(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_WRITE_FORBIDDEN')))
           // RFC-LOC-1 PR5a 决定 I：私人目录有没迁移的旧数据时，全部写入端点拒绝（409 E_LEGACY_UNMIGRATED），什么都不写——
           // 否则 data/v2/ 被写出后，迁移工具的 --apply 会因为输出目录非空而拒绝运行。每个请求现判（只看文件在不在）。
           const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
@@ -689,12 +677,7 @@ export function travelAtlasLocalEditor(options = {}) {
             if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
           }
         } catch (error) {
-          const details = typeof error?.details === 'string' ? error.details : undefined
-          return sendJson(response, 400, {
-            ok: false,
-            error: error instanceof Error ? error.message : '本地编辑操作失败。',
-            ...(details ? { details } : {}),
-          })
+          return sendJson(response, 400, normalizeLocalEditorError(error))
         }
       })
     },

@@ -1,5 +1,12 @@
 export const domainErrorResources = {
   "zh": {
+    "E_EDITOR_READ_FORBIDDEN": "仅允许本机编辑会话读取。",
+    "E_EDITOR_WRITE_FORBIDDEN": "仅允许本机编辑会话写入。",
+    "E_SEARCH_COUNTRY_NOT_FOUND": "没有找到这个国家，无法限制城市检索范围。",
+    "E_CITY_SEARCH_UNAVAILABLE": "OpenStreetMap 暂时不可用。请稍后重试，或改用手动坐标。",
+    "E_CITY_SEARCH_ALL_UNAVAILABLE": "Cesium ion 与 OpenStreetMap 均暂时不可用。请稍后重试，或改用手动坐标。",
+    "E_REQUEST_TOO_LARGE": "请求内容过大。",
+    "E_EDITOR_RESPONSE_INVALID": "本地编辑器返回了无法识别的响应（HTTP {{status}}）。操作结果可能尚未确认，请先刷新页面核对，再决定是否重试。",
     "E_LOCAL_EDITOR_FAILED": "本地编辑操作失败。",
     "E_LEGACY_UNMIGRATED": "私人目录里有旧格式的数据，还没有迁移，这次修改没有保存。请按 README 的 Private Data Format 步骤，先检出提交 4fd32a9（最后一个带迁移工具的版本）完成迁移，再回到最新版本。若不需要旧数据，可以把私人目录 data/ 下的四个旧文件（travel-map、want-to-go、editor-state、user-media 的 .local.json）移到别处。",
     "legacyFiles": "旧格式文件：{{files}}",
@@ -78,10 +85,18 @@ export const domainErrorResources = {
     "field_nameEn": "地点英文名",
     "field_id": "想去记录 id",
     "field_recordId": "旅行计划 id",
+    "field_search_query": "城市名称",
     "mediaItem_other": "{{name}}（{{count}} 个媒体）",
     "unknownCity": "未知城市"
   },
   "en": {
+    "E_EDITOR_READ_FORBIDDEN": "Only local editing sessions may read this data.",
+    "E_EDITOR_WRITE_FORBIDDEN": "Only local editing sessions may save changes.",
+    "E_SEARCH_COUNTRY_NOT_FOUND": "Country not found. City search cannot be limited to this country.",
+    "E_CITY_SEARCH_UNAVAILABLE": "OpenStreetMap is temporarily unavailable. Try again later or enter coordinates manually.",
+    "E_CITY_SEARCH_ALL_UNAVAILABLE": "Cesium ion and OpenStreetMap are temporarily unavailable. Try again later or enter coordinates manually.",
+    "E_REQUEST_TOO_LARGE": "The request is too large.",
+    "E_EDITOR_RESPONSE_INVALID": "The local editor returned an unreadable response (HTTP {{status}}). The operation's result may be unknown. Reload to check your data before deciding whether to retry.",
     "E_LOCAL_EDITOR_FAILED": "The local editing operation failed.",
     "E_LEGACY_UNMIGRATED": "Your private folder contains data in the old format that has not been migrated. No changes were saved. Follow the README Private Data Format steps: check out commit 4fd32a9 (the last version with the migration tool), complete the migration, then return to the latest version. If you do not need the old data, you can move the four old files from the private data/ folder elsewhere (travel-map, want-to-go, editor-state and user-media .local.json files).",
     "legacyFiles": "Old-format files: {{files}}",
@@ -160,6 +175,7 @@ export const domainErrorResources = {
     "field_nameEn": "English place name",
     "field_id": "Want to Go record ID",
     "field_recordId": "planned trip ID",
+    "field_search_query": "city name",
     "mediaItem_one": "{{name}} ({{count}} media item)",
     "mediaItem_other": "{{name}} ({{count}} media items)",
     "unknownCity": "Unknown city"
