@@ -56,13 +56,12 @@ export const countryPlaceOf = (places: PlaceIndex, place: CanonicalPlace | undef
   return place.partOf === undefined ? undefined : places.get(place.partOf)
 }
 
-/** Core 实体标题的形状（`Entity.title`；Core-B 改为 LocalizedText）。 */
+/** 旧双语匹配输入的形状。Core 的 Entity.title 已改为 LocalizedText，不再用它显示。 */
 export type PlaceTitle = { zh: string; en?: string }
 
 /**
- * 地点在 Core 里的标题（RFC-LOC-1 Core-A：Core 的地点实体由注册表构造，标题取这里）。
- * 规则与今天构造足迹国家 / 城市实体标题的规则相同：领域对象的名称由地点重建（中文名；英文名，缺时用中文名），
- * 再经 Core 足迹适配器原来的 buildTitle（中文名缺时用英文名，英文名为空时不写 en）。
+ * 旧双语规则的兼容辅助函数，仅保留给冻结的 placeResolver 测试（这些测试不改动）。
+ * 生产匹配用独立的 matchNameOf，Core 显示用 LocalizedText / resolveName；两者都不再依赖这里。
  */
 export const placeTitle = (place: Pick<CanonicalPlace, 'names'>): PlaceTitle => {
   const nameZh = place.names[ZH] ?? ''

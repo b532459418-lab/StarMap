@@ -17,6 +17,7 @@
  * 4. 不产出成员关系：一个地点在哪些图层里，由引用它的记录决定，不由地点本身决定。
  */
 
+import { copyLocalizedText, type LocalizedText } from '../localizedText.ts'
 import type { Anchor, Entity, EntityId, Relation, WorldGraphSnapshot } from '../types.ts'
 import { anchorId, relationId } from './travel.ts'
 
@@ -25,8 +26,11 @@ export interface PlaceInput {
   /** 注册表地点 id（V2 里是 UUID），即实体 id，不加前缀。 */
   id: EntityId
   subtype: 'country' | 'city'
-  /** 显示名称。Core-B 改为 LocalizedText；今天沿用 `Entity.title` 的形状。 */
-  title: { zh: string; en?: string }
+  /**
+   * 注册表里的多语言名称：`names` 与 `originalLanguage` 原样传入（RFC-LOC-1 Core 方案 C7）。
+   * 这里不做回退（例如「英文名缺时用中文名」）：显示哪个名称由 `resolveName` 按界面语言决定。
+   */
+  title: LocalizedText
   /** 两位大写国家代码：国家取自身 ISO，城市取所属国家的 ISO。拿不到时省略。 */
   countryCode?: string
   /** 城市 → 所属国家的地点 id。 */
@@ -43,19 +47,17 @@ export interface PlacesWorldGraphOptions {
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
 /**
- * 地点 → 实体：`type: 'place'`，`subtype` 与 `title` 照搬，`metadata` 只放 `countryCode`（有才写），
+ * 地点 → 实体：`type: 'place'`，`subtype` 与 `title` 照搬（`title` 复制一份），`metadata` 只放 `countryCode`（有才写），
  * `visibility: 'private'`，`createdAt` 与 `updatedAt` 都是 `now`。返回新对象，不与输入共享引用。
  */
 export const placeEntity = (place: PlaceInput, now: string): Entity => {
-  const title: Entity['title'] = { zh: place.title.zh }
-  if (place.title.en !== undefined) title.en = place.title.en
   const metadata: Entity['metadata'] = {}
   if (place.countryCode) metadata.countryCode = place.countryCode
   return {
     id: place.id,
     type: 'place',
     subtype: place.subtype,
-    title,
+    title: copyLocalizedText(place.title),
     metadata,
     visibility: 'private',
     createdAt: now,

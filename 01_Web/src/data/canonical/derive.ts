@@ -23,6 +23,7 @@
 
 import type { PlaceInput } from '../../worldgraph/adapters/places.ts'
 import type { PlannedRecordInput } from '../../worldgraph/adapters/plannedRecords.ts'
+import { copyLocalizedText } from '../../worldgraph/localizedText.ts'
 import { deriveDroneMedia, type DroneMediaDerived } from '../derive/droneMedia.ts'
 import { orderBySavedIds, type TravelAtlasEditorState } from '../derive/editorState.ts'
 import { deriveMediaCatalog, getMediaSource, type MediaCatalogDerived } from '../derive/mediaCatalog.ts'
@@ -46,7 +47,6 @@ import {
   countryPlaceOf,
   indexPlaces,
   isoOf,
-  placeTitle,
   rebuildCountryCodes,
   reconstructEditorState,
   reconstructMediaItem,
@@ -399,11 +399,11 @@ const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceI
 // ---- World Graph（RFC-LOC-1 Core-A：Core 的地点实体由注册表构造，想去与 planned 只按地点 id 引用它）----
 
 /**
- * 注册表地点 → Core 的 `PlaceInput`：标题见 `placeTitle`；国家代码取 ISO（国家取自身，城市取所属国家，大写）；
+ * 注册表地点 → Core 的 `PlaceInput`：多语言名称原样复制，不预先回退；国家代码取 ISO（国家取自身，城市取所属国家，大写）；
  * `partOf`、`location` 照搬（`location.approximate` 不进 Core）。
  */
 const placeInputOf = (place: CanonicalPlace, places: PlaceIndex): PlaceInput => {
-  const input: PlaceInput = { id: place.id, subtype: place.subtype, title: placeTitle(place) }
+  const input: PlaceInput = { id: place.id, subtype: place.subtype, title: copyLocalizedText(place) }
   const iso = isoOf(countryPlaceOf(places, place))
   if (iso) input.countryCode = iso.toUpperCase()
   if (place.partOf !== undefined) input.partOf = place.partOf

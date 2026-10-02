@@ -33,6 +33,8 @@ import { queryCollection } from './collection.ts'
 import { queryVisiblePlaces } from './query.ts'
 import { mergeWorldGraphSnapshots } from './snapshot.ts'
 
+const UI = 'zh-Hans'
+
 const NOW = '2026-09-20T00:00:00.000Z'
 
 // ---------------------------------------------------------------------------
@@ -42,7 +44,7 @@ const NOW = '2026-09-20T00:00:00.000Z'
 const place = (
   id: EntityId,
   subtype: 'region' | 'country' | 'city',
-  title: { zh: string; en?: string },
+  title: Entity['title'],
   metadata: Record<string, unknown> = {},
 ): Entity => ({
   id,
@@ -58,7 +60,7 @@ const place = (
 const journey = (id: EntityId, journeyId?: string): Entity => ({
   id,
   type: 'journey',
-  title: { zh: id },
+  title: { names: { 'zh-Hans': id } },
   metadata: journeyId === undefined ? {} : { journeyId },
   visibility: 'private',
   createdAt: NOW,
@@ -114,11 +116,11 @@ const emptySnapshot = (): WorldGraphSnapshot => ({
  */
 const demoSnapshot = (): WorldGraphSnapshot => ({
   entities: [
-    place('c1', 'country', { zh: '国一' }, { countryCode: 'AA' }),
-    place('c2', 'country', { zh: '国二' }, { countryCode: 'BB' }),
-    place('a', 'city', { zh: '甲', en: 'Alpha' }, { countryCode: 'AA' }),
-    place('b', 'city', { zh: '乙', en: 'Beta' }, { countryCode: 'AA' }),
-    place('z', 'city', { zh: '丙', en: 'Zeta' }, { countryCode: 'BB' }),
+    place('c1', 'country', { names: { 'zh-Hans': '国一' } }, { countryCode: 'AA' }),
+    place('c2', 'country', { names: { 'zh-Hans': '国二' } }, { countryCode: 'BB' }),
+    place('a', 'city', { names: { 'zh-Hans': '甲', en: 'Alpha' } }, { countryCode: 'AA' }),
+    place('b', 'city', { names: { 'zh-Hans': '乙', en: 'Beta' } }, { countryCode: 'AA' }),
+    place('z', 'city', { names: { 'zh-Hans': '丙', en: 'Zeta' } }, { countryCode: 'BB' }),
     journey(journeyEntityId('d1'), 'j1'),
     journey(journeyEntityId('d2'), 'j1'),
     journey(journeyEntityId('d3'), 'j1'),
@@ -261,7 +263,7 @@ test('坐标不是有限数（NaN / 缺一半）的 Anchor 不算有坐标；经
 
 test('足迹图层里 country / region 的 place 不进 places（足迹只画城市标记）；journey 不进 places', () => {
   const snapshot = demoSnapshot()
-  snapshot.entities.push(place('r1', 'region', { zh: '某区' }))
+  snapshot.entities.push(place('r1', 'region', { names: { 'zh-Hans': '某区' } }))
   snapshot.memberships.push(member('r1', 'travel'))
   snapshot.anchors.push(location('r1', 7, 8), location(journeyEntityId('d1'), 9, 9))
 
@@ -293,7 +295,7 @@ test('逐字段投影一个 place：sourceId 等于 entityId，countryId 等于 
     entityId: 'a',
     sourceId: 'a',
     subtype: 'city',
-    title: { zh: '甲', en: 'Alpha' },
+    title: { names: { 'zh-Hans': '甲', en: 'Alpha' } },
     lat: 1,
     lng: 2,
     layerIds: ['travel', 'want_to_go'],
@@ -309,10 +311,10 @@ test('逐字段投影一个 place：sourceId 等于 entityId，countryId 等于 
 
 test('title 没有英文名时不产出 en 键', () => {
   const snapshot = emptySnapshot()
-  snapshot.entities.push(place('solo', 'city', { zh: '只有中文' }))
+  snapshot.entities.push(place('solo', 'city', { names: { 'zh-Hans': '只有中文' } }))
   snapshot.memberships.push(member('solo', 'travel'))
   snapshot.anchors.push(location('solo', 1, 1))
-  assert.deepEqual(queryVisiblePlaces(snapshot, ['travel']).places[0].title, { zh: '只有中文' })
+  assert.deepEqual(queryVisiblePlaces(snapshot, ['travel']).places[0].title, { names: { 'zh-Hans': '只有中文' } })
 })
 
 test('countryCode 取地点实体的 metadata.countryCode，转大写；不是两位字母时不产出该键', () => {
@@ -362,7 +364,7 @@ test('足迹字段只在地点出现在足迹层时给出：只开想去时同�
     entityId: 'a',
     sourceId: 'a',
     subtype: 'city',
-    title: { zh: '甲', en: 'Alpha' },
+    title: { names: { 'zh-Hans': '甲', en: 'Alpha' } },
     lat: 1,
     lng: 2,
     layerIds: ['want_to_go'],
@@ -531,11 +533,11 @@ test('visibleLayerIds 与 recordIds 是副本，改结果不会回写调用方',
  * - planned：pl-nuuk → p-nuuk（与想去同一地点）
  */
 const PLACES: PlaceInput[] = [
-  { id: 'p-is', subtype: 'country', title: { zh: '冰岛', en: 'Iceland' }, countryCode: 'IS', location: { lat: 64.9, lng: -18.6 } },
-  { id: 'p-gl', subtype: 'country', title: { zh: '格陵兰', en: 'Greenland' }, countryCode: 'GL', location: { lat: 71.7, lng: -42.6 } },
-  { id: 'p-no', subtype: 'country', title: { zh: '挪威', en: 'Norway' }, countryCode: 'NO', location: { lat: 62, lng: 10 } },
-  { id: 'p-rvk', subtype: 'city', title: { zh: '雷克雅未克', en: 'Reykjavik' }, countryCode: 'IS', partOf: 'p-is', location: { lat: 64.1466, lng: -21.9426 } },
-  { id: 'p-nuuk', subtype: 'city', title: { zh: '努克', en: 'Nuuk' }, countryCode: 'GL', partOf: 'p-gl', location: { lat: 64.18, lng: -51.72 } },
+  { id: 'p-is', subtype: 'country', title: { names: { 'zh-Hans': '冰岛', en: 'Iceland' } }, countryCode: 'IS', location: { lat: 64.9, lng: -18.6 } },
+  { id: 'p-gl', subtype: 'country', title: { names: { 'zh-Hans': '格陵兰', en: 'Greenland' } }, countryCode: 'GL', location: { lat: 71.7, lng: -42.6 } },
+  { id: 'p-no', subtype: 'country', title: { names: { 'zh-Hans': '挪威', en: 'Norway' } }, countryCode: 'NO', location: { lat: 62, lng: 10 } },
+  { id: 'p-rvk', subtype: 'city', title: { names: { 'zh-Hans': '雷克雅未克', en: 'Reykjavik' } }, countryCode: 'IS', partOf: 'p-is', location: { lat: 64.1466, lng: -21.9426 } },
+  { id: 'p-nuuk', subtype: 'city', title: { names: { 'zh-Hans': '努克', en: 'Nuuk' } }, countryCode: 'GL', partOf: 'p-gl', location: { lat: 64.18, lng: -51.72 } },
 ]
 
 const ICELAND: Country = {
@@ -580,7 +582,7 @@ test('FR-MR-5：同一地点的足迹与想去是同一个实体的两条成员�
     entityId: 'p-rvk',
     sourceId: 'p-rvk',
     subtype: 'city',
-    title: { zh: '雷克雅未克', en: 'Reykjavik' },
+    title: { names: { 'zh-Hans': '雷克雅未克', en: 'Reykjavik' } },
     lat: 64.1466,
     lng: -21.9426,
     layerIds: ['travel', 'want_to_go'],
@@ -622,7 +624,7 @@ test('已接受的差异 1：同一地点有多条想去 / planned 记录时地�
   assert.deepEqual(nuuk?.recordIds, { want_to_go: ['w-nuuk', 'w-nuuk-2', 'pl-nuuk'] }, '想去在前（快照顺序），planned 在后')
   assert.deepEqual(nuuk?.membershipMetadata, { want_to_go: { hidden: false, source: 'want-to-go', note: '格陵兰首府' } }, '取第一条可见记录的 metadata')
 
-  const rows = queryCollection(snapshot, 'want_to_go').filter((entry) => entry.entityId === 'p-nuuk')
+  const rows = queryCollection(snapshot, 'want_to_go', UI).filter((entry) => entry.entityId === 'p-nuuk')
   assert.deepEqual(rows.map((entry) => entry.recordId).sort(), ['pl-nuuk', 'w-nuuk', 'w-nuuk-2'])
 })
 
@@ -636,7 +638,7 @@ test('同一地点的第一条想去记录被隐藏时，membershipMetadata 取�
 test('已接受的差异 2：名字相同但不是同一地点的城市不再合并，各自一个标记', () => {
   const places: PlaceInput[] = [
     ...PLACES,
-    { id: 'p-rvk-other', subtype: 'city', title: { zh: '雷克雅未克', en: 'Reykjavik' }, countryCode: 'IS', partOf: 'p-is', location: { lat: 64.15, lng: -21.95 } },
+    { id: 'p-rvk-other', subtype: 'city', title: { names: { 'zh-Hans': '雷克雅未克', en: 'Reykjavik' } }, countryCode: 'IS', partOf: 'p-is', location: { lat: 64.15, lng: -21.95 } },
   ]
   const wantToGo = WANT_TO_GO.map((item) => (item.id === 'w-rvk' ? { ...item, placeId: 'p-rvk-other' } : item))
   const result = queryVisiblePlaces(layeredSnapshot(wantToGo, PLANNED, places), ['travel', 'want_to_go'])

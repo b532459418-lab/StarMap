@@ -19,7 +19,7 @@ const entity = (id: string, zh: string): Entity => ({
   id,
   type: 'place',
   subtype: 'city',
-  title: { zh },
+  title: { names: { 'zh-Hans': zh } },
   metadata: {},
   visibility: 'private',
   createdAt: NOW,
@@ -116,7 +116,7 @@ test('entities / anchors / relations 按 id 去重，先到先得', () => {
     }),
   )
   assert.equal(merged.entities.length, 1)
-  assert.equal(merged.entities[0].title.zh, '先到')
+  assert.equal(merged.entities[0].title.names['zh-Hans'], '先到')
   assert.equal(merged.anchors.length, 1)
   assert.equal(merged.anchors[0].lat, 1)
   assert.equal(merged.relations.length, 1)

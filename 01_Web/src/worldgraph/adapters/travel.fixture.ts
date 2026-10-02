@@ -231,7 +231,9 @@ const finiteLocation = (lat: number | null | undefined, lng: number | null | und
  */
 export const placesOf = (countries: readonly Country[], cities: readonly City[]): PlaceInput[] => {
   const codeOf = new Map(countries.map((country) => [country.id, country.flagCode?.toUpperCase()]))
-  const titleOf = (zh: string | undefined, en: string | undefined) => (en ? { zh: zh || en, en } : { zh: zh || '' })
+  const titleOf = (zh: string | undefined, en: string | undefined): PlaceInput['title'] => ({
+    names: { ...(zh ? { 'zh-Hans': zh } : {}), ...(en ? { en } : {}) },
+  })
   const place = (input: PlaceInput): PlaceInput => {
     const result: PlaceInput = { id: input.id, subtype: input.subtype, title: input.title }
     if (input.countryCode) result.countryCode = input.countryCode

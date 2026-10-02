@@ -34,6 +34,7 @@
  */
 
 import { officialLayers, TRAVEL_LAYER_ID } from './layers.ts'
+import { copyLocalizedText, type LocalizedText } from './localizedText.ts'
 import type { Anchor, Entity, EntityId, LayerId, LayerMembership, Relation, WorldGraphSnapshot } from './types.ts'
 
 /**
@@ -47,7 +48,8 @@ export interface LayerPlace {
   /** 现在恒等于 `entityId`（地点 id 就是领域 id，Core 方案 C1）。保留给今天的调用方，留待以后清理。 */
   sourceId: string
   subtype: 'region' | 'country' | 'city' | undefined
-  title: { zh: string; en?: string }
+  /** 地点实体的多语言名称，原样传出（复制一份）；显示哪个名称由调用方用 `resolveName` 按界面语言决定。 */
+  title: LocalizedText
   lat: number
   lng: number
   /** 该地点在哪些【可见】图层里（有一条可见、未隐藏的成员关系），按 officialLayers.order 排序 */
@@ -250,9 +252,7 @@ export const queryVisiblePlaces = (
       entityId: entity.id,
       sourceId: entity.id,
       subtype: entity.subtype,
-      title: entity.title.en === undefined
-        ? { zh: entity.title.zh }
-        : { zh: entity.title.zh, en: entity.title.en },
+      title: copyLocalizedText(entity.title),
       lat: anchor.lat as number,
       lng: anchor.lng as number,
       layerIds: sortByLayerOrder(layerIds, layerOrder),

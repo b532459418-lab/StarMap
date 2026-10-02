@@ -13,6 +13,7 @@
  */
 
 import { queryCollection } from '../../worldgraph/collection.ts'
+import { UI_LOCALE } from '../uiLocale.ts'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../../worldgraph/layers.ts'
 import { queryVisiblePlaces } from '../../worldgraph/query.ts'
 import type { WantToGoItem } from './wantToGo.ts'
@@ -33,8 +34,10 @@ import type { City, CityId, Country, CountryId, TravelMapRecord } from '../../ty
  *   （C4：`LayerPlace` 去掉 `mergedEntityIds`、增加 `recordIds`），想去模块删除按实体 id 查条目的两张表
  *   （`wantToGoItemByEntityId` / `plannedRecordByEntityId`）。四份快照、地图与 Collection 查询因此都变了；其余部分
  *   与 @2 逐字节相同（测试见 `../canonical/derive.test.ts`）。@2 → @3 的映射对照只在 A2 的 PR 期间做过（C8）。
+ * - @4（RFC-LOC-1 Core-B）：快照、地图与 Collection 的 title 改为 LocalizedText，行程日标题标为 und。
+ *   38 份样例与冻结夹具的名称映射对照通过，除 title 与 format 外没有差异；App 领域模块保持原样。
  */
-export const BASELINE_FORMAT = 'starmap-legacy-baseline@3'
+export const BASELINE_FORMAT = 'starmap-legacy-baseline@4'
 
 /** 恰好等于 `options.now` 的字符串在基线里一律替换成它。 */
 export const NOW_PLACEHOLDER = '<now>'
@@ -298,7 +301,7 @@ export function buildBaseline(exports: AppDataExports, options: BaselineOptions)
       const visibleLayerIds = visibleLayerIdsFor(visible)
       return { name, visibleLayerIds, result: queryVisiblePlaces(snapshot, visibleLayerIds) }
     }),
-    collection: { [WANT_TO_GO_LAYER_ID]: queryCollection(snapshot, WANT_TO_GO_LAYER_ID) },
+    collection: { [WANT_TO_GO_LAYER_ID]: queryCollection(snapshot, WANT_TO_GO_LAYER_ID, UI_LOCALE) },
   }
 
   return toPlain({ format: BASELINE_FORMAT, modules, queries }, options.now)

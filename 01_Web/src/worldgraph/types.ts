@@ -19,6 +19,8 @@
  * erasableSyntaxOnly 都会拒绝它。
  */
 
+import type { LocalizedText } from './localizedText.ts'
+
 // ---- 标识 ----
 
 export type EntityId = string
@@ -76,7 +78,8 @@ export interface Entity {
   type: EntityType
   /** place 专用。 */
   subtype?: 'region' | 'country' | 'city'
-  title: { zh: string; en?: string }
+  /** 多语言名称（RFC-LOC-1 LOC-1，Core 方案 C7）；显示哪个名称由 `resolveName` 按界面语言决定（./localizedText.ts）。 */
+  title: LocalizedText
   summary?: string
   metadata: EntityMetadata
   /** V0.4 恒为 'private'。 */

@@ -20,6 +20,13 @@
  * 语法约束：erasable-only TypeScript（只用 type / interface）。
  */
 
+import {
+  copyLocalizedText,
+  resolveName,
+  searchableNames,
+  type LanguageTag,
+  type LocalizedText,
+} from './localizedText.ts'
 import type { Anchor, AnchorPrecision, Entity, EntityId, LayerId, WorldGraphSnapshot } from './types.ts'
 
 /** Collection 里的一行。字段都能一一对应到 CollectionPage 的用法。 */
@@ -29,7 +36,8 @@ export interface CollectionEntry {
   /** membership.recordId：这一行背后的记录 id（想去条目 / planned 足迹）；成员关系没有时省略。 */
   recordId?: string
   subtype: 'region' | 'country' | 'city' | undefined
-  title: { zh: string; en?: string }
+  /** 地点实体的多语言名称，原样传出（复制一份）；显示用 `resolveName` / `originalNameSubtitle`（./localizedText.ts）。 */
+  title: LocalizedText
   /** 两位大写国家代码；取 entity.metadata.countryCode，形状不对或没有则省略。 */
   countryCode?: string
   /** membership.addedAt */
@@ -76,38 +84,61 @@ const isFiniteCoordinate = (anchor: Anchor): boolean =>
 const compareCodePoints = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0
 
-const compareNameZh = (left: CollectionEntry, right: CollectionEntry): number =>
-  left.title.zh.localeCompare(right.title.zh, 'zh-CN')
+type CompareEntries = (left: CollectionEntry, right: CollectionEntry) => number
+
+/**
+ * 名称比较（RFC-LOC-1 Core 方案 C7）：`Intl.Collator(uiLocale)` 比较 `resolveName(title, uiLocale)`。
+ * 界面语言无效或不受支持时用显式英文排序，不取运行环境的默认 locale。
+ * 每个条目的显示名称只算一次。
+ */
+const nameComparator = (uiLocale: LanguageTag): CompareEntries => {
+  let collator: Intl.Collator
+  try {
+    collator = new Intl.Collator(Intl.Collator.supportedLocalesOf(uiLocale).length > 0 ? uiLocale : 'en')
+  } catch {
+    collator = new Intl.Collator('en')
+  }
+  const names = new Map<CollectionEntry, string>()
+  const nameOf = (entry: CollectionEntry): string => {
+    let name = names.get(entry)
+    if (name === undefined) {
+      name = resolveName(entry.title, uiLocale)
+      names.set(entry, name)
+    }
+    return name
+  }
+  return (left, right) => collator.compare(nameOf(left), nameOf(right))
+}
 
 /** 最后的稳定键：entityId 升序，再按 recordId 升序（没有 recordId 按空串算）。 */
-const compareIdentity = (left: CollectionEntry, right: CollectionEntry): number =>
+const compareIdentity: CompareEntries = (left, right) =>
   compareCodePoints(left.entityId, right.entityId) ||
   compareCodePoints(left.recordId ?? '', right.recordId ?? '')
 
-/** 默认顺序（'recent'）：addedAt 降序 → 同日按中文名升序 → 再按 entityId、recordId 升序，保证稳定。 */
-const compareRecent = (left: CollectionEntry, right: CollectionEntry): number =>
-  compareCodePoints(right.addedAt, left.addedAt) ||
-  compareNameZh(left, right) ||
-  compareIdentity(left, right)
-
-/** 'name'：中文名升序；同名按 entityId、recordId，保证稳定。 */
-const compareName = (left: CollectionEntry, right: CollectionEntry): number =>
-  compareNameZh(left, right) || compareIdentity(left, right)
-
-/** 'country'：国家代码升序，没有国家代码的排最后；同国再按 'name' 规则。 */
-const compareCountry = (left: CollectionEntry, right: CollectionEntry): number => {
-  if (left.countryCode !== right.countryCode) {
-    if (left.countryCode === undefined) return 1
-    if (right.countryCode === undefined) return -1
-    return compareCodePoints(left.countryCode, right.countryCode)
+/**
+ * 三种排序，名称都按界面语言比较（见 `nameComparator`）：
+ * - 'recent'（默认顺序）：addedAt 降序 → 同日按名称升序 → 再按 entityId、recordId 升序，保证稳定。
+ * - 'name'：名称升序；同名按 entityId、recordId，保证稳定。
+ * - 'country'：国家代码升序，没有国家代码的排最后；同国再按 'name' 规则。
+ */
+const comparatorsFor = (uiLocale: LanguageTag): Record<CollectionSort, CompareEntries> => {
+  const compareNames = nameComparator(uiLocale)
+  const compareName: CompareEntries = (left, right) => compareNames(left, right) || compareIdentity(left, right)
+  return {
+    recent: (left, right) =>
+      compareCodePoints(right.addedAt, left.addedAt) ||
+      compareNames(left, right) ||
+      compareIdentity(left, right),
+    name: compareName,
+    country: (left, right) => {
+      if (left.countryCode !== right.countryCode) {
+        if (left.countryCode === undefined) return 1
+        if (right.countryCode === undefined) return -1
+        return compareCodePoints(left.countryCode, right.countryCode)
+      }
+      return compareName(left, right)
+    },
   }
-  return compareName(left, right)
-}
-
-const comparators: Record<CollectionSort, (left: CollectionEntry, right: CollectionEntry) => number> = {
-  recent: compareRecent,
-  name: compareName,
-  country: compareCountry,
 }
 
 /**
@@ -117,8 +148,13 @@ const comparators: Record<CollectionSort, (left: CollectionEntry, right: Collect
  * - 同一 `(entityId, layerId, recordId)` 只取第一条成员关系（没有 recordId 按空串算；与 mergeWorldGraphSnapshots 的去重口径一致）。
  *   同一实体在这个图层有几条不同记录，就列几行。
  * - 返回的对象都是新造的，不与输入共享任何引用。
+ * - 默认顺序里同日的条目按名称排，名称按 `uiLocale`（界面语言）取与比较，见 `comparatorsFor`。
  */
-export const queryCollection = (snapshot: WorldGraphSnapshot, layerId: LayerId): CollectionEntry[] => {
+export const queryCollection = (
+  snapshot: WorldGraphSnapshot,
+  layerId: LayerId,
+  uiLocale: LanguageTag,
+): CollectionEntry[] => {
   const entityById = new Map<EntityId, Entity>()
   for (const entity of snapshot.entities) {
     if (!entityById.has(entity.id)) entityById.set(entity.id, entity)
@@ -148,9 +184,7 @@ export const queryCollection = (snapshot: WorldGraphSnapshot, layerId: LayerId):
       entityId: entity.id,
       layerId: membership.layerId,
       subtype: entity.subtype,
-      title: entity.title.en === undefined
-        ? { zh: entity.title.zh }
-        : { zh: entity.title.zh, en: entity.title.en },
+      title: copyLocalizedText(entity.title),
       addedAt: membership.addedAt,
       addedBy: membership.addedBy,
       hidden: metadata.hidden === true,
@@ -173,16 +207,19 @@ export const queryCollection = (snapshot: WorldGraphSnapshot, layerId: LayerId):
     entries.push(entry)
   }
 
-  return entries.sort(compareRecent)
+  return entries.sort(comparatorsFor(uiLocale).recent)
 }
 
 /** 搜索用的规范化：全角 / 兼容字符先折叠（NFKC），再转小写。 */
 const normalizeSearchText = (value: string): string => value.normalize('NFKC').toLowerCase()
 
-/** 参与搜索的字段：中文名、英文名、国家代码、备注。用换行拼接，避免跨字段拼出假匹配。 */
+/**
+ * 参与搜索的字段：名称的全部语言（`searchableNames`，RFC LOC-3：不只是当前显示的那个）、国家代码、备注。
+ * 用换行拼接，避免跨字段拼出假匹配。
+ */
 const searchTextOf = (entry: CollectionEntry): string =>
   normalizeSearchText(
-    [entry.title.zh, entry.title.en, entry.countryCode, entry.note]
+    [...searchableNames(entry.title), entry.countryCode, entry.note]
       .filter((part): part is string => part !== undefined && part !== '')
       .join('\n'),
   )
@@ -190,17 +227,21 @@ const searchTextOf = (entry: CollectionEntry): string =>
 /**
  * 搜索 + 状态筛选 + 排序。纯函数：不改输入数组与其中的对象，返回新数组。
  *
- * - `text`：trim 后为空则不过滤；否则对中文名 / 英文名 / 国家代码 / 备注做大小写不敏感的包含匹配。
+ * - `text`：trim 后为空则不过滤；否则对名称（任何语言）/ 国家代码 / 备注做大小写不敏感的包含匹配。
  * - `status`：`visible` 只留未隐藏、`hidden` 只留已隐藏，缺省 `all`。
  * - `sort`：`recent`（缺省，即 queryCollection 的默认顺序）/ `name` / `country`。
+ * - `uiLocale`：界面语言。排序里的名称是 `resolveName(title, uiLocale)`，用 `Intl.Collator(uiLocale)` 比较。
+ *   它与 `filter` 分开传：`filter` 是用户在页面上选的条件，界面语言不是。
  */
 export const filterCollection = (
   entries: readonly CollectionEntry[],
   filter: CollectionFilter,
+  uiLocale: LanguageTag,
 ): CollectionEntry[] => {
   const needle = normalizeSearchText((filter.text ?? '').trim())
   const status = filter.status ?? 'all'
-  const compare = comparators[filter.sort ?? 'recent'] ?? compareRecent
+  const comparators = comparatorsFor(uiLocale)
+  const compare = comparators[filter.sort ?? 'recent'] ?? comparators.recent
 
   return entries
     .filter((entry) => {

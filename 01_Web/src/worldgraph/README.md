@@ -11,6 +11,7 @@ The product editions that build on it are described in
 | File | Role |
 | --- | --- |
 | `types.ts` | World Graph Core Model: `Entity`, `LayerMembership`, `Anchor`, `Relation`, `WorldGraphSnapshot`, and the id / enum-like string types (`LayerId`, `EntityType`, `RelationType`, `AnchorPrecision`, `Visibility`, `RelationProvenance`). A membership may carry the `recordId` of the record behind it (a want-to-go item or a planned travel record), so one entity can have several memberships in the same layer. |
+| `localizedText.ts` | `LanguageTag`, `LocalizedText`, and pure name helpers: `resolveName(text, uiLocale)`, `originalNameSubtitle(text, uiLocale)`, `searchableNames(text)`, and `copyLocalizedText(text)`. Titles retain all registry names and an optional original language; resolution happens when displaying or sorting. |
 | `layers.ts` | Layer Registry: `LayerDefinition` and the read-only `officialLayers` list (`travel`, `want_to_go`). Icons are stored as lucide icon *names*, not components, so Core never depends on React. |
 | `slug.ts` | `slugify()`, the single slug rule. Core itself no longer uses it (since RFC-LOC-1 Core-A, entity ids are registry place ids and the map merges by identity); it is kept for matching and search: the App's place resolver for V2 writes (`src/data/canonical/placeResolver.ts`, which imports `slug.ts` directly) and the country search in `scripts/local-editor-plugin.mjs`, whose `.mjs` copy must stay identical. The former copy in `scripts/want-to-go-store.mjs` was removed with that legacy write module (RFC-LOC-1 PR5). |
 | `snapshot.ts` | `mergeWorldGraphSnapshots()` combines several adapter outputs into one snapshot (first one wins on duplicate ids; memberships are keyed by `(entityId, layerId, recordId ?? '')`), plus `emptyWorldGraphSnapshot()`. |
@@ -31,6 +32,34 @@ The product editions that build on it are described in
 | `slug.test.ts` | Unit tests for `slugify()`. |
 
 Run the tests with `npm test` from `01_Web/` (plain `node --test`, no bundler).
+
+## Names and UI locale
+
+Entity, place-input, map-query and Collection titles use `LocalizedText`:
+`{ names: Record<LanguageTag, string>, originalLanguage?: LanguageTag }`.
+Place titles copy the registry values without inserting fallback names. Journey-day
+titles have an unknown language and use `names.und`; an absent title has empty names.
+Queries copy the title and its nested names object instead of sharing references.
+
+`resolveName` maximizes BCP 47 tags with `Intl.Locale`, then chooses an exact
+language/script/region match, a language/script match, or the other Chinese script.
+If none matches, Chinese, Japanese and Korean interfaces prefer the original name
+before English; other interfaces prefer English before the original name. The
+last fallback is any nonempty name in tag code-point order. Invalid tags and `und`
+only participate in that last fallback. Empty names resolve to an empty string.
+
+The original-name subtitle is present only when it exists and differs from the
+resolved title. Migrated places without `originalLanguage` therefore have no
+Collection subtitle; their English names remain searchable. Collection searches
+all names, country code and note with NFKC normalization and case folding.
+`queryCollection(snapshot, layerId, uiLocale)` and
+`filterCollection(entries, filter, uiLocale)` both require the UI locale. Name
+comparisons use `Intl.Collator(uiLocale)` with entity id and then record id as
+stable tie breakers; recent and country sorts use the same name comparator.
+
+The App currently supplies `UI_LOCALE` from `src/data/uiLocale.ts` (Simplified
+Chinese). Map labels and Cesium entity names follow it. The App's other bilingual
+domain fields and interface wording remain outside this Core name contract.
 
 ## The boundary, and why it is enforced
 

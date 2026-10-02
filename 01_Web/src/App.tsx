@@ -39,6 +39,7 @@ import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
 import { cities, cityById, countries, countryById, getCitiesForCountry, journeyDays, travelAtlasDisplay, travelAtlasMeta } from './data/travelAtlas'
 import { worldGraphSnapshot } from './data/worldGraph'
+import { UI_LOCALE } from './data/uiLocale'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
 import { hiddenWantToGoItems } from './data/wantToGo'
 import { queryCollection } from './worldgraph/collection'
@@ -334,7 +335,7 @@ function App() {
 
   // Collection 列表（PR7）：想去图层的全部条目，含已隐藏与无坐标，不受图层可见性影响（FR-LP-6）。
   // 快照是模块级常量，算一次即可；写入后整页刷新，自然拿到新数据。
-  const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID), [])
+  const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID, UI_LOCALE), [])
 
   const atlasStats = useMemo(
     () => [

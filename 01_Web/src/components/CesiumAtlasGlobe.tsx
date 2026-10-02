@@ -40,6 +40,8 @@ import type { CityId, CountryId, SelectionMode } from '../types/travel'
 import { officialLayers, TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import type { LayerPlace, LayerQueryResult } from '../worldgraph/query'
 import type { EntityId } from '../worldgraph/types'
+import { resolveName } from '../worldgraph/localizedText'
+import { UI_LOCALE } from '../data/uiLocale'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
 import {
   bindTrackpadOrbit,
@@ -1818,7 +1820,7 @@ export function CesiumAtlasGlobe({
           // 点击只打开详情卡（FR-WTG-4），sourceId 就是它的 entityId（地点 id），半球裁剪照常生效。
           if (!city.layerIds.includes(TRAVEL_LAYER_ID)) {
             const isMuted = selectionMode !== 'overview'
-            const title = city.title.en ?? city.title.zh ?? city.sourceId
+            const title = resolveName(city.title, UI_LOCALE) || city.sourceId
 
             return (
               <Entity
@@ -1869,7 +1871,7 @@ export function CesiumAtlasGlobe({
           return (
             <Entity
               key={city.sourceId}
-              name={`${city.title.en ?? city.title.zh ?? city.sourceId} · ${visitCount} visit records`}
+              name={`${resolveName(city.title, UI_LOCALE) || city.sourceId} · ${visitCount} visit records`}
               properties={placeMarkerProperties.get(city.entityId)}
               show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
               position={cityPosition(city.lng, city.lat)}
@@ -1901,7 +1903,7 @@ export function CesiumAtlasGlobe({
                 show: isSelected || isCountryCity,
                 showBackground: true,
                 style: LabelStyle.FILL_AND_OUTLINE,
-                text: city.title.en ?? city.title.zh ?? city.sourceId,
+                text: resolveName(city.title, UI_LOCALE) || city.sourceId,
               }}
               ellipse={isSelected ? {
                 height: 300,
@@ -1939,7 +1941,7 @@ export function CesiumAtlasGlobe({
           return (
             <Entity
               key={`${city.sourceId}__want-to-go-badge`}
-              name={`${city.title.en ?? city.title.zh ?? city.sourceId} · want to go`}
+              name={`${resolveName(city.title, UI_LOCALE) || city.sourceId} · want to go`}
               properties={wantToGoBadgeProperties.get(city.entityId)}
               show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
               position={cityPosition(city.lng, city.lat)}

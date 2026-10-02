@@ -113,10 +113,10 @@ const makeExports = (now = NOW): AppDataExports => {
   // 注册表：足迹的两个国家、五个城市（冰岛就是想去的「整个冰岛」），另加格陵兰、努克、挪威、卑尔根。
   const places: PlaceInput[] = [
     ...samplePlaces(),
-    { id: 'greenland', subtype: 'country', title: { zh: '格陵兰', en: 'Greenland' }, countryCode: 'GL' },
-    { id: 'greenland__nuuk', subtype: 'city', title: { zh: '努克', en: 'Nuuk' }, countryCode: 'GL', partOf: 'greenland', location: { lat: 64.1814, lng: -51.6941 } },
-    { id: 'norway', subtype: 'country', title: { zh: '挪威', en: 'Norway' }, countryCode: 'NO' },
-    { id: 'norway__bergen', subtype: 'city', title: { zh: '卑尔根', en: 'Bergen' }, countryCode: 'NO', partOf: 'norway', location: { lat: 60.3913, lng: 5.3221 } },
+    { id: 'greenland', subtype: 'country', title: { names: { 'zh-Hans': '格陵兰', en: 'Greenland' } }, countryCode: 'GL' },
+    { id: 'greenland__nuuk', subtype: 'city', title: { names: { 'zh-Hans': '努克', en: 'Nuuk' } }, countryCode: 'GL', partOf: 'greenland', location: { lat: 64.1814, lng: -51.6941 } },
+    { id: 'norway', subtype: 'country', title: { names: { 'zh-Hans': '挪威', en: 'Norway' } }, countryCode: 'NO' },
+    { id: 'norway__bergen', subtype: 'city', title: { names: { 'zh-Hans': '卑尔根', en: 'Bergen' } }, countryCode: 'NO', partOf: 'norway', location: { lat: 60.3913, lng: 5.3221 } },
   ]
   const placeIdOfItem: Record<string, string> = { wtg_nuuk: 'greenland__nuuk', wtg_iceland: 'iceland' }
   const placesSnapshot = placesToWorldGraph(places, { now })
@@ -284,7 +284,7 @@ test('Map 转成按插入顺序的 [key, value] 数组，函数按定义域求�
   assert.deepEqual(domain, [...sampleCities().map((city) => city.id), 'elsewhere__city'])
   assert.deepEqual(baseline.modules.droneMedia.hasDroneMedia.at(-1), ['elsewhere__city', true])
   // @2 起：countryIdOfCity 的定义域再并上 editor-state 的 hiddenCityIds（去重，按首次出现顺序）；undefined 写成 null。
-  assert.equal(baseline.format, 'starmap-legacy-baseline@3')
+  assert.equal(baseline.format, 'starmap-legacy-baseline@4')
   assert.deepEqual(baseline.modules.travelAtlas.countryIdOfCity, [
     ...sampleCities().map((city) => [city.id, city.countryId]),
     ['elsewhere__city', null],
@@ -365,7 +365,7 @@ test('公开样例经 App 派生的基线：两次字节相同，关键数量与
   const both = queries.visiblePlaces.find(({ name }: { name: string }) => name === 'travel+want_to_go').result
   assert.deepEqual(
     both.places
-      .filter((place: { title: { en?: string } }) => place.title.en === 'Akureyri')
+      .filter((place: { title: { names: { en?: string } } }) => place.title.names.en === 'Akureyri')
       .map((place: { entityId: string; layerIds: string[] }) => [place.entityId, place.layerIds]),
     [['iceland__akureyri', ['travel']], ['wtg:wtg_2026-08-12_akureyri', ['want_to_go']]],
   )

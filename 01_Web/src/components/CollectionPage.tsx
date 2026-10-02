@@ -12,6 +12,8 @@ import {
 } from '../data/wantToGo'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
 import { filterCollection } from '../worldgraph/collection'
+import { originalNameSubtitle, resolveName } from '../worldgraph/localizedText'
+import { UI_LOCALE } from '../data/uiLocale'
 import type { CollectionEntry, CollectionSort, CollectionStatusFilter } from '../worldgraph/collection'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
@@ -101,7 +103,7 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
   const showAdd = addAvailable && onAddWantToGo !== undefined
 
   const visibleEntries = useMemo(
-    () => filterCollection(entries, { text, status, sort }),
+    () => filterCollection(entries, { text, status, sort }, UI_LOCALE),
     [entries, sort, status, text],
   )
 
@@ -252,8 +254,8 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   // 按这一行背后的记录 id 查（Core 方案 C3）：想去条目只查想去表，planned 条目只查 planned 表。
   const item = !fromTravelLog && entry.recordId !== undefined ? wantToGoItemById.get(entry.recordId) : undefined
   const planned = fromTravelLog && entry.recordId !== undefined ? plannedRecordById.get(entry.recordId) : undefined
-  const nameZh = entry.title.zh
-  const nameEn = entry.title.en
+  const name = resolveName(entry.title, UI_LOCALE)
+  const subtitle = originalNameSubtitle(entry.title, UI_LOCALE)
   const isSample = item?.source === 'sample'
   // 写入 id 只能来自私有想去文件里的条目；planned 记录查不到，就不渲染任何写入按钮。
   const writableId = writeAvailable && !entry.readOnly ? item?.id : undefined
@@ -320,21 +322,21 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
 
   const deleteEntry = () => {
     if (!writableId) return
-    if (!window.confirm(`确定彻底删除「${nameZh}」吗？此操作无法撤销。`)) return
+    if (!window.confirm(`确定彻底删除「${name}」吗？此操作无法撤销。`)) return
     runWrite(() => deleteHiddenLocalWantToGo([writableId]), '彻底删除失败。')
   }
 
   return (
     <li className="collection-card" data-hidden={entry.hidden ? 'true' : 'false'}>
       <div className="collection-card-heading">
-        <h4 className="collection-card-title">{nameZh}</h4>
-        {nameEn && nameEn !== nameZh ? <p className="collection-card-subtitle">{nameEn}</p> : null}
+        <h4 className="collection-card-title">{name}</h4>
+        {subtitle ? <p className="collection-card-subtitle">{subtitle}</p> : null}
       </div>
 
       <p className="collection-card-meta">{[countryName, dateLabel].filter(Boolean).join(' · ')}</p>
 
       {tags.length > 0 ? (
-        <ul className="collection-tags" aria-label={`${nameZh}的标签`}>
+        <ul className="collection-tags" aria-label={`${name}的标签`}>
           {tags.map((tag) => (
             <li key={tag.id} className="collection-tag" data-tag={tag.id}>{tag.label}</li>
           ))}
@@ -343,7 +345,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
 
       {editingNote ? (
         <div className="collection-note-editor">
-          <label htmlFor={noteId} className="sr-only">{`${nameZh}的备注`}</label>
+          <label htmlFor={noteId} className="sr-only">{`${name}的备注`}</label>
           <textarea
             id={noteId}
             value={noteDraft}
@@ -360,7 +362,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
                 type="button"
                 className="collection-action"
                 disabled={busy}
-                aria-label={`取消编辑备注：${nameZh}`}
+                aria-label={`取消编辑备注：${name}`}
                 onClick={() => setEditingNote(false)}
               >
                 取消
@@ -369,7 +371,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
                 type="button"
                 className="collection-action collection-action-primary"
                 disabled={busy}
-                aria-label={`保存备注：${nameZh}`}
+                aria-label={`保存备注：${name}`}
                 onClick={saveNote}
               >
                 {busy ? '正在保存…' : '保存'}
@@ -388,7 +390,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
               type="button"
               className="collection-action collection-action-primary"
               disabled={busy}
-              aria-label={`在地图上查看：${nameZh}`}
+              aria-label={`在地图上查看：${name}`}
               onClick={() => onViewOnMap(entry)}
             >
               <LocateFixed aria-hidden="true" />
@@ -403,7 +405,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
               data-blocked={convertBlockReason ? 'true' : undefined}
               disabled={busy || convertBlockReason !== undefined}
               title={convertBlockReason}
-              aria-label={`标记为去过：${nameZh}`}
+              aria-label={`标记为去过：${name}`}
               aria-describedby={convertBlockReason ? convertHintId : undefined}
               onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
@@ -418,7 +420,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
                 type="button"
                 className="collection-action"
                 disabled={busy}
-                aria-label={`编辑备注：${nameZh}`}
+                aria-label={`编辑备注：${name}`}
                 onClick={startEditingNote}
               >
                 <PencilLine aria-hidden="true" />
@@ -430,7 +432,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
                     type="button"
                     className="collection-action"
                     disabled={busy}
-                    aria-label={`恢复：${nameZh}`}
+                    aria-label={`恢复：${name}`}
                     onClick={restoreEntry}
                   >
                     <Eye aria-hidden="true" />
@@ -440,7 +442,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
                     type="button"
                     className="collection-action collection-action-danger"
                     disabled={busy}
-                    aria-label={`彻底删除：${nameZh}`}
+                    aria-label={`彻底删除：${name}`}
                     onClick={deleteEntry}
                   >
                     <Trash2 aria-hidden="true" />
@@ -452,7 +454,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
                   type="button"
                   className="collection-action"
                   disabled={busy}
-                  aria-label={`隐藏：${nameZh}`}
+                  aria-label={`隐藏：${name}`}
                   onClick={hideEntry}
                 >
                   <EyeOff aria-hidden="true" />
