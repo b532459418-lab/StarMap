@@ -12,7 +12,7 @@
  */
 
 import { slugify } from '../../worldgraph/slug.ts'
-import { EN, ZH, isoOf, placeTitle, type PlaceTitle } from './reconstruct.ts'
+import { EN, ZH, isoOf, type PlaceTitle } from './reconstruct.ts'
 import type { CanonicalPlace, PlaceId } from './types.ts'
 
 // ---------------------------------------------------------------------------
@@ -21,7 +21,7 @@ import type { CanonicalPlace, PlaceId } from './types.ts'
 //
 // 键是 `<国家代码>:<slug(英文名 ?? 中文名)>`，两个输入：
 // - 国家代码：`asCountryCode`（两位字母才算，统一大写），取所属国家地点的 ISO；
-// - 名称：地点在 Core 里的标题 `placeTitle`（./reconstruct.ts；英文名缺时用中文名）。
+// - 名称：独立的匹配规则 `matchNameOf`（英文名缺时用中文名），不依赖显示名称或界面语言。
 // RFC-LOC-1 Core-A 之前地图的 FR-MR-5 也按这个键把想去城市并进足迹城市；Core-A 起地图按地点 id 合并，
 // 这个键只剩 V2 写入「先找后建」的匹配用途（RFC ID-6）：它只回答「可能是同一个」，结论落在地点 id 上。
 
@@ -31,10 +31,14 @@ export const asCountryCode = (value: unknown): string | undefined => {
   return code !== undefined && /^[A-Z]{2}$/.test(code) ? code : undefined
 }
 
-/** 城市匹配键 `<国家代码>:<slug(英文名 ?? 中文名)>`。拿不到国家代码或 slug 为空时没有键（匹配不到任何地点）。 */
+/** 匹配名称保留原有规则：英文名，缺时用简体中文名。不使用显示名称的语言回退。 */
+export const matchNameOf = (names: Readonly<Record<string, string>>): string =>
+  (names[EN] ?? '') || (names[ZH] ?? '')
+
+/** 城市匹配键。保留现有双语输入契约，名称选择独立于显示规则。 */
 export const cityMatchKeyOf = (countryCode: string | undefined, title: PlaceTitle): string | undefined => {
   if (countryCode === undefined) return undefined
-  const slug = slugify(title.en ?? title.zh)
+  const slug = slugify(matchNameOf({ [ZH]: title.zh, [EN]: title.en ?? '' }))
   return slug === '' ? undefined : `${countryCode}:${slug}`
 }
 
@@ -77,7 +81,7 @@ export const resolveCountry = (places: readonly CanonicalPlace[], iso: string): 
 }
 
 /**
- * 在国家 `countryId` 的城市地点里按城市匹配键找城市。输入的名称与城市地点都按 `placeTitle` 取键
+ * 在国家 `countryId` 的城市地点里按城市匹配键找城市。输入的名称与城市地点都按 `matchNameOf` 取键
  * （英文名缺时用中文名）；国家代码取 `countryId` 这个国家地点的 ISO。国家不存在或没有 ISO、输入的键为空时视为找不到。
  */
 export const resolveCity = (
@@ -87,14 +91,11 @@ export const resolveCity = (
 ): PlaceResolution => {
   const country = places.find((place) => place.id === countryId && place.subtype === 'country')
   const countryCode = asCountryCode(isoOf(country))
-  const inputNames: Record<string, string> = {}
-  if (names.zh) inputNames[ZH] = names.zh
-  if (names.en) inputNames[EN] = names.en
-  const key = cityMatchKeyOf(countryCode, placeTitle({ names: inputNames }))
+  const key = cityMatchKeyOf(countryCode, { zh: names.zh ?? '', en: names.en })
   if (key === undefined) return { status: 'none' }
   return resolutionOf(places.filter((place) => (
     place.subtype === 'city'
     && place.partOf === countryId
-    && cityMatchKeyOf(countryCode, placeTitle(place)) === key
+    && cityMatchKeyOf(countryCode, { zh: place.names[ZH] ?? '', en: place.names[EN] }) === key
   )))
 }

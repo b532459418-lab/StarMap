@@ -22,21 +22,14 @@
 import type { WantToGoDataSource } from '../derive/wantToGo.ts'
 import type { ImportedMediaCatalogItem } from '../derive/mediaCatalog.ts'
 import type { TravelMapRecord } from '../../types/travel.ts'
+import type { LanguageTag, LocalizedText } from '../../worldgraph/localizedText.ts'
+export type { LanguageTag, LocalizedText } from '../../worldgraph/localizedText.ts'
 
 /** 地点 id。不透明字符串：不得解析其结构，也不得从名称重新计算（RFC ID-1）。 */
 export type PlaceId = string
 
-/** BCP 47 语言标签（RFC LOC-1）。现有中文名全为简体，统一标 `zh-Hans`（LOC-2）。 */
-export type LanguageTag = string
-
-/** RFC LOC-1。`names` 只写非空值。 */
-export interface LocalizedText {
-  names: Record<LanguageTag, string>
-  originalLanguage?: LanguageTag
-}
-
 /** RFC §3.1 的地点记录。 */
-export interface CanonicalPlace {
+export interface CanonicalPlace extends LocalizedText {
   id: PlaceId
   subtype: 'country' | 'city'
   /** 只写非空值；从旧格式迁移来的地点最多 `zh-Hans` 与 `en` 两项。 */

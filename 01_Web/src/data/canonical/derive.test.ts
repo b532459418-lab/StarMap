@@ -43,6 +43,18 @@ const sha256 = (text: string) => createHash('sha256').update(`${text}\n`).digest
 /** 冻结的 Canonical → 派生（与 App 相同的 now 注入方式）。 */
 const derive = (name: LegacyIdCanonicalName) => deriveAppDataFromCanonical(legacyIdCanonical(name), { now: NOW })
 
+test('Core receives every registry name and original language without precomputing a fallback', () => {
+  const canonical = legacyIdCanonical('sample')
+  const city = canonical.places.find((place) => place.subtype === 'city')!
+  city.names = { 'zh-Hans': '东京', ja: '東京' }
+  city.originalLanguage = 'ja'
+  const graph = deriveAppDataFromCanonical(canonical, { now: NOW }).worldGraph.worldGraphSnapshot
+  const title = graph.entities.find((entity) => entity.id === city.id)!.title
+  assert.deepEqual(title, { names: { 'zh-Hans': '东京', ja: '東京' }, originalLanguage: 'ja' })
+  title.names.ja = 'changed'
+  assert.equal(city.names.ja, '東京')
+})
+
 // ---------------------------------------------------------------------------
 // 基线格式
 // ---------------------------------------------------------------------------
@@ -285,29 +297,29 @@ const v2FilesSha256 = (v2Files: V2FileInputs, source: 'local' | 'sample' = 'loca
   baselineSha256(canonicalForInputs({ v2Files, source }))
 
 const LEGACY_ID_LOCKS: Record<LegacyIdCanonicalName, string> = {
-  sample: '88d6d203d78f9f9cb8cc981c0d576c4d4b71292aff8f39387ea33c4c475d3872',
-  personal: '7a07076131a377464be93c5281558237228df9ce4ab5658a86208573467ede19',
-  personalDanglingMedia: 'df6ccad7d9acda9fb3534f91da5f73851f374d19bc9ef2a31185d0fc85686a8f',
-  nameInconsistency: '90708ba1b55ab09a0bdc1b7818b02ff4ef62a63086d8d90f42c7309f323e953b',
-  countryOfCity: 'e2b6420036846c0d3e18d4ffde22c46eecfd5fb1248008bfe926696df6f8a208',
-  alias: '402656c0d194013e8c36a753e036263d2c37ee33bd5570e1059d264338b4ac59',
-  classification1: '46f5b220d2100ed410e76fbb6eebb4ea3084cbe3b53b6c72ec9ffeab736b0b7f',
-  classification2: '8b2f7d313fa98dd4a7bdfd17e095ccde311343d9c805537fe6da1cba1c4bd760',
-  classification3: '7a5c25710b7c466485d02075bce848789aa3b62d083b341f9907b89c4a00766c',
-  classification4: '992f63732776b2f56a655e75d3d5c50416ae8d45ca5bb41ad397010eb2afd750',
-  classificationConsistent: 'a249918590c36b4b171256790a4b36710c496827e95e3fdf5f6fe56eefde26b4',
-  journeyRules1: 'ac80f37f30d7eb22db5a81bce288f334d2ba44bc3588725aae616d1acee8ca62',
-  journeyRules2: '1e59a4d0cccd27c08214fe638c69b074b11a8aea97b7d34c968b1c83108799a1',
-  journeyRules3: '8dab8cc15525b1d7d8112af32dd36d3279e26f307feb49e143ede4fb1d2ed3dd',
-  editorHidden: 'b31d45003b38c13d495dd2c19f5976b982d4b1e0a1b9390fbda96a97894eb99e',
-  addedCountriesConsistent: 'adcb00c719e453acf07d21dd81721c63bd7f812221192fe96c3419eaa69c1936',
-  addedCountriesShown: '2eb3805fa4136ef8ab3f78678dfd183335f4abec5b9720a24b45bbc51babbd42',
-  addedCountriesHomeHidden: 'b0ad1af11f7b422e8a9997e246873de34dcc9c48d25bb0f1b863654bdc637332',
-  planned: 'b2b1eb32870aa66d6fde2f8433a79b114e2323d49c5182daf0bf8bcaf8b715ba',
-  media: '95069c47e593c1cf99c56f00f8bde521383d63e8e8af29ef4cf4babab5515dab',
-  combined: '2a3e17f07e8f4c6fb21a52af9b159761553dfa1ee6226d5f7578110065e1c115',
-  duplicate: '3803f64ecdcb033ea348e6debdab7bf639f3612feda67fc30ece16c2a88994d9',
-  caseAndDiacritic: '4babdad710e91719889fd53d664d1a06e7825801cfb70ddf03a7877d5702ce42',
+  sample: 'aa0b5531ec3a71b329c2c2772144f2d06e04b19aeb1febcecd065d54641f9f42',
+  personal: 'beb897637a255dc07310fe384ad98e5a409be34a539789ffcbd6337692ad771c',
+  personalDanglingMedia: '70e731b35ca7c58d601cf307299ed342f38fb678eba9776bb2e587ee977be45c',
+  nameInconsistency: '5dd3e81b0c2b4a1450261f2eb6346e8427eff46fb81503fdb7c260fcd8e1e372',
+  countryOfCity: 'f912716d14c7f80b91182ed8919e6d5c3fd279f3861684dfefb04bd6f2a30aca',
+  alias: '8c087bdde747cc69d46cbdb16b1aa478661787a8b00a34f58a038338fc09a3b9',
+  classification1: '610b1eaceb5ea2d02c9d343da2c3f9a4a229ea0bdf82d52fec3dc465f3713225',
+  classification2: 'be780a7d882f0e9ecad25506da746085c85948128f88255e9be8b2701a8b04aa',
+  classification3: '2fc4b098f69676dccd0302eb08881bab00306be7e6e899e19e495229f8103cd5',
+  classification4: '4d143761efa888bfa642c97b36802329ce685cf67478e1277388fcd859794e7d',
+  classificationConsistent: '333cde0a208508708e4628719794672d930cc8d043b16726d416f15e60ebb2b4',
+  journeyRules1: '454a18a59f670dbd38de21f040108908497c28ee74bbb64590a2ecec00808ff0',
+  journeyRules2: 'ea03602c3e6b84e312dc15acb09b291f52feb101a459e9789795be244f5c66e5',
+  journeyRules3: '7542c5034e47bcecde5ddfc109d1a5218306c582b91c59928bef1030fdc7b57b',
+  editorHidden: '212b243b6a4b27aa1d40935348bb790548444b585b82d096536cb4c6510df6f9',
+  addedCountriesConsistent: '55609ebce927221ea290acf40659ebea25a87e780fece96d0c7c0321aa5d3acb',
+  addedCountriesShown: '11d9c59564d776a46f6a89bdd50b60551d416cd621b8c9a56a9c816fd640d061',
+  addedCountriesHomeHidden: 'f21a5738c6034835ecdcebc1091e3ee0eea994dc7c08b5da1e3e563710f3df3c',
+  planned: 'dba8ea5025cd0ddb6f376b19f4b54d02ce552648933da2a6c03f8609539cb248',
+  media: '7b3c59aa12106c9ecc76a59415f77f2f88ab0d7c7c53fbc74569d2562bc9bf4a',
+  combined: '3fc7154522f2b9c2d985cd9ed15be860aece41c7eb2e0b5374ca145027733d8a',
+  duplicate: 'd5b29e36ecef6a6ba06a45761c9825884401e64ba025ff1003ee7a6b7f948916',
+  caseAndDiacritic: '37ae6f3e77595e4484b716bb00eb64afb9e64a21d0e606a29c9f5085ccd2fbae',
 }
 
 /**
@@ -317,16 +329,16 @@ const LEGACY_ID_LOCKS: Record<LegacyIdCanonicalName, string> = {
  * 是另一个地点（没合并），不再算已在足迹，地图上也不再并进足迹城市；合并后它就是足迹城市本身。nameInconsistency 没有这种条目，
  * 两者仍相同。
  */
-const PERSONAL_V2_LOCK = 'a2b094b4033c5899f222ba81a8b63818b1cb0382a4649df1f6a2bde157ec0f3b'
-const SAMPLE_MIGRATED_LOCK = 'dc448b1f9da30c2a83a06fab3df241fd3609faa2785e8f511fd101a1af3b6a3d'
-const NAME_INCONSISTENCY_V2_LOCK = '18b7070bd448d35a8ffff0a224c8996823e9593e0fc026b8ce6099c6cafb2bd4'
+const PERSONAL_V2_LOCK = 'bd04a994e6427bda31bc903f3de35990be5587cc36dae072912c6c70c6f35dd1'
+const SAMPLE_MIGRATED_LOCK = '5fc4301bcc50573eb36daab0ff79f42c0d5970a61fe2b5991490c81076152ba3'
+const NAME_INCONSISTENCY_V2_LOCK = 'ddb647faec3b15ffebf7230a26b33bbfd196cac75deb33d947b4a07f6256eeea'
 
 const V2_SPACE_LOCKS: Record<(typeof V2_SPACE_CANONICAL_NAMES)[number], string> = {
-  sample: '78f2751bbac513dff172b048908ba26931a753f4dec63fa139563786b88f9ca4',
-  personal: '770020d07dd8558a0d005837bb04415fa56a18193366c5c3e8c55f3ea2922b44',
+  sample: '52c65876b2f189195e5ff176d81480acb48e604745af1d61e4b2add6d58d3fe9',
+  personal: '9bbd86aad1028d543b935c255433759b6fbe69dfdb4ba48aef57f1472e9d121b',
   nameInconsistency: NAME_INCONSISTENCY_V2_LOCK,
-  recordCoordinates: '1494cffdc4730baf8d4f0e8f1ea0cf09447e24a506614d1a201891f457de65ff',
-  countryOfCity: 'bde2a4c59c7c613ca60a6394a9c05c8b96b1c867ee9565c8c6b36f9b4f2a7075',
+  recordCoordinates: '204d60ff84a4e91059d869d869195034c1b9b6c3103ec673a7adc51fc4a2ea34',
+  countryOfCity: '4cbe64374266453e74578f546c443b0fee71649ad1bcff16fa91cb1307faaa4e',
 }
 
 const MIGRATED_LOCKS: Record<(typeof MIGRATED_CANONICAL_NAMES)[number], string> = {
@@ -338,13 +350,13 @@ const MIGRATED_LOCKS: Record<(typeof MIGRATED_CANONICAL_NAMES)[number], string> 
 /** 冻结的五个 V2 文件（相对本文件的路径）。前两份是同一批中性个人数据迁移后的文件，后三份是三个脚本测试的私人根。 */
 const V2_FILES_LOCKS: [string, string][] = [
   ['../v2write/fixtures/migrated-files.json', PERSONAL_V2_LOCK],
-  ['../../../scripts/fixtures/bak-files-v2.json', '4c126287398329070a593a8c9d5092a8a76402897a27c16ad6b96e1c594b2667'],
-  ['../../../scripts/fixtures/baseline-v2.json', '9157f80a20dbcca79563e67ca00f7dfc6f28b23550cb7ed7e1b9dcef4ffffed5'],
-  ['../../../scripts/fixtures/editor-store-v2.json', 'fa74fc106da7cd42554805c1d8f3fa0a57308cbc9a124e5016bffef1d5172ff7'],
+  ['../../../scripts/fixtures/bak-files-v2.json', 'd6c598158e8e427b70d12543107664f678fce5b27a03a94059f34b5456858e36'],
+  ['../../../scripts/fixtures/baseline-v2.json', 'ecaba5cc00770a5a85189f963bc17e04f85ded3d62dd259163f770e15217a7ea'],
+  ['../../../scripts/fixtures/editor-store-v2.json', 'f3bda7b228655ff934093fe8c368d30846665d98e6d75bb2fa8d96117d94b6b3'],
 ]
 
 /** 公开 V2 样例的派生基线（RFC-LOC-1 PR4 起公布；`node scripts/baseline.mjs --sample` 的输出）。 */
-const V2_SAMPLE_BASELINE_SHA256 = '17178536c56a9f908428243e03fbdda4fe544423c7bc156f1e5d5f2eececdcc3'
+const V2_SAMPLE_BASELINE_SHA256 = '9b68b8add56e9e3c7d0340a503dc733ed5de1304ab959ce8bfd130d3d0e6bec0'
 
 const V2_SAMPLE_FILE_NAMES = { places: 'places.json', travel: 'travel-map.json', wantToGo: 'want-to-go.json', editorState: 'editor-state.json', media: 'user-media.json' }
 
@@ -367,7 +379,7 @@ test('锁定：冻结的五个 V2 文件（canonicalForInputs、V2 写入与三�
   for (const [relative, lock] of V2_FILES_LOCKS) assert.equal(v2FilesSha256(readJsonFile(relative) as V2FileInputs), lock, relative)
 })
 
-test('锁定：公开 V2 样例（src/data/v2-sample/，来源 sample）的派生基线为 17178536…', () => {
+test('锁定：公开 V2 样例（src/data/v2-sample/，来源 sample）的派生基线为 9b68b8ad…', () => {
   const v2Files = Object.fromEntries(Object.entries(V2_SAMPLE_FILE_NAMES).map(([key, name]) => [key, readJsonFile(`../v2-sample/${name}`)]))
   assert.equal(v2FilesSha256(v2Files, 'sample'), V2_SAMPLE_BASELINE_SHA256)
 })

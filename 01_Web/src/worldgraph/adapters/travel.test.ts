@@ -159,8 +159,8 @@ test('样例数据：sample_gjogv 的 journey Entity / time Anchor / visited Rel
   assert.deepEqual(entityById(snapshot.entities, id), {
     id: 'journey:sample_gjogv',
     type: 'journey',
-    // journey 没有 subtype——subtype 是 place 专用。
-    title: { zh: '2025 North Atlantic Demo' },
+    // journey 没有 subtype——subtype 是 place 专用。行程日标题判断不了语种，标为 und（RFC LOC-2）。
+    title: { names: { und: '2025 North Atlantic Demo' } },
     metadata: {
       sourceId: 'sample_gjogv',
       journeyId: '2025-north-atlantic-demo',

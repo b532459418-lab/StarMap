@@ -21,7 +21,7 @@ const NOW = '2026-10-01T00:00:00.000Z'
 const iceland = (): PlaceInput => ({
   id: 'p-iceland',
   subtype: 'country',
-  title: { zh: '冰岛', en: 'Iceland' },
+  title: { names: { 'zh-Hans': '冰岛', en: 'Iceland' } },
   countryCode: 'IS',
   location: { lat: 64.9, lng: -18.6 },
 })
@@ -29,7 +29,7 @@ const iceland = (): PlaceInput => ({
 const reykjavik = (): PlaceInput => ({
   id: 'p-reykjavik',
   subtype: 'city',
-  title: { zh: '雷克雅未克', en: 'Reykjavik' },
+  title: { names: { 'zh-Hans': '雷克雅未克', en: 'Reykjavik' } },
   countryCode: 'IS',
   partOf: 'p-iceland',
   location: { lat: 64.1466, lng: -21.9426 },
@@ -57,7 +57,7 @@ test('国家与城市：Entity / Anchor / part_of 逐字段正确，实体 id �
       id: 'p-iceland',
       type: 'place',
       subtype: 'country',
-      title: { zh: '冰岛', en: 'Iceland' },
+      title: { names: { 'zh-Hans': '冰岛', en: 'Iceland' } },
       metadata: { countryCode: 'IS' },
       visibility: 'private',
       createdAt: NOW,
@@ -67,7 +67,7 @@ test('国家与城市：Entity / Anchor / part_of 逐字段正确，实体 id �
       id: 'p-reykjavik',
       type: 'place',
       subtype: 'city',
-      title: { zh: '雷克雅未克', en: 'Reykjavik' },
+      title: { names: { 'zh-Hans': '雷克雅未克', en: 'Reykjavik' } },
       metadata: { countryCode: 'IS' },
       visibility: 'private',
       createdAt: NOW,
@@ -89,10 +89,10 @@ test('国家与城市：Entity / Anchor / part_of 逐字段正确，实体 id �
 })
 
 test('没有国家代码时 metadata 为空对象；没有英文名时 title 不出现 en 键', () => {
-  const entity = placeEntity({ id: 'p-x', subtype: 'city', title: { zh: '某地' } }, NOW)
+  const entity = placeEntity({ id: 'p-x', subtype: 'city', title: { names: { 'zh-Hans': '某地' } } }, NOW)
   assert.deepEqual(entity.metadata, {})
-  assert.deepEqual(entity.title, { zh: '某地' })
-  assert.equal(Object.hasOwn(entity.title, 'en'), false)
+  assert.deepEqual(entity.title, { names: { 'zh-Hans': '某地' } })
+  assert.equal(Object.hasOwn(entity.title.names, 'en'), false)
 })
 
 test('没有坐标、或坐标不是有限数时不产出 Anchor（D06）；0 是合法坐标', () => {
@@ -126,9 +126,9 @@ test('part_of 不悬空：所属地点不在输入里、或指向自己时不产
 })
 
 test('同一个 id 出现两次时第一条胜出，后续跳过（实体、锚点、关系各一份）', () => {
-  const duplicate: PlaceInput = { ...reykjavik(), title: { zh: '另一个写法' }, location: { lat: 1, lng: 2 } }
+  const duplicate: PlaceInput = { ...reykjavik(), title: { names: { 'zh-Hans': '另一个写法' } }, location: { lat: 1, lng: 2 } }
   const snapshot = placesToWorldGraph([iceland(), reykjavik(), duplicate], { now: NOW })
-  assert.deepEqual(snapshot.entities.map((entity) => [entity.id, entity.title.zh]), [['p-iceland', '冰岛'], ['p-reykjavik', '雷克雅未克']])
+  assert.deepEqual(snapshot.entities.map((entity) => [entity.id, entity.title.names['zh-Hans']]), [['p-iceland', '冰岛'], ['p-reykjavik', '雷克雅未克']])
   assert.deepEqual(snapshot.anchors.map((anchor) => [anchor.entityId, anchor.lat]), [['p-iceland', 64.9], ['p-reykjavik', 64.1466]])
   assert.equal(snapshot.relations.length, 1)
 })
@@ -140,4 +140,5 @@ test('纯函数：不修改输入，返回的对象不与输入共享引用，�
   assert.deepEqual(first, second)
   assert.deepEqual(places, [iceland(), reykjavik()])
   assert.notEqual(first.entities[1].title, places[1].title)
+  assert.notEqual(first.entities[1].title.names, places[1].title.names)
 })

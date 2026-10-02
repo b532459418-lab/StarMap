@@ -104,10 +104,11 @@ const putIfPresent = (target: Record<string, unknown>, key: string, value: unkno
 }
 
 /**
- * 行程日的 title：JourneyDay.title 是一个未区分语种的单字符串，只能落在 title.zh 上。
- * 为空时保留 `{ zh: '' }`（真实数据踩不到：派生层总会给行程日一个标题）。
+ * 行程日的 title：JourneyDay.title 是一个未区分语种的单字符串，判断不了语种，标为 `und`
+ * （RFC-LOC-1 LOC-2；Core 方案 C7）：`{ names: { und: title } }`。`resolveName` 只在第 5 步兜底时取到它。
+ * 为空时是 `{ names: {} }`（真实数据踩不到：派生层总会给行程日一个标题）。
  */
-const journeyTitle = (title: string | undefined): Entity['title'] => ({ zh: title || '' })
+const journeyTitle = (title: string | undefined): Entity['title'] => (title ? { names: { und: title } } : { names: {} })
 
 /**
  * 把足迹的领域对象投影成一个 World Graph 快照（足迹层）。
