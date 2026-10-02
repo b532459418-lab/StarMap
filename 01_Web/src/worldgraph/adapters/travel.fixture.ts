@@ -1,15 +1,15 @@
 /**
- * 样例数据 fixture —— 旧 travelAtlas.ts 对 tracked 的 ./travel.fixture.source.json（RFC-LOC-1 PR5b 前是 src/data/travel-map.sample.json） 的已知输出。
- * 那份 JSON 是 Core 今天的输入形状，PR5b 起作为 Core 自己的测试夹具放在这里，Core 切换时再换。
+ * 样例数据 fixture —— 足迹适配器的输入（Country / City / JourneyDay / Route）与对应的注册表地点（PlaceInput）。
+ *
+ * 足迹的四组领域对象是旧 travelAtlas.ts 对一份旧格式中性样例的已知输出（PR5b 前是 src/data/travel-map.sample.json，
+ * PR5b 起是 Core 的测试夹具 ./travel.fixture.source.json）。RFC-LOC-1 Core-A 退役了那份旧格式文件、钉住它的测试与
+ * 「查询与 PR3 之前 Globe 逻辑对等」的 query.parity.test.ts；这里的内容从此是冻结的静态数据。
  *
  * 为什么手写而不是 import travelAtlas.ts：travelAtlas.ts import 了 Vite 虚拟模块
  * 'virtual:starmap-private-data' 并读 import.meta.env，两者在 Vite 之外都无法解析，
  * node --test 直接崩；FR-MOD 也禁止 Core 依赖它。
  *
- * 手写 fixture 的风险是会跟真实数据漂移，因此 travel.test.ts 里有一个专门的测试
- * （"fixture 与 tracked 的 travel.fixture.source.json 保持一致"）把它逐字段钉回那份 JSON。
- * 本文件由 travel.test.ts 抽出（PR3），供 travel.test.ts 与 query.parity.test.ts 共用；
- * 内容与抽出前逐字相同，改它等于同时改动那两处测试的前提。
+ * 使用者：adapters/travel.test.ts 与 src/data/derive/baseline.test.ts。
  *
  * 本文件不是测试文件（npm test 的 glob 只匹配 .test.ts），也不会进生产构建——
  * 没有任何应用代码 import 它。
@@ -260,12 +260,3 @@ export const placesOf = (countries: readonly Country[], cities: readonly City[])
 
 /** 样例的注册表地点：两个国家、五个城市。 */
 export const samplePlaces = (): PlaceInput[] => placesOf(sampleCountries(), sampleCities())
-
-/**
- * 生成上面这些已知输出时，旧 travelAtlas.ts 的城市名 / 国家名坐标表（原 src/data/geoCoordinates.ts）。
- * 两张表一直是空的，所以国家中心是各记录坐标的算术平均、城市坐标就是记录坐标。RFC-LOC-1 PR5b 删除了那张表与按名字
- * 查坐标的回落（推导禁令），travel.test.ts 仍用这里的两张空表钉住 fixture 的这个前提。
- */
-type FixtureCoordinate = { lat: number; lng: number; approximate?: boolean }
-export const countryCoordinates: Record<string, FixtureCoordinate> = {}
-export const cityCoordinates: Record<string, FixtureCoordinate> = {}

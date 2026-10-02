@@ -5,7 +5,8 @@
  *
  * 为什么 fixture 是手写的、而不是 import travelAtlas.ts：
  * travelAtlas.ts import 了 Vite 虚拟模块 'virtual:starmap-private-data'，并读 import.meta.env。
- * 这两样在 Vite 之外都无法解析，node --test 直接崩。所以 fixture 是手写的足迹领域对象（./travel.fixture.ts）。
+ * 这两样在 Vite 之外都无法解析，node --test 直接崩。所以 fixture 是手写的足迹领域对象（./travel.fixture.ts，
+ * 原是旧格式样例的已知派生结果；RFC-LOC-1 Core-A 退役了那份旧格式样例与钉住它的测试，fixture 冻结为静态数据）。
  *
  * Core-A 起地点实体、位置锚点与 part_of 由 ./places.ts 构造（./places.test.ts），本适配器只产出足迹层的成员关系、
  * 行程日与关系；本文件的「与地点快照合并」一节核对两者拼起来自洽。
@@ -34,17 +35,12 @@ import {
 } from './travel.ts'
 import {
   JOURNEY_ID,
-  cityCoordinates,
-  countryCoordinates,
   sampleCities,
   sampleCountries,
   sampleInput,
-  sampleJourneyDays,
   samplePlaces,
   sampleRoutes,
 } from './travel.fixture.ts'
-
-import sample from './travel.fixture.source.json' with { type: 'json' }
 
 /** 固定时间戳：不传它输出就不可 deepEqual。 */
 const NOW = '2026-09-20T00:00:00.000Z'
@@ -279,55 +275,6 @@ test('Route 或行程日的城市端不在输入的城市里（包括写成了�
   // 行程日实体与时间锚点仍在。
   assert.deepEqual(snapshot.entities.map((entity) => entity.id), [journeyEntityId('orphan-day'), journeyEntityId('country-day')])
   assert.equal(snapshot.anchors.length, 2)
-})
-
-test('fixture 与 tracked 的 travel.fixture.source.json 保持一致', () => {
-  // 这个测试的唯一职责：当有人改了 ./travel.fixture.source.json 时，
-  // 手写的 fixture 会立刻变红，而不是悄悄地和真实数据脱节。
-  const records = sample.records
-  assert.equal(records.length, 5)
-  assert.ok(
-    records.every((record) => record.status === 'visited'),
-    '样例里若出现 planned 记录，下面按 5 条计算的期望值全部失效',
-  )
-
-  const cities = sampleCities()
-  const days = sampleJourneyDays()
-  assert.equal(cities.length, records.length)
-  assert.equal(days.length, records.length)
-
-  records.forEach((record, index) => {
-    const city = cities[index]
-    assert.equal(city.nameZh, record.city, `第 ${index} 条城市中文名不一致`)
-    assert.equal(city.nameEn, record.city_en, `第 ${index} 条城市英文名不一致`)
-    assert.equal(city.lat, record.lat, `第 ${index} 条纬度不一致`)
-    assert.equal(city.lng, record.lng, `第 ${index} 条经度不一致`)
-    assert.equal(city.memory, record.notes, `第 ${index} 条 memory 不一致`)
-    assert.deepEqual(city.keywords, [record.region], `第 ${index} 条 keywords 不一致`)
-
-    const day = days[index]
-    assert.equal(day.id, record.id)
-    assert.equal(day.date, record.start_date)
-    assert.equal(day.title, record.trip_title)
-  })
-
-  // 国家中心点是"该国全部有坐标记录的算术平均"，但这只在查表为空时成立（见 ./travel.fixture.ts）。
-  assert.equal(Object.keys(countryCoordinates).length, 0, 'fixture 的国家中心点假设 countryCoordinates 查表为空')
-  assert.equal(Object.keys(cityCoordinates).length, 0, 'fixture 的城市坐标假设 cityCoordinates 查表为空')
-
-  for (const country of sampleCountries()) {
-    const own = records.filter(
-      (record) => record.country_en.toLowerCase().replace(/[^a-z0-9]+/g, '-') === country.id,
-    )
-    assert.ok(own.length > 0, `${country.id} 在样例里找不到记录`)
-    const mean = (values: number[]) => values.reduce((sum, v) => sum + v, 0) / values.length
-    assert.equal(country.centerLat, mean(own.map((record) => record.lat)))
-    assert.equal(country.centerLng, mean(own.map((record) => record.lng)))
-    assert.equal(country.nameZh, own[0].country)
-    assert.equal(country.nameEn, own[0].country_en)
-    assert.equal(country.flagCode, own[0].country_code)
-    assert.equal(country.cityIds.length, own.length)
-  }
 })
 
 // ---------------------------------------------------------------------------
