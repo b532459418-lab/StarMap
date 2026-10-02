@@ -39,7 +39,6 @@ dev:public / build:public
 | --- | --- | --- | --- |
 | React / Cesium / UI 源码 | 保留 | 保留 | 产品主体 |
 | `src/data/v2-sample/` | 保留 | 保留 | 公开模式读取的中性示例：五个 V2 文件，手工维护，`privacy:check` 检查 |
-| `src/worldgraph/adapters/travel.fixture.source.json` | 保留 | 保留 | 旧格式的中性示例旅程，只作 StarMap Core 的测试夹具（App 不读），`privacy:check` 检查 |
 | `<private-root>/data/v2/` | 外置私有层 | 不包含 | 个人数据（App 只读写这里）：`places` / `travel-map` / `want-to-go` / `editor-state` / `user-media` 五个 `.local.json`，以及 `media-source-index.local.json` |
 | `<private-root>/data/migration/` | 外置私有层 | 不包含 | 旧数据迁移到 V2 时（提交 `4fd32a9` 的迁移工具）的迁移清单与决定文件 |
 | `<private-root>/data/data-mode.local.json` | 外置私有层 | 不包含 | 早期版本写下的数据模式标记，现已不再读取、不再写入，删留随意 |

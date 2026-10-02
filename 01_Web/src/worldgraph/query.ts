@@ -20,14 +20,17 @@
  *    这些图层。足迹只画城市（国家中心点从来不画，与 PR3 一致）；想去画城市与国家（PRD Q5）。
  *
  * 4. 路线只在 travel 图层可见时才计算（FR-LR-3）。计算规则逐条复刻 PR3 之前
- *    CesiumAtlasGlobe 里 `mappedRoutes` 的行为，只是把数据源从领域对象换成快照；
- *    `src/worldgraph/query.parity.test.ts` 用逐字复制的 legacy 逻辑把这件事钉死。
+ *    CesiumAtlasGlobe 里 `mappedRoutes` 的行为，只是把数据源从领域对象换成快照
+ *    （PR3 起由一份逐字复制旧逻辑的对等测试钉住，RFC-LOC-1 Core-A 退役了它；规则本身由 query.test.ts 覆盖）。
+ *    国家内顺序段读国家足迹成员关系上的 `cityIds`。
  *
- * 5. FR-MR-5「同一地点在两层」在这里合并，而不是在 Globe 里：非足迹的城市地点，若
- *    `(countryCode, slug(英文名))` 与一个【可见的】足迹城市相同，就并进那个足迹地点
- *    （`layerIds` 追加、`membershipMetadata` 合并、`mergedEntityIds` 记下来源），自身不再输出。
- *    足迹不可见时不合并，想去地点按自己的样式单独出现。剩下的非足迹地点之间同键只留第一个
- *    （快照合并顺序是 travel → want-to-go → planned，所以想去先于 planned）。国家地点不参与合并。
+ * 5. FR-MR-5「同一地点在两层」按身份合并（RFC-LOC-1 Core 方案 C4）：地点实体 id 就是注册表的地点 id，
+ *    同一地点在足迹与想去两层就是同一个实体的两条成员关系。一个实体在哪些可见图层里有未隐藏的成员关系，
+ *    就在哪些层出现，地图上只画一个标记，`layerIds` 列出这些层（足迹 + 想去即心形徽标）；关掉足迹时，
+ *    同一个实体按想去样式出现。不再按名字合并：名字相同但不是同一地点的城市各自一个标记。
+ *    同一地点在同一层有几条记录（例如一条想去加一条 planned），也只画一个标记：`recordIds` 列出可见记录，
+ *    `membershipMetadata` 取每层第一条可见成员关系的 metadata（快照合并顺序是 places → travel → want-to-go → planned，
+ *    所以想去先于 planned）。
  */
 
 import { officialLayers, TRAVEL_LAYER_ID } from './layers.ts'

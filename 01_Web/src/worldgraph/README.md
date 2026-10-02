@@ -12,21 +12,22 @@ The product editions that build on it are described in
 | --- | --- |
 | `types.ts` | World Graph Core Model: `Entity`, `LayerMembership`, `Anchor`, `Relation`, `WorldGraphSnapshot`, and the id / enum-like string types (`LayerId`, `EntityType`, `RelationType`, `AnchorPrecision`, `Visibility`, `RelationProvenance`). A membership may carry the `recordId` of the record behind it (a want-to-go item or a planned travel record), so one entity can have several memberships in the same layer. |
 | `layers.ts` | Layer Registry: `LayerDefinition` and the read-only `officialLayers` list (`travel`, `want_to_go`). Icons are stored as lucide icon *names*, not components, so Core never depends on React. |
-| `slug.ts` | `slugify()`, the single slug rule shared by want-to-go entity ids and the same-place merge key in `query.ts`. The `.mjs` copy in `scripts/local-editor-plugin.mjs` must stay identical; App-layer TypeScript (for example `src/data/canonical/placeResolver.ts`) imports `slug.ts` directly. The former copy in `scripts/want-to-go-store.mjs` was removed with that legacy write module (RFC-LOC-1 PR5). |
+| `slug.ts` | `slugify()`, the single slug rule. Core itself no longer uses it (since RFC-LOC-1 Core-A, entity ids are registry place ids and the map merges by identity); it is kept for matching and search: the App's place resolver for V2 writes (`src/data/canonical/placeResolver.ts`, which imports `slug.ts` directly) and the country search in `scripts/local-editor-plugin.mjs`, whose `.mjs` copy must stay identical. The former copy in `scripts/want-to-go-store.mjs` was removed with that legacy write module (RFC-LOC-1 PR5). |
 | `snapshot.ts` | `mergeWorldGraphSnapshots()` combines several adapter outputs into one snapshot (first one wins on duplicate ids; memberships are keyed by `(entityId, layerId, recordId ?? '')`), plus `emptyWorldGraphSnapshot()`. |
-| `query.ts` | Layer query: `queryVisiblePlaces()` turns a snapshot and the visible layer ids into the places and route segments the map renders. Each layer decides which place subtypes it draws, and a non-travel city that matches a visible travel city is merged into it (the heart badge). |
-| `collection.ts` | Collection query: `queryCollection()` lists every member of one layer, one row per record with its `recordId` (hidden and coordinate-less entries included, layer visibility ignored, no same-place merging) for the Collection view; `filterCollection()` applies the text search, visible / hidden filter, and recent / name / country sort. |
-| `adapters/travel.ts` | Travel adapter: `travelToWorldGraph()` projects already-loaded travel domain objects (countries, cities, journey days, routes) into a `WorldGraphSnapshot`, plus the id helpers `countryEntityId`, `cityEntityId`, `journeyEntityId`, `relationId`, `sourcedRelationId`, `anchorId`. Pure and deterministic; `options.now` is required. |
-| `adapters/wantToGo.ts` | Want to Go adapter: `wantToGoToWorldGraph()` projects want-to-go items (read and validated by the app's V2 Reader) into a snapshot, with the item id as each membership's `recordId`; `wantToGoEntityId()` builds `place:wtg:<CC>:<slug>` ids. Hidden items stay in the snapshot, marked on their membership. |
-| `adapters/plannedRecords.ts` | Planned records adapter: `plannedRecordsToWorldGraph()` projects travel records with `status: planned` into read-only Want to Go entries, with the record id as each membership's `recordId`; `plannedEntityId()` builds their ids. |
-| `adapters/travel.fixture.ts` | Hand-written fixture: the known output of the old `travelAtlas.ts` for the tracked `adapters/travel.fixture.source.json` (formerly `src/data/travel-map.sample.json`; moved here as Core's own test fixture in RFC-LOC-1 PR5b), shared by `adapters/travel.test.ts` and `query.parity.test.ts`. Not a test file and never imported by application code. |
-| `adapters/travel.test.ts` | Unit tests for the travel adapter, including the test that pins `travel.fixture.ts` back to the tracked sample JSON. |
-| `adapters/wantToGo.test.ts` | Unit tests for want-to-go ids and projection. |
+| `query.ts` | Layer query: `queryVisiblePlaces()` turns a snapshot and the visible layer ids into the places and route segments the map renders. Each layer decides which place subtypes it draws. Same-place merging (FR-MR-5) is by identity: an entity with visible memberships in several layers is one marker listing those layers (travel plus want-to-go is the heart badge), with the visible record ids per layer in `recordIds`. |
+| `collection.ts` | Collection query: `queryCollection()` lists every member of one layer, one row per record with its `recordId` (hidden and coordinate-less entries included, layer visibility ignored; title, country code and location come from the place entity, record fields from the membership) for the Collection view; `filterCollection()` applies the text search, visible / hidden filter, and recent / name / country sort. |
+| `adapters/places.ts` | Places adapter: `placesToWorldGraph()` builds the place entities from the place registry (`PlaceInput`, mapped by the app), one per place with the registry id as entity id, plus each place's location anchor and `part_of` relation. It is the only adapter that builds place entities, so a place referenced by several adapters is one entity. `placeEntity()` and `placeLocationAnchor()` build the two parts. |
+| `adapters/travel.ts` | Travel adapter: `travelToWorldGraph()` projects already-loaded travel domain objects into the travel layer: travel memberships for countries and cities (keyed by place id; `accent` and a country's `cityIds` sit on the membership), journey-day entities with time anchors, and `visited` / `related_to` relations. Id helpers `journeyEntityId`, `relationId`, `sourcedRelationId`, `anchorId`. Pure and deterministic; `options.now` is required. |
+| `adapters/wantToGo.ts` | Want to Go adapter: `wantToGoToWorldGraph()` turns want-to-go items (`WantToGoInput`: id, place id, dates and flags, as read and validated by the app's V2 Reader) into memberships of the place entity, one per item, with the item id as `recordId`. Hidden items stay in the snapshot, marked on their membership. |
+| `adapters/plannedRecords.ts` | Planned records adapter: `plannedRecordsToWorldGraph()` turns travel records with `status: planned` (`PlannedRecordInput`, selected by the app) into read-only Want to Go memberships of their city's place entity, with the record id as `recordId`. |
+| `adapters/travel.fixture.ts` | Hand-written fixture: travel domain objects (the known output of the old `travelAtlas.ts` for a former neutral legacy-format sample, frozen since RFC-LOC-1 Core-A retired that file) and `placesOf()` / `samplePlaces()`, their registry places. Shared by `adapters/travel.test.ts` and `src/data/derive/baseline.test.ts`. Not a test file and never imported by application code. |
+| `adapters/places.test.ts` | Unit tests for the places adapter. |
+| `adapters/travel.test.ts` | Unit tests for the travel adapter, including its merge with the places snapshot. |
+| `adapters/wantToGo.test.ts` | Unit tests for the want-to-go adapter. |
 | `adapters/plannedRecords.test.ts` | Unit tests for the planned records adapter. |
 | `snapshot.test.ts` | Unit tests for snapshot merging. |
-| `query.test.ts` | Unit tests for the layer query rules on small hand-written snapshots, including same-place merging. |
-| `query.parity.test.ts` | Parity test: on the sample data, `queryVisiblePlaces()` produces exactly what the map computed before the layer query existed (a verbatim copy of that legacy logic lives only in this file). |
-| `collection.test.ts` | Unit tests for the Collection query, search, filters, and sorts, plus one integration case over the want-to-go and planned adapters. |
+| `query.test.ts` | Unit tests for the layer query rules on small hand-written snapshots, plus identity merging over the four real adapters (one entity per place across adapters, one marker per place, names no longer merge). |
+| `collection.test.ts` | Unit tests for the Collection query, search, filters, and sorts, plus integration cases over the places, want-to-go and planned adapters. |
 | `slug.test.ts` | Unit tests for `slugify()`. |
 
 Run the tests with `npm test` from `01_Web/` (plain `node --test`, no bundler).
@@ -79,7 +80,7 @@ stabilize:
 
 1. `types.ts` — the five core objects and their id / enum types.
 2. `layers.ts` — `LayerDefinition` and the official layer registry.
-3. `adapters/travel.ts` — `travelToWorldGraph` and the id helpers.
+3. `adapters/places.ts` and `adapters/travel.ts` — `placesToWorldGraph`, `travelToWorldGraph` and the id helpers.
 4. `snapshot.ts` — `mergeWorldGraphSnapshots`, the way adapter outputs are
    combined.
 5. `query.ts` — `queryVisiblePlaces`, the layer query every renderer reads.
@@ -108,5 +109,5 @@ npm test         # node --test over src/**/*.test.ts
 ```
 
 Every change to `types.ts` or an adapter needs a test. Keep test fixtures
-hand-written (the existing test explains why importing `travelAtlas.ts` is not
-an option) and pin them back to the tracked sample data where possible.
+hand-written (the existing tests explain why importing `travelAtlas.ts` is not
+an option).

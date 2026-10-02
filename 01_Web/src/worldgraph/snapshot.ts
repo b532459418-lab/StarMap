@@ -24,7 +24,7 @@ export const emptyWorldGraphSnapshot = (): WorldGraphSnapshot => ({
 })
 
 /**
- * 复合键要能无歧义地还原成三段：entityId 里本来就有冒号（`place:wtg:GL:nuuk`），
+ * 复合键要能无歧义地还原成三段：entityId 里可以有冒号（例如行程日的 `journey:<id>`），
  * 直接用分隔符拼接会有碰撞风险，所以用 JSON 数组做键。没有 recordId 时按空串算。
  */
 const membershipKey = (entityId: string, layerId: string, recordId: string | undefined): string =>

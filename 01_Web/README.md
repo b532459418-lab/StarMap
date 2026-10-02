@@ -47,7 +47,6 @@ npm run release:check
 StarMap has two data layers:
 
 - `src/data/v2-sample/` is the tracked neutral North Atlantic demonstration used by a clean open-source clone: a five-city journey plus a Want to Go sample with three places (Nuuk, Tromsø, Akureyri). Akureyri is one place in both layers, so the public map shows the heart badge. The directory holds only the five V2 data files, which are maintained by hand (see [Edit the V2 sample](#edit-the-v2-sample)).
-- `src/worldgraph/adapters/travel.fixture.source.json` is the same journey in the legacy format. It is only a test fixture of StarMap Core, whose adapters still take that input shape; the app never reads it.
 - `<private-root>/data/` is the external private layer containing the owner's countries, cities, routes, coordinates, display rules, Want to Go list, editor state, and media catalog. Its layout is described in [Private Data Format](#private-data-format).
 
 The private layer is considered only in the explicit personal profile. Public preview and public build ignore it even when it exists; they, and forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development), read `src/data/v2-sample/`. Forced sample mode previews the public site: the local editor is off even in the personal profile, so the page renders exactly as in public mode, with no editing control, and nothing can be written to the private folder from it.

@@ -12,7 +12,8 @@
  * - UI 与 Core 读到的对象（记录、想去条目、媒体项、editor-state 的手动添加国家）由地点重建（`./reconstruct.ts`）；
  * - 其余展示用的计算（标题、摘要、「N 个城市」、路线是否跨国）照抄今天的代码，作用在重建后的记录上。
  * 能复用的 PR1 函数直接复用：`orderBySavedIds`、`formatDateRange`、`coordinateForRecord`、国旗与配色、
- * 媒体与无人机派生、三个 Core 适配器与 `mergeWorldGraphSnapshots`（经 `deriveWorldGraph`）。
+ * 媒体与无人机派生、Core 适配器与 `mergeWorldGraphSnapshots`（经 `deriveWorldGraph`；RFC-LOC-1 Core-A 起多了
+ * 地点适配器：Core 的地点实体由注册表构造，见文件末尾的 `placeInputOf`）。
  *
  * 本文件不 import 任何按名字推导身份的旧规则（eslint 拦截）。
  *
