@@ -162,6 +162,7 @@ const deriveTravelAtlasFromCanonical = (
   }
 
   const hiddenHomeRecords = allRecords.filter((record) => record.hiddenFromHome)
+  const addedCountryRegions = new Map(editorState.addedCountries.map((country) => [country.id, country.region]))
 
   const recordCountries: Country[] = Object.entries(placedByCountry).map(([countryId, countryPlaced], index) => {
     const place = places.get(countryId)
@@ -173,6 +174,8 @@ const deriveTravelAtlasFromCanonical = (
     const cityNames = unique(countryRecords.map((record) => record.city_en || record.city)).filter(Boolean)
     const tripTitles = unique(countryRecords.map((record) => record.trip_title).filter((title): title is string => Boolean(title)))
     const flagCode = isoOf(place)?.toLowerCase()
+    const recordRegions = unique(countryRecords.map((record) => record.region).filter((region): region is string => Boolean(region)))
+    const addedRegion = addedCountryRegions.get(countryId)
 
     return {
       id: countryId,
@@ -183,7 +186,8 @@ const deriveTravelAtlasFromCanonical = (
       visitedDateRange: formatDateRange(countryRecords),
       summary: `${cityNames.length} visited cities collected from Archive export.`,
       memory: tripTitles.length > 0 ? tripTitles.slice(0, 3).join(' / ') : 'Travel memory imported from Archive export.',
-      keywords: unique(countryRecords.map((record) => record.region).filter((region): region is string => Boolean(region))).slice(0, 3),
+      // 新增城市没有 region；保留该国家创建时已保存的大洲，不修改旅行记录。
+      keywords: recordRegions.length > 0 ? recordRegions.slice(0, 3) : addedRegion ? [addedRegion] : [],
       cityIds: orderBySavedIds(
         cityIds.map((id) => ({ id })),
         editorState.cityOrderByCountry[countryId],
