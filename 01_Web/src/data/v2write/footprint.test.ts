@@ -12,6 +12,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { isUuidV7 } from '../canonical/uuidv7.ts'
+import { deriveAppDataFromCanonical } from '../canonical/derive.ts'
+import { readV2 } from '../canonical/v2Reader.ts'
 import type { V2Files, V2TravelRecord } from '../canonical/v2Schema.ts'
 import { addCountry, addTravelRecord, deleteHiddenCountries } from './footprint.ts'
 import {
@@ -230,6 +232,52 @@ test('新增国家：国家地点已存在（只被想去或 planned 引用）�
     assert.equal(next.places.places.length, files.places.places.length)
     assert.deepEqual(next.editorState.addedCountries.map((entry) => entry.placeId), [placeNamed(files, name).id])
   }
+})
+
+test('新增国家的大洲在添加首个及后续城市、隐藏全部城市后仍保留，不回写城市记录', () => {
+  const ctx = testContext()
+  let files = migratedFiles()
+  files = applyWrites(files, addCountry(files, { countryCode: 'JP', visitedDate: '2026-05-01' }, ctx).writes)
+  const japan = placeNamed(files, 'Japan').id
+  const country = () => deriveAppDataFromCanonical(readV2(files), { now: WRITE_NOW.toISOString() }).travelAtlas.countryById[japan]
+  const savedCountry = structuredClone(files.editorState.addedCountries)
+  assert.deepEqual(country().keywords, ['Asia'])
+  for (const [city, cityEn, lat, lng] of [['东京', 'Tokyo', 35.6762, 139.6503], ['京都', 'Kyoto', 35.0116, 135.7681]] as const) {
+    files = applyWrites(files, addTravelRecord(files, {
+      country: '日本', country_en: 'Japan', country_code: 'JP', city, city_en: cityEn,
+      start_date: '2026-05-02', lat, lng,
+    }, ctx).writes)
+    assertIntact(files)
+    const before = structuredClone(files)
+    assert.deepEqual(country().keywords, ['Asia'])
+    assert.equal(Object.hasOwn(lastRecord(files), 'region'), false)
+    assert.deepEqual(files.editorState.addedCountries, savedCountry)
+    assert.deepEqual(files, before, '派生显示信息不修改输入')
+  }
+  assert.equal(country().cityIds.length, 2)
+  files.editorState.hiddenCityIds = [...files.editorState.hiddenCityIds, ...country().cityIds]
+  assert.deepEqual(country().keywords, ['Asia'])
+  assert.deepEqual(country().cityIds, [])
+})
+
+test('国家地区回退按国家 id 匹配：保留记录地区，没有国家地区时不猜测', () => {
+  const ctx = testContext()
+  let files = migratedFiles()
+  files = applyWrites(files, addCountry(files, { countryCode: 'JP', visitedDate: '2026-05-01' }, ctx).writes)
+  files = applyWrites(files, addTravelRecord(files, {
+    country: '日本', country_en: 'Japan', country_code: 'JP', city: '东京', city_en: 'Tokyo',
+    start_date: '2026-05-02', lat: 35.6762, lng: 139.6503,
+  }, ctx).writes)
+  const japan = placeNamed(files, 'Japan').id
+  const derive = () => deriveAppDataFromCanonical(readV2(files), { now: WRITE_NOW.toISOString() }).travelAtlas
+  lastRecord(files).region = 'East Asia'
+  assert.deepEqual(derive().countryById[japan].keywords, ['East Asia'])
+  delete lastRecord(files).region
+  files.editorState.addedCountries[0].placeId = placeNamed(files, 'Iceland').id
+  assert.deepEqual(derive().countryById[japan].keywords, [], '其他国家的地区不能套用')
+  files.editorState.addedCountries[0].placeId = japan
+  delete files.editorState.addedCountries[0].region
+  assert.deepEqual(derive().countryById[japan].keywords, [], '缺失的地区保持未知')
 })
 
 test('新增国家：已在足迹中（有已去过的记录，或已有 addedCountries 条目）→ E_COUNTRY_EXISTS（沿用旧文案）', () => {
