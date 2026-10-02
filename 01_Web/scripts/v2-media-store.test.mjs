@@ -3,34 +3,34 @@
  * 依次上传照片与全景 → 导入（恢复隐藏、追加排序）→ 隐藏 → 彻底删除，每一步之后五个 V2 文件都通过完整性检查。
  *
  * 插件本身在模块顶层 import sharp / undici / world-countries 并解析私有资料层路径，node --test 下不能加载，
- * 所以插件传给 IO 层的辅助函数（deps）在这里按插件的写法重写一遍：文件名规则、预留文件名、无人机 sidecar、
- * 运行导入器（子进程跑 scripts/import-media.mjs：先预检、有未解决信息就停、再 --apply）、删 sidecar 条目。
- * 只有「接收上传」换成了直接写入测试给的字节（同样用 sharp 校验尺寸与全景比例）。插件接线本身由
- * private-data-module.test.mjs 读源码断言，真实的上传流在规格的浏览器验证里走。
+ * 所以插件传给 IO 层的辅助函数（deps）在这里重写无人机 sidecar、删 sidecar 条目与路径规则。
+ * 文件名、预留文件名与上传流直接复用 local-editor-upload.mjs，导入器复用 local-editor-importer.mjs。
+ * 上传请求使用带 content-length 的 Readable 流，走真实接收与图片校验。插件接线由 private-data-module.test.mjs 读源码断言。
  *
  * 图片由 sharp 现场生成（纯色小图，一张 2:1）。STARMAP_PRIVATE_ROOT 总是指向 fs.mkdtemp 建的临时目录，用例结束时删除。
  */
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
 import sharp from 'sharp'
 
 import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, readV2Files, runV2Write } from './v2-editor-store.mjs'
 import { handleV2Import, handleV2MediaDelete, handleV2Upload } from './v2-media-store.mjs'
+import { createLocalEditorImporter } from './local-editor-importer.mjs'
+import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
+import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { placeFolderSuffix } from '../src/data/v2media/editorWrites.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { completeForWrite, integrityProblems } from '../src/data/v2write/transaction.ts'
 
-const execFileAsync = promisify(execFile)
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const newId = sequentialUuids(Date.UTC(2026, 8, 29))
@@ -50,39 +50,18 @@ const placesFile = () => ({
 
 const jpeg = (color, width = 64, height = 48) => sharp({ create: { width, height, channels: 3, background: color } }).jpeg({ quality: 90 }).toBuffer()
 
-/** 插件传给 V2 媒体端点的辅助函数，按插件的写法重写；只有 writeUpload 直接写测试给的字节。 */
+/** 上传与导入复用插件实际 helper；sidecar 与路径 helper 使用合成私人根。 */
 const depsFor = (paths) => {
   const inboxRoot = paths.inboxRoot
   const isPathInside = (root, target) => {
     const relative = path.relative(root, target)
     return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative)
   }
-  const safeSegment = (value, label) => {
-    // eslint-disable-next-line no-control-regex -- 与插件相同：Windows 文件名不能有 ASCII 控制字符。
-    const cleaned = String(value ?? '').trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
-    if (!cleaned || cleaned === '.' || cleaned === '..') throw new Error(`${label}无效。`)
-    return cleaned.slice(0, 120)
-  }
   return {
     isPathInside,
     safeSegment,
-    reserveDestination: async (directory, originalName) => {
-      const parsed = path.parse(safeSegment(originalName, '文件名'))
-      for (let index = 0; index < 1000; index += 1) {
-        const candidate = path.join(directory, `${parsed.name}${index === 0 ? '' : `-${index}`}${parsed.ext.toLowerCase()}`)
-        if (!await exists(candidate)) return candidate
-      }
-      throw new Error('同名文件过多，请先整理文件名。')
-    },
-    writeUpload: async (request, destination, kind) => {
-      const metadata = await sharp(request.body).metadata()
-      if (kind === 'panorama360' && Math.abs(metadata.width / metadata.height - 2) > 0.1) {
-        throw new Error(`所选图片为 ${metadata.width} × ${metadata.height}，不是常见的 2:1 等距柱状全景图。请改选“航拍照片”，或上传正确的 360 全景图。`)
-      }
-      await mkdir(path.dirname(destination), { recursive: true })
-      await writeFile(destination, request.body, { flag: 'wx' })
-      return metadata
-    },
+    reserveDestination,
+    writeUpload,
     updateDroneSidecar: async (cityRoot, destination, metadata, imageMetadata) => {
       const sidecarPath = path.join(cityRoot, 'media.json')
       const sidecar = await readJson(sidecarPath, {})
@@ -96,18 +75,7 @@ const depsFor = (paths) => {
       }
       await atomicJsonWrite(sidecarPath, sidecar)
     },
-    runImporter: async () => {
-      const script = path.join(webRoot, 'scripts', 'import-media.mjs')
-      const options = { cwd: webRoot, env: { ...process.env, STARMAP_PRIVATE_ROOT: paths.root }, maxBuffer: 8 * 1024 * 1024 }
-      const preflight = await execFileAsync(process.execPath, [script], options)
-      if (/需要处理|缺少日期或分辨率|缺少日期、分辨率或有效坐标|无法读取|找不到国家|找不到城市/.test(`${preflight.stdout}\n${preflight.stderr}`)) {
-        const error = new Error('媒体预检发现未解决信息，已停止导入。')
-        error.details = `${preflight.stdout}\n${preflight.stderr}`.trim()
-        throw error
-      }
-      const imported = await execFileAsync(process.execPath, [script, '--apply'], options)
-      return `${imported.stdout}\n${imported.stderr}`.trim()
-    },
+    runImporter: createLocalEditorImporter({ webRoot, privateRoot: paths.root }),
     normalizeInboxRelativePath: (value) => {
       if (typeof value !== 'string' || !value.trim()) return undefined
       const target = path.resolve(inboxRoot, value.trim())
@@ -146,7 +114,11 @@ const withV2Root = async (run) => {
   }
 }
 
-const upload = async ({ paths, deps }, params, body) => handleV2Upload({ privatePaths: paths, query: new URLSearchParams(params), request: { body }, deps })
+const upload = async ({ paths, deps }, params, body) => {
+  const request = Readable.from([body])
+  request.headers = { 'content-length': String(body.length) }
+  return handleV2Upload({ privatePaths: paths, query: new URLSearchParams(params), request, deps })
+}
 
 const assertIntact = async (paths, step) => {
   const problems = integrityProblems(completeForWrite(await readV2Files(paths), new Date()))
@@ -292,7 +264,7 @@ test('V2 媒体端点：上传（写 place.json）→ 导入（恢复与追加�
   })
 })
 
-test('V2 上传的拒绝：类型、地点、扩展名、无人机日期、旧辅助函数的原因、place.json 冲突——都不写文件', async () => {
+test('V2 上传的拒绝：类型、地点、扩展名、无人机日期、真实上传校验、place.json 冲突——都不写文件', async () => {
   await withV2Root(async (env) => {
     const { paths } = env
     const red = await jpeg({ r: 200, g: 30, b: 30 })
@@ -302,15 +274,21 @@ test('V2 上传的拒绝：类型、地点、扩展名、无人机日期、旧�
       [{ countryId: ID.iceland, cityId: 'iceland__vik', fileName: 'a.jpg' }, 'E_MEDIA_LOCATION_NOT_FOUND', '找不到对应的国家和城市，请先把城市加入旅行数据。'],
       [{ countryId: ID.iceland, cityId: ID.vik, fileName: 'a.gif' }, 'E_MEDIA_EXTENSION', '当前网页编辑器只接收 JPG、PNG、WebP 或 AVIF 图片。'],
       [{ countryId: ID.iceland, cityId: ID.vik, kind: 'aerialPhoto', fileName: 'a.jpg' }, 'E_MEDIA_DRONE_DATE', '无人机影像必须填写有效日期。'],
-      [{ countryId: ID.iceland, cityId: ID.vik, kind: 'panorama360', fileName: 'a.jpg', date: '2026-07-03' }, 'E_MEDIA_UPLOAD_REJECTED', '所选图片为 64 × 48，不是常见的 2:1 等距柱状全景图。请改选“航拍照片”，或上传正确的 360 全景图。'],
-      [{ countryId: ID.iceland, cityId: ID.vik, fileName: '..' }, 'E_MEDIA_UPLOAD_REJECTED', '文件名无效。'],
+      [{ countryId: ID.iceland, cityId: ID.vik, kind: 'panorama360', fileName: 'a.jpg', date: '2026-07-03' }, 'E_MEDIA_PANORAMA_RATIO', '所选图片为 64 × 48，不是常见的 2:1 等距柱状全景图。请改选“航拍照片”，或上传正确的 360 全景图。', { width: 64, height: 48 }],
+      [{ countryId: ID.iceland, cityId: ID.vik, fileName: '..' }, 'E_MEDIA_NAME_INVALID', '文件名无效。', { field: 'media_filename' }],
     ]
-    for (const [params, code, error] of cases) {
+    for (const [params, code, error, errorParams] of cases) {
       const result = await upload(env, params, red)
       assert.equal(result.status, 400, JSON.stringify(params))
       assert.equal(result.body.code, code, JSON.stringify(result.body))
       assert.equal(result.body.error, error)
+      if (errorParams !== undefined) assert.deepEqual(result.body.params, errorParams)
     }
+    const invalid = await upload(env, { countryId: ID.iceland, cityId: ID.vik, fileName: 'invalid.jpg' }, Buffer.from('synthetic invalid image bytes'))
+    assert.equal(invalid.status, 400)
+    assert.equal(invalid.body.code, 'E_MEDIA_IMAGE_INVALID')
+    assert.equal(typeof invalid.body.details, 'string')
+    assert.ok(invalid.body.details.trim().length > 0, '保留 sharp 的真实诊断')
     assert.deepEqual(await listTree(paths.inboxRoot), [], '失败的上传不写文件，也不写 place.json')
 
     // 维克没有英文名：文件夹用中文名。
@@ -446,4 +424,43 @@ test('V2 删除：editor-state 通不过完整性检查时一个文件都不删'
     assert.deepEqual([...await listTree(paths.inboxRoot), ...await listTree(paths.userMediaRoot)], before)
     assert.deepEqual(await readFile(paths.v2FilePaths.editorState, 'utf8'), `${JSON.stringify(state, null, 2)}\n`)
   })
+})
+
+test('V2 导入保留明确错误码、参数、原始文案和 details，不按文案或 details 推断阻断', async () => {
+  const cases = [
+    Object.assign(new V2WriteError('E_MEDIA_IMPORT_BLOCKED'), { details: '原预检输出\r\n' }),
+    Object.assign(new V2WriteError('E_MEDIA_IMPORT_FAILED', { reason: 'apply IO failure\n', stage: 'apply' }), { details: 'original stdout\noriginal stderr\n' }),
+    new V2WriteError('E_MEDIA_IMPORT_BLOCKED'),
+    Object.assign(new V2WriteError('E_REQUIRED', { field: 'search_query' }), { details: '' }),
+    Object.assign(new Error('future typed diagnostic'), { name: 'V2WriteError', code: 'E_FUTURE', params: { stage: 'apply' }, details: 'future details\n' }),
+  ]
+  for (const error of cases) {
+    let calls = 0
+    const result = await handleV2Import({ privatePaths: {}, input: {}, ctx: {}, deps: { runImporter: async () => {
+      calls += 1
+      throw error
+    } } })
+    assert.equal(calls, 1)
+    assert.equal(result.status, 400)
+    assert.deepEqual(result.body, {
+      ok: false, error: error.message, code: error.code,
+      ...(error.params !== undefined ? { params: error.params } : {}),
+      ...(typeof error.details === 'string' ? { details: error.details } : {}),
+    })
+  }
+})
+
+test('V2 导入普通错误即使带 details 或阻断文案仍是 FAILED，保留原始诊断', async () => {
+  for (const error of [
+    Object.assign(new Error('IO failure\r\n'), { code: 'EACCES', details: '  stdout\n\nstderr\r\n' }),
+    Object.assign(new Error('媒体预检发现未解决信息，已停止导入。'), { details: 'raw diagnostic\n' }),
+    Object.assign(new Error('failure with empty details'), { details: '' }),
+  ]) {
+    const result = await handleV2Import({ privatePaths: {}, input: {}, ctx: {}, deps: { runImporter: async () => { throw error } } })
+    assert.equal(result.status, 400)
+    assert.deepEqual(result.body, {
+      ok: false, error: error.message, code: 'E_MEDIA_IMPORT_FAILED',
+      params: { reason: error.message }, details: error.details,
+    })
+  }
 })

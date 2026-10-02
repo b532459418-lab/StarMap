@@ -1,12 +1,8 @@
-import { createReadStream, createWriteStream } from 'node:fs'
-import { cp, mkdir, stat, unlink } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { createReadStream } from 'node:fs'
+import { cp, mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import sharp from 'sharp'
 import { EnvHttpProxyAgent, fetch as proxyAwareFetch } from 'undici'
 import worldCountries from 'world-countries'
 import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
@@ -22,10 +18,11 @@ import { createV2WriteContext, readV2EditorState, runV2Write, v2EditorRoute, v2E
 import { handleV2Import, handleV2MediaDelete, handleV2Upload, v2MediaRoute } from './v2-media-store.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
+import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
+import { createLocalEditorImporter } from './local-editor-importer.mjs'
 
 // RFC-LOC-1 PR5a：本地编辑器只读写 data/v2/（V2 写入层：v2-editor-store.mjs 与 v2-media-store.mjs）。旧格式的写入逻辑、
 // 数据模式与回滚开关都已删除。私人目录有没迁移的旧数据时（./legacy-data.mjs），全部写入端点返回 409 E_LEGACY_UNMIGRATED。
-const execFileAsync = promisify(execFile)
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const virtualPrivateDataId = 'virtual:starmap-private-data'
 const resolvedPrivateDataId = `\0${virtualPrivateDataId}`
@@ -51,7 +48,6 @@ const configurePrivatePaths = (requestedRoot) => {
 
 configurePrivatePaths()
 const editorHeader = 'x-travelatlas-local-editor'
-const maxUploadBytes = 250 * 1024 * 1024
 const citySearchDispatcher = new EnvHttpProxyAgent()
 const userMediaContentTypes = new Map([
   ['.avif', 'image/avif'],
@@ -324,65 +320,6 @@ const requireText = (value, field) => {
   return text
 }
 
-const safeSegment = (value, label) => {
-  // eslint-disable-next-line no-control-regex -- Windows file names must reject ASCII control characters.
-  const cleaned = String(value ?? '').trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
-  if (!cleaned || cleaned === '.' || cleaned === '..') throw new Error(`${label}无效。`)
-  return cleaned.slice(0, 120)
-}
-
-const reserveDestination = async (directory, originalName) => {
-  const parsed = path.parse(safeSegment(originalName, '文件名'))
-  for (let index = 0; index < 1000; index += 1) {
-    const suffix = index === 0 ? '' : `-${index}`
-    const candidate = path.join(directory, `${parsed.name}${suffix}${parsed.ext.toLowerCase()}`)
-    if (!await exists(candidate)) return candidate
-  }
-  throw new Error('同名文件过多，请先整理文件名。')
-}
-
-const orientedImageDimensions = (metadata) => {
-  const orientation = metadata.orientation ?? 1
-  const swapsAxes = orientation >= 5 && orientation <= 8
-  const width = swapsAxes ? metadata.height : metadata.width
-  const height = swapsAxes ? metadata.width : metadata.height
-  return width && height ? { width, height } : undefined
-}
-
-const isLikelyEquirectangularPanorama = (dimensions) => {
-  if (!dimensions) return false
-  const ratio = dimensions.width / dimensions.height
-  return ratio >= 1.9 && ratio <= 2.1
-}
-
-const writeUpload = async (request, destination, kind) => {
-  const contentLength = Number(request.headers['content-length'] ?? 0)
-  if (!Number.isFinite(contentLength) || contentLength <= 0) throw new Error('没有收到文件内容。')
-  if (contentLength > maxUploadBytes) throw new Error('单个文件不能超过 250 MiB。')
-
-  const temporaryPath = path.join(tmpdir(), `travelatlas-upload-${process.pid}-${Date.now()}`)
-  let received = 0
-  request.on('data', (chunk) => {
-    received += chunk.length
-    if (received > maxUploadBytes) request.destroy(new Error('单个文件不能超过 250 MiB。'))
-  })
-
-  try {
-    await pipeline(request, createWriteStream(temporaryPath, { flags: 'wx' }))
-    const imageMetadata = await sharp(temporaryPath).metadata()
-    if (!imageMetadata.width || !imageMetadata.height) throw new Error('无法读取图片尺寸或文件内容无效。')
-    const dimensions = orientedImageDimensions(imageMetadata)
-    if (kind === 'panorama360' && !isLikelyEquirectangularPanorama(dimensions)) {
-      throw new Error(`所选图片为 ${dimensions?.width ?? imageMetadata.width} × ${dimensions?.height ?? imageMetadata.height}，不是常见的 2:1 等距柱状全景图。请改选“航拍照片”，或上传正确的 360 全景图。`)
-    }
-    await mkdir(path.dirname(destination), { recursive: true })
-    await pipeline(createReadStream(temporaryPath), createWriteStream(destination, { flags: 'wx' }))
-    return imageMetadata
-  } finally {
-    await unlink(temporaryPath).catch(() => undefined)
-  }
-}
-
 const updateDroneSidecar = async (cityRoot, destination, metadata, imageMetadata) => {
   const sidecarPath = path.join(cityRoot, 'media.json')
   const sidecar = await readJson(sidecarPath, {})
@@ -407,24 +344,8 @@ const updateDroneSidecar = async (cityRoot, destination, metadata, imageMetadata
   await atomicJsonWrite(sidecarPath, sidecar)
 }
 
-const runImporter = async () => {
-  const command = process.execPath
-  const script = path.join(webRoot, 'scripts', 'import-media.mjs')
-  const importerOptions = {
-    cwd: webRoot,
-    env: { ...process.env, STARMAP_PRIVATE_ROOT: privateRoot },
-    maxBuffer: 8 * 1024 * 1024,
-  }
-  const preflight = await execFileAsync(command, [script], importerOptions)
-  const blockingPattern = /需要处理|缺少日期或分辨率|缺少日期、分辨率或有效坐标|无法读取|找不到国家|找不到城市/
-  if (blockingPattern.test(`${preflight.stdout}\n${preflight.stderr}`)) {
-    const error = new Error('媒体预检发现未解决信息，已停止导入。')
-    error.details = `${preflight.stdout}\n${preflight.stderr}`.trim()
-    throw error
-  }
-  const imported = await execFileAsync(command, [script, '--apply'], importerOptions)
-  return `${imported.stdout}\n${imported.stderr}`.trim()
-}
+// Resolve the active private root per invocation, after configurePrivatePaths.
+const runImporter = () => createLocalEditorImporter({ webRoot, privateRoot })()
 
 const isPathInside = (root, target) => {
   const relative = path.relative(root, target)

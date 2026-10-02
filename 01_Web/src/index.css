@@ -7570,6 +7570,12 @@ button {
   gap: 10px;
   margin-top: 7px;
 }
+
+/* Preserve importer diagnostics and wrap long paths inside narrow editor panels. */
+.atlas-local-editor-notice {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .atlas-app-header[data-page='map'] .atlas-header-controls .atlas-tabs { margin: 0; }
 .atlas-language-selector {
   width: 96px;

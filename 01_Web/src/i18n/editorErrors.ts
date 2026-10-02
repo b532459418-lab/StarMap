@@ -44,6 +44,9 @@ export function formatEditorError(error: Error, t: Translate): string {
     ids: Array.isArray(params.ids) ? params.ids.map(String).join(', ') : '',
     folders: Array.isArray(params.folders) ? params.folders.map(String).join(', ') : '',
   }
+  if (error.code === 'E_MEDIA_IMPORT_FAILED') {
+    values.stage = t(params.stage === 'preflight' ? 'domainError:importStage_preflight' : 'domainError:importStage_apply')
+  }
   if (Array.isArray(params.cities)) values.cities = params.cities.map((city: unknown) => {
     const record = city && typeof city === 'object' ? city as Record<string, unknown> : {}
     return t('domainError:mediaItem', {
