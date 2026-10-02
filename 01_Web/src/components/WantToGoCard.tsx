@@ -3,13 +3,15 @@ import { EyeOff, Footprints, Heart, X } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
 import { reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorApi'
 import { travelAtlasDataSource } from '../data/travelAtlas'
+import { wantToGoCardRecordOf } from '../data/derive/wantToGo'
 import {
   plannedConvertBlockReason,
-  plannedRecordByEntityId,
+  plannedRecordById,
   wantToGoConvertBlockReason,
   wantToGoDataSource,
-  wantToGoItemByEntityId,
+  wantToGoItemById,
 } from '../data/wantToGo'
+import { worldGraphSnapshot } from '../data/worldGraph'
 import type { EntityId } from '../worldgraph/types'
 import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
 
@@ -41,8 +43,9 @@ const regionNameZh = (countryCode: string) => {
 /**
  * 想去详情卡（PRD FR-WTG-4 / §9.4），放在右侧栏最上方，与 InfoCard 并存。
  *
- * 数据只来自 wantToGoItemByEntityId（想去条目）或 plannedRecordByEntityId（planned 旅行记录）；
- * 两边都查不到时不渲染。planned 条目只读（FR-WTG-7），唯一的写入操作是「标记为去过」（PR9）。
+ * 卡片收到的是地点的实体 id（RFC-LOC-1 Core-A：实体 id 就是地点 id），一个地点在想去图层可能有几条记录，
+ * 卡片只显示一条：有可见的想去条目就显示第一条想去条目，否则显示第一条 planned 记录（wantToGoCardRecordOf），
+ * 再按记录 id 查 wantToGoItemById / plannedRecordById；都查不到时不渲染。planned 条目只读（FR-WTG-7），唯一的写入操作是「标记为去过」（PR9）。
  * 「隐藏」只在私人模式、且条目来自私有文件（wantToGoDataSource === 'local'）时渲染（FR-PUB-2）：
  * 样例条目不在私有文件里，隐藏请求必然失败。写入只走 localEditorApi（D26）。
  * 「标记为去过」的门控：想去条目同「隐藏」；planned 条目写的是旅行记录，看 travelAtlasDataSource。
@@ -52,8 +55,9 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
-  const item = wantToGoItemByEntityId.get(entityId)
-  const planned = item ? undefined : plannedRecordByEntityId.get(entityId)
+  const record = wantToGoCardRecordOf(worldGraphSnapshot.memberships, entityId)
+  const item = record?.source === 'want-to-go' ? wantToGoItemById.get(record.recordId) : undefined
+  const planned = record?.source === 'planned' ? plannedRecordById.get(record.recordId) : undefined
 
   if (!item && !planned) return null
 

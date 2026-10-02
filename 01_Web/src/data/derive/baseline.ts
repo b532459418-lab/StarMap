@@ -15,7 +15,7 @@
 import { queryCollection } from '../../worldgraph/collection.ts'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../../worldgraph/layers.ts'
 import { queryVisiblePlaces } from '../../worldgraph/query.ts'
-import type { WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
+import type { WantToGoItem } from './wantToGo.ts'
 import type { LayerId, WorldGraphSnapshot } from '../../worldgraph/types.ts'
 import type { City, CityId, Country, CountryId, TravelMapRecord } from '../../types/travel.ts'
 
@@ -25,12 +25,16 @@ import type { City, CityId, Country, CountryId, TravelMapRecord } from '../../ty
  * - @1（PR1）：六个模块的导出 + 地图与 Collection 查询。
  * - @2（RFC-LOC-1 PR3b-1 §2.5）：`travelAtlas.evaluated` 增加 `countryIdOfCity`，定义域为
  *   「城市级函数的定义域 ∪ editor-state 的 hiddenCityIds」。其余与 @1 逐字节相同：
- *   删掉这一项、`format` 改回 @1，得到的就是 @1 基线（测试见 `../canonical/derive.test.ts`）。
- *   RFC-LOC-1 Core-A A1 在 @2 上只做了加法，格式标识不变（Core-A A2 升为 @3）：快照成员关系与想去 Collection 条目上的
+ *   删掉这一项、`format` 改回 @1，得到的就是 @1 基线。
+ *   RFC-LOC-1 Core-A A1 在 @2 上只做了加法，格式标识不变：快照成员关系与想去 Collection 条目上的
  *   `recordId`，想去模块的 `wantToGoItemById` / `plannedRecordById`。另有一处求值口径的变化：「这个城市已经在足迹里了」
- *   改为按地点 id 判断，只影响「同名但不是同一地点」的想去城市（见 `../canonical/derive.test.ts`）。
+ *   改为按地点 id 判断，只影响「同名但不是同一地点」的想去城市。
+ * - @3（RFC-LOC-1 Core-A A2）：World Graph 的地点实体 id 改为注册表的地点 id（Core 方案 C1、C2），地图按身份合并
+ *   （C4：`LayerPlace` 去掉 `mergedEntityIds`、增加 `recordIds`），想去模块删除按实体 id 查条目的两张表
+ *   （`wantToGoItemByEntityId` / `plannedRecordByEntityId`）。四份快照、地图与 Collection 查询因此都变了；其余部分
+ *   与 @2 逐字节相同（测试见 `../canonical/derive.test.ts`）。@2 → @3 的映射对照只在 A2 的 PR 期间做过（C8）。
  */
-export const BASELINE_FORMAT = 'starmap-legacy-baseline@2'
+export const BASELINE_FORMAT = 'starmap-legacy-baseline@3'
 
 /** 恰好等于 `options.now` 的字符串在基线里一律替换成它。 */
 export const NOW_PLACEHOLDER = '<now>'
@@ -93,8 +97,6 @@ export interface AppDataExports {
     wantToGoItems: readonly WantToGoItem[]
     wantToGoProblems: unknown
     hiddenWantToGoItems: unknown
-    wantToGoItemByEntityId: unknown
-    plannedRecordByEntityId: unknown
     wantToGoItemById: unknown
     plannedRecordById: unknown
     wantToGoConvertBlockReason(item: WantToGoItem): string | undefined
@@ -164,8 +166,6 @@ export const baselineExportNames = {
       'wantToGoItems',
       'wantToGoProblems',
       'hiddenWantToGoItems',
-      'wantToGoItemByEntityId',
-      'plannedRecordByEntityId',
       'wantToGoItemById',
       'plannedRecordById',
     ],

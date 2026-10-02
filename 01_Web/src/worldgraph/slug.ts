@@ -1,9 +1,8 @@
 /**
  * slug 规则 —— World Graph Core 里唯一的一份。
  *
- * 用在两处：想去条目的 EntityId（`place:wtg:<CC>:<slug(nameEn)>`，adapters/wantToGo.ts）
- * 与图层查询的 FR-MR-5 合并键（`<CC>:<slug(name)>`，query.ts）。两处必须同一规则，
- * 否则「同一个地点」在 id 与合并键上会被判成两个地方。
+ * RFC-LOC-1 Core-A 之前它还用来拼想去条目的 EntityId 与图层查询的同地点合并键；Core-A 起实体 id 是注册表的地点 id、
+ * 地图按身份合并，Core 自身不再用它。今天只剩匹配与搜索用途：App 的地点解析（V2 写入「先找后建」）与插件的目录搜索。
  *
  * 规则与 scripts/local-editor-plugin.mjs 的 slugify 逐字相同（小写、NFKC、非字母数字折叠成 `-`、去首尾 `-`）。
  * 那是脚本层仅存的副本（.mjs 的插件模块没有 import 这里）；改动任何一处都必须两处同时改。

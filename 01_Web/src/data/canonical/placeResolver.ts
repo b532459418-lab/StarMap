@@ -12,22 +12,18 @@
  */
 
 import { slugify } from '../../worldgraph/slug.ts'
-import { EN, ZH, isoOf } from './reconstruct.ts'
+import { EN, ZH, isoOf, placeTitle, type PlaceTitle } from './reconstruct.ts'
 import type { CanonicalPlace, PlaceId } from './types.ts'
 
 // ---------------------------------------------------------------------------
-// FR-MR-5 合并键：与 src/worldgraph/query.ts 的 mergeKeyOf 逐字一致
+// 城市匹配键：「可能是同一个城市吗」
 // ---------------------------------------------------------------------------
 //
-// Core 的 mergeKeyOf 不导出（不改 Core），这里照抄它与它的两个输入：
-// - 国家代码：`asCountryCode`（两位字母才算，统一大写）。足迹城市取所属国家 Entity 的 flagCode
-//   （= 国家地点 ISO 的小写），想去地点取自身的 countryCode（= 所属国家地点的 ISO）；
-// - 名称：Entity 的 title。足迹城市的 title 由 Core travel 适配器 `buildTitle(city.nameZh, city.nameEn)`
-//   得到，City 的名称由 ./derive.ts 从地点重建（nameZh = 中文名，nameEn = 英文名 || 中文名）；
-//   想去地点的 title 是 `{ zh: nameZh, en: nameEn }`，由 ./reconstruct.ts 从地点重建。
-// placeResolver.test.ts 用真实管线 queryVisiblePlaces 对拍这套判断（PR5b 之前 planMigration.test.ts 也对拍）。
-
-export type EntityTitle = { zh: string; en?: string }
+// 键是 `<国家代码>:<slug(英文名 ?? 中文名)>`，两个输入：
+// - 国家代码：`asCountryCode`（两位字母才算，统一大写），取所属国家地点的 ISO；
+// - 名称：地点在 Core 里的标题 `placeTitle`（./reconstruct.ts；英文名缺时用中文名）。
+// RFC-LOC-1 Core-A 之前地图的 FR-MR-5 也按这个键把想去城市并进足迹城市；Core-A 起地图按地点 id 合并，
+// 这个键只剩 V2 写入「先找后建」的匹配用途（RFC ID-6）：它只回答「可能是同一个」，结论落在地点 id 上。
 
 /** 两位字母才算国家代码，统一大写；其它形状一律视为没有。 */
 export const asCountryCode = (value: unknown): string | undefined => {
@@ -35,20 +31,8 @@ export const asCountryCode = (value: unknown): string | undefined => {
   return code !== undefined && /^[A-Z]{2}$/.test(code) ? code : undefined
 }
 
-/** 足迹城市在 Core 里的 title：英文名缺时用中文名（同 Core travel 适配器的 buildTitle）。 */
-export const footprintCityTitle = (place: Pick<CanonicalPlace, 'names'>): EntityTitle => {
-  const nameZh = place.names[ZH] ?? ''
-  const nameEn = (place.names[EN] ?? '') || nameZh
-  const title: EntityTitle = { zh: nameZh || nameEn || '' }
-  if (nameEn) title.en = nameEn
-  return title
-}
-
-/** 想去地点在 Core 里的 title：`{ zh: nameZh, en: nameEn }`，缺的为空字符串。 */
-export const wantToGoTitle = (place: Pick<CanonicalPlace, 'names'>): EntityTitle => ({ zh: place.names[ZH] ?? '', en: place.names[EN] ?? '' })
-
-/** FR-MR-5 合并键 `<国家代码>:<slug(英文名 ?? 中文名)>`。拿不到国家代码或 slug 为空时没有键（不合并）。 */
-export const mergeKeyOf = (countryCode: string | undefined, title: EntityTitle): string | undefined => {
+/** 城市匹配键 `<国家代码>:<slug(英文名 ?? 中文名)>`。拿不到国家代码或 slug 为空时没有键（匹配不到任何地点）。 */
+export const cityMatchKeyOf = (countryCode: string | undefined, title: PlaceTitle): string | undefined => {
   if (countryCode === undefined) return undefined
   const slug = slugify(title.en ?? title.zh)
   return slug === '' ? undefined : `${countryCode}:${slug}`
@@ -93,7 +77,7 @@ export const resolveCountry = (places: readonly CanonicalPlace[], iso: string): 
 }
 
 /**
- * 在国家 `countryId` 的城市地点里按 FR-MR-5 合并键找城市。输入的名称与城市地点都按足迹城市的 title 取键
+ * 在国家 `countryId` 的城市地点里按城市匹配键找城市。输入的名称与城市地点都按 `placeTitle` 取键
  * （英文名缺时用中文名）；国家代码取 `countryId` 这个国家地点的 ISO。国家不存在或没有 ISO、输入的键为空时视为找不到。
  */
 export const resolveCity = (
@@ -106,11 +90,11 @@ export const resolveCity = (
   const inputNames: Record<string, string> = {}
   if (names.zh) inputNames[ZH] = names.zh
   if (names.en) inputNames[EN] = names.en
-  const key = mergeKeyOf(countryCode, footprintCityTitle({ names: inputNames }))
+  const key = cityMatchKeyOf(countryCode, placeTitle({ names: inputNames }))
   if (key === undefined) return { status: 'none' }
   return resolutionOf(places.filter((place) => (
     place.subtype === 'city'
     && place.partOf === countryId
-    && mergeKeyOf(countryCode, footprintCityTitle(place)) === key
+    && cityMatchKeyOf(countryCode, placeTitle(place)) === key
   )))
 }

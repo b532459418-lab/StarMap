@@ -43,11 +43,8 @@ const unexpectedWantToGoFiles = publicFiles.filter((filePath) => {
     && existsSync(path.join(projectRoot, filePath))
 })
 
-// RFC-LOC-1 PR5b: the legacy-format travel sample now lives only as Core's test fixture (the input shape the Core
-// adapters take today). It is the one legacy-format file allowed in the tree and keeps the neutral-sample checks.
-const coreFixtureLabel = 'src/worldgraph/adapters/travel.fixture.source.json'
-const samplePath = path.join(webRoot, ...coreFixtureLabel.split('/'))
-const sampleData = JSON.parse(readFileSync(samplePath, 'utf8'))
+// RFC-LOC-1 Core-A removed the last legacy-format file (Core's test fixture travel.fixture.source.json) and its checks;
+// the tree holds no legacy-format sample any more.
 const errors = []
 const gitignore = readFileSync(path.join(projectRoot, '.gitignore'), 'utf8')
 const requiredIgnoreRules = [
@@ -71,13 +68,6 @@ const missingIgnoreRules = requiredIgnoreRules.filter((rule) => !gitignore.split
 if (missingIgnoreRules.length > 0) {
   errors.push(`Required .gitignore safeguards are missing:\n${missingIgnoreRules.map((rule) => `  - ${rule}`).join('\n')}`)
 }
-if (sampleData.privacy_level !== 'public-sample') {
-  errors.push(`${coreFixtureLabel} must declare privacy_level = public-sample.`)
-}
-if (!Array.isArray(sampleData.records) || sampleData.records.length === 0) {
-  errors.push(`${coreFixtureLabel} needs at least one runnable sample record.`)
-}
-
 if (unexpectedWantToGoFiles.length > 0) {
   errors.push(`Only the neutral want-to-go sample, its schema, and the store scripts may be tracked:\n${unexpectedWantToGoFiles.map((filePath) => `  - ${filePath}`).join('\n')}`)
 }
@@ -104,7 +94,6 @@ if (errors.length > 0) {
 } else {
   console.log('StarMap privacy audit passed.')
   console.log(`Tracked and unignored public files checked: ${publicFiles.length}`)
-  console.log(`Neutral Core fixture records (${coreFixtureLabel}): ${sampleData.records.length}`)
   console.log('V2 public sample (src/data/v2-sample/) passed its checks.')
   console.log('Required .gitignore safeguards are present.')
   console.log('Private Inbox, generated media, local catalogs, local travel data, and environment files are outside the tracked public boundary.')

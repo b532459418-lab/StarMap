@@ -3,8 +3,9 @@
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  * PR3a 的迁移规划测试曾改为经本模块取合并键与距离（迁移工具与它的测试在 PR5b 删除）；
- * 这里另测两个解析函数，并用 PR3a 的对拍数据确认 `resolveCity` 与真实管线 `queryVisiblePlaces` 的合并一致。
- * 对拍数据（旧 id 空间的 Canonical）PR5b 起是冻结的静态数据（./frozen.fixture.ts；删除 Legacy Adapter 之前用它生成）。
+ * 这里另测两个解析函数。最后一个测试沿用 PR3a 的对拍数据（旧 id 空间的 Canonical，PR5b 起冻结在 ./frozen.fixture.ts）：
+ * RFC-LOC-1 Core-A 之前它断言 `resolveCity` 复用的足迹城市正是地图按名字（FR-MR-5）并进的那些；Core-A 起地图按地点 id 合并，
+ * 那次对拍的结果作为期望值冻结在这里。
  */
 
 /// <reference types="node" />
@@ -12,21 +13,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { queryVisiblePlaces } from '../../worldgraph/query.ts'
-import { deriveAppDataFromCanonical } from './derive.ts'
 import { legacyIdCanonical, type LegacyIdCanonicalName } from './frozen.fixture.ts'
 import {
   asCountryCode,
+  cityMatchKeyOf,
   distanceKm,
-  footprintCityTitle,
-  mergeKeyOf,
   resolveCity,
   resolveCountry,
-  wantToGoTitle,
 } from './placeResolver.ts'
+import { placeTitle } from './reconstruct.ts'
 import type { CanonicalData, CanonicalPlace } from './types.ts'
-
-const NOW = '2000-01-01T00:00:00.000Z'
 
 /** 雷克雅未克的坐标（公开地理事实）。 */
 const REYKJAVIK = { lat: 64.1466, lng: -21.9426 }
@@ -109,18 +105,17 @@ test('resolveCity：多于一个 → ambiguous，列出全部候选（不按距�
 // 合并键与距离
 // ---------------------------------------------------------------------------
 
-test('合并键：国家代码两位字母才算；title 取英文名，缺时取中文名；slug 为空时没有键', () => {
+test('城市匹配键：国家代码两位字母才算；title 取英文名，缺时取中文名；slug 为空时没有键', () => {
   assert.equal(asCountryCode(' is '), 'IS')
   assert.equal(asCountryCode('isl'), undefined)
   assert.equal(asCountryCode(''), undefined)
   assert.equal(asCountryCode(undefined), undefined)
-  assert.equal(mergeKeyOf('IS', footprintCityTitle(PLACES[3])), 'IS:reykjavik')
-  assert.equal(mergeKeyOf('IS', footprintCityTitle(PLACES[4])), 'IS:维克')
-  assert.equal(mergeKeyOf(undefined, footprintCityTitle(PLACES[3])), undefined)
-  assert.equal(mergeKeyOf('IS', { zh: '', en: '' }), undefined)
-  // 想去地点的 title 缺英文名时是空字符串（不回落），与 Core 想去适配器一致。
-  assert.deepEqual(wantToGoTitle(PLACES[4]), { zh: '维克', en: '' })
-  assert.equal(mergeKeyOf('IS', wantToGoTitle(PLACES[4])), undefined)
+  assert.equal(cityMatchKeyOf('IS', placeTitle(PLACES[3])), 'IS:reykjavik')
+  assert.equal(cityMatchKeyOf('IS', placeTitle(PLACES[4])), 'IS:维克')
+  assert.equal(cityMatchKeyOf(undefined, placeTitle(PLACES[3])), undefined)
+  assert.equal(cityMatchKeyOf('IS', { zh: '', en: '' }), undefined)
+  // 只有中文名的地点：标题的英文名用中文名（与 Core 地点实体的标题相同）。
+  assert.deepEqual(placeTitle(PLACES[4]), { zh: '维克', en: '维克' })
 })
 
 test('distanceKm：同一点为 0；同一经线上纬度相差 1 度约 111 km', () => {
@@ -130,20 +125,8 @@ test('distanceKm：同一点为 0；同一经线上纬度相差 1 度约 111 km'
 })
 
 // ---------------------------------------------------------------------------
-// 对拍：resolveCity 找到的足迹城市 ⇔ queryVisiblePlaces 在地图上把想去条目并进的足迹城市
+// 对拍数据：resolveCity 找到的足迹城市（冻结的期望值）
 // ---------------------------------------------------------------------------
-
-/** 今天地图（足迹 + 想去都可见）上并进足迹城市的想去条目：`足迹城市 id ← 想去条目 id`。 */
-const mapMergedPairs = (canonical: CanonicalData) => {
-  const data = deriveAppDataFromCanonical(canonical, { now: NOW })
-  const snapshot = data.worldGraph.worldGraphSnapshot
-  const itemIdOf = new Map(snapshot.entities.map((entity) => [entity.id, entity.metadata.wantToGoId as string | undefined]))
-  const { places } = queryVisiblePlaces(snapshot, ['travel', 'want_to_go'])
-  return places
-    .filter((place) => place.layerIds.includes('travel'))
-    .flatMap((place) => (place.mergedEntityIds ?? []).map((entityId) => `${place.sourceId} ← ${itemIdOf.get(entityId)}`))
-    .sort()
-}
 
 /** 把每个想去城市按名称拿去足迹地点里解析（V2 写入「新增想去」的判断），找到的就是它会复用的足迹城市。 */
 const resolvedPairs = (canonical: CanonicalData) => {
@@ -158,7 +141,7 @@ const resolvedPairs = (canonical: CanonicalData) => {
   }).sort()
 }
 
-test('对拍（沿用 PR3a 的对拍数据）：resolveCity 复用的足迹城市，正是 queryVisiblePlaces 在地图上合并的', () => {
+test('PR3a 的对拍数据：resolveCity 复用的足迹城市，等于 Core-A 之前地图按名字合并的结果（冻结的期望值）', () => {
   // 最后一份：足迹有雷克雅未克、维克（只有中文名）、胡萨维克（Húsavík）、托尔斯港（Tórshavn）；想去有
   // 小写的 reykjavik、英文名写成中文的维克、不带变音符的 Husavik、带变音符的 Tórshavn（FO 与 DK 各一条）。
   const fixtures: [string, LegacyIdCanonicalName][] = [
@@ -167,16 +150,20 @@ test('对拍（沿用 PR3a 的对拍数据）：resolveCity 复用的足迹城�
     ['疑似重复', 'duplicate'],
     ['大小写、变音符、只有中文名', 'caseAndDiacritic'],
   ]
-  for (const [name, key] of fixtures) {
-    const canonical = legacyIdCanonical(key)
-    assert.deepEqual(resolvedPairs(canonical), mapMergedPairs(canonical), name)
-  }
-  // 公开样例：阿克雷里（足迹与想去同名同坐标）是唯一的一对。
-  assert.deepEqual(resolvedPairs(legacyIdCanonical('sample')), ['iceland__akureyri ← wtg_2026-08-12_akureyri'])
-  // 最后一个 fixture：大小写与「只有中文名」合并，变音符与别的国家不合并。
-  assert.deepEqual(resolvedPairs(legacyIdCanonical(fixtures[3][1])), [
-    'faroe-islands__tórshavn ← w_torshavn_accent',
-    'iceland__reykjavik ← w_reykjavik_lower',
-    'iceland__维克 ← w_vik_zh',
-  ])
+  // Core-A 之前 `queryVisiblePlaces` 在这四份数据上（足迹 + 想去都可见）并进足迹城市的想去条目，与下面逐一相同。
+  const expected: string[][] = [
+    // 公开样例：阿克雷里（足迹与想去同名同坐标）是唯一的一对。
+    ['iceland__akureyri ← wtg_2026-08-12_akureyri'],
+    ['iceland__akureyri ← wtg_2026-08-12_akureyri'],
+    [],
+    // 最后一份：大小写与「只有中文名」合并，变音符与别的国家不合并。
+    [
+      'faroe-islands__tórshavn ← w_torshavn_accent',
+      'iceland__reykjavik ← w_reykjavik_lower',
+      'iceland__维克 ← w_vik_zh',
+    ],
+  ]
+  fixtures.forEach(([name, key], index) => {
+    assert.deepEqual(resolvedPairs(legacyIdCanonical(key)), expected[index], name)
+  })
 })

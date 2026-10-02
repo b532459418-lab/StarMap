@@ -18,10 +18,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import type { City, TravelMapRecord } from '../../types/travel.ts'
+import { placesToWorldGraph, type PlaceInput } from '../../worldgraph/adapters/places.ts'
 import { plannedRecordsToWorldGraph } from '../../worldgraph/adapters/plannedRecords.ts'
-import { sampleCities, sampleCountries, sampleJourneyDays, sampleRoutes } from '../../worldgraph/adapters/travel.fixture.ts'
+import { samplePlaces, sampleCities, sampleCountries, sampleJourneyDays, sampleRoutes } from '../../worldgraph/adapters/travel.fixture.ts'
 import { travelToWorldGraph } from '../../worldgraph/adapters/travel.ts'
-import { wantToGoToWorldGraph, type WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
+import { wantToGoToWorldGraph } from '../../worldgraph/adapters/wantToGo.ts'
 import { mergeWorldGraphSnapshots } from '../../worldgraph/snapshot.ts'
 import { deriveAppDataFromCanonical } from '../canonical/derive.ts'
 import { legacyIdCanonical } from '../canonical/frozen.fixture.ts'
@@ -32,6 +33,7 @@ import {
   stableStringify,
   type AppDataExports,
 } from './baseline.ts'
+import type { WantToGoItem } from './wantToGo.ts'
 
 const NOW = '2000-01-01T00:00:00.000Z'
 
@@ -108,9 +110,19 @@ const makeExports = (now = NOW): AppDataExports => {
     },
   ]
 
+  // 注册表：足迹的两个国家、五个城市（冰岛就是想去的「整个冰岛」），另加格陵兰、努克、挪威、卑尔根。
+  const places: PlaceInput[] = [
+    ...samplePlaces(),
+    { id: 'greenland', subtype: 'country', title: { zh: '格陵兰', en: 'Greenland' }, countryCode: 'GL' },
+    { id: 'greenland__nuuk', subtype: 'city', title: { zh: '努克', en: 'Nuuk' }, countryCode: 'GL', partOf: 'greenland', location: { lat: 64.1814, lng: -51.6941 } },
+    { id: 'norway', subtype: 'country', title: { zh: '挪威', en: 'Norway' }, countryCode: 'NO' },
+    { id: 'norway__bergen', subtype: 'city', title: { zh: '卑尔根', en: 'Bergen' }, countryCode: 'NO', partOf: 'norway', location: { lat: 60.3913, lng: 5.3221 } },
+  ]
+  const placeIdOfItem: Record<string, string> = { wtg_nuuk: 'greenland__nuuk', wtg_iceland: 'iceland' }
+  const placesSnapshot = placesToWorldGraph(places, { now })
   const travelSnapshot = travelToWorldGraph({ countries, cities, journeyDays, routes }, { now })
-  const wantToGoSnapshot = wantToGoToWorldGraph(wantToGoItems, { now })
-  const plannedSnapshot = plannedRecordsToWorldGraph(plannedRecords, { now, countryCodes: { Norway: 'no' } })
+  const wantToGoSnapshot = wantToGoToWorldGraph(wantToGoItems.map((item) => ({ ...item, placeId: placeIdOfItem[item.id] })))
+  const plannedSnapshot = plannedRecordsToWorldGraph(plannedRecords.map((record) => ({ id: record.id, placeId: 'norway__bergen', start_date: record.start_date })))
 
   return {
     travelAtlas: {
@@ -158,8 +170,6 @@ const makeExports = (now = NOW): AppDataExports => {
       wantToGoItems,
       wantToGoProblems: ['第 3 条想去记录缺少 id，已跳过。'],
       hiddenWantToGoItems: wantToGoItems.filter((item) => item.hidden),
-      wantToGoItemByEntityId: new Map([['place:wtg:GL:nuuk', wantToGoItems[0]]]),
-      plannedRecordByEntityId: new Map([['place:planned:planned_bergen', plannedRecords[0]]]),
       wantToGoItemById: new Map(wantToGoItems.map((item) => [item.id, item])),
       plannedRecordById: new Map(plannedRecords.map((record) => [record.id, record])),
       wantToGoConvertBlockReason: (item: WantToGoItem) => (item.place.kind === 'city' ? undefined : '整个国家'),
@@ -170,7 +180,7 @@ const makeExports = (now = NOW): AppDataExports => {
       travelSnapshot,
       wantToGoSnapshot,
       plannedSnapshot,
-      worldGraphSnapshot: mergeWorldGraphSnapshots(travelSnapshot, wantToGoSnapshot, plannedSnapshot),
+      worldGraphSnapshot: mergeWorldGraphSnapshots(placesSnapshot, travelSnapshot, wantToGoSnapshot, plannedSnapshot),
     },
   }
 }
@@ -262,7 +272,6 @@ test('module namespace 之类多出的导出被忽略', () => {
 
 test('Map 转成按插入顺序的 [key, value] 数组，函数按定义域求值', () => {
   const baseline = JSON.parse(baselineText(makeExports()))
-  assert.deepEqual(baseline.modules.wantToGo.wantToGoItemByEntityId.map(([key]: [string]) => key), ['place:wtg:GL:nuuk'])
   assert.deepEqual(baseline.modules.wantToGo.wantToGoItemById.map(([key]: [string]) => key), ['wtg_nuuk', 'wtg_iceland'])
   assert.deepEqual(baseline.modules.wantToGo.plannedRecordById.map(([key]: [string]) => key), ['planned_bergen'])
   assert.deepEqual(baseline.modules.wantToGo.wantToGoConvertBlockReason, [['wtg_nuuk', null], ['wtg_iceland', '整个国家']])
@@ -274,8 +283,8 @@ test('Map 转成按插入顺序的 [key, value] 数组，函数按定义域求�
   const domain = baseline.modules.droneMedia.hasDroneMedia.map(([cityId]: [string]) => cityId)
   assert.deepEqual(domain, [...sampleCities().map((city) => city.id), 'elsewhere__city'])
   assert.deepEqual(baseline.modules.droneMedia.hasDroneMedia.at(-1), ['elsewhere__city', true])
-  // @2：countryIdOfCity 的定义域再并上 editor-state 的 hiddenCityIds（去重，按首次出现顺序）；undefined 写成 null。
-  assert.equal(baseline.format, 'starmap-legacy-baseline@2')
+  // @2 起：countryIdOfCity 的定义域再并上 editor-state 的 hiddenCityIds（去重，按首次出现顺序）；undefined 写成 null。
+  assert.equal(baseline.format, 'starmap-legacy-baseline@3')
   assert.deepEqual(baseline.modules.travelAtlas.countryIdOfCity, [
     ...sampleCities().map((city) => [city.id, city.countryId]),
     ['elsewhere__city', null],
@@ -351,9 +360,14 @@ test('公开样例经 App 派生的基线：两次字节相同，关键数量与
   )
   assert.equal(modules.wantToGo.wantToGoItems.length, 3)
   assert.deepEqual(modules.mediaCatalog.allImportedMediaItems, [])
-  // 样例里想去的 Akureyri 与足迹的 Akureyri 同键：足迹可见时并进足迹城市（FR-MR-5）。
+  // 这份是旧 id 空间的冻结数据：想去的 Akureyri 是自己的地点（wtg:…），不是足迹城市 iceland__akureyri。
+  // RFC-LOC-1 Core-A 起地图按地点 id 合并（Core 方案 C4），名字相同的两个地点各自一个标记。
   const both = queries.visiblePlaces.find(({ name }: { name: string }) => name === 'travel+want_to_go').result
-  const akureyri = both.places.find((place: { entityId: string }) => place.entityId === 'place:city:iceland__akureyri')
-  assert.deepEqual(akureyri.layerIds, ['travel', 'want_to_go'])
+  assert.deepEqual(
+    both.places
+      .filter((place: { title: { en?: string } }) => place.title.en === 'Akureyri')
+      .map((place: { entityId: string; layerIds: string[] }) => [place.entityId, place.layerIds]),
+    [['iceland__akureyri', ['travel']], ['wtg:wtg_2026-08-12_akureyri', ['want_to_go']]],
+  )
   assert.equal(queries.collection.want_to_go.length, 3)
 })

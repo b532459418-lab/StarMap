@@ -100,7 +100,10 @@ export interface LayerMembership {
   recordId?: string
   addedBy: 'user' | 'rule'
   addedAt: string
-  /** want_to_go: { note?: string; hidden?: boolean; source?: string } */
+  /**
+   * want_to_go: { note?: string; hidden?: boolean; source?: string; readOnly?: boolean }
+   * travel: { hidden?: boolean; accent?: string; cityIds?: string[] }（accent 与国家的 cityIds 供图层查询读，见 adapters/travel.ts）
+   */
   metadata?: Record<string, unknown>
 }
 

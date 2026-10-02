@@ -1,142 +1,64 @@
 /**
- * Planned Records Adapter —— 把 travel-map 里 `status === 'planned'` 的记录
- * 投影成 want_to_go 图层里的只读条目（PRD FR-WTG-7）。
+ * Planned Records Adapter —— 把 `status === 'planned'` 的足迹记录投影成 want_to_go 图层里的只读成员关系
+ * （PRD FR-WTG-7；RFC-LOC-1 Core 方案 C1–C3 起按地点 id 引用地点实体）。
  *
- * 为什么输入是【原始 TravelMapRecord[]】而不是 travelAtlas 的 Country / City：
- * travelAtlas.ts 在记录层（`rawRecords`）就把 planned 过滤掉了，它导出的领域对象里
- * 根本没有这些记录。FR-TA-5 要求那条过滤【保持不变】，所以 planned 记录只能从
- * 原始 records 里取。过滤动作放在本函数内部，调用方把整份 records 传进来即可。
+ * 输入只是 planned 记录的最小形状：App 在派生层挑出 planned 记录（FR-TA-5：它们不进足迹），
+ * 只把这里用得到的字段传进来。记录上的名称、国家代码、坐标都不再需要——它们属于地点，
+ * 由 ./places.ts 从注册表构造；记录自带的坐标是记录级数据，地图不使用（RFC §3.2）。
  *
- * 设计约束同 travel.ts / wantToGo.ts：Core、纯函数、options.now 必填、不改输入。
+ * 设计约束同 travel.ts / wantToGo.ts：Core、纯函数、不读时钟、不改输入。
  *
- * 这些条目在 V0.4 是【只读】的：没有对应的本地编辑端点，membership 上带
- * `readOnly: true` 与 `addedBy: 'rule'`，UI 据此隐藏「隐藏 / 删除」操作。
- * 迁移进 want-to-go.local.json 是 P1（PRD §15 Q2）。
+ * 这些条目在 V0.4 是【只读】的：membership 上带 `readOnly: true` 与 `addedBy: 'rule'`，
+ * UI 据此隐藏「隐藏 / 删除」操作。
  */
 
-import type { TravelMapRecord } from '../../types/travel.ts'
-import type {
-  Anchor,
-  Entity,
-  EntityId,
-  EntityMetadata,
-  LayerMembership,
-  WorldGraphSnapshot,
-} from '../types.ts'
+import type { EntityId, LayerMembership, WorldGraphSnapshot } from '../types.ts'
 // 与 wantToGo.ts 同一个图层，只是来源不同；图层 id 只在 Layer Registry 里声明一次。
 import { WANT_TO_GO_LAYER_ID } from '../layers.ts'
-import { anchorId } from './travel.ts'
 
-/** membership.metadata.source 与 entity.metadata.source 的取值（FR-WTG-7）。 */
+/** membership.metadata.source 的取值（FR-WTG-7）。 */
 export const PLANNED_SOURCE = 'travel-map:planned'
 
-export interface PlannedRecordsOptions {
-  /** 注入 Entity.updatedAt 的时间戳（ISO 8601）。【必填】，理由同 travel.ts。 */
-  now: string
-  /**
-   * travelAtlas 的 `display.countryCodes`（国家英文名 → 两位国家代码）。
-   * 记录自带 `country_code` 时优先用记录上的值，这里只是第二级回落。
-   */
-  countryCodes?: Record<string, string>
+/** 一条 planned 足迹记录。 */
+export interface PlannedRecordInput {
+  id: string
+  /** 记录所在城市的注册表地点 id，即实体 id（Core 方案 C1）。 */
+  placeId: EntityId
+  start_date: string
+  notes?: string
 }
 
-// ---- ID 规则（PRD §8.2）----
-
 /**
- * `place:planned:<TravelMapRecord.id>`。
+ * 把 planned 记录投影成一个 World Graph 快照。
  *
- * 与 wantToGoEntityId 的 `place:wtg:<CC>:<slug>` 【刻意】不同：同一个真实地点
- * 既可能是一条 planned 记录、又可能被手动加进想去列表，PRD §8.2 允许两个 Entity 并存，
- * 由渲染层合并显示（FR-MR-5）。Entity 级去重是 0.5 的迁移工作。
- */
-export const plannedEntityId = (recordId: string): EntityId => `place:planned:${recordId}`
-
-const isFiniteNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value)
-
-/**
- * 把 travel-map 的 planned 记录投影成一个 World Graph 快照。
- *
- * - 只取 `status === 'planned'` 的记录，其余忽略
- * - Entity：`place:planned:<recordId>`，`type: 'place'`，`subtype: 'city'`
- * - Anchor：lat / lng 都是有限数时产出 location Anchor（`precision: 'exact'`）；
- *   travel-map 的坐标可以是 null（schema 允许），这时只有 Entity 没有 Anchor（D06）
- * - Membership：`want_to_go`，`recordId` 取记录的 id，`addedBy: 'rule'`，`metadata.readOnly = true`
- * - Relation：不产出
+ * - Membership：`want_to_go`，`entityId` 取记录的 placeId，`recordId` 取记录的 id，`addedBy: 'rule'`，
+ *   `addedAt` 用记录的 start_date，`metadata = { source: PLANNED_SOURCE, readOnly: true, note? }`
+ * - Entity / Anchor / Relation：不产出（地点实体与锚点由 ./places.ts 构造）
  *
  * 同一个 record id 出现两次时第一条胜出；不修改输入。
  */
-export const plannedRecordsToWorldGraph = (
-  records: readonly TravelMapRecord[],
-  options: PlannedRecordsOptions,
-): WorldGraphSnapshot => {
-  const now = options.now
-  const countryCodes = options.countryCodes
-  const entities: Entity[] = []
+export const plannedRecordsToWorldGraph = (records: readonly PlannedRecordInput[]): WorldGraphSnapshot => {
   const memberships: LayerMembership[] = []
-  const anchors: Anchor[] = []
-  const seenEntityIds = new Set<EntityId>()
+  const seenRecordIds = new Set<string>()
 
   for (const record of records) {
-    if (record.status !== 'planned') continue
+    if (seenRecordIds.has(record.id)) continue
+    seenRecordIds.add(record.id)
 
-    const entityId = plannedEntityId(record.id)
-    if (seenEntityIds.has(entityId)) continue
-    seenEntityIds.add(entityId)
-
-    // 三级回落：记录自带 → display.countryCodes → 省略。统一大写。
-    const rawCountryCode = record.country_code || countryCodes?.[record.country_en] || ''
-    const countryCode = rawCountryCode.trim().toUpperCase()
-
-    const metadata: EntityMetadata = {
-      source: PLANNED_SOURCE,
-      readOnly: true,
-      recordId: record.id,
-    }
-    if (countryCode) metadata.countryCode = countryCode
-    if (record.country_en) metadata.countryEn = record.country_en
-
-    // title.zh 在中文名缺失时回落到英文名，理由同 travel.ts 的 buildTitle：
-    // 空标题会在地图上渲染成一个没有标签的标记。
-    const title: Entity['title'] = { zh: record.city || record.city_en || '' }
-    if (record.city_en) title.en = record.city_en
-
-    entities.push({
-      id: entityId,
-      type: 'place',
-      subtype: 'city',
-      title,
-      metadata,
-      visibility: 'private',
-      createdAt: record.start_date,
-      updatedAt: now,
-    })
-
-    if (isFiniteNumber(record.lat) && isFiniteNumber(record.lng)) {
-      anchors.push({
-        id: anchorId('location', entityId),
-        entityId,
-        kind: 'location',
-        lat: record.lat,
-        lng: record.lng,
-        precision: 'exact',
-      })
-    }
-
-    const membershipMetadata: Record<string, unknown> = {
+    const metadata: Record<string, unknown> = {
       source: PLANNED_SOURCE,
       readOnly: true,
     }
-    if (record.notes) membershipMetadata.note = record.notes
+    if (record.notes) metadata.note = record.notes
     memberships.push({
-      entityId,
+      entityId: record.placeId,
       layerId: WANT_TO_GO_LAYER_ID,
       recordId: record.id,
       addedBy: 'rule',
       addedAt: record.start_date,
-      metadata: membershipMetadata,
+      metadata,
     })
   }
 
-  return { entities, memberships, anchors, relations: [] }
+  return { entities: [], memberships, anchors: [], relations: [] }
 }

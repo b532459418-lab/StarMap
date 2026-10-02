@@ -5,7 +5,7 @@ import { appData, worldGraphSessionNow as sessionNow } from './appData'
  *
  * 放在 src/data/ 而不是 src/worldgraph/：它经 ./appData.ts 依赖 Vite 虚拟模块
  * 'virtual:starmap-private-data' 与 import.meta.env，那正是 FR-MOD 边界明令禁止 Core 做的事。
- * Core 只接收参数，"把参数凑齐"是应用层的活——三个适配器的调用与合并在纯派生层
+ * Core 只接收参数，"把参数凑齐"是应用层的活——四个适配器（地点、足迹、想去、planned）的调用与合并在纯派生层
  * ./derive/worldGraph.ts（RFC-LOC-1 PR1），PR2 起由 ./appData.ts 经 Canonical 调用；本文件以原名导出。
  *
  * 模块级只算一次：几个适配器都是纯函数，输入是模块级常量，
@@ -26,5 +26,5 @@ export const wantToGoSnapshot = derived.wantToGoSnapshot
 /** travel-map 里 status === 'planned' 的记录（FR-WTG-7），只读地进入想去图层。 */
 export const plannedSnapshot = derived.plannedSnapshot
 
-/** 地图查询用的合并快照，顺序是 travel → want-to-go → planned。 */
+/** 地图查询用的合并快照，顺序是 places → travel → want-to-go → planned。 */
 export const worldGraphSnapshot = derived.worldGraphSnapshot

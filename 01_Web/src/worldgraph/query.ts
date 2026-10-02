@@ -20,47 +20,54 @@
  *    这些图层。足迹只画城市（国家中心点从来不画，与 PR3 一致）；想去画城市与国家（PRD Q5）。
  *
  * 4. 路线只在 travel 图层可见时才计算（FR-LR-3）。计算规则逐条复刻 PR3 之前
- *    CesiumAtlasGlobe 里 `mappedRoutes` 的行为，只是把数据源从领域对象换成快照；
- *    `src/worldgraph/query.parity.test.ts` 用逐字复制的 legacy 逻辑把这件事钉死。
+ *    CesiumAtlasGlobe 里 `mappedRoutes` 的行为，只是把数据源从领域对象换成快照
+ *    （PR3 起由一份逐字复制旧逻辑的对等测试钉住，RFC-LOC-1 Core-A 退役了它；规则本身由 query.test.ts 覆盖）。
+ *    国家内顺序段读国家足迹成员关系上的 `cityIds`。
  *
- * 5. FR-MR-5「同一地点在两层」在这里合并，而不是在 Globe 里：非足迹的城市地点，若
- *    `(countryCode, slug(英文名))` 与一个【可见的】足迹城市相同，就并进那个足迹地点
- *    （`layerIds` 追加、`membershipMetadata` 合并、`mergedEntityIds` 记下来源），自身不再输出。
- *    足迹不可见时不合并，想去地点按自己的样式单独出现。剩下的非足迹地点之间同键只留第一个
- *    （快照合并顺序是 travel → want-to-go → planned，所以想去先于 planned）。国家地点不参与合并。
+ * 5. FR-MR-5「同一地点在两层」按身份合并（RFC-LOC-1 Core 方案 C4）：地点实体 id 就是注册表的地点 id，
+ *    同一地点在足迹与想去两层就是同一个实体的两条成员关系。一个实体在哪些可见图层里有未隐藏的成员关系，
+ *    就在哪些层出现，地图上只画一个标记，`layerIds` 列出这些层（足迹 + 想去即心形徽标）；关掉足迹时，
+ *    同一个实体按想去样式出现。不再按名字合并：名字相同但不是同一地点的城市各自一个标记。
+ *    同一地点在同一层有几条记录（例如一条想去加一条 planned），也只画一个标记：`recordIds` 列出可见记录，
+ *    `membershipMetadata` 取每层第一条可见成员关系的 metadata（快照合并顺序是 places → travel → want-to-go → planned，
+ *    所以想去先于 planned）。
  */
 
-import { cityEntityId } from './adapters/travel.ts'
 import { officialLayers, TRAVEL_LAYER_ID } from './layers.ts'
-import { slugify } from './slug.ts'
-import type { Anchor, Entity, EntityId, LayerId, Relation, WorldGraphSnapshot } from './types.ts'
+import type { Anchor, Entity, EntityId, LayerId, LayerMembership, Relation, WorldGraphSnapshot } from './types.ts'
 
-/** 地图渲染一个地点标记需要的最小信息。字段能一一对应到 CesiumAtlasGlobe 的用法。 */
+/**
+ * 地图渲染一个地点标记需要的最小信息。字段能一一对应到 CesiumAtlasGlobe 的用法。
+ *
+ * 足迹相关的四个字段（`visitCount`、`countryEntityId`、`countryId`、`accent`）只在地点出现在足迹层
+ * （`layerIds` 含 travel）时给出：它们描述足迹标记的样式与行为，按想去样式出现的标记不使用它们。
+ */
 export interface LayerPlace {
   entityId: EntityId
-  /** 来源领域对象 id（travel 为 CityId），来自 Entity.metadata.sourceId；没有则等于 entityId */
+  /** 现在恒等于 `entityId`（地点 id 就是领域 id，Core 方案 C1）。保留给今天的调用方，留待以后清理。 */
   sourceId: string
   subtype: 'region' | 'country' | 'city' | undefined
   title: { zh: string; en?: string }
   lat: number
   lng: number
-  /** 该地点在哪些【可见】图层里，按 officialLayers.order 排序 */
+  /** 该地点在哪些【可见】图层里（有一条可见、未隐藏的成员关系），按 officialLayers.order 排序 */
   layerIds: LayerId[]
-  /** travel：所属国家的 Entity id 与领域 id（metadata.countryId） */
+  /** 足迹层：part_of 指向的所属国家的实体 id（地点 id） */
   countryEntityId?: EntityId
+  /** 足迹层：所属国家的领域 id；与 `countryEntityId` 相同（地点 id） */
   countryId?: string
-  /**
-   * 两位大写国家代码，FR-MR-5 合并键的一半。足迹城市取 part_of 目标国家 Entity 的
-   * metadata.flagCode；想去 / planned 地点取自身 metadata.countryCode。拿不到时不产出该键。
-   */
+  /** 两位大写国家代码，取地点实体的 metadata.countryCode。拿不到时不产出该键。 */
   countryCode?: string
-  /** FR-MR-5：被并入本地点的其他 Entity（例如同一城市的想去条目），按并入顺序。没有合并时不产出该键。 */
-  mergedEntityIds?: EntityId[]
-  /** 标记主色：优先自身 metadata.accent，其次所属国家 Entity 的 metadata.accent */
+  /**
+   * 每个可见层里可见（未隐藏）记录的 id（成员关系的 recordId），按快照顺序；没有记录 id 的层（例如足迹）不写，
+   * 一层都没有时不产出该键。同一地点有几条想去 / planned 记录，地图上仍只画一个标记（Core 方案 C4）。
+   */
+  recordIds?: Partial<Record<LayerId, string[]>>
+  /** 足迹层的标记主色：地点自己足迹成员关系 metadata 的 accent，没有则取所属国家足迹成员关系的 accent */
   accent?: string
-  /** 指向本地点的 visited Relation 数量（journey → place）；没有则 0 */
+  /** 足迹层：指向本地点的 visited Relation 数量（journey → place）；不在足迹层或没有则 0 */
   visitCount: number
-  /** 各可见图层的 membership.metadata（note / hidden / source 等），键为 LayerId */
+  /** 各可见图层里【第一条】可见成员关系的 metadata（note / hidden / source 等），键为 LayerId */
   membershipMetadata: Partial<Record<LayerId, Record<string, unknown>>>
 }
 
@@ -107,10 +114,7 @@ const isFiniteCoordinate = (anchor: Anchor): boolean =>
   typeof anchor.lng === 'number' &&
   Number.isFinite(anchor.lng)
 
-/** 领域 id：Entity.metadata.sourceId，没有则回落到 EntityId 本身。 */
-const sourceIdOf = (entity: Entity): string => asString(entity.metadata.sourceId) ?? entity.id
-
-/** 两位字母才算国家代码，统一大写；其它形状一律视为没有（这样的地点不参与 FR-MR-5 合并）。 */
+/** 两位字母才算国家代码，统一大写；其它形状一律视为没有。 */
 const asCountryCode = (value: unknown): string | undefined => {
   const code = asString(value)?.trim().toUpperCase()
   return code !== undefined && /^[A-Z]{2}$/.test(code) ? code : undefined
@@ -122,69 +126,21 @@ const sortByLayerOrder = (layerIds: readonly LayerId[], layerOrder: Map<LayerId,
     (a, b) => (layerOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (layerOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
   )
 
-/** FR-MR-5 合并键：`<countryCode>:<slug(英文名，没有则中文名)>`。只有城市参与；拿不到国家代码或 slug 为空时不合并。 */
-const mergeKeyOf = (place: LayerPlace): string | undefined => {
-  if (place.subtype !== 'city' || place.countryCode === undefined) return undefined
-  const slug = slugify(place.title.en ?? place.title.zh)
-  return slug === '' ? undefined : `${place.countryCode}:${slug}`
-}
-
-/**
- * FR-MR-5：把"同一地点在多层"的重复标记合并掉（规则见文件头第 5 条）。
- * 入参 places 是本次查询新造的对象，可以就地改；输入快照里的对象一个也不碰。
- */
-const mergeSamePlaces = (places: LayerPlace[], layerOrder: Map<LayerId, number>): LayerPlace[] => {
-  const travelPlaceByKey = new Map<string, LayerPlace>()
-  for (const place of places) {
-    if (!place.layerIds.includes(TRAVEL_LAYER_ID)) continue
-    const key = mergeKeyOf(place)
-    if (key !== undefined && !travelPlaceByKey.has(key)) travelPlaceByKey.set(key, place)
-  }
-
-  const keptOtherPlaceByKey = new Map<string, LayerPlace>()
-  const merged: LayerPlace[] = []
-  for (const place of places) {
-    const key = place.layerIds.includes(TRAVEL_LAYER_ID) ? undefined : mergeKeyOf(place)
-    if (key === undefined) {
-      merged.push(place)
-      continue
-    }
-
-    const travelPlace = travelPlaceByKey.get(key)
-    if (travelPlace) {
-      travelPlace.layerIds = sortByLayerOrder(
-        [...new Set([...travelPlace.layerIds, ...place.layerIds])],
-        layerOrder,
-      )
-      // 逐层合并，足迹地点已有的层不覆盖；复制一份，免得改到别处共享的对象。
-      const membershipMetadata = { ...travelPlace.membershipMetadata }
-      for (const layerId of Object.keys(place.membershipMetadata) as LayerId[]) {
-        if (membershipMetadata[layerId] === undefined) {
-          membershipMetadata[layerId] = place.membershipMetadata[layerId]
-        }
-      }
-      travelPlace.membershipMetadata = membershipMetadata
-      travelPlace.mergedEntityIds = [...(travelPlace.mergedEntityIds ?? []), place.entityId]
-      continue
-    }
-
-    const keptPlace = keptOtherPlaceByKey.get(key)
-    if (keptPlace) {
-      keptPlace.mergedEntityIds = [...(keptPlace.mergedEntityIds ?? []), place.entityId]
-      continue
-    }
-
-    keptOtherPlaceByKey.set(key, place)
-    merged.push(place)
-  }
-  return merged
+/** 一个实体在某一层的可见成员关系汇总：第一条的 metadata 与全部 recordId。 */
+interface VisibleLayerMembers {
+  /** 第一条可见成员关系（它的 metadata 进 LayerPlace.membershipMetadata）。 */
+  first: LayerMembership
+  /** 可见成员关系的 recordId，按快照顺序、去重。 */
+  recordIds: string[]
 }
 
 /**
  * 把一份快照 + 一组可见图层，投影成地图要渲染的地点与路线。
  *
- * places 的顺序 = Entity 在 `snapshot.entities` 里的顺序（稳定，便于逐条对比），
- * 被 FR-MR-5 并入别处的地点从中删去，其余相对顺序不变；
+ * FR-MR-5「同一地点在两层」按身份合并（Core 方案 C4）：一个实体在哪些可见图层里有未隐藏的成员关系，
+ * 就在哪些层出现，地图上只画一个标记，`layerIds` 列出这些层（足迹 + 想去即心形徽标）。
+ *
+ * places 的顺序 = Entity 在 `snapshot.entities` 里的顺序（稳定，便于逐条对比）；
  * routes 的顺序 = 先国家内顺序段、后跨国段，各自保持遍历顺序。
  */
 export const queryVisiblePlaces = (
@@ -243,29 +199,31 @@ export const queryVisiblePlaces = (
     return countryId === undefined ? undefined : entityById.get(countryId)
   }
 
-  /** 领域 countryId：来自 part_of 的目标 Entity（travel 快照里 sourceId 与 countryId 相同）。 */
-  const countryIdOf = (entityId: EntityId): string | undefined => {
-    const country = countryEntityOf(entityId)
-    if (!country) return undefined
-    return asString(country.metadata.sourceId) ?? asString(country.metadata.countryId)
+  /** 领域 countryId：part_of 的目标实体的 id。地点 id 就是领域 id（Core 方案 C1）。 */
+  const countryIdOf = (entityId: EntityId): string | undefined => countryEntityOf(entityId)?.id
+
+  // ---- 足迹成员关系：每个实体第一条，不看可见性与隐藏。查询要读的 accent / cityIds 在它的 metadata 上 ----
+  const travelMembershipByEntityId = new Map<EntityId, LayerMembership>()
+  for (const membership of snapshot.memberships) {
+    if (membership.layerId !== TRAVEL_LAYER_ID) continue
+    if (!travelMembershipByEntityId.has(membership.entityId)) travelMembershipByEntityId.set(membership.entityId, membership)
   }
+  const travelAccentOf = (entityId: EntityId): string | undefined =>
+    asString(travelMembershipByEntityId.get(entityId)?.metadata?.accent)
 
   // ---- membership：只取可见图层、且没有被标记 hidden 的成员关系 ----
-  const layerIdsByEntityId = new Map<EntityId, LayerId[]>()
-  const membershipMetadataByEntityId = new Map<EntityId, Partial<Record<LayerId, Record<string, unknown>>>>()
+  const visibleMembersByEntityId = new Map<EntityId, Map<LayerId, VisibleLayerMembers>>()
 
   for (const membership of snapshot.memberships) {
     if (!visible.has(membership.layerId)) continue
     if (membership.metadata?.hidden === true) continue
 
-    const layerIds = layerIdsByEntityId.get(membership.entityId) ?? []
-    if (!layerIds.includes(membership.layerId)) layerIds.push(membership.layerId)
-    layerIdsByEntityId.set(membership.entityId, layerIds)
-
-    if (membership.metadata !== undefined) {
-      const metadataByLayer = membershipMetadataByEntityId.get(membership.entityId) ?? {}
-      metadataByLayer[membership.layerId] = membership.metadata
-      membershipMetadataByEntityId.set(membership.entityId, metadataByLayer)
+    const byLayer = visibleMembersByEntityId.get(membership.entityId) ?? new Map<LayerId, VisibleLayerMembers>()
+    visibleMembersByEntityId.set(membership.entityId, byLayer)
+    const members = byLayer.get(membership.layerId) ?? { first: membership, recordIds: [] }
+    byLayer.set(membership.layerId, members)
+    if (membership.recordId !== undefined && !members.recordIds.includes(membership.recordId)) {
+      members.recordIds.push(membership.recordId)
     }
   }
 
@@ -275,10 +233,11 @@ export const queryVisiblePlaces = (
     if (entityById.get(entity.id) !== entity) continue
     if (entity.type !== 'place') continue
 
-    // 只保留"允许这个 subtype 上图"的可见图层：足迹的国家 Entity 在这里被排除，
+    // 只保留"允许这个 subtype 上图"的可见图层：足迹层的国家在这里被排除，
     // 想去的国家条目则留下（文件头第 3 条）。
     const subtype = entity.subtype
-    const layerIds = (layerIdsByEntityId.get(entity.id) ?? []).filter(
+    const membersByLayer = visibleMembersByEntityId.get(entity.id) ?? new Map<LayerId, VisibleLayerMembers>()
+    const layerIds = [...membersByLayer.keys()].filter(
       (layerId) => subtype !== undefined && (mapSubtypesByLayerId.get(layerId)?.has(subtype) ?? false),
     )
     if (layerIds.length === 0) continue
@@ -287,12 +246,9 @@ export const queryVisiblePlaces = (
     const anchor = locationByEntityId.get(entity.id)
     if (!anchor) continue
 
-    const country = countryEntityOf(entity.id)
-    const accent = asString(entity.metadata.accent) ?? (country ? asString(country.metadata.accent) : undefined)
-
     const place: LayerPlace = {
       entityId: entity.id,
-      sourceId: sourceIdOf(entity),
+      sourceId: entity.id,
       subtype: entity.subtype,
       title: entity.title.en === undefined
         ? { zh: entity.title.zh }
@@ -300,25 +256,31 @@ export const queryVisiblePlaces = (
       lat: anchor.lat as number,
       lng: anchor.lng as number,
       layerIds: sortByLayerOrder(layerIds, layerOrder),
-      visitCount: visitCountByEntityId.get(entity.id) ?? 0,
+      visitCount: 0,
       membershipMetadata: {},
     }
-    // 只带出留在 layerIds 里的那些图层的 metadata，与 layerIds 保持同一口径。
-    const metadataByLayer = membershipMetadataByEntityId.get(entity.id) ?? {}
+    // 只带出留在 layerIds 里的那些图层的 metadata 与 recordId，与 layerIds 保持同一口径。
+    const recordIds: Partial<Record<LayerId, string[]>> = {}
     for (const layerId of place.layerIds) {
-      const metadata = metadataByLayer[layerId]
-      if (metadata !== undefined) place.membershipMetadata[layerId] = metadata
+      const members = membersByLayer.get(layerId)
+      if (!members) continue
+      if (members.first.metadata !== undefined) place.membershipMetadata[layerId] = members.first.metadata
+      if (members.recordIds.length > 0) recordIds[layerId] = [...members.recordIds]
     }
-    if (country) {
-      place.countryEntityId = country.id
-      const countryId = countryIdOf(entity.id)
-      if (countryId !== undefined) place.countryId = countryId
+    if (Object.keys(recordIds).length > 0) place.recordIds = recordIds
+
+    // 足迹相关的字段只在地点出现在足迹层时给出（见 LayerPlace 的说明）。
+    if (place.layerIds.includes(TRAVEL_LAYER_ID)) {
+      place.visitCount = visitCountByEntityId.get(entity.id) ?? 0
+      const country = countryEntityOf(entity.id)
+      if (country) {
+        place.countryEntityId = country.id
+        place.countryId = country.id
+      }
+      const accent = travelAccentOf(entity.id) ?? (country ? travelAccentOf(country.id) : undefined)
+      if (accent !== undefined) place.accent = accent
     }
-    if (accent !== undefined) place.accent = accent
-    // 足迹城市的国家代码在所属国家 Entity 上（flagCode）；想去 / planned 地点自己带 countryCode。
-    const countryCode = country
-      ? asCountryCode(country.metadata.flagCode)
-      : asCountryCode(entity.metadata.countryCode)
+    const countryCode = asCountryCode(entity.metadata.countryCode)
     if (countryCode !== undefined) place.countryCode = countryCode
 
     places.push(place)
@@ -326,7 +288,7 @@ export const queryVisiblePlaces = (
 
   return {
     visibleLayerIds: [...visibleLayerIds],
-    places: mergeSamePlaces(places, layerOrder),
+    places,
     routes: visible.has(TRAVEL_LAYER_ID) ? buildRoutes(snapshot, entityById, locationByEntityId, {
       relatedToRelations,
       visitJourneyIdsByEntityId,
@@ -354,7 +316,7 @@ interface PendingSegment {
 /**
  * 逐条复刻 PR3 之前 `CesiumAtlasGlobe.mappedRoutes` 的规则：
  *
- * 1. `orderedCountryRoutes`：每个国家按 `metadata.cityIds` 顺序取相邻两两成段，
+ * 1. `orderedCountryRoutes`：每个国家按它足迹成员关系上 `metadata.cityIds` 的顺序取相邻两两成段，
  *    能在 `related_to` 里找到同端点的关系时用它的 routeId / journeyId / kind 覆盖；
  *    找不到 journeyId 时退回"两端共享的 journeyId"。
  * 2. `crossCountryRoutes`：所有两端国家不同的 `related_to` 关系。
@@ -369,20 +331,25 @@ const buildRoutes = (
   const { relatedToRelations, visitJourneyIdsByEntityId, countryIdOf } = indexes
   const pending: PendingSegment[] = []
 
-  // ---- 1. 国家内的顺序段 ----
-  for (const entity of snapshot.entities) {
-    if (entity.type !== 'place' || entity.subtype !== 'country') continue
-    const cityIds = entity.metadata.cityIds
+  // ---- 1. 国家内的顺序段：国家的 cityIds 在它的足迹成员关系上，按成员关系的顺序遍历 ----
+  const seenCountryIds = new Set<EntityId>()
+  for (const membership of snapshot.memberships) {
+    if (membership.layerId !== TRAVEL_LAYER_ID) continue
+    const entity = entityById.get(membership.entityId)
+    if (!entity || entity.type !== 'place' || entity.subtype !== 'country') continue
+    if (seenCountryIds.has(entity.id)) continue
+    seenCountryIds.add(entity.id)
+    const cityIds = membership.metadata?.cityIds
     if (!Array.isArray(cityIds)) continue
-    const countrySourceId = sourceIdOf(entity)
 
     for (let index = 0; index + 1 < cityIds.length; index += 1) {
       const fromCityId = asString(cityIds[index])
       const toCityId = asString(cityIds[index + 1])
       if (fromCityId === undefined || toCityId === undefined) continue
 
-      const fromEntityId = cityEntityId(fromCityId)
-      const toEntityId = cityEntityId(toCityId)
+      // 城市的实体 id 就是城市 id（地点 id）。
+      const fromEntityId = fromCityId
+      const toEntityId = toCityId
       if (!entityById.has(fromEntityId) || !entityById.has(toEntityId)) continue
 
       const existing = relatedToRelations.find(
@@ -398,7 +365,7 @@ const buildRoutes = (
       const segment: PendingSegment = {
         id:
           (existing ? asString(existing.metadata?.routeId) : undefined) ??
-          `country-order__${countrySourceId}__${fromCityId}__${toCityId}`,
+          `country-order__${entity.id}__${fromCityId}__${toCityId}`,
         fromEntityId,
         toEntityId,
         kind: (existing ? asRouteKind(existing.metadata?.kind) : undefined) ?? defaultRouteKind,
@@ -449,8 +416,8 @@ const buildRoutes = (
       id: segment.id,
       fromEntityId: segment.fromEntityId,
       toEntityId: segment.toEntityId,
-      fromSourceId: sourceIdOf(from),
-      toSourceId: sourceIdOf(to),
+      fromSourceId: from.id,
+      toSourceId: to.id,
       fromLat: fromAnchor.lat as number,
       fromLng: fromAnchor.lng as number,
       toLat: toAnchor.lat as number,

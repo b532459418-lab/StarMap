@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
 import { PLANNED_SOURCE } from '../../worldgraph/adapters/plannedRecords.ts'
-import { buildBaseline, stableStringify } from '../derive/baseline.ts'
+import { BASELINE_FORMAT, buildBaseline, stableStringify } from '../derive/baseline.ts'
 import { canonicalForInputs, type V2FileInputs } from './canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
 import {
@@ -48,50 +48,43 @@ const derive = (name: LegacyIdCanonicalName) => deriveAppDataFromCanonical(legac
 // ---------------------------------------------------------------------------
 
 /**
- * 公开样例（旧 id 空间）的基线：今天的 @2、Core-A A1 之前的 @2（PR3b-1 增加 countryIdOfCity，PR1 起公布）与 @1。
+ * 公开样例（旧 id 空间）基线的历史哈希（只作记录）：@1 `eb91f172…`（PR1 公布）、@2 `8caf2cfb…`（PR3b-1）、
+ * Core-A A1 之后的 @2 `2e34a237…`。A1 只做了加法，那时这里有一个测试把今天的基线逐步还原到前两个哈希。
+ *
+ * Core-A A2（地点实体与按身份合并）改的只有 World Graph：四份快照、地图与 Collection 查询，以及想去模块按实体 id 查条目的
+ * 两张表（`wantToGoItemByEntityId` / `plannedRecordByEntityId`，A2 删除）。实体 id 与按名字的合并都变了，基线不能再逐步还原；
+ * 两者的对照（旧实体 id → 地点 id 之后逐项比较，Core 方案 C8）只在 A2 的 PR 期间做过，不提交。
+ * 下面锁定的是「World Graph 以外的部分」：去掉上述各项与格式标识后，与 A2 之前（A1 之后）逐字节相同。
  */
-const SAMPLE_BASELINE_SHA256 = '2e34a237997790e39eec48e33fe02605794a390c564316ac1ebd894ff1948a41'
-const SAMPLE_BASELINE_SHA256_BEFORE_A1 = '8caf2cfb4e0a4c3180aa004e0f65c919f9dcca4424e6bb0445943175fe38ac34'
-const SAMPLE_BASELINE_SHA256_V1 = 'eb91f172531f7c87280b07399af6ee80d1fc6e99a2ad38efa50b60b9afd299a4'
+const OUTSIDE_WORLD_GRAPH_SHA256 = {
+  /** 公开样例（旧 id 空间，`legacyIdCanonical('sample')`）。 */
+  legacySample: 'ebd00174d7e170021b962c55b2daec5178c639d50e82d017fd39ae8db5b86f7e',
+  /** 公开 V2 样例（`src/data/v2-sample/`）。 */
+  v2Sample: '3bc4679bbb0eec94f9db0c43010d8ad0620d1cceee915232d9b5add94f4e96eb',
+}
 
 /** 基线 JSON 里与下面几项改动有关的部分（buildBaseline 返回 unknown）。 */
 interface BaselineShape {
-  format: string
+  format?: string
   modules: { travelAtlas: Record<string, unknown>; wantToGo: Record<string, unknown>; worldGraph: Record<string, unknown> }
-  queries: { collection: Record<string, Record<string, unknown>[]> }
+  queries?: unknown
 }
 
 const SNAPSHOT_EXPORT_NAMES = ['travelSnapshot', 'wantToGoSnapshot', 'plannedSnapshot', 'worldGraphSnapshot'] as const
 
-/**
- * RFC-LOC-1 Core-A A1（成员关系带记录 id）对基线做的加法，格式仍是 @2：快照成员关系与想去 Collection 条目上的
- * `recordId`，以及想去模块按记录 id 的两张表 `wantToGoItemById` / `plannedRecordById`。
- */
-const removeA1Additions = (baseline: BaselineShape): void => {
-  for (const name of SNAPSHOT_EXPORT_NAMES) {
-    const snapshot = baseline.modules.worldGraph[name] as { memberships: Record<string, unknown>[] }
-    for (const membership of snapshot.memberships) delete membership.recordId
-  }
-  for (const entry of baseline.queries.collection.want_to_go) delete entry.recordId
-  delete baseline.modules.wantToGo.wantToGoItemById
-  delete baseline.modules.wantToGo.plannedRecordById
+/** 去掉 Core-A A2 改动的部分（见上），剩下的就是「World Graph 以外的部分」。 */
+const outsideWorldGraph = (baseline: BaselineShape): BaselineShape => {
+  delete baseline.format
+  delete baseline.queries
+  for (const name of SNAPSHOT_EXPORT_NAMES) delete baseline.modules.worldGraph[name]
+  delete baseline.modules.wantToGo.wantToGoItemByEntityId
+  delete baseline.modules.wantToGo.plannedRecordByEntityId
+  return baseline
 }
 
-const IN_FOOTPRINT_REASON = '这个城市已经在足迹里了。如果只是想从想去列表移除，请使用隐藏或彻底删除。'
-
-test('基线 @2：去掉 A1 的加法、还原 A1 的唯一差异后等于 A1 之前的 8caf2cfb…；再删掉 countryIdOfCity、format 改回 @1，等于 PR1 公布的 @1 哈希', () => {
+test('基线：World Graph 以外的部分与 Core-A A2 之前逐字节相同（公开样例的旧 id 空间与 V2 两份）', () => {
   const baseline = buildBaseline(derive('sample'), { now: NOW }) as BaselineShape
-  assert.equal(baseline.format, 'starmap-legacy-baseline@2')
-  assert.equal(sha256(stableStringify(baseline)), SAMPLE_BASELINE_SHA256)
-  removeA1Additions(baseline)
-
-  // A1 唯一的非加法差异（Core 方案 C5）：「已在足迹」改为按地点 id 判断。这份旧 id 空间的数据里，想去的阿克雷里
-  // 是自己的地点（wtg:…），不是足迹城市 iceland__akureyri，所以不再算已在足迹；A1 之前按「国家代码 + 英文名」算。
-  const reasons = baseline.modules.wantToGo.wantToGoConvertBlockReason as [string, string | null][]
-  const akureyri = reasons.find(([id]) => id === 'wtg_2026-08-12_akureyri')
-  assert.deepEqual(akureyri, ['wtg_2026-08-12_akureyri', null])
-  akureyri![1] = IN_FOOTPRINT_REASON
-  assert.equal(sha256(stableStringify(baseline)), SAMPLE_BASELINE_SHA256_BEFORE_A1)
+  assert.equal(baseline.format, BASELINE_FORMAT)
   assert.deepEqual(baseline.modules.travelAtlas.countryIdOfCity, [
     ['iceland__reykjavik', 'iceland'],
     ['iceland__vik', 'iceland'],
@@ -99,10 +92,11 @@ test('基线 @2：去掉 A1 的加法、还原 A1 的唯一差异后等于 A1 �
     ['faroe-islands__torshavn', 'faroe-islands'],
     ['faroe-islands__gjogv', 'faroe-islands'],
   ])
+  assert.equal(sha256(stableStringify(outsideWorldGraph(baseline))), OUTSIDE_WORLD_GRAPH_SHA256.legacySample)
 
-  delete baseline.modules.travelAtlas.countryIdOfCity
-  baseline.format = 'starmap-legacy-baseline@1'
-  assert.equal(sha256(stableStringify(baseline)), SAMPLE_BASELINE_SHA256_V1)
+  const v2Files = Object.fromEntries(Object.entries(V2_SAMPLE_FILE_NAMES).map(([key, name]) => [key, readJsonFile(`../v2-sample/${name}`)]))
+  const v2Baseline = buildBaseline(deriveAppDataFromCanonical(canonicalForInputs({ v2Files, source: 'sample' }), { now: NOW }), { now: NOW })
+  assert.equal(sha256(stableStringify(outsideWorldGraph(v2Baseline as BaselineShape))), OUTSIDE_WORLD_GRAPH_SHA256.v2Sample)
 })
 
 // ---------------------------------------------------------------------------
@@ -219,7 +213,13 @@ test('planned 记录：与 visited 同城、只有 planned 的城市与国家', 
   assert.deepEqual(derived.travelAtlas.plannedRecords.map((item) => item.id), ['same-city', 'planned-only', 'planned-no-coordinate'])
   assert.deepEqual(derived.travelAtlas.countries.map((country) => country.id), ['iceland'])
   assert.equal(derived.wantToGo.plannedConvertBlockReason(derived.travelAtlas.plannedRecords[2]), '这条旅行计划没有坐标，无法转为足迹。')
-  assert.equal(derived.worldGraph.plannedSnapshot.entities.length, 3)
+  // RFC-LOC-1 Core-A：planned 记录只产出成员关系，实体 id 是记录所在城市的地点 id；与 visited 同城的那条就落在足迹城市上。
+  assert.equal(derived.worldGraph.plannedSnapshot.entities.length, 0)
+  assert.deepEqual(
+    derived.worldGraph.plannedSnapshot.memberships.map((membership) => [membership.entityId, membership.recordId]),
+    [['iceland__reykjavik', 'same-city'], ['norway__bergen', 'planned-only'], ['norway__oslo', 'planned-no-coordinate']],
+  )
+  assert.deepEqual(derived.travelAtlas.cities.map((city) => city.id), ['iceland__reykjavik'])
 })
 
 test('按记录 id 的两张表（Core 方案 C3）：键是想去条目与 planned 记录的 id，值是同一个对象；想去图层每条成员关系的 recordId 都查得到', () => {
@@ -272,8 +272,8 @@ test('媒体：城市照片、封面、无人机、隐藏、悬空引用', () =>
 /**
  * 派生基线的 sha256：`stableStringify(buildBaseline(deriveAppDataFromCanonical(…)))` 加末尾换行，与 scripts 的基线工具
  * 写出的文件相同。冻结时（PR5b 第一个提交）旧 id 空间的每一份都等于旧路径 B（`deriveAppData(normalizeLegacy(原始数据))`），
- * 公开样例（旧 id）同时等于 PR1 起公布的 @2 基线 8caf2cfb…。RFC-LOC-1 Core-A A1 只给基线做了加法（见文件开头的
- * removeA1Additions），下面的值是 A1 之后的。派生代码改变了任何一处结果，这里就会变红。
+ * 公开样例（旧 id）同时等于 PR1 起公布的 @2 基线 8caf2cfb…。RFC-LOC-1 Core-A A1 只给基线做了加法；Core-A A2 改了 World Graph
+ * （地点实体 id、按身份合并，见文件开头），下面的值是 A2 之后的。派生代码改变了任何一处结果，这里就会变红。
  */
 const baselineSha256 = (canonical: CanonicalData) =>
   sha256(stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW })))
@@ -285,47 +285,48 @@ const v2FilesSha256 = (v2Files: V2FileInputs, source: 'local' | 'sample' = 'loca
   baselineSha256(canonicalForInputs({ v2Files, source }))
 
 const LEGACY_ID_LOCKS: Record<LegacyIdCanonicalName, string> = {
-  sample: '2e34a237997790e39eec48e33fe02605794a390c564316ac1ebd894ff1948a41',
-  personal: '85c1b57a421b7daafc79f09b571e902c322fa3eadcd1b86a86228b43e727e8d5',
-  personalDanglingMedia: '06dee44bd4320111750277eb301b7c635964ccf30926ecd153b423fcbddde6e2',
-  nameInconsistency: '7edb6e7a91bcd275ab7d2a4d0784f52bf2004667ada897d0f03730710d7581a4',
-  countryOfCity: '63f31e2fd88db1c6b1ac5620e172b136fe2b98c14081aa07c81ab91c2fa0ec41',
-  alias: '1905f58f011ad74bb8778cd4bab74b1e312a8617bb016575af8b67e848a23628',
-  classification1: '6d0979e103ea89a8aca040130f14c5fb0d9b12b34732a8fb6327e79778b334e4',
-  classification2: 'ea3f5b6f136dc0f3cacd6fad2d2a8ad56b2ad5bc11713665e04bd7ff36f8a75c',
-  classification3: '7107df5db955effa33fb4c219c09c5dbb70afc961c336a4e83f06a16a68ec175',
-  classification4: '1db92319f01f6680958a317a8875f4a2ae2954f68a00acf1897d77cafb75f19a',
-  classificationConsistent: 'deb6b695ddc133b2db7a95850c0bf94f513860e3ee08858717a0686687c06191',
-  journeyRules1: '99d94746d993b7c50c265f6937d7c62149077579e4fc868d8c68470f4b0f91df',
-  journeyRules2: '26e92b04d6aa4246c6be8c5e2410ef8492de4f974b3139e70879e3d38673f5fb',
-  journeyRules3: 'db096e68069a62dd86f0a0eaf9f32d02a2fa0d9a671308cdd657a42e0ff77194',
-  editorHidden: '0583907689bc7fb856ae5e9aeb3ddbc611dd904bb5a327e44d65580bdceea499',
-  addedCountriesConsistent: 'e43af56d9efef4acc0988df6afd735171e3d417b1fd8e6db7a7ccfd32e23cb06',
-  addedCountriesShown: '0349e4229b4aaa59f99149c8c7aa51d96b8aab8d672740e9b3452c8011f49f54',
-  addedCountriesHomeHidden: '092883715d0af4eec2fb0ad3d925e389e9e83f5f73d3b4796eec3cfec26804e1',
-  planned: '6698928970fbaa5037802a10adf53430b7b481709480f3781f5f458879c80a30',
-  media: '974d197a4e5bc8288c5dd70b6cb14ac2e443f192f67bfc0f2774744aa440cf89',
-  combined: '5dca293a21bdef2eae10d35730ede4905fb27515bb7df77db366b1875d2d36d1',
-  duplicate: '7882d51e34ee98661265184e69b2931f3e6074b682c22cce9a5a229c9635c43b',
-  caseAndDiacritic: '1d869e97edd7486859a668126ba27b45ac42bcd74e269cb5344c62b803fef1ba',
+  sample: '88d6d203d78f9f9cb8cc981c0d576c4d4b71292aff8f39387ea33c4c475d3872',
+  personal: '7a07076131a377464be93c5281558237228df9ce4ab5658a86208573467ede19',
+  personalDanglingMedia: 'df6ccad7d9acda9fb3534f91da5f73851f374d19bc9ef2a31185d0fc85686a8f',
+  nameInconsistency: '90708ba1b55ab09a0bdc1b7818b02ff4ef62a63086d8d90f42c7309f323e953b',
+  countryOfCity: 'e2b6420036846c0d3e18d4ffde22c46eecfd5fb1248008bfe926696df6f8a208',
+  alias: '402656c0d194013e8c36a753e036263d2c37ee33bd5570e1059d264338b4ac59',
+  classification1: '46f5b220d2100ed410e76fbb6eebb4ea3084cbe3b53b6c72ec9ffeab736b0b7f',
+  classification2: '8b2f7d313fa98dd4a7bdfd17e095ccde311343d9c805537fe6da1cba1c4bd760',
+  classification3: '7a5c25710b7c466485d02075bce848789aa3b62d083b341f9907b89c4a00766c',
+  classification4: '992f63732776b2f56a655e75d3d5c50416ae8d45ca5bb41ad397010eb2afd750',
+  classificationConsistent: 'a249918590c36b4b171256790a4b36710c496827e95e3fdf5f6fe56eefde26b4',
+  journeyRules1: 'ac80f37f30d7eb22db5a81bce288f334d2ba44bc3588725aae616d1acee8ca62',
+  journeyRules2: '1e59a4d0cccd27c08214fe638c69b074b11a8aea97b7d34c968b1c83108799a1',
+  journeyRules3: '8dab8cc15525b1d7d8112af32dd36d3279e26f307feb49e143ede4fb1d2ed3dd',
+  editorHidden: 'b31d45003b38c13d495dd2c19f5976b982d4b1e0a1b9390fbda96a97894eb99e',
+  addedCountriesConsistent: 'adcb00c719e453acf07d21dd81721c63bd7f812221192fe96c3419eaa69c1936',
+  addedCountriesShown: '2eb3805fa4136ef8ab3f78678dfd183335f4abec5b9720a24b45bbc51babbd42',
+  addedCountriesHomeHidden: 'b0ad1af11f7b422e8a9997e246873de34dcc9c48d25bb0f1b863654bdc637332',
+  planned: 'b2b1eb32870aa66d6fde2f8433a79b114e2323d49c5182daf0bf8bcaf8b715ba',
+  media: '95069c47e593c1cf99c56f00f8bde521383d63e8e8af29ef4cf4babab5515dab',
+  combined: '2a3e17f07e8f4c6fb21a52af9b159761553dfa1ee6226d5f7578110065e1c115',
+  duplicate: '3803f64ecdcb033ea348e6debdab7bf639f3612feda67fc30ece16c2a88994d9',
+  caseAndDiacritic: '4babdad710e91719889fd53d664d1a06e7825801cfb70ddf03a7877d5702ce42',
 }
 
 /**
  * 同一批中性数据在 V2 id 空间里：不合并直接搬进来的（v2Space）与迁移规划合并之后的 M（migrated）。
  * 迁移后的五个文件与 M 派生出的基线相同。v2Space 与 M 在 RFC-LOC-1 Core-A A1 之前也相同；A1 起「这个城市已经在足迹里了」
- * 按地点 id 判断（Core 方案 C5），sample 与 personal 的 v2Space 各差一处：想去的阿克雷里在 v2Space 里是另一个地点
- * （没合并），不再算已在足迹；合并后它就是足迹城市本身，仍算。nameInconsistency 没有这种条目，两者仍相同。
+ * 按地点 id 判断（Core 方案 C5），A2 起地图也按地点 id 合并（Core 方案 C4）：想去的阿克雷里在 sample 与 personal 的 v2Space 里
+ * 是另一个地点（没合并），不再算已在足迹，地图上也不再并进足迹城市；合并后它就是足迹城市本身。nameInconsistency 没有这种条目，
+ * 两者仍相同。
  */
-const PERSONAL_V2_LOCK = '9431fbb661c6807258a44fd2ca666059bedaec466d07502ef81cc6ef6db10c4e'
-const SAMPLE_MIGRATED_LOCK = '28580c5f96b0ea166bf4309ae97ad4eb19d92342fdbe1d34655f78385380458e'
-const NAME_INCONSISTENCY_V2_LOCK = '9eca871e84a60bc7d1c31ed24a965c6e4587ebd181545b0c6c3ada8b71fc424e'
+const PERSONAL_V2_LOCK = 'a2b094b4033c5899f222ba81a8b63818b1cb0382a4649df1f6a2bde157ec0f3b'
+const SAMPLE_MIGRATED_LOCK = 'dc448b1f9da30c2a83a06fab3df241fd3609faa2785e8f511fd101a1af3b6a3d'
+const NAME_INCONSISTENCY_V2_LOCK = '18b7070bd448d35a8ffff0a224c8996823e9593e0fc026b8ce6099c6cafb2bd4'
 
 const V2_SPACE_LOCKS: Record<(typeof V2_SPACE_CANONICAL_NAMES)[number], string> = {
-  sample: 'aa6321858035ee3ca7bf16f8c7d9db3af0394efdf8699f0e409d86d0955d4f90',
-  personal: '770c6307ddb047188aa19d5f674ac1d107d5162137f704c9200de9a1ff53b4ae',
+  sample: '78f2751bbac513dff172b048908ba26931a753f4dec63fa139563786b88f9ca4',
+  personal: '770020d07dd8558a0d005837bb04415fa56a18193366c5c3e8c55f3ea2922b44',
   nameInconsistency: NAME_INCONSISTENCY_V2_LOCK,
-  recordCoordinates: '92eedeb3355a58e0000dce22c4aee011af09fb772fb687c8dcf64649208d51d3',
-  countryOfCity: '4cd8dce60d5ae4a97c6ae3718557c48962b8748ced56f71757d1b1035fa962c0',
+  recordCoordinates: '1494cffdc4730baf8d4f0e8f1ea0cf09447e24a506614d1a201891f457de65ff',
+  countryOfCity: 'bde2a4c59c7c613ca60a6394a9c05c8b96b1c867ee9565c8c6b36f9b4f2a7075',
 }
 
 const MIGRATED_LOCKS: Record<(typeof MIGRATED_CANONICAL_NAMES)[number], string> = {
@@ -337,13 +338,13 @@ const MIGRATED_LOCKS: Record<(typeof MIGRATED_CANONICAL_NAMES)[number], string> 
 /** 冻结的五个 V2 文件（相对本文件的路径）。前两份是同一批中性个人数据迁移后的文件，后三份是三个脚本测试的私人根。 */
 const V2_FILES_LOCKS: [string, string][] = [
   ['../v2write/fixtures/migrated-files.json', PERSONAL_V2_LOCK],
-  ['../../../scripts/fixtures/bak-files-v2.json', 'eb8dc06b85f7ba48ad324b457c7ae63acd3f381eb11a3dddc4a50b2569e71185'],
-  ['../../../scripts/fixtures/baseline-v2.json', '87a26c86ff165cc8752923cdb9405fa4f16eadabd6b64cc941df69802bdbc0a5'],
-  ['../../../scripts/fixtures/editor-store-v2.json', '46669f394ba1ac80a84dc150a75754b6a4a35255c7e5e0f6a2643d537c8108d6'],
+  ['../../../scripts/fixtures/bak-files-v2.json', '4c126287398329070a593a8c9d5092a8a76402897a27c16ad6b96e1c594b2667'],
+  ['../../../scripts/fixtures/baseline-v2.json', '9157f80a20dbcca79563e67ca00f7dfc6f28b23550cb7ed7e1b9dcef4ffffed5'],
+  ['../../../scripts/fixtures/editor-store-v2.json', 'fa74fc106da7cd42554805c1d8f3fa0a57308cbc9a124e5016bffef1d5172ff7'],
 ]
 
 /** 公开 V2 样例的派生基线（RFC-LOC-1 PR4 起公布；`node scripts/baseline.mjs --sample` 的输出）。 */
-const V2_SAMPLE_BASELINE_SHA256 = '5cd7bf55f6b9fa61774c0f7f22d1a2db3a5eb845b6757abd13cd32dc0a6a9756'
+const V2_SAMPLE_BASELINE_SHA256 = '17178536c56a9f908428243e03fbdda4fe544423c7bc156f1e5d5f2eececdcc3'
 
 const V2_SAMPLE_FILE_NAMES = { places: 'places.json', travel: 'travel-map.json', wantToGo: 'want-to-go.json', editorState: 'editor-state.json', media: 'user-media.json' }
 
@@ -366,7 +367,7 @@ test('锁定：冻结的五个 V2 文件（canonicalForInputs、V2 写入与三�
   for (const [relative, lock] of V2_FILES_LOCKS) assert.equal(v2FilesSha256(readJsonFile(relative) as V2FileInputs), lock, relative)
 })
 
-test('锁定：公开 V2 样例（src/data/v2-sample/，来源 sample）的派生基线为 5cd7bf55…', () => {
+test('锁定：公开 V2 样例（src/data/v2-sample/，来源 sample）的派生基线为 17178536…', () => {
   const v2Files = Object.fromEntries(Object.entries(V2_SAMPLE_FILE_NAMES).map(([key, name]) => [key, readJsonFile(`../v2-sample/${name}`)]))
   assert.equal(v2FilesSha256(v2Files, 'sample'), V2_SAMPLE_BASELINE_SHA256)
 })

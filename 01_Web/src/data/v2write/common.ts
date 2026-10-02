@@ -119,7 +119,7 @@ export const ensureCountryPlace = (draft: V2Draft, iso: string): EnsuredPlace =>
 }
 
 /**
- * 在国家 `countryId` 下按 FR-MR-5 合并键找城市地点：找到就复用；多于一个报 `E_PLACE_AMBIGUOUS`；
+ * 在国家 `countryId` 下按城市匹配键（../canonical/placeResolver.ts 的 `resolveCity`）找城市地点：找到就复用；多于一个报 `E_PLACE_AMBIGUOUS`；
  * 找不到就新建（`names` / `partOf` / `location` 取自输入；不写 `legacyKeys`）。
  * 复用的城市没有坐标、而输入带了坐标时，把输入的坐标补到地点上（否则新足迹城市在地图上没有标记）；
  * 已有坐标的不改。

@@ -13,7 +13,7 @@
 import { indexPlaces, reconstructWantToGoItem } from '../canonical/reconstruct.ts'
 import type { CanonicalWantToGoItem, PlaceId } from '../canonical/types.ts'
 import type { V2FileKey, V2Files } from '../canonical/v2Schema.ts'
-import type { WantToGoItem } from '../../worldgraph/adapters/wantToGo.ts'
+import type { WantToGoItem } from '../derive/wantToGo.ts'
 import { fail } from './errors.ts'
 import {
   COUNTRY_CODE_PATTERN,
