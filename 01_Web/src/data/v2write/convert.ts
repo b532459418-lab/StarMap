@@ -44,7 +44,8 @@ const isFiniteNumber = (value: unknown): value is number => typeof value === 'nu
  * 想去条目 → 足迹。地点就是 `item.placeId`：必须是有坐标的城市、条目没被隐藏，否则沿用旧的三种拒绝文案；
  * 任何记录（含 planned）已引用该城市 → `E_CONVERT_CITY_IN_FOOTPRINT`（沿用旧文案）。
  * 新记录的规则同「新增足迹」（../v2write/footprint.ts），坐标就是城市的 location（因而省略）；
- * `keepWantToGo !== true` 时移除条目（地点仍被新记录引用，保留）。国家首次进入足迹时重排 `countryOrder`。
+ * `keepWantToGo !== true` 时移除条目（地点仍被新记录引用，保留）。国家首次进入足迹时按 ISO 目录保存洲信息，
+ * 并重排 `countryOrder`；已有国家信息不覆盖，目录缺失时不猜测洲。
  * 写盘：足迹 → 想去（移除条目时）→ editor-state（排序变了时）。
  */
 const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<string, unknown>, ctx: V2WriteContext) => {
@@ -79,11 +80,17 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
     draft.files.travel.records.push(record)
     const wantToGoRemoved = body.keepWantToGo !== true
     if (wantToGoRemoved) draft.files.wantToGo.items = draft.files.wantToGo.items.filter((candidate) => candidate.id !== id)
+    const countryCode = draft.placeById(countryId)?.externalIds?.iso3166Alpha2
+    const hasCountryInfo = draft.files.editorState.addedCountries.some((country) => country.placeId === countryId)
+    const region = !wasInFootprint && !hasCountryInfo && countryCode
+      ? ctx.countryCatalog.get(countryCode.trim().toUpperCase())?.region
+      : undefined
+    if (region) draft.files.editorState.addedCountries.push({ placeId: countryId, region, visitedDate: dates.start })
     const reordered = !wasInFootprint && reorderCountries(draft.files)
 
     const writes: WriteList = [{ file: 'travel' }]
     if (wantToGoRemoved) writes.push({ file: 'wantToGo', onFailure: WTG_REMOVE_FAILURE })
-    if (reordered) writes.push({ file: 'editorState', onFailure: REORDER_FAILURE })
+    if (reordered || region) writes.push({ file: 'editorState', onFailure: REORDER_FAILURE })
     const result: ConvertToTravelResult = { travelRecordId: record.id, countryId, cityId: city.id, wantToGoRemoved }
     return { result, writes }
   })

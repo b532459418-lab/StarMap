@@ -11,7 +11,7 @@ const authorizedHeaders = {
   origin: 'http://127.0.0.1:5173',
 }
 
-function captureMiddleware(plugin) {
+function captureMiddleware(plugin, privateModule) {
   const handlers = []
   const watched = []
   const watcherCallbacks = new Map()
@@ -24,8 +24,11 @@ function captureMiddleware(plugin) {
       on: (event, callback) => watcherCallbacks.set(event, callback),
     },
     moduleGraph: {
-      getModuleById: () => undefined,
-      invalidateModule: (module) => invalidations.push(module),
+      getModuleById: (id) => privateModule?.id === id ? privateModule : undefined,
+      invalidateModule: (module) => {
+        invalidations.push(module)
+        module.transformResult = null
+      },
     },
     ws: { send: (message) => reloads.push(message) },
   })
@@ -38,6 +41,7 @@ async function requestTo(handler, {
   headers = authorizedHeaders,
   address = '127.0.0.1',
   content = Buffer.from('{}'),
+  onEnd = () => {},
 }) {
   let bodyReads = 0
   const request = Readable.from((function* () {
@@ -52,7 +56,7 @@ async function requestTo(handler, {
   const response = {
     statusCode: 200,
     setHeader: (key, value) => responseHeaders.set(key, value),
-    end: (body = '') => { responseText += body; endings += 1 },
+    end: (body = '') => { responseText += body; endings += 1; onEnd() },
   }
   try {
     await handler(request, response, () => { nextCalls += 1 })
@@ -204,6 +208,140 @@ test('Local editor middleware preserves authorization, error codes and private f
 
     assert.deepEqual(captured.reloads, [])
     assert.deepEqual(captured.invalidations, [])
+
+    await t.test('First writes invalidate the cached empty module without watcher events or page reloads', async () => {
+      const freshRoot = path.join(root, 'first-write')
+      const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: freshRoot })
+      const id = plugin.resolveId('virtual:starmap-private-data')
+      const privateModule = { id, transformResult: null }
+      const fresh = captureMiddleware(plugin, privateModule)
+      const writeHandler = fresh.handlers[0]
+      const cachedFiles = async () => {
+        privateModule.transformResult ??= { code: await plugin.load(id) }
+        return (await import(`data:text/javascript,${encodeURIComponent(privateModule.transformResult.code)}`)).privateV2Files
+      }
+      assert.deepEqual(await cachedFiles(), {})
+      await assert.rejects(readdir(path.join(freshRoot, 'data')), { code: 'ENOENT' })
+      const before = privateModule.transformResult
+      await requestTo(writeHandler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
+      await requestTo(writeHandler, { url: editorPrefix + 'countries', headers: {} })
+      assert.equal(privateModule.transformResult, before, 'Read/forbidden requests preserve the cached module')
+      assert.deepEqual(fresh.invalidations, [])
+
+      const post = async (route, input) => {
+        let invalidAtResponseEnd = false
+        const result = await requestTo(writeHandler, {
+          url: editorPrefix + route,
+          content: Buffer.from(JSON.stringify(input)),
+          onEnd: () => { invalidAtResponseEnd = privateModule.transformResult === null },
+        })
+        assert.equal(result.status, 201, JSON.stringify(result.body))
+        assert.equal(invalidAtResponseEnd, true, 'Invalidate before sending the write response')
+        return cachedFiles()
+      }
+      let files = await post('countries', { countryCode: 'JP', visitedDate: '2026-05-01' })
+      assert.deepEqual(files.places.places.map((place) => place.names.en), ['Japan'])
+      files = await post('records', {
+        country: '日本', country_en: 'Japan', country_code: 'JP', city: '东京', city_en: 'Tokyo',
+        start_date: '2026-05-02', lat: 35.6762, lng: 139.6503,
+      })
+      assert.deepEqual(files.places.places.map((place) => place.names.en).sort(), ['Japan', 'Tokyo'])
+      files = await post('records', {
+        country: '日本', country_en: 'Japan', country_code: 'JP', city: '京都', city_en: 'Kyoto',
+        start_date: '2026-05-03', lat: 35.0116, lng: 135.7681,
+      })
+      assert.deepEqual(files.places.places.map((place) => place.names.en).sort(), ['Japan', 'Kyoto', 'Tokyo'])
+      assert.equal(files.travel.records.length, 2, 'Both city records are reloaded')
+      assert.equal(fresh.invalidations.length, 3)
+      assert.ok(fresh.invalidations.every((module) => module === privateModule))
+      assert.deepEqual(fresh.reloads, [], 'Explicit cache invalidation does not trigger another page reload')
+    })
+
+    await t.test('Partial write failure also invalidates the module before its error response', async () => {
+      const partialRoot = path.join(root, 'partial-write')
+      const v2Root = path.join(partialRoot, 'data', 'v2')
+      // Only the final editor-state atomic write fails; places/travel have already been saved.
+      await mkdir(path.join(v2Root, `editor-state.local.json.${process.pid}.tmp`), { recursive: true })
+      const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: partialRoot })
+      const id = plugin.resolveId('virtual:starmap-private-data')
+      const privateModule = { id, transformResult: { code: await plugin.load(id) } }
+      const partial = captureMiddleware(plugin, privateModule)
+      let invalidAtResponseEnd = false
+      const result = await requestTo(partial.handlers[0], {
+        url: editorPrefix + 'records',
+        content: Buffer.from(JSON.stringify({
+          country: '日本', country_en: 'Japan', country_code: 'JP', city: '东京', city_en: 'Tokyo',
+          start_date: '2026-05-02', lat: 35.6762, lng: 139.6503,
+        })),
+        onEnd: () => { invalidAtResponseEnd = privateModule.transformResult === null },
+      })
+      assertError(result, 400, 'E_PARTIAL_WRITE')
+      assert.deepEqual(result.body.params.written, ['places', 'travel'])
+      assert.equal(invalidAtResponseEnd, true)
+      const { privateV2Files } = await import(`data:text/javascript,${encodeURIComponent(await plugin.load(id))}`)
+      assert.deepEqual(privateV2Files.places.places.map((place) => place.names.en).sort(), ['Japan', 'Tokyo'])
+      assert.equal(privateV2Files.travel.records.length, 1)
+      assert.equal(privateV2Files.editorState, undefined)
+      assert.deepEqual(partial.invalidations, [privateModule])
+      assert.deepEqual(partial.reloads, [])
+    })
+
+    await t.test('A dispatch exception invalidates cache before the outer error handler responds', async () => {
+      const failingRoot = path.join(root, 'dispatch-exception')
+      const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: failingRoot })
+      const id = plugin.resolveId('virtual:starmap-private-data')
+      const privateModule = { id, transformResult: { code: await plugin.load(id) } }
+      const failing = captureMiddleware(plugin, privateModule)
+      const dataRoot = path.join(failingRoot, 'data', 'v2')
+      await mkdir(dataRoot, { recursive: true })
+      await writeFile(path.join(dataRoot, 'places.local.json'), '{')
+      let invalidAtResponseEnd = false
+      const result = await requestTo(failing.handlers[0], {
+        url: editorPrefix + 'countries',
+        content: Buffer.from(JSON.stringify({ countryCode: 'JP', visitedDate: '2026-05-01' })),
+        onEnd: () => { invalidAtResponseEnd = privateModule.transformResult === null },
+      })
+      assertError(result, 400, 'E_UNEXPECTED')
+      assert.equal(invalidAtResponseEnd, true)
+      assert.deepEqual(failing.invalidations, [privateModule])
+      assert.deepEqual(failing.reloads, [])
+    })
+
+    await t.test('Converting a first Iceland city preserves the catalog continent in editor state', async () => {
+      const convertRoot = path.join(root, 'convert-first-country')
+      const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: convertRoot })
+      const fresh = captureMiddleware(plugin)
+      const handler = fresh.handlers[0]
+      const added = await requestTo(handler, {
+        url: editorPrefix + 'wanttogo',
+        content: Buffer.from(JSON.stringify({
+          place: { kind: 'city', nameZh: '示例南城', nameEn: 'SampleSouth', countryCode: 'IS', lat: 64, lng: -22 },
+          note: '保留备注',
+        })),
+      })
+      assert.equal(added.status, 201, JSON.stringify(added.body))
+      assert.equal(added.body.item.note, '保留备注')
+      const converted = await requestTo(handler, {
+        url: editorPrefix + 'wanttogo/convert',
+        content: Buffer.from(JSON.stringify({
+          source: 'want-to-go', id: added.body.id,
+          startDate: '2026-10-03', endDate: '2026-10-04', keepWantToGo: false,
+        })),
+      })
+      assert.equal(converted.status, 200, JSON.stringify(converted.body))
+      assert.equal(converted.body.wantToGoRemoved, true)
+      const state = await requestTo(handler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
+      assert.equal(state.status, 200, JSON.stringify(state.body))
+      assert.deepEqual(state.body.state.addedCountries.map(({ id, region, visitedDate, countryCode }) => ({ id, region, visitedDate, countryCode })), [{
+        id: converted.body.countryId, region: 'Europe', visitedDate: '2026-10-03', countryCode: 'is',
+      }])
+      const { privateV2Files } = await import(`data:text/javascript,${encodeURIComponent(await plugin.load(plugin.resolveId('virtual:starmap-private-data')))}`)
+      assert.deepEqual(privateV2Files.wantToGo.items, [])
+      assert.deepEqual(privateV2Files.travel.records.map(({ start_date, end_date }) => ({ start_date, end_date })), [{
+        start_date: '2026-10-03', end_date: '2026-10-04',
+      }])
+      assert.deepEqual(fresh.reloads, [])
+    })
   } finally {
     process.env = originalEnvironment
     const resolvedRoot = path.resolve(root)

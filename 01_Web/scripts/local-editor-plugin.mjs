@@ -532,12 +532,15 @@ export function travelAtlasLocalEditor(options = {}) {
       let editorMutationDepth = 0
       let ignoreWatcherUntil = 0
       server.watcher.add(dataRoot)
+      const invalidatePrivateDataModule = () => {
+        const privateModule = server.moduleGraph.getModuleById(resolvedPrivateDataId)
+        if (privateModule) server.moduleGraph.invalidateModule(privateModule)
+      }
       // data/v2/ 的新建、修改、删除，以及四个旧数据文件的新建与删除（RFC-LOC-1 PR5a）：迁移写出 V2 文件、导入器更新媒体目录、
       // 把旧文件移走，不重启服务也会让虚拟模块失效；编辑器自己的写入期间与之后 1.5 秒内不刷新页面（原有条件）。
       const onPrivateDataEvent = (event, changedPath) => {
         if (!shouldHandlePrivateDataChange(event, changedPath, privatePaths)) return
-        const privateModule = server.moduleGraph.getModuleById(resolvedPrivateDataId)
-        if (privateModule) server.moduleGraph.invalidateModule(privateModule)
+        invalidatePrivateDataModule()
         if (editorMutationDepth > 0 || Date.now() < ignoreWatcherUntil) return
         server.ws.send({ type: 'full-reload' })
       }
@@ -590,13 +593,17 @@ export function travelAtlasLocalEditor(options = {}) {
           if (refusal) return sendJson(response, refusal.status, refusal.body)
 
           editorMutationDepth += 1
+          let result
           try {
-            const result = await handleV2Write(request, url)
-            return sendJson(response, result.status, result.body)
+            result = await handleV2Write(request, url)
           } finally {
             editorMutationDepth -= 1
             if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
+            // 首次写入才创建 dataRoot 时 watcher 可能漏掉事件；失败也可能已写入部分文件。
+            // 在响应结束前失效缓存，让客户端原有的刷新读到当前数据，不额外触发页面刷新。
+            invalidatePrivateDataModule()
           }
+          return sendJson(response, result.status, result.body)
         } catch (error) {
           return sendJson(response, 400, normalizeLocalEditorError(error))
         }

@@ -176,6 +176,8 @@ test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2
   assert.equal(step.status, 200, JSON.stringify(step.body))
   assert.equal(step.body.wantToGoRemoved, false)
   const norway = step.body.countryId
+  const norwayCountry = { placeId: norway, region: 'Europe', visitedDate: '2026-06-01' }
+  assert.deepEqual(step.files.editorState.addedCountries.find((country) => country.placeId === norway), norwayCountry)
   assert.ok(step.files.wantToGo.items.some((item) => item.id === osloItem))
   assert.ok(step.files.editorState.countryOrder.includes(norway), '挪威首次进入足迹，进入国家顺序')
   step = await run('POST /__travelatlas/editor/wanttogo', { place: { kind: 'city', nameZh: '斯塔万格', nameEn: 'Stavanger', countryCode: 'NO', lat: 58.97, lng: 5.7331 } }, '新增想去斯塔万格')
@@ -183,6 +185,7 @@ test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2
   step = await run('POST /__travelatlas/editor/wanttogo/convert', { source: 'want-to-go', id: stavangerItem, startDate: '2026-06-03' }, '斯塔万格转足迹（不保留）')
   assert.equal(step.body.wantToGoRemoved, true)
   assert.equal(step.files.wantToGo.items.some((item) => item.id === stavangerItem), false)
+  assert.deepEqual(step.files.editorState.addedCountries.find((country) => country.placeId === norway), norwayCountry, '再次转足迹不覆盖国家首次到访信息')
 
   // 5. planned 转足迹：补 journeyId。
   step = await run('POST /__travelatlas/editor/wanttogo/convert', { source: 'planned', recordId: 'planned_bergen', startDate: '2026-06-05' }, '卑尔根 planned 转足迹')
@@ -196,7 +199,8 @@ test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2
   step = await run('POST /__travelatlas/editor/countries/delete', { ids: [japan] }, '删除日本')
   assert.deepEqual(step.body, { ok: true, deletedCountryIds: [japan], deletedRecordCount: 1 })
   assert.equal(step.files.places.places.some((place) => place.id === japan), false)
-  assert.equal(step.files.editorState.addedCountries.length, 0)
+  assert.equal(step.files.editorState.addedCountries.some((country) => country.placeId === japan), false, '日本的国家元信息已删除')
+  assert.deepEqual(step.files.editorState.addedCountries, [norwayCountry], '挪威的洲与首次到访日期仍保留')
 
   // 拒绝：返回 { ok: false, error, code }，不写。
   const before = await readDiskV2(paths)

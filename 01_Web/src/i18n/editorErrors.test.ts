@@ -158,3 +158,20 @@ test('Unknown write result guidance follows the current language beside the unch
   assert.notEqual(i18n.t('editor:writeResultUnknown'), english)
   assert.equal(formatEditorError(error, i18n.t), 'Failed to fetch')
 })
+
+test('A missing-country-code search refusal follows language changes while keeping its original message', async () => {
+  const i18n = createInstance()
+  await i18n.init({ resources, lng: DEFAULT_UI_LOCALE, fallbackLng: false, initAsync: false })
+  for (const initialLocale of [DEFAULT_UI_LOCALE, EN_UI_LOCALE]) {
+    await i18n.changeLanguage(initialLocale)
+    const originalMessage = i18n.t('editor:noIso')
+    const error = new LocalEditorError({ code: 'E_CITY_SEARCH_COUNTRY_CODE_MISSING', error: originalMessage })
+    assert.equal(editorErrorNotice(error, 'editor:searchUnavailable'), error)
+    for (const locale of [EN_UI_LOCALE, DEFAULT_UI_LOCALE]) {
+      await i18n.changeLanguage(locale)
+      assert.equal(formatEditorError(error, i18n.t), i18n.t('editor:noIso'))
+      assert.equal(error.message, originalMessage)
+      assert.equal(error.code, 'E_CITY_SEARCH_COUNTRY_CODE_MISSING')
+    }
+  }
+})
