@@ -2,17 +2,20 @@ import { useTranslation } from 'react-i18next'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { editorErrorNotice } from '../i18n/editorErrors.ts'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Drone, GripVertical, Maximize2, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems } from '../data/mediaCatalog'
 import { deleteHiddenLocalMedia, importLocalMedia, reloadAfterLocalSave, updateLocalEditorState, uploadLocalMedia } from '../data/localEditorApi'
 import { readDroneFileMetadata } from '../data/droneMetadata'
 import { cityById } from '../data/travelAtlas'
+import { getMediaImportSession } from '../data/mediaImportSession'
 import type { DroneMediaItem } from '../data/droneMedia'
 import { getDroneMediaForCity } from '../data/droneMedia'
 import type { CityId } from '../types/travel'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
+import { MediaImportRecovery } from './MediaImportRecovery'
+import { useMediaImportSession } from './useMediaImportSession'
 import { useFlipLayout } from './useFlipLayout'
 
 type DroneMediaCardProps = {
@@ -89,8 +92,12 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   const { t } = useTranslation('droneEditor')
   const { name } = usePlaceNames()
   const city = cityId ? cityById[cityId] : undefined
+  const importTarget = city ? JSON.stringify([city.countryId, city.id, 'drone']) : undefined
+  const session = useMediaImportSession(importTarget)
+  const sessionLocked = session.state.phase !== 'idle'
   const items = useMemo(() => getDroneMediaForCity(cityId), [cityId])
   const metadataRunRef = useRef(0)
+  const mountedRef = useRef(true)
   const [editing, setEditing] = useState(false)
   const [showUpload, setShowUpload] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -119,12 +126,21 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
     ? fileDrafts.filter((draft) => draft.status === 'ready' && isLikelyEquirectangularPanorama(draft.width, draft.height)).length
     : 0
 
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      metadataRunRef.current += 1
+    }
+  }, [])
+
   if (!city || (items.length === 0 && !localEditorAvailable)) return null
 
   // Saved bilingual titles are stable metadata, independent of the interface language.
   const mediaTitle = `${city.nameZh}无人机影像`
 
   const saveDraft = async () => {
+    if (busy || sessionLocked) return
     setBusy(true)
     setNotice({ key: 'droneEditor:saving' })
     try {
@@ -142,6 +158,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
 
   const uploadDroneFiles = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (busy || sessionLocked) return
     if (!fileDrafts.length) {
       setNotice({ key: 'droneEditor:selectFirst' })
       return
@@ -158,40 +175,63 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
       setNotice({ key: 'droneEditor:panoramaMismatch', values: { count: panoramaMismatchCount } })
       return
     }
+    const selectedKind = uploadForm.kind
+    const selectedCity = city
+    const titleZh = mediaTitle
+    const titleEn = `${city.nameEn} Drone Media`
+    const capturedDrafts = new Map(fileDrafts.map((draft) => [draft.file, { ...draft }]))
+    const selectedFiles = fileDrafts.map((draft) => draft.file)
+    metadataRunRef.current += 1
     setBusy(true)
     setNotice({ key: 'droneEditor:receiving', values: { count: fileDrafts.length } })
     try {
-      const uploadedSourcePaths: string[] = []
-      for (const draft of fileDrafts) {
+      await session.upload(selectedFiles, async (file) => {
+        const draft = capturedDrafts.get(file)!
         const lat = draft.lat.trim() ? Number(draft.lat) : undefined
         const lng = draft.lng.trim() ? Number(draft.lng) : undefined
         const altitudeMeters = draft.altitudeMeters.trim() ? Number(draft.altitudeMeters) : undefined
         const relativeAltitudeMeters = draft.relativeAltitudeMeters.trim() ? Number(draft.relativeAltitudeMeters) : undefined
-        const uploaded = await uploadLocalMedia({
-          countryId: city.countryId ?? '',
-          cityId: city.id,
-          kind: uploadForm.kind,
-          file: draft.file,
+        return uploadLocalMedia({
+          countryId: selectedCity.countryId ?? '',
+          cityId: selectedCity.id,
+          kind: selectedKind,
+          file,
           date: draft.date,
           lat,
           lng,
           altitudeMeters,
           relativeAltitudeMeters,
-          titleZh: mediaTitle,
-          titleEn: `${city.nameEn} Drone Media`,
+          titleZh,
+          titleEn,
         })
-        uploadedSourcePaths.push(uploaded.sourcePath)
-      }
+      })
+      if (!mountedRef.current) return
       setNotice({ key: 'droneEditor:importing' })
-      await importLocalMedia(uploadedSourcePaths)
-      reloadAfterLocalSave()
-    } catch (error) {
-      setNotice(editorErrorNotice(error, 'droneEditor:importFailed'))
-      setBusy(false)
+      await session.importMedia(importLocalMedia)
+      if (mountedRef.current) reloadAfterLocalSave()
+    } catch {
+      if (mountedRef.current) setNotice('')
+    } finally {
+      if (mountedRef.current) setBusy(false)
+    }
+  }
+
+  const retryDroneImport = async () => {
+    if (busy) return
+    setBusy(true)
+    setNotice('')
+    try {
+      await session.importMedia(importLocalMedia)
+      if (mountedRef.current) reloadAfterLocalSave()
+    } catch {
+      if (mountedRef.current) setNotice('')
+    } finally {
+      if (mountedRef.current) setBusy(false)
     }
   }
 
   const readSelectedFiles = async (files: FileList | null) => {
+    if (busy || sessionLocked) return
     const selectedFiles = Array.from(files ?? [])
     const runId = metadataRunRef.current + 1
     metadataRunRef.current = runId
@@ -243,7 +283,8 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
       }
     }))
 
-    if (metadataRunRef.current !== runId) return
+    if (!mountedRef.current || metadataRunRef.current !== runId || !importTarget
+      || getMediaImportSession(importTarget).getSnapshot().phase !== 'idle') return
     setFileDrafts(resolved)
     const missingDates = resolved.filter((draft) => !draft.date).length
     setNotice(missingDates
@@ -256,6 +297,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
     field: 'date' | 'lat' | 'lng' | 'altitudeMeters' | 'relativeAltitudeMeters',
     value: string,
   ) => {
+    if (busy || sessionLocked) return
     setFileDrafts((current) => current.map((draft) => draft.id === id ? { ...draft, [field]: value } : draft))
   }
 
@@ -273,9 +315,11 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
           {localEditorAvailable ? (
             <LocalEditorToolbar
               editing={editing}
-              busy={busy}
+              busy={busy || sessionLocked}
               label={t('heading')}
               onToggle={() => {
+                if (busy || sessionLocked) return
+                metadataRunRef.current += 1
                 setEditing((current) => !current)
                 setShowUpload(false)
                 setDraftItemIds(items.map((item) => item.id))
@@ -284,13 +328,18 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                 setNotice('')
               }}
               onReset={() => {
+                if (busy || sessionLocked) return
+                metadataRunRef.current += 1
                 setDraftItemIds(items.map((item) => item.id))
                 setDraftHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
                 setShowUpload(false)
                 setFileDrafts([])
                 setNotice({ key: 'droneEditor:undo' })
               }}
-              onAdd={() => setShowUpload((open) => !open)}
+              onAdd={() => {
+                if (busy || sessionLocked) return
+                setShowUpload((open) => !open)
+              }}
               onSave={saveDraft}
             />
           ) : null}
@@ -300,12 +349,15 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
           <form className="atlas-local-editor-form atlas-local-editor-form-dark" onSubmit={uploadDroneFiles}>
             <p>{t('importHelp')}</p>
             <div className="atlas-local-editor-form-grid">
-              <select aria-label={t('kind')} className="atlas-local-media-kind" value={uploadForm.kind} onChange={(event) => setUploadForm((form) => ({ ...form, kind: event.target.value as 'panorama360' | 'aerialPhoto' }))}>
+              <select disabled={busy || sessionLocked} aria-label={t('kind')} className="atlas-local-media-kind" value={uploadForm.kind} onChange={(event) => {
+                if (busy || sessionLocked) return
+                setUploadForm((form) => ({ ...form, kind: event.target.value as 'panorama360' | 'aerialPhoto' }))
+              }}>
                 <option value="panorama360">{t('panorama')}</option>
                 <option value="aerialPhoto">{t('aerialPhoto')}</option>
               </select>
               <label className="atlas-local-file-picker">
-                <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/avif" aria-label={t('images')} onChange={(event) => void readSelectedFiles(event.target.files)} />
+                <input type="file" disabled={busy || sessionLocked} multiple accept="image/jpeg,image/png,image/webp,image/avif" aria-label={t('images')} onChange={(event) => void readSelectedFiles(event.target.files)} />
                 <span className="atlas-local-file-picker-button">{t('chooseFiles')}</span>
                 <span className="atlas-local-file-picker-status" data-empty={fileDrafts.length === 0}>
                   {fileDrafts.length === 0
@@ -340,42 +392,44 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                     <div className="atlas-drone-metadata-fields">
                       <label>
                         <span>{t('date')} <em>{draft.fromFile.date ? t('fromFile') : t('missingRequired')}</em></span>
-                        <input type="date" required readOnly={draft.fromFile.date} value={draft.date} onChange={(event) => updateFileDraft(draft.id, 'date', event.target.value)} />
+                        <input type="date" required disabled={busy || sessionLocked} readOnly={draft.fromFile.date} value={draft.date} onChange={(event) => updateFileDraft(draft.id, 'date', event.target.value)} />
                       </label>
                       <label>
                         <span>{t('latitude')} <em>{draft.fromFile.lat ? t('fromFile') : t('missingOptional')}</em></span>
-                        <input type="number" step="any" min="-90" max="90" readOnly={draft.fromFile.lat} placeholder={t('optionalCoordinate')} value={draft.lat} onChange={(event) => updateFileDraft(draft.id, 'lat', event.target.value)} />
+                        <input type="number" disabled={busy || sessionLocked} step="any" min="-90" max="90" readOnly={draft.fromFile.lat} placeholder={t('optionalCoordinate')} value={draft.lat} onChange={(event) => updateFileDraft(draft.id, 'lat', event.target.value)} />
                       </label>
                       <label>
                         <span>{t('longitude')} <em>{draft.fromFile.lng ? t('fromFile') : t('missingOptional')}</em></span>
-                        <input type="number" step="any" min="-180" max="180" readOnly={draft.fromFile.lng} placeholder={t('optionalCoordinate')} value={draft.lng} onChange={(event) => updateFileDraft(draft.id, 'lng', event.target.value)} />
+                        <input type="number" disabled={busy || sessionLocked} step="any" min="-180" max="180" readOnly={draft.fromFile.lng} placeholder={t('optionalCoordinate')} value={draft.lng} onChange={(event) => updateFileDraft(draft.id, 'lng', event.target.value)} />
                       </label>
                       <label>
                         <span>{t('altitude')} <em>{draft.fromFile.altitudeMeters ? t('fromFile') : t('missingOptional')}</em></span>
-                        <input type="number" step="any" readOnly={draft.fromFile.altitudeMeters} placeholder={t('optionalMeters')} value={draft.altitudeMeters} onChange={(event) => updateFileDraft(draft.id, 'altitudeMeters', event.target.value)} />
+                        <input type="number" disabled={busy || sessionLocked} step="any" readOnly={draft.fromFile.altitudeMeters} placeholder={t('optionalMeters')} value={draft.altitudeMeters} onChange={(event) => updateFileDraft(draft.id, 'altitudeMeters', event.target.value)} />
                       </label>
                       <label>
                         <span>{t('relativeAltitude')} <em>{draft.fromFile.relativeAltitudeMeters ? t('fromFile') : t('missingOptional')}</em></span>
-                        <input type="number" step="any" readOnly={draft.fromFile.relativeAltitudeMeters} placeholder={t('optionalMeters')} value={draft.relativeAltitudeMeters} onChange={(event) => updateFileDraft(draft.id, 'relativeAltitudeMeters', event.target.value)} />
+                        <input type="number" disabled={busy || sessionLocked} step="any" readOnly={draft.fromFile.relativeAltitudeMeters} placeholder={t('optionalMeters')} value={draft.relativeAltitudeMeters} onChange={(event) => updateFileDraft(draft.id, 'relativeAltitudeMeters', event.target.value)} />
                       </label>
                     </div>
                   </article>
                 ))}
               </div>
             ) : null}
-            <button className="atlas-local-import-submit" type="submit" disabled={busy || panoramaMismatchCount > 0}>{t('confirmImport')}</button>
+            <button className="atlas-local-import-submit" type="submit" disabled={busy || sessionLocked || panoramaMismatchCount > 0}>{t('confirmImport')}</button>
           </form>
         ) : null}
 
         {notice ? <p className="atlas-local-editor-notice atlas-local-editor-notice-dark" role="status">{notice}</p> : null}
+        {localEditorAvailable ? <MediaImportRecovery state={session.state} busy={busy} onRetry={retryDroneImport} /> : null}
 
         {editing && hiddenIdsForCity.length > 0 ? (
           <div className="atlas-local-editor-hidden-actions">
             <button
               type="button"
               className="atlas-local-editor-restore"
-              disabled={busy}
+              disabled={busy || sessionLocked}
               onClick={() => {
+                if (busy || sessionLocked) return
                 setBusy(true)
                 void updateLocalEditorState((current) => ({
                   ...current,
@@ -391,8 +445,9 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
             <button
               type="button"
               className="atlas-local-editor-delete"
-              disabled={busy}
+              disabled={busy || sessionLocked}
               onClick={() => {
+                if (busy || sessionLocked) return
                 const confirmed = window.confirm(t('deleteConfirm', { count: hiddenIdsForCity.length }))
                 if (!confirmed) return
                 setBusy(true)
