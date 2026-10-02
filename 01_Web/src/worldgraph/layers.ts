@@ -24,7 +24,8 @@ export const WANT_TO_GO_LAYER_ID: LayerId = 'want_to_go'
 
 export interface LayerDefinition {
   id: LayerId
-  label: { zh: string; en: string }
+  /** UI 翻译资源的命名空间键；Core 只保存键，不选择语言或解析译文。 */
+  labelKey: string
   /** lucide 图标名，与底部 dock 现有风格一致。 */
   icon: string
   /** 该图层标记的主色。 */
@@ -48,7 +49,7 @@ export interface LayerDefinition {
 export const officialLayers: readonly LayerDefinition[] = [
   {
     id: 'travel',
-    label: { zh: '足迹', en: 'Travel' },
+    labelKey: 'layer:travel',
     icon: 'Footprints',
     // 现有足迹色：城市标记在没有国家配色时的默认 accent（CesiumAtlasGlobe 的 '#38bdf8'），
     // 也是图源菜单勾选图标用的同一个蓝。
@@ -61,7 +62,7 @@ export const officialLayers: readonly LayerDefinition[] = [
   },
   {
     id: 'want_to_go',
-    label: { zh: '想去', en: 'Want to Go' },
+    labelKey: 'layer:wantToGo',
     icon: 'Heart',
     // PRD §9.3：暖色，与现有蓝绿地球对比（待设计确认，§16 Q1）。
     accent: '#F0647A',

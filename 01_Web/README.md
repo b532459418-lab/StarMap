@@ -126,7 +126,7 @@ Tianditu is integrated through Cesium's WMTS imagery provider as an imagery base
 
 ## Public Interface Defaults
 
-The public template uses the neutral `StarMap` identity. Its enlarged primary navigation contains only Map and Journey. The document language defaults to `zh-CN`; no Chinese/English selector is rendered. The center-bottom dock contains icon buttons for the compass, map layers, map-source selection, the labels overlay, City 3D, and version updates; the sidebar toggles sit outside the dock.
+The public template uses the neutral `StarMap` identity. Its primary navigation contains Map, Journey and Collection, with a Chinese/English selector alongside it. The first supported browser language sets the initial interface language, falling back to English; a saved manual choice takes priority. The document language follows that choice. The center-bottom dock contains icon buttons for the compass, map layers, map-source selection, the labels overlay, City 3D, and version updates; the sidebar toggles sit outside the dock.
 
 The public interface deliberately uses neutral copy that a new user can replace with their own identity.
 

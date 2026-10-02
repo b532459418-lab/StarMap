@@ -656,7 +656,7 @@ function App() {
                   />
                 ) : null}
 
-                <MouseControlGuide language={locale === 'en' ? 'en' : 'zh'} />
+                <MouseControlGuide />
               </div>
 
             </div>

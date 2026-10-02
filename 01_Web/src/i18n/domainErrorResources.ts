@@ -1,5 +1,8 @@
 export const domainErrorResources = {
   "zh": {
+    "E_LOCAL_EDITOR_FAILED": "本地编辑操作失败。",
+    "E_LEGACY_UNMIGRATED": "私人目录里有旧格式的数据，还没有迁移，这次修改没有保存。请按 README 的 Private Data Format 步骤，先检出提交 4fd32a9（最后一个带迁移工具的版本）完成迁移，再回到最新版本。若不需要旧数据，可以把私人目录 data/ 下的四个旧文件（travel-map、want-to-go、editor-state、user-media 的 .local.json）移到别处。",
+    "legacyFiles": "旧格式文件：{{files}}",
     "E_REQUIRED": "请填写{{field}}。",
     "E_DATE_FORMAT": "{{field}}必须使用 YYYY-MM-DD。",
     "E_DATE_ORDER": "结束日期不能早于到访日期。",
@@ -79,6 +82,9 @@ export const domainErrorResources = {
     "unknownCity": "未知城市"
   },
   "en": {
+    "E_LOCAL_EDITOR_FAILED": "The local editing operation failed.",
+    "E_LEGACY_UNMIGRATED": "Your private folder contains data in the old format that has not been migrated. No changes were saved. Follow the README Private Data Format steps: check out commit 4fd32a9 (the last version with the migration tool), complete the migration, then return to the latest version. If you do not need the old data, you can move the four old files from the private data/ folder elsewhere (travel-map, want-to-go, editor-state and user-media .local.json files).",
+    "legacyFiles": "Old-format files: {{files}}",
     "E_REQUIRED": "Enter {{field}}.",
     "E_DATE_FORMAT": "{{field}} must use YYYY-MM-DD.",
     "E_DATE_ORDER": "The end date cannot be before the visit date.",

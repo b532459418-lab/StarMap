@@ -24,7 +24,7 @@ test('Bundled translations resolve immediately and apply English singular/plural
 
 test('Both languages cover every translation key and preserve interpolation arguments', () => {
   const normalize = (key: string) => key.replace(/_(one|other)$/, '')
-  for (const namespace of ['common', 'collection', 'editor', 'details', 'journey', 'mediaViewer', 'droneEditor', 'mapMenu', 'domainError', 'appShell'] as const) {
+  for (const namespace of ['common', 'collection', 'editor', 'details', 'journey', 'mediaViewer', 'droneEditor', 'mapMenu', 'domainError', 'appShell', 'layer', 'auxiliary'] as const) {
     const flatten = (dictionary: object, prefix = ''): Record<string, string> => Object.fromEntries(Object.entries(dictionary).flatMap(([key, value]) => {
       const path = prefix ? `${prefix}.${key}` : key
       return typeof value === 'string' ? [[path, value]] : Object.entries(flatten(value, path))

@@ -77,6 +77,28 @@ Architecture rules that lint enforces:
 - Core files use erasable-only TypeScript (`type` / `interface`, no `enum`,
   `namespace`, or parameter properties) so `node --test` can run them directly.
 
+### Interface translations
+
+`npm run lint` includes `npm run i18n:check`, so the existing **Public checks**
+job also enforces translations in its clean release archive. All namespaces
+registered in `src/i18n/resources.ts` must cover Chinese and English, preserve
+the same interpolation parameters, and supply English singular/plural forms.
+
+The TypeScript syntax check follows local imports from `src/main.tsx` and checks
+active UI text, placeholders, titles, accessible labels, notices, confirmations,
+and translation keys. Use `t()` for fixed wording and keep user notes, place
+data, file names, internal state values, and saved metadata intact. The frozen
+`AtlasGlobe.tsx` and unreferenced prototypes are outside this active UI check.
+
+Dynamic translation keys need a finite contract in `scripts/i18n-check.mjs`.
+Current contracts read option declarations and the layer registry as syntax,
+then verify every resulting key in both languages. New choices therefore need
+translations too. Exceptions must name one exact literal, its specific file,
+and a reason such as a brand, keyboard modifier, or provider attribution; do
+not exempt whole components. This guard does not prove rendered layout or
+translation quality. Continue to check language switching, drafts, and narrow
+screens in the browser.
+
 ## Privacy rules for contributors
 
 - Never commit tokens, keys, `.env.local`, personal travel data, or personal

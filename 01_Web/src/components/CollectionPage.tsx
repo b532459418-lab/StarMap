@@ -149,7 +149,7 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
           <header className="collection-section-header">
             <h3 id={sectionTitleId}>
               <Heart aria-hidden="true" style={{ color: wantToGoLayer?.accent }} />
-              <span>{t('wantToGo')}</span>
+              <span>{wantToGoLayer ? t(wantToGoLayer.labelKey) : ''}</span>
             </h3>
             <p className="collection-section-count">
               {visibleEntries.length === entries.length

@@ -6,6 +6,8 @@ import { resources } from './resources.ts'
 import { DEFAULT_UI_LOCALE, EN_UI_LOCALE } from '../data/uiLocale.ts'
 import { LocalEditorError, editorErrorNotice, formatEditorError, localizedConversionReason } from './editorErrors.ts'
 import { V2_WRITE_ERROR_CODES, messageFor } from '../data/v2write/errors.ts'
+// @ts-expect-error The server refusal is an erasable JavaScript module without browser dependencies.
+import { legacyWriteRefusal } from '../../scripts/legacy-data.mjs'
 
 test('Every server write code has a translation; error notices follow language without changing recovery messages', async () => {
   const i18n = createInstance()
@@ -40,4 +42,25 @@ test('Media summaries keep user names, correct counts and details, without mutat
   assert.equal(localizedConversionReason(reason, i18n.t), 'This place has no coordinates and cannot be marked as visited.')
   assert.equal(localizedConversionReason('external reason', i18n.t), 'external reason')
   assert.equal(localizedConversionReason(undefined, i18n.t), undefined)
+})
+
+test('Unmigrated-data refusals and empty response errors translate without changing server messages', async () => {
+  const i18n = createInstance()
+  await i18n.init({ resources, lng: EN_UI_LOCALE, fallbackLng: EN_UI_LOCALE, initAsync: false })
+  const refusal = legacyWriteRefusal({ legacyFiles: ['travel-map.local.json'], v2Files: [] })
+  const error = new LocalEditorError(refusal.body)
+  const english = formatEditorError(error, i18n.t)
+  assert.match(english, /No changes were saved/)
+  assert.match(english, /4fd32a9/)
+  assert.match(english, /return to the latest version/)
+  assert.match(english, /Old-format files: travel-map.local.json/)
+  assert.equal(error.message, refusal.body.error)
+  const emptyError = new LocalEditorError({})
+  assert.equal(formatEditorError(emptyError, i18n.t), 'The local editing operation failed.')
+  assert.equal(formatEditorError(new LocalEditorError({ details: 'raw diagnostic' }), i18n.t), 'raw diagnostic')
+  await i18n.changeLanguage(DEFAULT_UI_LOCALE)
+  assert.match(formatEditorError(error, i18n.t), /这次修改没有保存/)
+  assert.match(formatEditorError(error, i18n.t), /旧格式文件：travel-map.local.json/)
+  assert.equal(formatEditorError(emptyError, i18n.t), '本地编辑操作失败。')
+  assert.equal(error.message, refusal.body.error)
 })
