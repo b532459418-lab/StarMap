@@ -1,3 +1,6 @@
+import { LanguageSelector } from './LanguageSelector'
+import { useUiLocale } from '../i18n/useUiLocale'
+
 export type AtlasPage = 'map' | 'journey' | 'collection' | 'about'
 
 type AtlasHeaderProps = {
@@ -9,13 +12,14 @@ type AtlasHeaderProps = {
   scrollbarWidth?: number
 }
 
-const navItems: { id: AtlasPage; label: string }[] = [
-  { id: 'map', label: 'Map' },
-  { id: 'journey', label: 'Journey' },
-  { id: 'collection', label: 'Collection' },
+const navItems: { id: AtlasPage }[] = [
+  { id: 'map' },
+  { id: 'journey' },
+  { id: 'collection' },
 ]
 
 export function AtlasHeader({ activePage, onPageChange, scrolled, scrollbarWidth = 0 }: AtlasHeaderProps) {
+  const { t } = useUiLocale()
   return (
     <header
       className="atlas-app-header cesium-lab-title hero-glass-layer absolute left-[50vw] top-4 z-50 w-[min(760px,calc(100vw-32px))] -translate-x-1/2 px-6 py-4 text-center sm:px-8"
@@ -28,28 +32,31 @@ export function AtlasHeader({ activePage, onPageChange, scrolled, scrollbarWidth
         StarMap
       </h1>
       <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-white sm:text-base">
-        Map the places you have visited and turn every journey into a story you can revisit.
+        {t('subtitle')}
       </p>
-      <nav
-        className="atlas-tabs mx-auto mt-4 inline-flex items-center gap-1 rounded-full border border-white/70 bg-white/50 p-1 text-sm font-medium text-slate-500 shadow-sm backdrop-blur-xl"
-        aria-label="Primary navigation"
-      >
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onPageChange(item.id)}
-            aria-current={activePage === item.id ? 'page' : undefined}
-            className={`rounded-full px-4 py-2 transition ${
-              activePage === item.id
-                ? 'bg-slate-950 text-white shadow-[0_12px_30px_rgba(15,23,42,0.16)]'
-                : 'hover:bg-white/70 hover:text-slate-950'
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
+      <div className="atlas-header-controls">
+        <nav
+          className="atlas-tabs mx-auto mt-4 inline-flex items-center gap-1 rounded-full border border-white/70 bg-white/50 p-1 text-sm font-medium text-slate-500 shadow-sm backdrop-blur-xl"
+          aria-label={t('navigation')}
+        >
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onPageChange(item.id)}
+              aria-current={activePage === item.id ? 'page' : undefined}
+              className={`rounded-full px-4 py-2 transition ${
+                activePage === item.id
+                  ? 'bg-slate-950 text-white shadow-[0_12px_30px_rgba(15,23,42,0.16)]'
+                  : 'hover:bg-white/70 hover:text-slate-950'
+              }`}
+            >
+              {t(item.id)}
+            </button>
+          ))}
+        </nav>
+        <LanguageSelector />
+      </div>
     </header>
   )
 }

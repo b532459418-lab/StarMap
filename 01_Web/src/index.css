@@ -7561,3 +7561,33 @@ button {
     transition: none;
   }
 }
+/* Language choice shares the navigation row and remains reachable on narrow screens. */
+.atlas-header-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 7px;
+}
+.atlas-app-header[data-page='map'] .atlas-header-controls .atlas-tabs { margin: 0; }
+.atlas-language-selector {
+  width: 96px;
+  height: 36px;
+  padding: 4px 8px;
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: 10px;
+  background: #182333;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.atlas-language-selector:focus-visible { outline: 2px solid #8dcaff; outline-offset: 3px; }
+@media (max-width: 560px) {
+  .atlas-header-controls { gap: 6px; }
+  .atlas-app-header[data-page='map'] .atlas-header-controls .atlas-tabs button {
+    min-width: 62px;
+    padding: 7px 6px;
+    font-size: 12px;
+  }
+  .atlas-language-selector { width: 80px; font-size: 12px; padding: 4px; }
+}

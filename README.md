@@ -59,6 +59,10 @@ Open `http://127.0.0.1:5173/`. This public profile uses only neutral sample data
 
 For a personal atlas, create an external private layer next to the source repository (the official maintenance workspace uses `StarMap/06_private/`), copy `.env.example` to its `config/.env.local`, and run `npm run dev:personal`. In a standalone clone, set `STARMAP_PRIVATE_ROOT` to any private folder or use the ignored `StarMap/06_private/` fallback. Personal configuration, journeys, media, and editor state remain physically outside the source repository.
 
+## Interface language
+
+Choose 中文 or English next to the top navigation. On your first visit StarMap uses the first supported browser language, falling back to English. A manual choice is saved in this browser and takes priority on later visits. Navigation, map place labels, mouse controls, and Collection wording, country names, search, and name sorting follow that choice. Search also matches names in other languages. Place names fall back to available registry names when a translation is missing. Detail cards, Journey content, editor forms, and domain error messages are still being translated; map-provider imagery labels are separate from this setting.
+
 ## Map credentials — start here
 
 StarMap can start without a token by using its bundled low-resolution Natural Earth II fallback. For Cesium ion online global imagery:

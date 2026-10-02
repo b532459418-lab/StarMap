@@ -1,28 +1,32 @@
 /// <reference types="node" />
-
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync, readFileSync } from 'node:fs'
-import ts from 'typescript'
-import { UI_LOCALE } from './uiLocale.ts'
+import { DEFAULT_UI_LOCALE, EN_UI_LOCALE, initialUiLocale, persistUiLocale, UI_LOCALE_STORAGE_KEY } from './uiLocale.ts'
 
-test('The UI locale is defined once; other simplified Chinese tags are names in data', () => {
-  assert.equal(UI_LOCALE, 'zh-Hans')
-  const root = new URL('../', import.meta.url)
-  const files = readdirSync(root, { recursive: true }).filter((file) => typeof file === 'string' && /\.tsx?$/.test(file) && !file.endsWith('.test.ts')) as string[]
-  for (const file of files) {
-    if (file.replaceAll('\\', '/') === 'data/uiLocale.ts') continue
-    const source = ts.createSourceFile(file, readFileSync(new URL(file.replaceAll('\\', '/'), root), 'utf8'), ts.ScriptTarget.Latest, true)
-    const visit = (node: ts.Node) => {
-      if (ts.isStringLiteral(node) && node.text === UI_LOCALE) {
-        const parent = node.parent
-        const dataTag = (ts.isVariableDeclaration(parent) && parent.name.getText(source) === 'ZH')
-          || (ts.isPropertyAssignment(parent) && parent.name === node)
-          || (ts.isElementAccessExpression(parent) && parent.argumentExpression === node)
-        assert.ok(dataTag, `${file}: the UI locale must come from UI_LOCALE`)
-      }
-      ts.forEachChild(node, visit)
-    }
-    visit(source)
-  }
+test('A saved manual choice takes priority over browser preferences', () => {
+  const store = { getItem: (key: string) => key === UI_LOCALE_STORAGE_KEY ? EN_UI_LOCALE : null, setItem: () => {} }
+  assert.equal(initialUiLocale(store, ['zh-CN']), EN_UI_LOCALE)
+  assert.equal(initialUiLocale({ ...store, getItem: () => DEFAULT_UI_LOCALE }, ['en-US']), DEFAULT_UI_LOCALE)
+})
+
+test('First visit uses the first supported browser language, including regional tags', () => {
+  assert.equal(initialUiLocale(undefined, ['fr-FR', 'zh-TW', 'en-US']), DEFAULT_UI_LOCALE)
+  assert.equal(initialUiLocale(undefined, ['en-GB', 'zh-CN']), EN_UI_LOCALE)
+  assert.equal(initialUiLocale(undefined, ['bad_tag', 'zh-CN']), DEFAULT_UI_LOCALE)
+  assert.equal(initialUiLocale(undefined, ['de-DE']), EN_UI_LOCALE)
+  assert.equal(initialUiLocale(undefined, []), EN_UI_LOCALE)
+})
+
+test('Invalid saved values and blocked storage do not prevent startup or session switching', () => {
+  const blocked = { getItem: () => { throw new Error('blocked') }, setItem: () => { throw new Error('blocked') } }
+  assert.equal(initialUiLocale(blocked, ['zh-CN']), DEFAULT_UI_LOCALE)
+  assert.equal(initialUiLocale({ ...blocked, getItem: () => 'unsupported' }, ['zh-CN']), DEFAULT_UI_LOCALE)
+  assert.doesNotThrow(() => persistUiLocale(blocked, EN_UI_LOCALE))
+  assert.doesNotThrow(() => persistUiLocale(undefined, EN_UI_LOCALE))
+})
+
+test('Manual selection is saved using the stable browser preference key', () => {
+  const writes: [string, string][] = []
+  persistUiLocale({ getItem: () => null, setItem: (key, value) => { writes.push([key, value]) } }, DEFAULT_UI_LOCALE)
+  assert.deepEqual(writes, [[UI_LOCALE_STORAGE_KEY, DEFAULT_UI_LOCALE]])
 })
