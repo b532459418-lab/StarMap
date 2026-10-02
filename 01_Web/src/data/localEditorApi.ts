@@ -2,6 +2,7 @@ import type { TravelAtlasEditorState } from './editorState'
 import type { WantToGoItem } from './derive/wantToGo.ts'
 import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
 import { parseMediaImportResponse, parseMediaUploadResponse } from './localMediaResponse.ts'
+import { assertLocalEditorReloadAllowed, withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
 
 const editorHeaders = {
   'content-type': 'application/json',
@@ -51,23 +52,23 @@ export const searchLocalCities = async (
   return (await parseResponse<{ results: CitySearchOption[] }>(response)).results
 }
 
-export const addLocalCountry = async (countryCode: string, visitedDate?: string) => {
+export const addLocalCountry = (countryCode: string, visitedDate?: string) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/countries', {
     method: 'POST',
     headers: editorHeaders,
     body: JSON.stringify({ countryCode, visitedDate }),
   })
   return parseResponse<{ countryId: string }>(response)
-}
+})
 
 export const readLocalEditorState = async () => {
   const response = await fetch('/__travelatlas/editor/state', { cache: 'no-store' })
   return (await parseResponse<{ state: TravelAtlasEditorState }>(response)).state
 }
 
-export const updateLocalEditorState = async (
+export const updateLocalEditorState = (
   update: (current: TravelAtlasEditorState) => TravelAtlasEditorState,
-) => {
+) => withLocalEditorWrite(async () => {
   const current = await readLocalEditorState()
   const response = await fetch('/__travelatlas/editor/state', {
     method: 'PUT',
@@ -75,7 +76,7 @@ export const updateLocalEditorState = async (
     body: JSON.stringify(update(current)),
   })
   return (await parseResponse<{ state: TravelAtlasEditorState }>(response)).state
-}
+})
 
 export type LocalMediaUpload = {
   countryId: string
@@ -91,7 +92,7 @@ export type LocalMediaUpload = {
   titleEn?: string
 }
 
-export const uploadLocalMedia = async (upload: LocalMediaUpload) => {
+export const uploadLocalMedia = (upload: LocalMediaUpload, permit?: MediaImportPermit) => withLocalEditorWrite(async () => {
   const search = new URLSearchParams({
     countryId: upload.countryId,
     cityId: upload.cityId,
@@ -115,27 +116,27 @@ export const uploadLocalMedia = async (upload: LocalMediaUpload) => {
     body: upload.file,
   })
   return parseMediaUploadResponse(response)
-}
+}, permit)
 
-export const importLocalMedia = async (sourcePaths: string[] = []) => {
+export const importLocalMedia = (sourcePaths: string[] = [], permit?: MediaImportPermit) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/import', {
     method: 'POST',
     headers: editorHeaders,
     body: JSON.stringify({ sourcePaths }),
   })
   return parseMediaImportResponse(response, sourcePaths)
-}
+}, permit)
 
-export const deleteHiddenLocalMedia = async (cityId: string, ids: string[]) => {
+export const deleteHiddenLocalMedia = (cityId: string, ids: string[]) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/media/delete', {
     method: 'POST',
     headers: editorHeaders,
     body: JSON.stringify({ cityId, ids }),
   })
   return parseResponse<{ deletedIds: string[]; deletedSourceFiles: number; output: string }>(response)
-}
+})
 
-export const deleteHiddenLocalCountries = async (ids: string[]) => {
+export const deleteHiddenLocalCountries = (ids: string[]) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/countries/delete', {
     method: 'POST',
     headers: editorHeaders,
@@ -145,7 +146,7 @@ export const deleteHiddenLocalCountries = async (ids: string[]) => {
     deletedCountryIds: string[]
     deletedRecordCount: number
   }>(response)
-}
+})
 
 export type LocalTravelRecordInput = {
   country: string
@@ -160,14 +161,14 @@ export type LocalTravelRecordInput = {
   trip_title?: string
 }
 
-export const addLocalTravelRecord = async (input: LocalTravelRecordInput) => {
+export const addLocalTravelRecord = (input: LocalTravelRecordInput) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/records', {
     method: 'POST',
     headers: editorHeaders,
     body: JSON.stringify(input),
   })
   return parseResponse<{ id: string; countryId: string; cityId: string }>(response)
-}
+})
 
 // ---- Want to Go（FR-WTG-6 / D26）----
 // 写入路径的唯一出口就是本文件：组件里不得出现任何 fetch。
@@ -185,35 +186,35 @@ export type LocalWantToGoInput = {
   addedAt?: string
 }
 
-export const addLocalWantToGo = async (input: LocalWantToGoInput) => {
+export const addLocalWantToGo = (input: LocalWantToGoInput) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/wanttogo', {
     method: 'POST',
     headers: editorHeaders,
     body: JSON.stringify(input),
   })
   return parseResponse<{ id: string; item: WantToGoItem }>(response)
-}
+})
 
-export const updateLocalWantToGo = async (
+export const updateLocalWantToGo = (
   id: string,
   patch: { hidden?: boolean; note?: string },
-) => {
+) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/wanttogo/update', {
     method: 'POST',
     headers: editorHeaders,
     body: JSON.stringify({ id, ...patch }),
   })
   return parseResponse<{ item: WantToGoItem }>(response)
-}
+})
 
-export const deleteHiddenLocalWantToGo = async (ids: string[]) => {
+export const deleteHiddenLocalWantToGo = (ids: string[]) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/wanttogo/delete', {
     method: 'POST',
     headers: editorHeaders,
     body: JSON.stringify({ ids }),
   })
   return parseResponse<{ deletedIds: string[] }>(response)
-}
+})
 
 // ---- 想去 → 足迹（PR9，PRD S5 / R13）----
 // 一个端点完成整件事：新增足迹城市（或把 planned 改为已去过）、按需更新国家排序、默认移除想去条目。
@@ -237,13 +238,16 @@ export type LocalConvertToTravelResult = {
   wantToGoRemoved: boolean
 }
 
-export const convertLocalWantToGoToTravel = async (input: LocalConvertToTravelInput) => {
+export const convertLocalWantToGoToTravel = (input: LocalConvertToTravelInput) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/wanttogo/convert', {
     method: 'POST',
     headers: editorHeaders,
     body: JSON.stringify(input),
   })
   return parseResponse<LocalConvertToTravelResult>(response)
-}
+})
 
-export const reloadAfterLocalSave = () => window.location.reload()
+export const reloadAfterLocalSave = () => {
+  assertLocalEditorReloadAllowed()
+  window.location.reload()
+}

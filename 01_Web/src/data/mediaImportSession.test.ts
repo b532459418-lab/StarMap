@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 import { createMediaImportSession, getMediaImportSession, MediaImportSessionGuardError } from './mediaImportSession.ts'
+import { createLocalEditorCoordination, type MediaImportPermit } from './localEditorCoordination.ts'
 
 const deferred = <T>() => {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -185,7 +186,10 @@ test('registry survives subscriber remounts and isolates city/media target keys'
   const session = getMediaImportSession(target)
   let notifications = 0
   const unsubscribe = session.subscribe(() => { notifications += 1 })
-  await session.upload([{} as File], async () => ({ sourcePath: 'photos/confirmed.jpg' }))
+  await session.upload([{} as File], async (_file, permit) => {
+    assert.ok(permit, 'registered sessions share the global media coordination')
+    return { sourcePath: 'photos/confirmed.jpg' }
+  })
   assert.ok(notifications > 0)
   unsubscribe()
   const remounted = getMediaImportSession(target)
@@ -197,4 +201,135 @@ test('registry survives subscriber remounts and isolates city/media target keys'
   const oldNotifications = notifications
   await remounted.importMedia(async () => undefined)
   assert.equal(notifications, oldNotifications)
+})
+
+const importBusy = (error: unknown) => error instanceof LocalEditorError && error.code === 'E_MEDIA_IMPORT_BUSY'
+
+test('coordinated photo/drone and different-city sessions cannot overlap upload, pending or import', async () => {
+  const coordination = createLocalEditorCoordination()
+  const photo = createMediaImportSession<string>({ coordination, target: 'city-a-photos' })
+  const drone = createMediaImportSession<string>({ coordination, target: 'city-a-drone' })
+  const otherCity = createMediaImportSession<string>({ coordination, target: 'city-b-photos' })
+  const uploadGate = deferred<{ sourcePath: string }>()
+  let competingRequests = 0
+  const uploading = photo.upload(['a'], async () => uploadGate.promise)
+  for (const other of [drone, otherCity]) {
+    const previous = other.getSnapshot()
+    await assert.rejects(other.upload(['b'], async () => { competingRequests += 1; return { sourcePath: 'b' } }), importBusy)
+    assert.equal(other.getSnapshot(), previous)
+  }
+  uploadGate.resolve({ sourcePath: 'photos/a.jpg' })
+  await uploading
+  assert.equal(photo.getSnapshot().phase, 'pending')
+  await assert.rejects(drone.upload(['b'], async () => { competingRequests += 1; return { sourcePath: 'b' } }), importBusy)
+  const importGate = deferred<void>()
+  const importing = photo.importMedia(async () => importGate.promise)
+  await assert.rejects(otherCity.upload(['b'], async () => { competingRequests += 1; return { sourcePath: 'b' } }), importBusy)
+  assert.equal(competingRequests, 0)
+  importGate.resolve(undefined)
+  await importing
+  assert.deepEqual(coordination.getSnapshot(), { writes: 0 })
+  await drone.upload(['b'], async () => ({ sourcePath: 'drone/b.jpg' }))
+  assert.equal(drone.getSnapshot().phase, 'pending')
+})
+
+test('ordinary write delays media acquisition and its failure releases the lease before media starts', async () => {
+  const coordination = createLocalEditorCoordination()
+  const session = createMediaImportSession<string>({ coordination, target: 'city-a-photos' })
+  const writing = deferred<void>()
+  const error = new Error('ordinary parse failure')
+  const ordinary = coordination.withLocalEditorWrite(async () => { await writing.promise; throw error })
+  let uploads = 0
+  const initial = session.getSnapshot()
+  await assert.rejects(session.upload(['a'], async () => { uploads += 1; return { sourcePath: 'a' } }), importBusy)
+  assert.equal(session.getSnapshot(), initial)
+  assert.equal(uploads, 0)
+  writing.resolve(undefined)
+  await assert.rejects(ordinary, (failure) => failure === error)
+  await session.upload(['a'], (file, permit) => coordination.withLocalEditorWrite(async () => {
+    uploads += 1
+    assert.deepEqual(coordination.getSnapshot(), { target: 'city-a-photos', writes: 0 })
+    return { sourcePath: file }
+  }, permit))
+  assert.equal(uploads, 1)
+})
+
+test('known zero-path upload refusal releases ownership, whereas partial and unknown uploads keep it', async () => {
+  const coordination = createLocalEditorCoordination()
+  const first = createMediaImportSession<string>({ coordination, target: 'city-a-photos' })
+  const second = createMediaImportSession<string>({ coordination, target: 'city-b-drone' })
+  const safe = editorError('E_MEDIA_IMAGE_INVALID')
+  await assert.rejects(first.upload(['a'], async () => { throw safe }), (failure) => failure === safe)
+  assert.equal(first.getSnapshot().phase, 'idle')
+  assert.deepEqual(coordination.getSnapshot(), { writes: 0 })
+  await assert.rejects(second.upload(['b', 'c'], async (file) => {
+    if (file === 'c') throw safe
+    return { sourcePath: file }
+  }), (failure) => failure === safe)
+  assert.equal(second.getSnapshot().phase, 'pending')
+  assert.deepEqual(coordination.getSnapshot(), { target: 'city-b-drone', writes: 0 })
+  const refused = first.getSnapshot()
+  await assert.rejects(first.upload(['a'], async () => ({ sourcePath: 'a' })), importBusy)
+  assert.equal(first.getSnapshot(), refused)
+  assert.equal(first.getSnapshot().error, safe)
+  await second.importMedia(async () => undefined)
+  const unknown = new TypeError('response lost after delivery')
+  await assert.rejects(first.upload(['a'], async () => { throw unknown }), (failure) => failure === unknown)
+  assert.equal(first.getSnapshot().phase, 'uncertain')
+  assert.deepEqual(coordination.getSnapshot(), { target: 'city-a-photos', writes: 0 })
+  await assert.rejects(second.upload(['b'], async () => ({ sourcePath: 'b' })), importBusy)
+  assert.throws(coordination.assertReloadAllowed, importBusy)
+})
+
+test('owner import retries retain the same permit and paths without upload, and release only on success', async () => {
+  const coordination = createLocalEditorCoordination()
+  const session = createMediaImportSession<string>({ coordination, target: 'city-a-photos' })
+  let uploads = 0
+  let ownerPermit: MediaImportPermit | undefined
+  await session.upload(['a', 'b'], (file, permit) => coordination.withLocalEditorWrite(async () => {
+    uploads += 1
+    ownerPermit ??= permit
+    assert.equal(permit, ownerPermit)
+    return { sourcePath: file }
+  }, permit))
+  const blocked = editorError('E_MEDIA_IMPORT_BLOCKED')
+  await assert.rejects(session.importMedia((paths, permit) => coordination.withLocalEditorWrite(async () => {
+    assert.equal(permit, ownerPermit)
+    assert.deepEqual(paths, ['a', 'b'])
+    throw blocked
+  }, permit)), (failure) => failure === blocked)
+  const previous = session.getSnapshot()
+  await assert.rejects(session.upload(['c'], async () => ({ sourcePath: 'c' })), MediaImportSessionGuardError)
+  assert.equal(session.getSnapshot(), previous)
+  let otherWrites = 0
+  await assert.rejects(coordination.withLocalEditorWrite(async () => { otherWrites += 1 }), importBusy)
+  assert.equal(otherWrites, 0)
+  await session.importMedia((paths, permit) => coordination.withLocalEditorWrite(async () => {
+    assert.equal(permit, ownerPermit)
+    assert.deepEqual(paths, ['a', 'b'])
+  }, permit))
+  assert.equal(uploads, 2)
+  assert.deepEqual(coordination.getSnapshot(), { writes: 0 })
+  assert.equal(session.getSnapshot().phase, 'idle')
+  assert.doesNotThrow(coordination.assertReloadAllowed)
+})
+
+test('unknown or partial import results preserve ownership, original errors and paths without requests or reload', async () => {
+  for (const error of [editorError('E_PARTIAL_WRITE'), editorError('E_EDITOR_RESPONSE_INVALID'), new TypeError('network failure')]) {
+    const coordination = createLocalEditorCoordination()
+    const session = createMediaImportSession<string>({ coordination, target: 'city-a-photos' })
+    await session.upload(['a'], async () => ({ sourcePath: 'a' }))
+    await assert.rejects(session.importMedia(async () => { throw error }), (failure) => failure === error)
+    const uncertain = session.getSnapshot()
+    assert.equal(uncertain.phase, 'uncertain')
+    assert.equal(uncertain.error, error)
+    assert.deepEqual(uncertain.sourcePaths, ['a'])
+    let requests = 0
+    let reloads = 0
+    await assert.rejects(coordination.withLocalEditorWrite(async () => { requests += 1 }), importBusy)
+    assert.throws(() => { coordination.assertReloadAllowed(); reloads += 1 }, importBusy)
+    assert.equal(requests, 0)
+    assert.equal(reloads, 0)
+    assert.equal(session.getSnapshot(), uncertain)
+  }
 })

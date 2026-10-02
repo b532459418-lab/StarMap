@@ -1,4 +1,5 @@
 import { LocalEditorError } from '../i18n/editorErrors.ts'
+import { localEditorCoordination, type LocalEditorCoordination, type MediaImportPermit } from './localEditorCoordination.ts'
 
 export type MediaImportSessionState = {
   readonly phase: 'idle' | 'uploading' | 'pending' | 'importing' | 'uncertain'
@@ -10,8 +11,8 @@ export type MediaImportSessionState = {
 export type MediaImportSession<T = File> = {
   getSnapshot: () => MediaImportSessionState
   subscribe: (listener: () => void) => () => void
-  upload: (files: readonly T[], uploadFn: (file: T) => Promise<{ sourcePath: string }>) => Promise<void>
-  importMedia: (importFn: (sourcePaths: string[]) => Promise<unknown>) => Promise<void>
+  upload: (files: readonly T[], uploadFn: (file: T, permit?: MediaImportPermit) => Promise<{ sourcePath: string }>) => Promise<void>
+  importMedia: (importFn: (sourcePaths: string[], permit?: MediaImportPermit) => Promise<unknown>) => Promise<void>
 }
 
 export class MediaImportSessionGuardError extends Error {
@@ -50,7 +51,11 @@ const isSafeImportFailure = (error: unknown) => {
 }
 
 /** No file bytes or persistent storage: retain only confirmed paths and the original failure. */
-export function createMediaImportSession<T = File>(): MediaImportSession<T> {
+export function createMediaImportSession<T = File>(
+  options: { coordination: LocalEditorCoordination; target: string } | { coordination?: undefined; target?: string } = {},
+): MediaImportSession<T> {
+  const { coordination, target } = options
+  let permit: MediaImportPermit | undefined
   let state = EMPTY_MEDIA_IMPORT_SESSION_STATE
   const listeners = new Set<() => void>()
   const publish = (next: MediaImportSessionState) => {
@@ -64,14 +69,15 @@ export function createMediaImportSession<T = File>(): MediaImportSession<T> {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
     },
-    upload: async (files: readonly T[], uploadFn: (file: T) => Promise<{ sourcePath: string }>) => {
+    upload: async (files: readonly T[], uploadFn: (file: T, permit?: MediaImportPermit) => Promise<{ sourcePath: string }>) => {
       if (state.phase !== 'idle') throw new MediaImportSessionGuardError()
       const selected = [...files]
       if (!selected.length) throw new MediaImportSessionGuardError()
+      if (coordination) permit = coordination.beginMedia(target!)
       publish({ phase: 'uploading', sourcePaths: [], selectedCount: selected.length })
       try {
         for (const file of selected) {
-          const uploaded = await uploadFn(file)
+          const uploaded = await uploadFn(file, permit)
           if (typeof uploaded?.sourcePath !== 'string' || !uploaded.sourcePath.trim()) {
             throw new LocalEditorError({ code: 'E_MEDIA_UPLOAD_RESULT_UNKNOWN' })
           }
@@ -80,15 +86,23 @@ export function createMediaImportSession<T = File>(): MediaImportSession<T> {
         publish({ ...state, phase: 'pending' })
       } catch (error) {
         const phase = isSafeUploadFailure(error) ? (state.sourcePaths.length ? 'pending' : 'idle') : 'uncertain'
+        if (phase === 'idle' && coordination && permit) {
+          coordination.releaseMedia(permit)
+          permit = undefined
+        }
         publish({ ...state, phase, error })
         throw error
       }
     },
-    importMedia: async (importFn: (sourcePaths: string[]) => Promise<unknown>) => {
+    importMedia: async (importFn: (sourcePaths: string[], permit?: MediaImportPermit) => Promise<unknown>) => {
       if (state.phase !== 'pending' || !state.sourcePaths.length) throw new MediaImportSessionGuardError()
       publish({ phase: 'importing', sourcePaths: state.sourcePaths, selectedCount: state.selectedCount })
       try {
-        await importFn([...state.sourcePaths])
+        await importFn([...state.sourcePaths], permit)
+        if (coordination && permit) {
+          coordination.releaseMedia(permit)
+          permit = undefined
+        }
         publish(EMPTY_MEDIA_IMPORT_SESSION_STATE)
       } catch (error) {
         publish({ ...state, phase: isSafeImportFailure(error) ? 'pending' : 'uncertain', error })
@@ -103,7 +117,7 @@ const sessions = new Map<string, MediaImportSession<File>>()
 export function getMediaImportSession(target: string): MediaImportSession<File> {
   let session = sessions.get(target)
   if (!session) {
-    session = createMediaImportSession<File>()
+    session = createMediaImportSession<File>({ coordination: localEditorCoordination, target })
     sessions.set(target, session)
   }
   return session

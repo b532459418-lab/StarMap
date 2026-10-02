@@ -1,5 +1,7 @@
 export const mediaImportResources = {
   zh: {
+    otherPending: '其他媒体尚未完成处理。请回到对应城市继续导入；结果不明时，先刷新并核对投递箱。完成后即可继续编辑。',
+    otherWriting: '其他修改正在保存，请稍候再上传或导入媒体。',
     received_other: '已接收 {{count}} 个文件。',
     pending: '继续导入会使用已接收的文件，不会再次上传。请先解决下面诊断中的问题。',
     partial: '本次选择的部分文件没有完成接收。完成已接收部分的导入后，再单独选择其余文件。',
@@ -10,6 +12,8 @@ export const mediaImportResources = {
     failed: '媒体操作失败，请查看投递箱和媒体列表。',
   },
   en: {
+    otherPending: 'Other media is still pending. Return to its city to continue importing; if the result is unknown, reload and check the Inbox first. Editing will resume when it is resolved.',
+    otherWriting: 'Other changes are being saved. Wait before uploading or importing media.',
     received_one: '{{count}} file received.',
     received_other: '{{count}} files received.',
     pending: 'Continue importing the files already received without uploading them again. Resolve the issues in the diagnostics below first.',

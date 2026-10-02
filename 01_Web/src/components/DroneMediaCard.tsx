@@ -94,7 +94,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   const city = cityId ? cityById[cityId] : undefined
   const importTarget = city ? JSON.stringify([city.countryId, city.id, 'drone']) : undefined
   const session = useMediaImportSession(importTarget)
-  const sessionLocked = session.state.phase !== 'idle'
+  const sessionLocked = session.state.phase !== 'idle' || session.blocked
   const items = useMemo(() => getDroneMediaForCity(cityId), [cityId])
   const metadataRunRef = useRef(0)
   const mountedRef = useRef(true)
@@ -185,7 +185,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
     setBusy(true)
     setNotice({ key: 'droneEditor:receiving', values: { count: fileDrafts.length } })
     try {
-      await session.upload(selectedFiles, async (file) => {
+      await session.upload(selectedFiles, async (file, permit) => {
         const draft = capturedDrafts.get(file)!
         const lat = draft.lat.trim() ? Number(draft.lat) : undefined
         const lng = draft.lng.trim() ? Number(draft.lng) : undefined
@@ -203,7 +203,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
           relativeAltitudeMeters,
           titleZh,
           titleEn,
-        })
+        }, permit)
       })
       if (!mountedRef.current) return
       setNotice({ key: 'droneEditor:importing' })
@@ -217,7 +217,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   }
 
   const retryDroneImport = async () => {
-    if (busy) return
+    if (busy || session.blocked || session.state.phase !== 'pending') return
     setBusy(true)
     setNotice('')
     try {
@@ -420,7 +420,12 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
         ) : null}
 
         {notice ? <p className="atlas-local-editor-notice atlas-local-editor-notice-dark" role="status">{notice}</p> : null}
-        {localEditorAvailable ? <MediaImportRecovery state={session.state} busy={busy} onRetry={retryDroneImport} /> : null}
+        {localEditorAvailable && session.blocked ? (
+          <p className="atlas-local-editor-notice atlas-local-editor-notice-dark" role="status">
+            {t(session.otherWriting ? 'mediaImport:otherWriting' : 'mediaImport:otherPending')}
+          </p>
+        ) : null}
+        {localEditorAvailable ? <MediaImportRecovery state={session.state} busy={busy || session.blocked} onRetry={retryDroneImport} /> : null}
 
         {editing && hiddenIdsForCity.length > 0 ? (
           <div className="atlas-local-editor-hidden-actions">
