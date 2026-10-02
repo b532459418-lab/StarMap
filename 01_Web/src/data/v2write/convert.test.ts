@@ -10,8 +10,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { readV2 } from '../canonical/v2Reader.ts'
+import { deriveAppDataFromCanonical } from '../canonical/derive.ts'
 import type { V2Files, V2TravelRecord } from '../canonical/v2Schema.ts'
 import { convertToTravel } from './convert.ts'
+import { addCountry } from './footprint.ts'
+import { addWantToGo } from './wantToGo.ts'
+import { emptyV2FilesForWrite } from './transaction.ts'
 import {
   GHOST_ID,
   applyWrites,
@@ -28,6 +32,67 @@ const NUUK_ITEM = 'wtg_2026-08-12_nuuk'
 const fromWantToGo = (id: string, extra: Record<string, unknown> = {}) => ({ source: 'want-to-go', id, startDate: '2026-09-01', ...extra })
 
 const recordById = (files: V2Files, id: string) => files.travel.records.find((record) => record.id === id) as V2TravelRecord
+
+const sampleSouth = {
+  place: { kind: 'city', nameZh: '示例南城', nameEn: 'SampleSouth', countryCode: 'IS', lat: 64, lng: -22 },
+  note: '保留备注',
+}
+
+test('想去首次转为足迹：按国家 ISO 目录保存洲，保留地点和日期，不修改输入', () => {
+  const ctx = testContext()
+  const empty = emptyV2FilesForWrite(ctx.now)
+  const added = addWantToGo(empty, sampleSouth, ctx)
+  const files = applyWrites(empty, added.writes)
+  const before = structuredClone(files)
+  const outcome = convertToTravel(files, fromWantToGo(added.result.id, {
+    startDate: '2026-10-03', endDate: '2026-10-04', keepWantToGo: false,
+  }), ctx)
+  const next = applyWrites(files, outcome.writes)
+  assertIntact(next)
+  assert.deepEqual(files, before)
+  assert.deepEqual(next.places, files.places)
+  assert.deepEqual(next.editorState.addedCountries, [{ placeId: outcome.result.countryId, region: 'Europe', visitedDate: '2026-10-03' }])
+  assert.equal(next.wantToGo.items.length, 0)
+  const record = recordById(next, outcome.result.travelRecordId)
+  assert.deepEqual([record.start_date, record.end_date, record.placeId], ['2026-10-03', '2026-10-04', outcome.result.cityId])
+  const atlas = deriveAppDataFromCanonical(readV2(next), { now: ctx.now.toISOString() }).travelAtlas
+  assert.deepEqual(atlas.countryById[outcome.result.countryId].keywords, ['Europe'])
+})
+
+test('想去转足迹：已有用户国家信息不覆盖，保留想去时备注不变', () => {
+  for (const hasVisitedDate of [true, false]) {
+    const ctx = testContext()
+    const empty = emptyV2FilesForWrite(ctx.now)
+    let files = applyWrites(empty, addCountry(empty, { countryCode: 'IS', visitedDate: '2026-01-01' }, ctx).writes)
+    files.editorState.addedCountries[0].region = 'User region'
+    if (!hasVisitedDate) delete files.editorState.addedCountries[0].visitedDate
+    const added = addWantToGo(files, sampleSouth, ctx)
+    files = applyWrites(files, added.writes)
+    const saved = structuredClone(files.editorState.addedCountries)
+    const outcome = convertToTravel(files, fromWantToGo(added.result.id, { keepWantToGo: true }), ctx)
+    const next = applyWrites(files, outcome.writes)
+    assertIntact(next)
+    assert.deepEqual(next.editorState.addedCountries, saved)
+    assert.deepEqual(next.wantToGo.items, files.wantToGo.items)
+    assert.equal(next.wantToGo.items[0].note, sampleSouth.note)
+    assert.deepEqual(writeOrder(outcome.writes), ['travel'])
+  }
+})
+
+test('想去转足迹：国家顺序已包含地点时，新增洲仍写 editor-state；目录缺失时保持未知', () => {
+  const ctx = testContext()
+  const empty = emptyV2FilesForWrite(ctx.now)
+  const added = addWantToGo(empty, sampleSouth, ctx)
+  const files = applyWrites(empty, added.writes)
+  const iceland = placeNamed(files, 'Iceland').id
+  files.editorState.countryOrder = [iceland]
+  const outcome = convertToTravel(files, fromWantToGo(added.result.id), ctx)
+  assert.deepEqual(writeOrder(outcome.writes), ['travel', 'wantToGo', 'editorState'])
+  assert.deepEqual(applyWrites(files, outcome.writes).editorState.addedCountries, [{ placeId: iceland, region: 'Europe', visitedDate: '2026-09-01' }])
+  const unknown = convertToTravel(files, fromWantToGo(added.result.id), { ...ctx, countryCatalog: new Map() })
+  assert.deepEqual(writeOrder(unknown.writes), ['travel', 'wantToGo'])
+  assert.deepEqual(applyWrites(files, unknown.writes).editorState.addedCountries, [])
+})
 
 // ---------------------------------------------------------------------------
 // 想去 → 足迹

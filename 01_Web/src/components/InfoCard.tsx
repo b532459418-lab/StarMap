@@ -1,4 +1,4 @@
-import { editorErrorNotice } from '../i18n/editorErrors.ts'
+import { LocalEditorError, editorErrorNotice } from '../i18n/editorErrors.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
@@ -106,7 +106,9 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
     : []
   const countryCode = country?.flagCode
   const searchCityOptions = useCallback((query: string, signal: AbortSignal) => {
-    if (!countryCode) return Promise.reject(new Error(t('editor:noIso')))
+    if (!countryCode) return Promise.reject(new LocalEditorError({
+      code: 'E_CITY_SEARCH_COUNTRY_CODE_MISSING', error: t('editor:noIso'),
+    }))
     return searchLocalCities(query, countryCode, signal)
   }, [countryCode, t])
 

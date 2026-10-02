@@ -202,7 +202,7 @@ export function LocationSearchField<T extends SearchOption>({
               {getMeta ? <span className="atlas-location-search-result-meta">{getMeta(option)}</span> : null}
             </button>
           ))}
-          {notice ? <p role="status">{notice}</p> : null}
+          {notice ? <p className="atlas-local-editor-notice" role="status">{notice}</p> : null}
         </div>
       ) : null}
     </div>

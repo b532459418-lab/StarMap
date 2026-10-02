@@ -265,7 +265,7 @@ test('写入：先过本机会话检查，再判「未迁移」（未迁移时�
   const writeSection = sourceBetween(source, "if (!authorizeWrite(request)) return sendJson(response, 403", '} catch (error) {', false)
   const refusal = writeSection.indexOf('const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))\n          if (refusal) return sendJson(response, refusal.status, refusal.body)')
   const mutation = writeSection.indexOf('editorMutationDepth += 1')
-  const dispatch = writeSection.indexOf('const result = await handleV2Write(request, url)\n            return sendJson(response, result.status, result.body)')
+  const dispatch = writeSection.indexOf('result = await handleV2Write(request, url)')
   assert.ok(refusal > 0, '有未迁移的拒绝')
   assert.ok(mutation > refusal, '拒绝在进入写入之前（不算编辑器写入，也不抑制刷新）')
   assert.ok(dispatch > mutation, '之后无条件走 V2 写入')
