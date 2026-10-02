@@ -12,7 +12,7 @@ The product editions that build on it are described in
 | --- | --- |
 | `types.ts` | World Graph Core Model: `Entity`, `LayerMembership`, `Anchor`, `Relation`, `WorldGraphSnapshot`, and the id / enum-like string types (`LayerId`, `EntityType`, `RelationType`, `AnchorPrecision`, `Visibility`, `RelationProvenance`). A membership may carry the `recordId` of the record behind it (a want-to-go item or a planned travel record), so one entity can have several memberships in the same layer. |
 | `localizedText.ts` | `LanguageTag`, `LocalizedText`, and pure name helpers: `resolveName(text, uiLocale)`, `originalNameSubtitle(text, uiLocale)`, `searchableNames(text)`, and `copyLocalizedText(text)`. Titles retain all registry names and an optional original language; resolution happens when displaying or sorting. |
-| `layers.ts` | Layer Registry: `LayerDefinition` and the read-only `officialLayers` list (`travel`, `want_to_go`). Icons are stored as lucide icon *names*, not components, so Core never depends on React. |
+| `layers.ts` | Layer Registry: `LayerDefinition` and the read-only `officialLayers` list (`travel`, `want_to_go`). Display labels are stored as translation keys; icons are stored as lucide icon *names*. Core does not resolve either into UI objects. |
 | `slug.ts` | `slugify()`, the single slug rule. Core itself no longer uses it (since RFC-LOC-1 Core-A, entity ids are registry place ids and the map merges by identity); it is kept for matching and search: the App's place resolver for V2 writes (`src/data/canonical/placeResolver.ts`, which imports `slug.ts` directly) and the country search in `scripts/local-editor-plugin.mjs`, whose `.mjs` copy must stay identical. The former copy in `scripts/want-to-go-store.mjs` was removed with that legacy write module (RFC-LOC-1 PR5). |
 | `snapshot.ts` | `mergeWorldGraphSnapshots()` combines several adapter outputs into one snapshot (first one wins on duplicate ids; memberships are keyed by `(entityId, layerId, recordId ?? '')`), plus `emptyWorldGraphSnapshot()`. |
 | `query.ts` | Layer query: `queryVisiblePlaces()` turns a snapshot and the visible layer ids into the places and route segments the map renders. Each layer decides which place subtypes it draws. Same-place merging (FR-MR-5) is by identity: an entity with visible memberships in several layers is one marker listing those layers (travel plus want-to-go is the heart badge), with the visible record ids per layer in `recordIds`. |
@@ -59,6 +59,11 @@ stable tie breakers; recent and country sorts use the same name comparator.
 
 The App supplies the current UI locale through its i18next provider (Simplified
 Chinese or English). Map labels, Cesium entity names, and Collection follow it.
+Official layer definitions carry a namespaced `labelKey` (`layer:travel` or
+`layer:wantToGo`), rather than a `{ zh, en }` label object. The App resolves it
+with `t(layer.labelKey)` using its `layer` translation resources. Core stores
+only the key and has no i18next dependency; language changes do not change
+layer ids, order, visibility defaults, accents, icons or projection rules.
 Deterministic data baselines always use `DEFAULT_UI_LOCALE` (Simplified Chinese),
 independent of browser preferences. Other domain fields and interface wording
 remain outside this Core name contract; their UI translation is being migrated

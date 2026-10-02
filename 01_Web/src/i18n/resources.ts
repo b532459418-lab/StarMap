@@ -1,4 +1,6 @@
 import { appShellResources } from './appShellResources.ts'
+import { layerResources } from './layerResources.ts'
+import { auxiliaryResources } from './auxiliaryResources.ts'
 import { domainErrorResources } from './domainErrorResources.ts'
 import { mapMenuResources } from './mapMenuResources.ts'
 import { droneEditorResources } from './droneEditorResources.ts'
@@ -10,6 +12,8 @@ import { DEFAULT_UI_LOCALE, EN_UI_LOCALE } from '../data/uiLocale.ts'
 
 export const resources = {
   [DEFAULT_UI_LOCALE]: {
+    layer: layerResources.zh,
+    auxiliary: auxiliaryResources.zh,
     appShell: appShellResources.zh,
     domainError: domainErrorResources.zh,
     mapMenu: mapMenuResources.zh,
@@ -25,7 +29,7 @@ export const resources = {
       title: '收藏', heading: '想去的地方', description: '想去图层里的全部地点，包括地图上暂时看不到的。',
       total: '全部', onMap: '地图上', hidden: '已隐藏', noLocation: '无坐标', fromTravelLog: '来自旅行记录',
       all: '全部', visible: '显示中', recent: '最近加入', name: '名称', country: '国家',
-      wantToGo: '想去', places_other: '{{count}} 个地点', filteredPlaces_other: '{{visible}} / {{count}} 个地点',
+      places_other: '{{count}} 个地点', filteredPlaces_other: '{{visible}} / {{count}} 个地点',
       add: '添加想去的地方', search: '搜索想去的地方', searchPlaceholder: '搜索名称、国家代码或备注',
       status: '按状态筛选', sort: '排序', empty: '暂时没有想去的地方。', emptyEditable: '还没有想去的地方。',
       noResults: '没有符合条件的地点。', clear: '清除筛选', added: '{{date}} 加入',
@@ -41,6 +45,8 @@ export const resources = {
     },
   },
   [EN_UI_LOCALE]: {
+    layer: layerResources.en,
+    auxiliary: auxiliaryResources.en,
     appShell: appShellResources.en,
     domainError: domainErrorResources.en,
     mapMenu: mapMenuResources.en,
@@ -56,7 +62,7 @@ export const resources = {
       title: 'Collection', heading: 'Places you want to go', description: 'Every place in your Want to Go layer, including places currently absent from the map.',
       total: 'Total', onMap: 'On map', hidden: 'Hidden', noLocation: 'No location', fromTravelLog: 'From travel log',
       all: 'All', visible: 'Visible', recent: 'Recently added', name: 'Name', country: 'Country',
-      wantToGo: 'Want to Go', places_one: '{{count}} place', places_other: '{{count}} places',
+      places_one: '{{count}} place', places_other: '{{count}} places',
       filteredPlaces_one: '{{visible}} / {{count}} place', filteredPlaces_other: '{{visible}} / {{count}} places',
       add: 'Add a place to visit', search: 'Search places to visit', searchPlaceholder: 'Search names, country codes or notes',
       status: 'Filter by status', sort: 'Sort', empty: 'No places to visit yet.', emptyEditable: 'You have not added any places to visit yet.',

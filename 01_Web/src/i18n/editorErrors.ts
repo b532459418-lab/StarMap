@@ -12,7 +12,7 @@ export class LocalEditorError extends Error {
   constructor(body: EditorErrorBody) {
     super([body.error, body.details].filter(Boolean).join('\n') || '本地编辑操作失败。')
     this.name = 'LocalEditorError'
-    this.code = body.code
+    this.code = body.code ?? (!body.error && !body.details ? 'E_LOCAL_EDITOR_FAILED' : undefined)
     this.params = body.params ?? {}
     this.details = body.details
   }
@@ -41,7 +41,10 @@ export function formatEditorError(error: Error, t: Translate): string {
       count: typeof record.count === 'number' ? record.count : 0,
     })
   }).join(', ')
-  return [t(`domainError:${error.code}`, values).trim(), error.details].filter(Boolean).join('\n')
+  const legacyFiles = error.code === 'E_LEGACY_UNMIGRATED' && Array.isArray(params.legacyFiles) && params.legacyFiles.length
+    ? t('domainError:legacyFiles', { files: params.legacyFiles.map(String).join(', ') })
+    : undefined
+  return [t(`domainError:${error.code}`, values).trim(), legacyFiles, error.details].filter(Boolean).join('\n')
 }
 
 const conversionCodes = ['E_CONVERT_COUNTRY_KIND', 'E_CONVERT_NO_COORDINATES', 'E_CONVERT_HIDDEN', 'E_CONVERT_CITY_IN_FOOTPRINT', 'E_PLANNED_NO_COORDINATES'] as const

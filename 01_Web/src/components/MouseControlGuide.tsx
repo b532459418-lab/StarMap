@@ -1,23 +1,12 @@
-import type { InterfaceLanguage } from './LanguageToggle'
-
-type MouseControlGuideProps = {
-  language: InterfaceLanguage
-}
+import { useTranslation } from 'react-i18next'
 
 type GestureAction = 'drag' | 'scroll' | 'tilt'
 
-const controlCopy: Record<InterfaceLanguage, Array<{ action: GestureAction; key: string; label: string }>> = {
-  zh: [
-    { action: 'drag', key: '单指拖动', label: '旋转地球' },
-    { action: 'scroll', key: '双指滑动', label: '缩放' },
-    { action: 'tilt', key: 'Ctrl+拖动', label: '俯仰' },
-  ],
-  en: [
-    { action: 'drag', key: 'One-finger drag', label: 'Orbit' },
-    { action: 'scroll', key: 'Two-finger scroll', label: 'Zoom' },
-    { action: 'tilt', key: 'Ctrl-drag', label: 'Tilt' },
-  ],
-}
+const controls: Array<{ action: GestureAction; key: string; label: string }> = [
+  { action: 'drag', key: 'dragGesture', label: 'orbit' },
+  { action: 'scroll', key: 'scrollGesture', label: 'zoom' },
+  { action: 'tilt', key: 'tiltGesture', label: 'tilt' },
+]
 
 function GestureIcon({ action }: { action: GestureAction }) {
   return (
@@ -67,16 +56,16 @@ function GestureIcon({ action }: { action: GestureAction }) {
   )
 }
 
-export function MouseControlGuide({ language }: MouseControlGuideProps) {
-  const controls = controlCopy[language]
+export function MouseControlGuide() {
+  const { t } = useTranslation('auxiliary')
 
   return (
     <footer
-      aria-label={language === 'zh' ? '地图触控板与鼠标操作说明' : 'Map trackpad and mouse controls'}
+      aria-label={t('mapControls')}
       className="atlas-mouse-guide"
     >
       <div className="atlas-mouse-guide-heading" aria-hidden="true">
-        <span>{language === 'zh' ? '触控板操作' : 'Trackpad controls'}</span>
+        <span>{t('trackpadControls')}</span>
         <span className="atlas-mouse-guide-line" />
       </div>
       <div className="atlas-mouse-guide-grid">
@@ -84,8 +73,8 @@ export function MouseControlGuide({ language }: MouseControlGuideProps) {
           <div className="atlas-mouse-guide-item" key={control.action}>
             <GestureIcon action={control.action} />
             <span className="atlas-mouse-guide-copy">
-              <span>{control.key}</span>
-              <strong>{control.label}</strong>
+              <span>{t(control.key)}</span>
+              <strong>{t(control.label)}</strong>
             </span>
           </div>
         ))}

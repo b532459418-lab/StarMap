@@ -2,8 +2,6 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { Check, ChevronDown, Footprints, Heart, Layers, Plus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { DEFAULT_UI_LOCALE } from '../data/uiLocale'
-import { useUiLocale } from '../i18n/useUiLocale'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { editorErrorNotice } from '../i18n/editorErrors'
@@ -43,11 +41,10 @@ type LayerPanelProps = {
 }
 
 export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onAddWantToGo }: LayerPanelProps) {
-  const { t } = useTranslation('mapMenu')
-  const { locale } = useUiLocale()
+  const { t } = useTranslation(['mapMenu', 'layer'])
   const { name, subtitle } = usePlaceNames()
-  const layerLocale = locale === DEFAULT_UI_LOCALE ? 'zh' : 'en'
-  const wantToGoLabel = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)?.label[layerLocale] ?? ''
+  const wantToGoLayer = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)
+  const wantToGoLabel = wantToGoLayer ? t(wantToGoLayer.labelKey) : ''
   const hiddenPlace = (item: WantToGoItem) => ({
     id: wantToGoEntityIds.get(item.id),
     nameZh: item.place.nameZh,
@@ -138,7 +135,7 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
                     {Icon ? <Icon /> : null}
                   </span>
                   <span className="atlas-layer-copy">
-                    <strong>{layer.label[layerLocale]}</strong>
+                    <strong>{t(layer.labelKey)}</strong>
                     <small>{t(checked ? 'shown' : 'hidden')}</small>
                   </span>
                   {checked ? <Check aria-hidden="true" /> : null}
