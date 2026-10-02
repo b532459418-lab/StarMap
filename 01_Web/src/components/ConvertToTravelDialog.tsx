@@ -1,4 +1,4 @@
-import { editorErrorNotice } from '../i18n/editorErrors.ts'
+import { LocalEditorError, editorErrorNotice, requiresEditorReload } from '../i18n/editorErrors.ts'
 import { worldGraphSnapshot } from '../data/worldGraph'
 import { WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
@@ -40,8 +40,7 @@ type ConvertToTravelDialogProps = {
  *
  * 日期一律由用户填写，不预填今天。关闭时整个内容卸载，下次打开是一张干净的表单；
  * 成功后整页刷新，失败把服务端的 error 留在对话框里，不关闭（与 WantToGoAddDialog 相同）。
- * 例外：错误以「足迹已创建，但」开头时足迹已经写入，页面数据已过期，提交按钮换成「刷新页面」，
- * 不允许在过期数据上再次提交。
+ * 部分写入或请求结果未知时，提交按钮换成「刷新页面」，避免再次提交可能已经写入的转换。
  */
 export function ConvertToTravelDialog({ target, onClose, onConverted }: ConvertToTravelDialogProps) {
   return target ? (
@@ -72,6 +71,7 @@ function ConvertToTravelDialogContent({
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
   const [needsReload, setNeedsReload] = useState(false)
+  const [showWriteResultWarning, setShowWriteResultWarning] = useState(false)
 
   const item = target.source === 'want-to-go' ? wantToGoItemById.get(target.recordId) : undefined
   const planned = target.source === 'planned' ? plannedRecordById.get(target.recordId) : undefined
@@ -149,10 +149,13 @@ function ConvertToTravelDialogContent({
       reloadAfterLocalSave()
     } catch (error) {
       // 例如城市已在足迹里时服务端返回「这个城市已经在足迹里了……」，不写任何文件（规格 §2 第 3 条）。
-      const message = error instanceof Error ? error.message : t('editor:convertFailed')
       setNotice(editorErrorNotice(error, 'editor:convertFailed'))
-      // 足迹已写入、后续步骤失败（规格 §2 第 1 条）：只能刷新，不能在过期数据上重试。
-      setNeedsReload(message.startsWith('足迹已创建，但'))
+      // 部分写入或响应结果无法确认时，先刷新核对，避免重复写入。
+      const reloadRequired = requiresEditorReload(error, { afterWrite: true })
+      setNeedsReload(reloadRequired)
+      const noticeExplainsReload = error instanceof LocalEditorError
+        && (error.code === 'E_PARTIAL_WRITE' || error.code === 'E_EDITOR_RESPONSE_INVALID')
+      setShowWriteResultWarning(reloadRequired && !noticeExplainsReload)
       setBusy(false)
     }
   }
@@ -244,6 +247,7 @@ function ConvertToTravelDialogContent({
           ) : null}
 
           {notice ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{notice}</p> : null}
+          {showWriteResultWarning ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{t('editor:writeResultUnknown')}</p> : null}
 
           {needsReload ? (
             // 被点击的提交按钮已经消失，焦点移到替代它的按钮上，键盘用户不会落到页面顶部。

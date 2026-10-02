@@ -1,26 +1,10 @@
 import type { TravelAtlasEditorState } from './editorState'
 import type { WantToGoItem } from './derive/wantToGo.ts'
-import { LocalEditorError } from '../i18n/editorErrors.ts'
-
-type EditorResponse<T> = {
-  ok: boolean
-  error?: string
-  details?: string
-  code?: string
-  params?: Record<string, unknown>
-} & T
+import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
 
 const editorHeaders = {
   'content-type': 'application/json',
   'x-travelatlas-local-editor': '1',
-}
-
-const parseResponse = async <T,>(response: Response) => {
-  const body = await response.json() as EditorResponse<T>
-  if (!response.ok || !body.ok) {
-    throw new LocalEditorError(body)
-  }
-  return body
 }
 
 export type CountrySearchOption = {

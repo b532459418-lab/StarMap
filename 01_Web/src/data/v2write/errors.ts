@@ -34,6 +34,7 @@ export const FIELD_LABELS: Readonly<Record<string, string>> = {
   nameEn: '地点英文名',
   id: '想去记录 id',
   recordId: '旅行计划 id',
+  search_query: '城市名称',
 }
 
 const label = (params: V2ErrorParams): string => {
@@ -122,6 +123,12 @@ export const V2_WRITE_MESSAGES = {
     return `投递箱文件夹 ${folders} 的 place.json 都指向别的地点（或内容无效），未写入文件。请先确认这些文件夹属于哪个地点。`
   },
   E_UNKNOWN_ENDPOINT: () => '未知的本地编辑接口。',
+  E_EDITOR_READ_FORBIDDEN: () => '仅允许本机编辑会话读取。',
+  E_EDITOR_WRITE_FORBIDDEN: () => '仅允许本机编辑会话写入。',
+  E_SEARCH_COUNTRY_NOT_FOUND: () => '没有找到这个国家，无法限制城市检索范围。',
+  E_CITY_SEARCH_UNAVAILABLE: () => 'OpenStreetMap 暂时不可用。请稍后重试，或改用手动坐标。',
+  E_CITY_SEARCH_ALL_UNAVAILABLE: () => 'Cesium ion 与 OpenStreetMap 均暂时不可用。请稍后重试，或改用手动坐标。',
+  E_REQUEST_TOO_LARGE: () => '请求内容过大。',
   /** 请求体读不出来（过大、不是 JSON）：原因原样（同旧模式）。 */
   E_REQUEST_INVALID: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '请求内容无效。'),
   /** 纯函数里意料之外的错误（程序缺陷）：原因原样，兜底用旧模式的「本地编辑操作失败。」。 */
@@ -153,10 +160,11 @@ export const fail = (code: V2WriteErrorCode, params?: V2ErrorParams): never => {
   throw new V2WriteError(code, params)
 }
 
-/** 错误响应体：`{ ok: false, error, code, params? }`。 */
-export const errorBody = (error: V2WriteError) => ({
+/** 错误响应体：`{ ok: false, error, code, params?, details? }`；诊断详情不改写。 */
+export const errorBody = (error: V2WriteError & { details?: string }) => ({
   ok: false as const,
   error: error.message,
   code: error.code,
   ...(error.params !== undefined ? { params: error.params } : {}),
+  ...(typeof error.details === 'string' ? { details: error.details } : {}),
 })
