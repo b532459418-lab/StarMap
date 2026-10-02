@@ -57,6 +57,18 @@ npm run build:public
 npm run privacy:check
 ```
 
+GitHub Actions runs the **CI / Public checks** job for every pull request to
+`main`, every push to `main`, and manual runs. It uses Node.js 24 on Ubuntu and
+executes `npm run release:check`: the privacy audit followed by a clean archive
+of the committed source, locked dependency installation, lint, the complete
+test suite, and a public build. No personal data or map credentials are needed.
+New commits cancel older runs for the same pull request or branch.
+
+Before merging, check that **Public checks** passed for the latest commit.
+Maintainers can require this check through branch protection; the workflow
+alone does not enforce a merge restriction. Browser checks remain necessary
+for changes to user-visible behavior.
+
 Architecture rules that lint enforces:
 
 - `src/worldgraph/**` is StarMap Core. It must not import `src/components/**`,
