@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { Viewer } from '@photo-sphere-viewer/core'
 import '@photo-sphere-viewer/core/index.css'
 import type { DroneMediaItem } from '../data/droneMedia'
+import { useUiLocale } from '../i18n/useUiLocale'
+import { DEFAULT_UI_LOCALE } from '../data/uiLocale'
+import { panoramaCaption, panoramaLanguageKeys } from '../i18n/mediaViewerOptions.ts'
 
 type DronePanoramaModalProps = {
   item?: DroneMediaItem
@@ -18,9 +22,22 @@ type PanoramaLoadResult = {
 }
 
 export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
+  const { t } = useTranslation('mediaViewer')
+  const { locale } = useUiLocale()
+  const title = item ? (locale === DEFAULT_UI_LOCALE ? item.titleZh || item.titleEn : item.titleEn || item.titleZh) : ''
+  const viewerOptions = useMemo(() => ({
+    caption: panoramaCaption(title),
+    lang: Object.fromEntries(panoramaLanguageKeys.map((key) => [key, t(key)])),
+  }), [t, title])
+  const viewerOptionsRef = useRef(viewerOptions)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const [loadResult, setLoadResult] = useState<PanoramaLoadResult>({ state: 'loading' })
+
+  useEffect(() => {
+    viewerOptionsRef.current = viewerOptions
+    viewerRef.current?.setOptions(viewerOptions)
+  }, [viewerOptions])
 
   useEffect(() => {
     if (!item) return
@@ -70,7 +87,7 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
       viewerRef.current = new Viewer({
         container: containerRef.current,
         panorama: image.src,
-        caption: item.titleEn,
+        ...viewerOptionsRef.current,
         defaultZoomLvl: 35,
         keyboard: 'always',
         mousewheel: true,
@@ -108,6 +125,7 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
   return (
     <div
       aria-modal="true"
+      aria-labelledby="drone-panorama-title"
       className="drone-panorama-modal fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4 text-white backdrop-blur-sm sm:p-6"
       role="dialog"
       onMouseDown={(event) => {
@@ -118,10 +136,10 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
         <div className="drone-panorama-header flex items-center justify-between gap-4 border-b border-white/10 px-5 py-4">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-300">
-              {item.type === 'panorama360' ? 'Drone 360 Panorama' : 'Drone Aerial Photo'}
+              {t(item.type === 'panorama360' ? 'dronePanorama' : 'droneAerialPhoto')}
             </p>
-            <h2 className="mt-1 truncate text-xl font-semibold tracking-normal">
-              {item.titleZh}
+            <h2 id="drone-panorama-title" className="mt-1 truncate text-xl font-semibold tracking-normal">
+              {title}
             </h2>
             <p className="drone-panorama-meta mt-1 text-sm">
               {item.fileName} · {item.resolution}
@@ -129,7 +147,7 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
           </div>
           <button
             type="button"
-            aria-label="Close drone media"
+            aria-label={t('closeDroneMedia')}
             onClick={onClose}
             className="grid size-11 shrink-0 place-items-center rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/18"
           >
@@ -140,13 +158,13 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
         <div className="relative min-h-0 flex-1">
           <div ref={containerRef} className="drone-panorama-viewer absolute inset-0">
             {item.type === 'aerialPhoto' && loadResult.itemId === item.id && loadResult.src ? (
-              <img className="drone-aerial-preview" src={loadResult.src} alt={item.titleZh} />
+              <img className="drone-aerial-preview" src={loadResult.src} alt={title} />
             ) : null}
             {item.type === 'panorama360' ? (
               <button
                 type="button"
                 className="panorama-fullscreen-back"
-                aria-label="Exit fullscreen and return to window"
+                aria-label={t('exitFullscreen')}
                 onClick={() => viewerRef.current?.exitFullscreen()}
               >
                 <ArrowLeft aria-hidden="true" strokeWidth={1.8} />
@@ -159,13 +177,13 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
               <div className="max-w-md px-6 text-center">
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-300">
                   {loadState === 'loading'
-                    ? item.type === 'panorama360' ? '正在加载全景图' : '正在加载航拍照片'
-                    : item.type === 'panorama360' ? '全景资源暂时无法读取' : '航拍照片暂时无法读取'}
+                    ? t(item.type === 'panorama360' ? 'loadingPanorama' : 'loadingAerialPhoto')
+                    : t(item.type === 'panorama360' ? 'missingPanorama' : 'missingAerialPhoto')}
                 </p>
                 <p className="mt-3 text-sm leading-6 text-slate-300">
                   {loadState === 'loading'
-                    ? item.type === 'panorama360' ? '正在生成并加载沉浸式 360 视图。' : '正在加载高分辨率航拍预览。'
-                    : '请稍后重新打开。如果问题持续存在，请重新导入原图。'}
+                    ? t(item.type === 'panorama360' ? 'loadingPanoramaDescription' : 'loadingAerialDescription')
+                    : t('retryDescription')}
                 </p>
               </div>
             </div>

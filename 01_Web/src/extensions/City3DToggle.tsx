@@ -1,4 +1,5 @@
 import { Building2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { googleConfigured } from './googleImagery'
 import './city3d.css'
 
@@ -8,6 +9,7 @@ type City3DToggleProps = {
 }
 
 export function City3DToggle({ enabled, onChange }: City3DToggleProps) {
+  const { t } = useTranslation('appShell')
   if (!googleConfigured) return null
 
   return (
@@ -15,8 +17,8 @@ export function City3DToggle({ enabled, onChange }: City3DToggleProps) {
       type="button"
       className="atlas-dock-button atlas-city-3d-toggle pointer-events-auto"
       aria-pressed={enabled}
-      aria-label={enabled ? '关闭城市 3D' : '开启城市 3D'}
-      title={enabled ? '关闭 Google 城市 3D' : '开启 Google 城市 3D'}
+      aria-label={t(enabled ? 'disableCity3D' : 'enableCity3D')}
+      title={t(enabled ? 'disableGoogleCity3D' : 'enableGoogleCity3D')}
       onClick={() => onChange(!enabled)}
     >
       <Building2 aria-hidden="true" />

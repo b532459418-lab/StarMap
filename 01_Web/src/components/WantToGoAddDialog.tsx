@@ -1,4 +1,5 @@
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { useTranslation } from 'react-i18next'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -137,7 +138,7 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
       reloadAfterLocalSave()
     } catch (error) {
       // 例如重复添加时服务端返回「这个地方已在想去列表中。」（FR-WTG-8）。
-      setNotice(error instanceof Error ? error.message : { key: 'editor:addFailed' })
+      setNotice(editorErrorNotice(error, 'editor:addFailed'))
       setBusy(false)
     }
   }

@@ -1,4 +1,5 @@
 import { Signpost } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import './labels.css'
 
 type LabelsToggleProps = {
@@ -8,6 +9,7 @@ type LabelsToggleProps = {
 }
 
 export function LabelsToggle({ available, enabled, onChange }: LabelsToggleProps) {
+  const { t } = useTranslation('appShell')
   if (!available) return null
 
   return (
@@ -15,8 +17,8 @@ export function LabelsToggle({ available, enabled, onChange }: LabelsToggleProps
       type="button"
       className="atlas-dock-button atlas-map-labels-toggle pointer-events-auto"
       aria-pressed={enabled}
-      aria-label={enabled ? '隐藏地名/路网' : '显示地名/路网'}
-      title={enabled ? '隐藏地名/路网' : '显示地名/路网'}
+      aria-label={t(enabled ? 'hideLabels' : 'showLabels')}
+      title={t(enabled ? 'hideLabels' : 'showLabels')}
       onClick={() => onChange(!enabled)}
     >
       <Signpost aria-hidden="true" />

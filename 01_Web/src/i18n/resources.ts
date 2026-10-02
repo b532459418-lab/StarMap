@@ -1,3 +1,8 @@
+import { appShellResources } from './appShellResources.ts'
+import { domainErrorResources } from './domainErrorResources.ts'
+import { mapMenuResources } from './mapMenuResources.ts'
+import { droneEditorResources } from './droneEditorResources.ts'
+import { mediaViewerResources } from './mediaViewerResources.ts'
 import { editorResources } from './editorResources.ts'
 import { detailsResources } from './detailsResources.ts'
 import { journeyResources } from './journeyResources.ts'
@@ -5,6 +10,11 @@ import { DEFAULT_UI_LOCALE, EN_UI_LOCALE } from '../data/uiLocale.ts'
 
 export const resources = {
   [DEFAULT_UI_LOCALE]: {
+    appShell: appShellResources.zh,
+    domainError: domainErrorResources.zh,
+    mapMenu: mapMenuResources.zh,
+    droneEditor: droneEditorResources.zh,
+    mediaViewer: mediaViewerResources.zh,
     editor: editorResources.zh, details: detailsResources.zh, journey: journeyResources.zh,
     common: {
       language: '界面语言', subtitle: '记录你走过的地方，让每段旅程成为可以重温的故事。',
@@ -31,6 +41,11 @@ export const resources = {
     },
   },
   [EN_UI_LOCALE]: {
+    appShell: appShellResources.en,
+    domainError: domainErrorResources.en,
+    mapMenu: mapMenuResources.en,
+    droneEditor: droneEditorResources.en,
+    mediaViewer: mediaViewerResources.en,
     editor: editorResources.en, details: detailsResources.en, journey: journeyResources.en,
     common: {
       language: 'Interface language', subtitle: 'Map the places you have visited and turn every journey into a story you can revisit.',

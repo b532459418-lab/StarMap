@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, Layers3 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { mapSourceOptions } from '../extensions/mapSources'
 import type { MapSourceId } from '../extensions/mapSources'
 
@@ -9,6 +10,7 @@ type MapSourceSwitcherProps = {
 }
 
 export function MapSourceSwitcher({ value, onChange }: MapSourceSwitcherProps) {
+  const { t } = useTranslation('mapMenu')
   const [open, setOpen] = useState(false)
   const shellRef = useRef<HTMLDivElement>(null)
 
@@ -31,12 +33,13 @@ export function MapSourceSwitcher({ value, onChange }: MapSourceSwitcherProps) {
   }, [open])
 
   const activeOption = mapSourceOptions.find((option) => option.id === value)
+  const activeLabel = t(`source.${activeOption?.id ?? 'local'}.label`)
 
   return (
     <div ref={shellRef} className="atlas-map-source-switcher">
       {open ? (
-        <div className="atlas-map-source-menu" role="menu" aria-label="选择地图图源">
-          <p>地图图源</p>
+        <div className="atlas-map-source-menu" role="menu" aria-label={t('selectSource')}>
+          <p>{t('sources')}</p>
           {mapSourceOptions.map((option) => (
             <button
               key={option.id}
@@ -47,6 +50,7 @@ export function MapSourceSwitcher({ value, onChange }: MapSourceSwitcherProps) {
               data-active={option.id === value ? 'true' : 'false'}
               data-configured={option.configured ? 'true' : 'false'}
               disabled={!option.configured}
+              title={t(option.id === 'local' ? 'bundledSource' : option.configured ? 'credentialsPresent' : 'missingCredentials')}
               onClick={() => {
                 onChange(option.id)
                 setOpen(false)
@@ -54,9 +58,9 @@ export function MapSourceSwitcher({ value, onChange }: MapSourceSwitcherProps) {
             >
               <span className="atlas-map-source-status" aria-hidden="true" />
               <span className="atlas-map-source-copy">
-                <strong>{option.label}</strong>
+                <strong>{t(`source.${option.id}.label`)}</strong>
                 <small>
-                  {option.configured ? option.description : '未配置 API Key'}
+                  {option.configured ? t(`source.${option.id}.description`) : t('missingCredentials')}
                 </small>
               </span>
               {option.id === value ? <Check aria-hidden="true" /> : null}
@@ -67,9 +71,9 @@ export function MapSourceSwitcher({ value, onChange }: MapSourceSwitcherProps) {
       <button
         type="button"
         className="atlas-dock-button atlas-map-source-button pointer-events-auto"
-        aria-label={`切换地图图源，当前为${activeOption?.label ?? '本地低清'}`}
+        aria-label={t('switchSource', { name: activeLabel })}
         aria-expanded={open}
-        title={`图源：${activeOption?.label ?? '本地低清'}`}
+        title={t('sourceTitle', { name: activeLabel })}
         onClick={() => setOpen((visible) => !visible)}
       >
         <Layers3 aria-hidden="true" />

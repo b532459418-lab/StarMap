@@ -1,6 +1,8 @@
 import { lazy, Suspense } from 'react'
 import { ArrowUpRight, Check, Copy, RefreshCw } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { ReleaseUpdateState } from '../data/releaseUpdates'
+import { useUiLocale } from '../i18n/useUiLocale'
 
 const ReleaseMarkdown = lazy(() => import('./ReleaseMarkdown'))
 
@@ -11,13 +13,14 @@ type ReleaseUpdateButtonProps = {
 }
 
 export function ReleaseUpdateButton({ active, state, onToggle }: ReleaseUpdateButtonProps) {
+  const { t } = useTranslation('appShell')
   return (
     <button
       type="button"
       className="atlas-dock-button atlas-release-button pointer-events-auto"
-      aria-label={active ? '返回上一界面' : '版本更新'}
+      aria-label={t(active ? 'returnPrevious' : 'updates')}
       aria-current={active ? 'page' : undefined}
-      title={active ? '返回上一界面' : state.hasUnseenUpdate ? '发现新版本，查看更新' : '版本更新'}
+      title={t(active ? 'returnPrevious' : state.hasUnseenUpdate ? 'unseenUpdate' : 'updates')}
       data-update-available={state.hasUnseenUpdate ? 'true' : 'false'}
       onClick={onToggle}
     >
@@ -32,32 +35,34 @@ type ReleaseUpdatePageProps = {
 }
 
 export function ReleaseUpdatePage({ state }: ReleaseUpdatePageProps) {
+  const { t } = useTranslation('appShell')
+  const { locale } = useUiLocale()
   const statusCopy = state.status === 'checking'
-    ? '正在检查最新版本'
+    ? t('checking')
     : state.status === 'available' && state.release
-      ? `发现新版本 ${state.release.tag_name}`
+      ? t('available', { version: state.release.tag_name })
       : state.status === 'current'
-        ? state.message || '当前已是最新版本'
+        ? state.message || t('current')
         : state.status === 'unconfigured'
-          ? state.message || '尚未配置 GitHub 更新源'
-          : state.message || '等待检查版本状态'
+          ? state.message || t('unconfigured')
+          : state.message || t('waiting')
 
   const announcement = state.release?.body?.trim()
-    || `StarMap v${state.currentVersion}\n\n当前公共版包含 Map、Journey 与版本更新中心；默认中文，支持本地数据与媒体边界。`
+    || t('fallbackAnnouncement', { version: state.currentVersion })
 
   return (
     <div className="atlas-update-scroll selector-scrollbar h-full overflow-y-auto overscroll-contain">
       <div className="atlas-update-shell mx-auto w-full max-w-7xl px-5 pb-24 sm:px-8">
         <section className="update-command-panel">
           <div>
-            <p className="journey-kicker">Release center</p>
-            <h2>版本更新</h2>
-            <p>在不覆盖私人数据和本地修改的前提下，了解并完成 StarMap 更新。</p>
+            <p className="journey-kicker">{t('releaseCenter')}</p>
+            <h2>{t('updates')}</h2>
+            <p>{t('introduction')}</p>
           </div>
           <div className="update-status-card" data-status={state.status}>
             <span className="update-status-light" aria-hidden="true" />
             <div>
-              <p>当前版本 v{state.currentVersion}</p>
+              <p>{t('currentVersionValue', { version: state.currentVersion })}</p>
               <strong>{statusCopy}</strong>
             </div>
           </div>
@@ -66,28 +71,28 @@ export function ReleaseUpdatePage({ state }: ReleaseUpdatePageProps) {
         <div className="update-content-grid">
           <section className="update-content-card update-guide-card">
             <p className="update-card-index">01</p>
-            <p className="update-card-kicker">Guide</p>
-            <h3>更新指南</h3>
+            <p className="update-card-kicker">{t('guide')}</p>
+            <h3>{t('updateGuide')}</h3>
             <ol>
-              <li>先保存或提交自己的本地修改，并确认私人照片和环境文件仍在忽略范围内。</li>
-              <li>阅读本页的更新公告与版本说明，确认这次更新是否影响自己的定制内容。</li>
-              <li>复制 AI 更新指令，交给能访问项目文件的 AI 以“合并”方式执行更新。</li>
-              <li>更新后运行 lint、build、privacy:check 和 media:check，再打开网站检查地图与照片。</li>
+              <li>{t('guideSave')}</li>
+              <li>{t('guideRead')}</li>
+              <li>{t('guideMerge')}</li>
+              <li>{t('guideCheck')}</li>
             </ol>
           </section>
 
           <section className="update-content-card update-version-card">
             <p className="update-card-index">02</p>
-            <p className="update-card-kicker">Version notes</p>
-            <h3>版本说明</h3>
+            <p className="update-card-kicker">{t('versionNotes')}</p>
+            <h3>{t('versionNotes')}</h3>
             <dl>
-              <div><dt>当前版本</dt><dd>v{state.currentVersion}</dd></div>
-              <div><dt>最新版本</dt><dd>{state.release?.tag_name ?? '尚未发布'}</dd></div>
-              <div><dt>发布时间</dt><dd>{state.release?.published_at ? new Date(state.release.published_at).toLocaleDateString('zh-CN') : '—'}</dd></div>
-              <div><dt>更新方式</dt><dd>人工确认 / AI 辅助合并</dd></div>
+              <div><dt>{t('currentVersion')}</dt><dd>v{state.currentVersion}</dd></div>
+              <div><dt>{t('latestVersion')}</dt><dd>{state.release?.tag_name ?? t('unpublished')}</dd></div>
+              <div><dt>{t('publishedAt')}</dt><dd>{state.release?.published_at ? new Date(state.release.published_at).toLocaleDateString(locale) : '—'}</dd></div>
+              <div><dt>{t('updateMethod')}</dt><dd>{t('manualMerge')}</dd></div>
             </dl>
             <p className="update-caution">
-              注意：更新不会自动覆盖项目。请勿替换 `.env.local`、私人旅行数据、个人媒体或未提交修改。
+              {t('caution')}
             </p>
             <div className="update-page-actions">
               <button
@@ -96,7 +101,7 @@ export function ReleaseUpdatePage({ state }: ReleaseUpdatePageProps) {
                 onClick={() => void state.copyUpdatePrompt()}
               >
                 {state.copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                {state.copied ? '已复制' : '复制 AI 更新指令'}
+                {t(state.copied ? 'copied' : 'copyUpdatePrompt')}
               </button>
               <button
                 type="button"
@@ -104,23 +109,23 @@ export function ReleaseUpdatePage({ state }: ReleaseUpdatePageProps) {
                 onClick={() => void state.checkForUpdates(true)}
               >
                 <RefreshCw aria-hidden="true" />
-                重新检查
+                {t('recheck')}
               </button>
             </div>
           </section>
 
           <section className="update-content-card update-announcement-card">
             <p className="update-card-index">03</p>
-            <p className="update-card-kicker">Announcement</p>
-            <h3>更新公告</h3>
+            <p className="update-card-kicker">{t('announcement')}</p>
+            <h3>{t('announcement')}</h3>
             <div className="update-release-copy">
-              <Suspense fallback={<p className="update-release-loading">正在排版更新公告…</p>}>
+              <Suspense fallback={<p className="update-release-loading">{t('formatting')}</p>}>
                 <ReleaseMarkdown source={announcement} />
               </Suspense>
             </div>
             {state.release ? (
               <a className="update-release-link" href={state.release.html_url} target="_blank" rel="noreferrer">
-                查看 GitHub Release <ArrowUpRight aria-hidden="true" />
+                {t('viewRelease')} <ArrowUpRight aria-hidden="true" />
               </a>
             ) : null}
           </section>

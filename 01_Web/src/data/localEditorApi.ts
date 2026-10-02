@@ -1,10 +1,13 @@
 import type { TravelAtlasEditorState } from './editorState'
 import type { WantToGoItem } from './derive/wantToGo.ts'
+import { LocalEditorError } from '../i18n/editorErrors.ts'
 
 type EditorResponse<T> = {
   ok: boolean
   error?: string
   details?: string
+  code?: string
+  params?: Record<string, unknown>
 } & T
 
 const editorHeaders = {
@@ -15,7 +18,7 @@ const editorHeaders = {
 const parseResponse = async <T,>(response: Response) => {
   const body = await response.json() as EditorResponse<T>
   if (!response.ok || !body.ok) {
-    throw new Error([body.error, body.details].filter(Boolean).join('\n') || '本地编辑操作失败。')
+    throw new LocalEditorError(body)
   }
   return body
 }

@@ -1,3 +1,4 @@
+import { editorErrorNotice, localizedConversionReason } from '../i18n/editorErrors.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { regionName } from '../i18n/placeNames'
@@ -80,7 +81,7 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
     void updateLocalWantToGo(item.id, { hidden: true })
       .then(reloadAfterLocalSave)
       .catch((error: unknown) => {
-        setNotice(error instanceof Error ? error.message : { key: 'details:hideFailed' })
+        setNotice(editorErrorNotice(error, 'details:hideFailed'))
         setBusy(false)
       })
   }
@@ -136,7 +137,7 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
               type="button"
               className="atlas-wtg-card-convert"
               disabled={busy || convertBlockReason !== undefined}
-              title={convertBlockReason}
+              title={localizedConversionReason(convertBlockReason, t)}
               aria-describedby={convertBlockReason ? convertHintId : undefined}
               onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
@@ -147,7 +148,7 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
         </div>
       ) : null}
 
-      {convertBlockReason ? <p id={convertHintId} className="atlas-wtg-card-hint">{convertBlockReason}</p> : null}
+      {convertBlockReason ? <p id={convertHintId} className="atlas-wtg-card-hint">{localizedConversionReason(convertBlockReason, t)}</p> : null}
 
       {notice ? <p className="atlas-wtg-card-notice" role="status">{notice}</p> : null}
     </aside>

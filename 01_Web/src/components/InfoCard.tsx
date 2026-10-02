@@ -1,3 +1,4 @@
+import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
@@ -110,7 +111,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       }))
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:saveFailed' })
+      setEditorNotice(editorErrorNotice(error, 'editor:saveFailed'))
       setEditorBusy(false)
     }
   }
@@ -130,7 +131,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       }))
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:saveFailed' })
+      setEditorNotice(editorErrorNotice(error, 'editor:saveFailed'))
       setEditorBusy(false)
     }
   }
@@ -186,7 +187,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       })
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:createFailed' })
+      setEditorNotice(editorErrorNotice(error, 'editor:createFailed'))
       setEditorBusy(false)
     }
   }
@@ -205,7 +206,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       await importLocalMedia(uploadedSourcePaths)
       reloadAfterLocalSave()
     } catch (error) {
-      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:photoImportFailed' })
+      setEditorNotice(editorErrorNotice(error, 'editor:photoImportFailed'))
       setEditorBusy(false)
     } finally {
       if (photoInputRef.current) photoInputRef.current.value = ''
@@ -217,6 +218,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
     onOpenCityPhotos?.({
       photos: cityPhotos,
       cityName: name(city),
+      cityId: city.id,
       initialPhotoId,
       mode: galleryMode,
     })
@@ -508,7 +510,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                     ...current,
                     hiddenCityIds: current.hiddenCityIds.filter((id) => countryIdOfCity(id) !== country?.id),
                   })).then(reloadAfterLocalSave).catch((error: unknown) => {
-                    setEditorNotice(error instanceof Error ? error.message : { key: 'editor:restoreFailed' })
+                    setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
                     setEditorBusy(false)
                   })
                 }}
@@ -530,7 +532,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       ...current,
                       hiddenMediaIds: current.hiddenMediaIds.filter((id) => !hiddenPhotoIdsForCity.includes(id)),
                     })).then(reloadAfterLocalSave).catch((error: unknown) => {
-                      setEditorNotice(error instanceof Error ? error.message : { key: 'editor:restoreFailed' })
+                      setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
                       setEditorBusy(false)
                     })
                   }}
@@ -554,7 +556,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       .then(() => deleteHiddenLocalMedia(city.id, hiddenPhotoIdsForCity))
                       .then(reloadAfterLocalSave)
                       .catch((error: unknown) => {
-                        setEditorNotice(error instanceof Error ? error.message : { key: 'editor:deletePermanentlyFailed' })
+                        setEditorNotice(editorErrorNotice(error, 'editor:deletePermanentlyFailed'))
                         setEditorBusy(false)
                       })
                   }}
