@@ -1,5 +1,10 @@
 export const journeyResources = {
   "zh": {
+    "unknownDate": "日期未知或需核对",
+    "uncertainDate": "日期不确定",
+    "yearOnly": "仅知年份",
+    "includesYearOnly": "含仅知年份记录",
+    "noMatchingVisits": "当前时间范围没有到访记录",
     "chronology": "旅程年表",
     "heading": "按时间重温走过的地方。",
     "description": "按时间倒序查看去过的城市，从最近的旅程开始。",
@@ -17,6 +22,11 @@ export const journeyResources = {
     "timeline": "时间线"
   },
   "en": {
+    "unknownDate": "Date unknown or needs review",
+    "uncertainDate": "Uncertain date",
+    "yearOnly": "Year only",
+    "includesYearOnly": "Includes year-only records",
+    "noMatchingVisits": "No visits in this time range",
     "chronology": "Travel chronology",
     "heading": "Places, in the order they became memories.",
     "description": "A living index of visited cities, arranged from the newest journey backwards.",

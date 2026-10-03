@@ -8,7 +8,9 @@ import { createBrowserFixture } from './browser-fixture.mjs'
 
 const webRoot = fileURLToPath(new URL('../', import.meta.url))
 const large = process.argv.slice(2).includes('--performance')
-if (process.argv.slice(2).some((arg) => arg !== '--performance')) throw new Error('Supported option: --performance')
+const timeFilters = process.argv.slice(2).includes('--time-filters')
+const criticalFlows = process.argv.slice(2).includes('--critical-flows')
+if (process.argv.slice(2).some((arg) => !['--performance', '--time-filters', '--critical-flows'].includes(arg)) || [large, timeFilters, criticalFlows].filter(Boolean).length > 1) throw new Error('Supported options: --performance, --time-filters or --critical-flows')
 const occupied = await new Promise((resolve, reject) => {
   const socket = net.connect({ host: '127.0.0.1', port: 5173 })
   socket.setTimeout(2000)
@@ -25,7 +27,7 @@ function cleanupTarget(value) {
 }
 try {
   await createBrowserFixture(root, { large })
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url)), 'test', '--config', 'playwright.config.mjs'], {
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url)), 'test', '--config', 'playwright.config.mjs', ...(timeFilters ? ['time-filter'] : criticalFlows ? ['critical-flows.spec.mjs'] : [])], {
     cwd: webRoot,
     stdio: 'inherit',
     env: { ...process.env, STARMAP_BROWSER_TEST_ROOT: root, STARMAP_BROWSER_PERFORMANCE: large ? '1' : '0', STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '' },

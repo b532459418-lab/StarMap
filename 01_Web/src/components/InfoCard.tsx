@@ -9,7 +9,7 @@ import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource
 import { addLocalTravelRecord, deleteHiddenLocalMedia, importLocalMedia, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState, uploadLocalMedia } from '../data/localEditorApi'
 import type { CitySearchOption } from '../data/localEditorApi'
 import { cityById, countryById, countryIdOfCity, getCitiesForCountry } from '../data/travelAtlas'
-import type { CityId, Country, CountryId, SelectionMode } from '../types/travel'
+import type { CityId, Country, CountryId, SelectionMode, TravelMapRecord } from '../types/travel'
 import type { CityPhotoGalleryRequest } from './CityPhotoGalleryModal'
 import { LocationSearchField } from './LocationSearchField'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
@@ -17,11 +17,17 @@ import { MediaImportRecovery } from './MediaImportRecovery'
 import { CityWantToGoAction } from './CityWantToGoAction'
 import { useFlipLayout } from './useFlipLayout'
 import { useMediaImportSession } from './useMediaImportSession'
+import type { DateEvidence } from '../worldgraph/timeFilter'
+import { formatRecordDate, formatRecordDateSummary } from '../data/derive/recordDateLabel'
 
 type InfoCardProps = {
   mode: SelectionMode
   selectedCountryId?: CountryId
   selectedCityId?: CityId
+  matchingTravelRecordIds?: readonly string[]
+  matchingCountryVisitDates?: readonly DateEvidence[]
+  outsideTimeFilter?: boolean
+  onClearTimeFilter?: () => void
   onSelectCity?: (cityId: CityId) => void
   onOpenCityPhotos?: (request: CityPhotoGalleryRequest) => void
 }
@@ -47,7 +53,7 @@ const getContinentName = (country?: Country) => {
   return continentRules.find(({ regions }) => regions.some((region) => regionText.includes(region)))?.continent ?? '—'
 }
 
-export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity, onOpenCityPhotos }: InfoCardProps) {
+export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTravelRecordIds, matchingCountryVisitDates, outsideTimeFilter = false, onClearTimeFilter, onSelectCity, onOpenCityPhotos }: InfoCardProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
   const country = selectedCountryId ? countryById[selectedCountryId] : undefined
@@ -55,6 +61,29 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   const isCityMode = mode === 'city' && city && country
   const isOverview = mode === 'overview' || !country
   const memoryCities = useMemo(() => country ? getCitiesForCountry(country.id) : [], [country])
+  const matchingRecordIds = useMemo(() => matchingTravelRecordIds === undefined ? undefined : new Set(matchingTravelRecordIds), [matchingTravelRecordIds])
+  const browseMemoryCities = useMemo(() => matchingRecordIds === undefined ? memoryCities
+    : memoryCities.filter((item) => item.records?.some((record) => matchingRecordIds.has(record.id))), [memoryCities, matchingRecordIds])
+  const selectedRecords = isCityMode ? city.records ?? [] : country?.records ?? []
+  const matchingVisits = matchingRecordIds === undefined ? selectedRecords : selectedRecords.filter((record) => matchingRecordIds.has(record.id))
+  const recordDateWords = { unknown: t('details:unknownDate'), yearOnly: t('journey:yearOnly'), partial: t('details:dateQualitypartial'),
+    missing: t('details:dateQualitymissing'), invalid: t('details:dateQualityinvalid') }
+  const recordDateLabel = (record: TravelMapRecord) => formatRecordDate(
+    { startDate: record.start_date, endDate: record.end_date, year: record.year },
+    recordDateWords,
+  )
+  const summaryDateLabel = (summary: unknown, records: readonly TravelMapRecord[]) => formatRecordDateSummary(summary,
+    records.map(record => ({ startDate: record.start_date, endDate: record.end_date, year: record.year })), recordDateWords)
+  const countryVisitLabel = (date: DateEvidence) => {
+    const label = date.quality === 'valid' && date.range.from && date.range.to
+      ? date.precision === 'year' ? date.range.from.slice(0, 4)
+        : date.range.from === date.range.to ? date.range.from : `${date.range.from} – ${date.range.to}`
+      : t('details:unknownDate')
+    return t('details:countryVisitDate', { date: label })
+  }
+  const matchingDateLabel = (records: readonly TravelMapRecord[]) => records.length > 0
+    ? [...new Set(records.map(recordDateLabel))].join(' · ')
+    : matchingCountryVisitDates?.length ? matchingCountryVisitDates.map(countryVisitLabel).join(' · ') : t('details:noMatchingVisits')
   const isCountryGrid = mode === 'country' && Boolean(country)
   const cityPhotos = useMemo(() => isCityMode ? getCityPhotos(city.id) : [], [city, isCityMode])
   const isCityPhotoGrid = isCityMode && cityPhotos.length > 0
@@ -91,7 +120,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
   const photoByDraftId = new Map(cityPhotos.map((item) => [item.id, item]))
   const displayedMemoryCities = cityEditing
     ? draftCityIds.map((id) => cityByDraftId.get(id)).filter(Boolean)
-    : memoryCities
+    : browseMemoryCities
   const displayedCityPhotos = photoEditing
     ? draftPhotoIds.map((id) => photoByDraftId.get(id)).filter(Boolean)
     : cityPhotos
@@ -244,7 +273,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       if (isCurrentTarget()) setEditorBusy(false)
     }
   }
-  const visitedCityCount = country?.cityIds.length ?? 0
+  const visitedCityCount = matchingRecordIds === undefined ? country?.cityIds.length ?? 0 : browseMemoryCities.length
   const openCityGallery = (galleryMode: CityPhotoGalleryRequest['mode'], initialPhotoId?: string) => {
     if (!isCityPhotoGrid || !city) return
     onOpenCityPhotos?.({
@@ -266,9 +295,11 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       : name(country)
   const dateLabel = isOverview
     ? t('details:selectPlace')
-    : isCityMode
-      ? city.visitedDateRange
-      : country.visitedDateRange
+    : matchingRecordIds !== undefined
+      ? matchingDateLabel(matchingVisits)
+      : isCityMode
+      ? summaryDateLabel(city.visitedDateRange, selectedRecords)
+      : summaryDateLabel(country.visitedDateRange, selectedRecords)
   const summary = isOverview
     ? t('details:overviewDescription')
     : isCityMode
@@ -294,7 +325,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                 {isCityMode ? subtitle(city) : subtitle(country)}
               </p>
               <p className="mt-2 text-sm font-medium text-white">
-                {isCityMode ? city.visitedDateRange : country.visitedDateRange}
+                {dateLabel}
               </p>
             </>
           ) : null}
@@ -307,6 +338,25 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       </div>
 
       <div className="atlas-info-content atlas-panel-body flex min-h-0 flex-1 flex-col gap-4">
+        {outsideTimeFilter && !isOverview ? (
+          <div className="atlas-local-editor-notice" role="status" data-time-filter-outside="true">
+            <p>{t('details:outsideTimeFilter')}</p>
+            {onClearTimeFilter ? <button type="button" onClick={onClearTimeFilter}>{t('details:clearTimeFilter')}</button> : null}
+          </div>
+        ) : null}
+        {matchingRecordIds !== undefined && !isOverview ? (
+          <section className="shrink-0 text-sm text-slate-600" aria-label={t('details:matchingVisits', { count: matchingVisits.length })}>
+            <p className="font-semibold">{t('details:matchingVisits', { count: matchingVisits.length })}</p>
+            {matchingVisits.length > 0 ? (
+              <ul className="max-h-32 overflow-y-auto">
+                {matchingVisits.map((record) => <li key={record.id} data-travel-record-id={record.id}>
+                  {recordDateLabel(record)}{record.trip_title ? ` · ${record.trip_title}` : ''}
+                </li>)}
+              </ul>
+            ) : <p>{t('details:noMatchingVisits')}</p>}
+          </section>
+        ) : null}
+        {matchingCountryVisitDates?.length ? <p className="shrink-0 text-sm">{matchingCountryVisitDates.map(countryVisitLabel).join(' · ')}</p> : null}
         {isCityMode && localEditorAvailable ? (
           <CityWantToGoAction
             key={city.id}
@@ -782,7 +832,9 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
                       )}
                       <p className="memory-city-card-subtitle text-xs text-slate-300">{subtitle(memoryCity)}</p>
                       <p className="memory-city-card-date mt-2 text-xs leading-5 text-slate-300">
-                        {memoryCity.visitedDateRange ?? t('details:travelMemory')}
+                        {matchingRecordIds !== undefined && !cityEditing
+                          ? matchingDateLabel((memoryCity.records ?? []).filter((record) => matchingRecordIds.has(record.id)))
+                          : summaryDateLabel(memoryCity.visitedDateRange, memoryCity.records ?? [])}
                       </p>
                     </div>
                     {cityEditing ? (

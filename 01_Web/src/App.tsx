@@ -12,6 +12,7 @@ import { CompassButton } from './components/CompassButton'
 import { ConvertToTravelDialog } from './components/ConvertToTravelDialog'
 import type { ConvertToTravelTarget } from './components/ConvertToTravelDialog'
 import { LayerPanel } from './components/LayerPanel'
+import { LayerTimeFilters } from './components/LayerTimeFilters'
 import { MapSourceSwitcher } from './components/MapSourceSwitcher'
 import { MouseControlGuide } from './components/MouseControlGuide'
 import { DroneMediaCard } from './components/DroneMediaCard'
@@ -30,6 +31,10 @@ import { droneMediaById, hasDroneMedia } from './data/droneMedia'
 import { localEditorAvailable } from './data/editorState'
 import type { LocalConvertToTravelResult } from './data/localEditorApi'
 import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
+import { readLayerTimeFilters, rememberLayerTimeFilters } from './data/layerTimeFilters'
+import { timeQueryContext } from './data/appData'
+import { buildBrowseTimeProjection, includedBrowseRecordKeys } from './data/derive/browseTimeProjection'
+import { wantToGoCardRecordOf, type WantToGoCardRecord } from './data/derive/wantToGo'
 import { City3DToggle } from './extensions/City3DToggle'
 import { getInitialCity3DEnabled, rememberCity3DEnabled } from './extensions/city3dPreference'
 import { LabelsToggle } from './extensions/LabelsToggle'
@@ -37,7 +42,7 @@ import { getInitialMapLabelsEnabled, rememberMapLabelsEnabled } from './extensio
 import { getInitialMapSource, mapSourceHasLabelOverlay, rememberMapSource } from './extensions/mapSources'
 import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
-import { cities, cityById, countries, countryById, getCitiesForCountry, journeyDays, travelAtlasDisplay, travelAtlasMeta } from './data/travelAtlas'
+import { cityById, countryById, getCitiesForCountry, journeyDays, travelAtlasDisplay } from './data/travelAtlas'
 import { worldGraphSnapshot } from './data/worldGraph'
 import { useUiLocale } from './i18n/useUiLocale'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
@@ -46,7 +51,11 @@ import { queryCollection } from './worldgraph/collection'
 import type { CollectionEntry } from './worldgraph/collection'
 import { officialLayers, TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from './worldgraph/layers'
 import { queryVisiblePlaces } from './worldgraph/query'
-import type { EntityId } from './worldgraph/types'
+import { isTimeFilterActive } from './worldgraph/timeFilter'
+import type { LayerTimeFilters as TimeFilterState } from './worldgraph/timeQuery'
+import { recordRefKey } from './worldgraph/recordIdentity'
+import { PLANNED_SOURCE } from './worldgraph/adapters/plannedRecords'
+import type { EntityId, LayerId } from './worldgraph/types'
 import type { CityId, CountryId, JourneyDay, SelectionMode } from './types/travel'
 
 const DronePanoramaModal = lazy(() =>
@@ -157,6 +166,23 @@ function App() {
   const [city3DEnabled, setCity3DEnabled] = useState(getInitialCity3DEnabled)
   const [mapLabelsEnabled, setMapLabelsEnabled] = useState(getInitialMapLabelsEnabled)
   const [layerVisibility, setLayerVisibility] = useState(getInitialLayerVisibility)
+  const [restoredTimeFilters] = useState(readLayerTimeFilters)
+  const [timeFilters, setTimeFilters] = useState<TimeFilterState>(restoredTimeFilters.filters)
+  const [timeStorageWarning, setTimeStorageWarning] = useState(restoredTimeFilters.warning)
+  const [timeFiltersRestored, setTimeFiltersRestored] = useState(restoredTimeFilters.restored)
+  const [timeFiltersOpen, setTimeFiltersOpen] = useState(false)
+  const [timeFilterLayer, setTimeFilterLayer] = useState<LayerId>('travel')
+  const timeFilterButtonRef = useRef<HTMLButtonElement>(null)
+  const timeFilterPanelRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (timeFiltersOpen && (activePage === 'map' || activePage === 'journey')) {
+      timeFilterPanelRef.current?.querySelector<HTMLElement>(`[data-layer="${timeFilterLayer}"] summary`)?.focus({ preventScroll: true })
+    }
+  }, [timeFiltersOpen, timeFilterLayer, activePage])
+  const closeTimeFilters = () => {
+    setTimeFiltersOpen(false)
+    timeFilterButtonRef.current?.focus({ preventScroll: true })
+  }
   const [journeyViewMode, setJourneyViewMode] = useState<JourneyViewMode>(restoredJourneyViewMode)
   const [activeDroneMediaCityId, setActiveDroneMediaCityId] = useState<CityId | undefined>(restoredDroneCityId)
   const [activeDroneMediaItemId, setActiveDroneMediaItemId] = useState<string | undefined>(restoredDroneItemId)
@@ -164,6 +190,7 @@ function App() {
   const [cityPhotoGallery, setCityPhotoGallery] = useState<CityPhotoGalleryRequest>()
   // 想去详情卡（FR-WTG-4）与添加对话框（FR-WTG-3）。都不进 viewState：保存后整页刷新即关闭（规格 §2 第 7 条）。
   const [selectedWantToGoEntityId, setSelectedWantToGoEntityId] = useState<EntityId>()
+  const [selectedWantToGoRecord, setSelectedWantToGoRecord] = useState<WantToGoCardRecord>()
   const [isAddWantToGoOpen, setIsAddWantToGoOpen] = useState(false)
   // 「标记为去过」对话框（PR9）：Collection 卡片与想去详情卡共用这一份，同样不进 viewState。
   const [convertTarget, setConvertTarget] = useState<ConvertToTravelTarget>()
@@ -366,12 +393,43 @@ function App() {
     () => officialLayers.filter((layer) => layerVisibility[layer.id] !== false).map((layer) => layer.id),
     [layerVisibility],
   )
-  const layerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds), [visibleLayerIds])
+  const layerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds, { context: timeQueryContext, filters: timeFilters }), [visibleLayerIds, timeFilters])
+  const unfilteredLayerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds), [visibleLayerIds])
+  const browseProjection = useMemo(() => buildBrowseTimeProjection(timeQueryContext, timeFilters), [timeFilters])
+  const includedRecordKeys = useMemo(() => includedBrowseRecordKeys(browseProjection), [browseProjection])
+  const dateQualityCounts = useMemo(() => {
+    const counts = { partial: 0, missing: 0, invalid: 0 }
+    for (const { record } of browseProjection.matchedRecords) {
+      if (record.sourceKind !== 'travel' && record.sourceKind !== 'country-visit') continue
+      if (record.date.quality !== 'valid') counts[record.date.quality] += 1
+    }
+    return counts
+  }, [browseProjection])
+  const travelTimeActive = timeFilters.travel !== undefined && isTimeFilterActive(timeFilters.travel)
+  const wantTimeActive = timeFilters.want_to_go !== undefined && isTimeFilterActive(timeFilters.want_to_go)
+  const travelBrowse = useMemo(() => travelTimeActive
+    ? { countryIds: [...browseProjection.countryIds], cityIds: [...browseProjection.cityIds] } : undefined, [travelTimeActive, browseProjection])
+  const matchingTravelRecordIds = useMemo(() => travelTimeActive ? [...browseProjection.travelRecordIds] : undefined, [travelTimeActive, browseProjection])
+  const matchingCountryVisitDates = useMemo(() => travelTimeActive && selectionMode === 'country'
+    ? browseProjection.includedRecords.filter(({ record }) => record.sourceKind === 'country-visit' && record.placeId === selectedCountryId).map(({ record }) => record.date)
+    : undefined, [travelTimeActive, selectionMode, selectedCountryId, browseProjection])
+  const selectedTravelOutsideTime = travelTimeActive && (selectionMode === 'city'
+    ? selectedCityId !== undefined && !browseProjection.cityIds.has(selectedCityId)
+    : selectionMode === 'country' && selectedCountryId !== undefined && !browseProjection.countryIds.has(selectedCountryId))
+  const selectedWantOutsideTime = wantTimeActive && selectedWantToGoRecord !== undefined
+    && !includedRecordKeys.has(recordRefKey({ sourceKind: selectedWantToGoRecord.source, recordId: selectedWantToGoRecord.recordId }))
+  const changeTimeFilters = (next: TimeFilterState) => {
+    setTimeFilters(next)
+    setTimeFiltersRestored(false)
+    setTimeStorageWarning(!rememberLayerTimeFilters(next))
+  }
+  const clearTravelTime = () => changeTimeFilters({ ...timeFilters, travel: { includeUncertain: false } })
+  const clearWantTime = () => changeTimeFilters({ ...timeFilters, want_to_go: { includeUncertain: false } })
 
   // 详情卡对应的地点已不在地图的想去层上（图层被关掉、条目被隐藏）时关闭它。只看实体 id（地点 id）：
   // 同一地点在足迹层也有标记时，它就是同一个实体（FR-MR-5 按身份合并，带心形徽标），仍算在图上。
   // 按 React 文档"渲染期间根据新数据调整 state"的写法，不用 effect，避免先画出一帧过期的卡片。
-  const selectedWantToGoIsMapped = selectedWantToGoEntityId !== undefined && layerData.places.some(
+  const selectedWantToGoIsMapped = selectedWantToGoEntityId !== undefined && unfilteredLayerData.places.some(
     (place) => place.entityId === selectedWantToGoEntityId && place.layerIds.includes(WANT_TO_GO_LAYER_ID),
   )
   if (selectedWantToGoEntityId !== undefined && !selectedWantToGoIsMapped) {
@@ -384,12 +442,12 @@ function App() {
 
   const atlasStats = useMemo(
     () => [
-      { value: `${countries.length}`, label: t('journey:countries') },
-      { value: `${cities.length}`, label: t('journey:cities') },
-      { value: `${travelAtlasMeta.totalRecords}`, label: t('journey:records') },
-      { value: `${travelAtlasMeta.recordsWithCoordinates}`, label: t('journey:mapped') },
+      { value: `${browseProjection.travelStats.definite.countries}`, label: t('journey:countries') },
+      { value: `${browseProjection.travelStats.definite.cities}`, label: t('journey:cities') },
+      { value: `${browseProjection.travelStats.definite.records}`, label: t('journey:records') },
+      { value: `${layerData.places.filter(place => place.layerIds.includes(TRAVEL_LAYER_ID) && browseProjection.definiteCityIds.has(place.entityId)).length}`, label: t('journey:mapped') },
     ],
-    [t],
+    [t, browseProjection, layerData],
   )
 
   const resetOverview = () => {
@@ -447,6 +505,8 @@ function App() {
   // 侧栏收起时点了会"没反应"，所以同时展开侧栏。
   const selectWantToGoPlace = (entityId: EntityId) => {
     openMobileDetails()
+    const matches = wantTimeActive ? layerData.places.find(place => place.entityId === entityId)?.recordRefs?.want_to_go ?? [] : undefined
+    setSelectedWantToGoRecord(wantToGoCardRecordOf(worldGraphSnapshot.memberships, entityId, matches))
     setSelectedWantToGoEntityId(entityId)
     setSidebarsOpen(true)
   }
@@ -478,6 +538,7 @@ function App() {
       requestId: viewOnMapRequestIdRef.current,
     })
     setSelectedWantToGoEntityId(entry.entityId)
+    setSelectedWantToGoRecord({ source: entry.source === PLANNED_SOURCE ? 'planned' : 'want-to-go', recordId: entry.recordId ?? '' })
     setSidebarsOpen(true)
     changePrimaryPage('map')
   }
@@ -602,7 +663,7 @@ function App() {
   }
 
   return (
-    <main className="theme-night relative h-[100dvh] overflow-hidden bg-[#010409] text-slate-950">
+    <main className="theme-night relative h-[100dvh] overflow-clip bg-[#010409] text-slate-950">
       <div className="app-background fixed inset-0 -z-10" />
       <div className="app-grid fixed inset-0 -z-10" />
       <div className="star-field fixed inset-0 -z-10" />
@@ -613,11 +674,28 @@ function App() {
         scrollbarWidth={pageScrollbarWidth}
       />
       <section
-        className="atlas-experience cesium-lab-page relative h-[100dvh] w-screen overflow-hidden"
+        className="atlas-experience cesium-lab-page relative h-[100dvh] w-screen overflow-clip"
         data-page={activePage}
         data-sidebars-open={sidebarsOpen}
         onScrollCapture={syncPageScrolled}
       >
+          <div className="atlas-time-query-toolbar" hidden={activePage !== 'map' && activePage !== 'journey'}>
+            <button ref={timeFilterButtonRef} type="button" aria-expanded={timeFiltersOpen} aria-controls="atlas-time-query-panel"
+              onClick={() => timeFiltersOpen ? closeTimeFilters() : setTimeFiltersOpen(true)}>{t('timeFilter:open')}</button>
+            <span>{t(travelTimeActive || wantTimeActive ? 'timeFilter:active' : 'timeFilter:allTime')}</span>
+            {travelTimeActive ? <span>{t('layer:travel')} · {timeFilters.travel?.from ?? '…'} – {timeFilters.travel?.to ?? '…'}</span> : null}
+            {wantTimeActive ? <span>{t('layer:wantToGo')} · {timeFilters.want_to_go?.from ?? '…'} – {timeFilters.want_to_go?.to ?? '…'}</span> : null}
+            {timeFiltersRestored ? <span className="atlas-time-query-restored">{t('timeFilter:restored')}</span> : null}
+          </div>
+          <aside ref={timeFilterPanelRef} id="atlas-time-query-panel" className="atlas-time-query-panel glass-panel"
+            hidden={!timeFiltersOpen || (activePage !== 'map' && activePage !== 'journey')}
+            inert={!timeFiltersOpen || (activePage !== 'map' && activePage !== 'journey')}
+            aria-label={t('timeFilter:open')} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); closeTimeFilters() } }}>
+            <button type="button" className="atlas-time-query-close" onClick={closeTimeFilters}>{t('timeFilter:close')}</button>
+            <LayerTimeFilters filters={timeFilters} onChange={changeTimeFilters} storageWarning={timeStorageWarning} activeLayer={timeFilterLayer} />
+          </aside>
+          {activePage === 'map' && (travelTimeActive || wantTimeActive) && visibleLayerIds.length > 0 && layerData.places.length === 0
+            ? <p className="atlas-time-map-empty" role="status">{t('timeFilter:noMapResults')}</p> : null}
           <div className="absolute inset-0 z-0">
             <CesiumAtlasGlobe
               hoveredCountryId={hoveredCountryId}
@@ -672,6 +750,7 @@ function App() {
               </div>
               <div id="atlas-country-panel" className="atlas-country-stack" ref={countryPanelRef} aria-hidden={countriesHidden} inert={countriesHidden}>
                 <CountrySelector
+                browse={travelBrowse}
                 selectedCountryId={selectedCountryId}
                 selectedCityId={selectedCityId}
                 activeDroneMediaCityId={activeDroneMediaCityId}
@@ -705,6 +784,9 @@ function App() {
                   <WantToGoCard
                     key={`want-to-go-${selectedWantToGoEntityId}`}
                     entityId={selectedWantToGoEntityId}
+                    explicitRecord={selectedWantToGoRecord}
+                    outsideTimeFilter={selectedWantOutsideTime}
+                    onClearTimeFilter={clearWantTime}
                     onClose={() => setSelectedWantToGoEntityId(undefined)}
                     onConvertToTravel={setConvertTarget}
                   />
@@ -715,6 +797,10 @@ function App() {
                   mode={selectionMode}
                   selectedCountryId={selectedCountryId}
                   selectedCityId={selectedCityId}
+                  matchingTravelRecordIds={matchingTravelRecordIds}
+                  matchingCountryVisitDates={matchingCountryVisitDates}
+                  outsideTimeFilter={selectedTravelOutsideTime}
+                  onClearTimeFilter={clearTravelTime}
                   onSelectCity={selectCity}
                   onOpenCityPhotos={setCityPhotoGallery}
                 />
@@ -761,6 +847,7 @@ function App() {
             </button>
             <CompassButton />
             <LayerPanel
+              onOpenTimeFilter={layerId => { setTimeFilterLayer(layerId); setTimeFiltersOpen(true) }}
               visibility={layerVisibility}
               onToggle={(layerId, visible) => {
                 const next = { ...layerVisibility, [layerId]: visible }
@@ -827,16 +914,27 @@ function App() {
                       </div>
                     ))}
                   </div>
+                  <p className="atlas-time-query-evidence" role="status">
+                    {t('timeFilter:definite')} · {t('journey:records')}: {browseProjection.travelStats.definite.records}
+                    {' · '}{t('timeFilter:uncertain')} · {t('journey:records')}: {browseProjection.travelStats.uncertain.records}
+                    {' · '}{t('journey:cities')}: {browseProjection.travelStats.uncertain.cities}
+                    {' · '}{t('journey:countries')}: {browseProjection.travelStats.uncertain.countries}
+                  </p>
+                  {travelTimeActive && browseProjection.travelRecordIds.size === 0 ? <p role="status">{t('timeFilter:noResults')}</p> : null}
+                  {dateQualityCounts.partial + dateQualityCounts.missing + dateQualityCounts.invalid > 0 ? <p className="atlas-time-query-evidence">
+                    {t('timeFilter:dateQuality', dateQualityCounts)}
+                  </p> : null}
                 </section>
 
                 {journeyViewMode === 'timeline' ? (
                   <Timeline
+                    projection={browseProjection}
                     selectedDayId={selectedDayId}
                     onSelectDay={selectDay}
                     onHoverCity={setHoverCityId}
                   />
                 ) : (
-                  <JourneyYearCards />
+                  <JourneyYearCards projection={browseProjection} />
                 )}
               </div>
             </div>

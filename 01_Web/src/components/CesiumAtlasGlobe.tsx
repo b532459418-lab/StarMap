@@ -11,6 +11,7 @@ import {
   LabelStyle,
   Math as CesiumMath,
   Matrix4,
+  PolylineDashMaterialProperty,
   PolylineOutlineMaterialProperty,
   SceneTransforms,
   Viewer as CesiumViewer,
@@ -982,7 +983,9 @@ export function CesiumAtlasGlobe({
       selectionMode === 'city' &&
       selectedCity &&
       typeof selectedCity.lat === 'number' &&
-      typeof selectedCity.lng === 'number'
+      typeof selectedCity.lng === 'number' &&
+      Number.isFinite(selectedCity.lat) &&
+      Number.isFinite(selectedCity.lng)
     ) {
       return { type: 'city', id: selectedCity.id, lat: selectedCity.lat, lng: selectedCity.lng }
     }
@@ -991,7 +994,9 @@ export function CesiumAtlasGlobe({
       selectionMode === 'country' &&
       selectedCountry &&
       typeof selectedCountry.centerLat === 'number' &&
-      typeof selectedCountry.centerLng === 'number'
+      typeof selectedCountry.centerLng === 'number' &&
+      Number.isFinite(selectedCountry.centerLat) &&
+      Number.isFinite(selectedCountry.centerLng)
     ) {
       return {
         type: 'country',
@@ -1798,12 +1803,12 @@ export function CesiumAtlasGlobe({
           return (
             <Entity
               key={route.id}
-              name={`${route.journeyId}: ${route.fromCityId} to ${route.toCityId}`}
+              name={`${route.journeyId}: ${route.fromCityId} to ${route.toCityId}${route.dateMatch === 'uncertain' ? ` · ${t('journey:uncertainDate')}` : ''}`}
               show={showMapContent && isVisible}
               polyline={{
                 arcType: ArcType.NONE,
                 clampToGround: false,
-                material: new PolylineOutlineMaterialProperty({
+                material: route.dateMatch === 'uncertain' ? new PolylineDashMaterialProperty({ color: routeColor, dashLength: 16 }) : new PolylineOutlineMaterialProperty({
                   color: routeColor,
                   outlineColor: routeOutlineColor,
                   outlineWidth: isActive ? 1.2 : 0.8,
@@ -2019,6 +2024,7 @@ export function CesiumAtlasGlobe({
 
       <div className="cesium-map-status pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full border border-white/14 bg-slate-950/62 px-4 py-2 text-xs font-semibold text-slate-200 shadow-lg backdrop-blur-2xl">
         {t('auxiliary:mappedCities', { count: travelPlaceCount })} · {t('auxiliary:routeSegments', { count: mappedRoutes.length })}
+        {mappedRoutes.some(route => route.dateMatch === 'uncertain') ? ` · ${t('timeFilter:uncertainRoutes', { count: mappedRoutes.filter(route => route.dateMatch === 'uncertain').length })}` : null}
         {wantToGoPlaceCount > 0 ? ` · ${t('auxiliary:wantToGoPlaces', { count: wantToGoPlaceCount })}` : null}
       </div>
     </div>

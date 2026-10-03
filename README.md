@@ -43,6 +43,7 @@ This repository is the **StarMap Core / Community Edition**, licensed under [MIT
 - Three-tier private media pipeline: lightweight thumbnails, viewer previews, and preserved originals.
 - An in-app GitHub Release update guide.
 - Repeatable critical browser regression with isolated synthetic data, plus a separate 1,000-place performance baseline command (see `01_Web/README.md`).
+- Independent layer time filters with year or date ranges, cross-year Journey grouping, and separate uncertain-date evidence. Collection and editing keep complete source data.
 - Privacy audit and public/private data separation designed for open-source reuse.
 
 ## Quick start

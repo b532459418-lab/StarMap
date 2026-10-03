@@ -9,7 +9,8 @@ import { EyeOff, Footprints, Heart, X } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
 import { reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorApi'
 import { travelAtlasDataSource } from '../data/travelAtlas'
-import { wantToGoCardRecordOf } from '../data/derive/wantToGo'
+import { wantToGoCardRecordOf, type WantToGoCardRecord } from '../data/derive/wantToGo'
+import { formatRecordDate } from '../data/derive/recordDateLabel'
 import {
   plannedConvertBlockReason,
   plannedRecordById,
@@ -19,10 +20,16 @@ import {
 } from '../data/wantToGo'
 import { worldGraphSnapshot } from '../data/worldGraph'
 import type { EntityId } from '../worldgraph/types'
+import type { RecordRef } from '../worldgraph/recordIdentity'
 import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
 
 type WantToGoCardProps = {
   entityId: EntityId
+  matchingRecords?: readonly RecordRef[]
+  /** Explicit Collection targets and open-detail sources stay fixed across filter changes. */
+  explicitRecord?: WantToGoCardRecord
+  outsideTimeFilter?: boolean
+  onClearTimeFilter?: () => void
   onClose: () => void
   /** 「标记为去过」（PR9）：打开 App 里唯一的转换对话框。 */
   onConvertToTravel?: (target: ConvertToTravelTarget) => void
@@ -40,14 +47,14 @@ type WantToGoCardProps = {
  * 「标记为去过」的门控：想去条目同「隐藏」；planned 条目写的是旅行记录，看 travelAtlasDataSource。
  * 转换对话框收到的是卡片所显示那条记录的 id（想去条目的 id 或 planned 记录的 id），对话框按记录 id 查找。
  */
-export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoCardProps) {
+export function WantToGoCard({ entityId, matchingRecords, explicitRecord, outsideTimeFilter = false, onClearTimeFilter, onClose, onConvertToTravel }: WantToGoCardProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { locale } = useUiLocale()
   const { name, subtitle } = usePlaceNames()
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
-  const record = wantToGoCardRecordOf(worldGraphSnapshot.memberships, entityId)
+  const record = explicitRecord ?? wantToGoCardRecordOf(worldGraphSnapshot.memberships, entityId, matchingRecords)
   const item = record?.source === 'want-to-go' ? wantToGoItemById.get(record.recordId) : undefined
   const planned = record?.source === 'planned' ? plannedRecordById.get(record.recordId) : undefined
 
@@ -71,7 +78,11 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
   const displayName = name(place)
   const originalName = subtitle(place)
   const countryName = item ? regionName(item.place.countryCode, locale) : name({ nameZh: planned?.country, nameEn: planned?.country_en })
-  const dateLabel = item ? t('details:added', { date: item.addedAt }) : planned?.start_date ?? ''
+  const date = formatRecordDate(item ? { startDate: item.addedAt }
+    : { startDate: planned?.start_date, endDate: planned?.end_date, year: planned?.year },
+  { unknown: t('details:unknownDate'), yearOnly: t('journey:yearOnly'), partial: t('details:dateQualitypartial'),
+    missing: t('details:dateQualitymissing'), invalid: t('details:dateQualityinvalid') })
+  const dateLabel = item ? t('details:added', { date }) : t('details:plannedVisit', { date })
   const note = item ? item.note : planned?.notes || undefined
 
   const hideItem = () => {
@@ -109,6 +120,13 @@ export function WantToGoCard({ entityId, onClose, onConvertToTravel }: WantToGoC
           <X aria-hidden="true" />
         </button>
       </div>
+
+      {outsideTimeFilter ? (
+        <div className="atlas-local-editor-notice" role="status" data-time-filter-outside="true">
+          <p>{t('details:outsideTimeFilter')}</p>
+          {onClearTimeFilter ? <button type="button" onClick={onClearTimeFilter}>{t('details:clearTimeFilter')}</button> : null}
+        </div>
+      ) : null}
 
       <p className="atlas-wtg-card-meta">
         <Heart aria-hidden="true" />

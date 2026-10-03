@@ -1,5 +1,15 @@
 export const detailsResources = {
   "zh": {
+    "dateQualitypartial": "日期不完整",
+    "dateQualitymissing": "日期缺失",
+    "dateQualityinvalid": "日期无效 / 需核对",
+    "countryVisitDate": "国家到访日期：{{date}}",
+    "outsideTimeFilter": "不在当前时间筛选结果中，当前资料和编辑草稿仍保留。",
+    "clearTimeFilter": "清除此层时间筛选后查看",
+    "matchingVisits": "匹配到访记录：{{count}} 条",
+    "noMatchingVisits": "当前时间条件没有匹配到访记录。",
+    "unknownDate": "日期未知 / 需核对",
+    "plannedVisit": "计划到访：{{date}}",
     "countryMaps": "国家地图",
     "visitedCountries": "国家足迹",
     "visitedCities": "到访城市",
@@ -64,6 +74,16 @@ export const detailsResources = {
     "overviewKeywords": "旅行 / 游戏"
   },
   "en": {
+    "dateQualitypartial": "Partial date",
+    "dateQualitymissing": "Missing date",
+    "dateQualityinvalid": "Invalid date / needs review",
+    "countryVisitDate": "Country visit date: {{date}}",
+    "outsideTimeFilter": "Outside the current time filter. This information and your editing drafts are retained.",
+    "clearTimeFilter": "Clear this layer’s time filter to view",
+    "matchingVisits": "Matching visits: {{count}}",
+    "noMatchingVisits": "No visits match the current time conditions.",
+    "unknownDate": "Date unknown / needs review",
+    "plannedVisit": "Planned visit: {{date}}",
     "countryMaps": "Country maps",
     "visitedCountries": "Visited countries",
     "visitedCities": "Visited cities",

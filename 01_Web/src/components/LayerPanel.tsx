@@ -38,9 +38,10 @@ type LayerPanelProps = {
   hiddenWantToGoItems?: readonly WantToGoItem[]
   /** FR-LP-3：面板底部「＋ 添加想去的地方」。只在私人模式、且想去数据不是公开样例时渲染。 */
   onAddWantToGo?: () => void
+  onOpenTimeFilter?: (layerId: LayerId) => void
 }
 
-export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onAddWantToGo }: LayerPanelProps) {
+export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onAddWantToGo, onOpenTimeFilter }: LayerPanelProps) {
   const { t } = useTranslation(['mapMenu', 'layer'])
   const { name, subtitle } = usePlaceNames()
   const wantToGoLayer = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)
@@ -143,6 +144,13 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
               )
             })}
           </div>
+
+          {onOpenTimeFilter ? <div className="atlas-layer-time-links">
+            {panelLayers.map(layer => <button key={layer.id} type="button"
+              onClick={() => { setOpen(false); onOpenTimeFilter(layer.id) }}>
+              {t('timeFilter:layerTime', { layer: t(layer.labelKey) })}
+            </button>)}
+          </div> : null}
 
           {showHiddenItems ? (
             <div className="atlas-layer-hidden">
