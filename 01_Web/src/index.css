@@ -7606,3 +7606,127 @@ button {
   }
   .atlas-language-selector { width: 80px; font-size: 12px; padding: 4px; }
 }
+
+.atlas-country-stack { display: contents; }
+.atlas-mobile-panel-switch { display: none; }
+
+@media (width < 768px) {
+  .cesium-lab-page { --atlas-overlay-top: 164px; }
+
+  .atlas-app-header[data-page='map'] p {
+    min-height: 2.8em;
+  }
+
+  .cesium-lab-page .atlas-overlay-frame {
+    bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+
+  .cesium-lab-page .atlas-overlay-frame::before,
+  .cesium-lab-page .atlas-overlay-frame::after {
+    display: none;
+  }
+
+  .cesium-lab-page .atlas-mobile-panel-switch {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 40;
+    display: flex;
+    height: 52px;
+    gap: 6px;
+    padding: 4px 12px;
+    background: rgba(4, 12, 22, 0.94);
+    pointer-events: auto;
+  }
+
+  .cesium-lab-page .atlas-mobile-panel-switch button {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    color: #a9bacd;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .cesium-lab-page .atlas-mobile-panel-switch button[aria-pressed='true'] {
+    border-color: rgba(125, 211, 252, 0.36);
+    background: rgba(56, 189, 248, 0.12);
+    color: #e0f2fe;
+  }
+
+  .cesium-lab-page .atlas-mobile-panel-switch button:focus-visible {
+    outline: 2px solid #8dcaff;
+    outline-offset: -3px;
+  }
+
+  .cesium-lab-page .atlas-overlay-frame:not([data-page='map']) .atlas-mobile-panel-switch,
+  .cesium-lab-page .atlas-overlay-frame[data-sidebars-open='false'] .atlas-mobile-panel-switch,
+  .cesium-lab-page .atlas-overlay-frame[data-mobile-panel='details'] .atlas-left-panel,
+  .cesium-lab-page .atlas-overlay-frame[data-mobile-panel='countries'] .atlas-right-stack {
+    display: none;
+  }
+
+  .cesium-lab-page .atlas-left-panel,
+  .cesium-lab-page .atlas-right-stack {
+    top: 52px;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    max-width: none;
+    height: calc(100% - 52px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    padding-bottom: 16px;
+  }
+
+  .cesium-lab-page .atlas-left-panel > * {
+    flex-shrink: 0;
+  }
+
+  .theme-night .cesium-lab-page .atlas-left-panel,
+  .theme-night .cesium-lab-page .atlas-right-stack {
+    background: rgba(4, 12, 22, 0.94);
+  }
+
+  .cesium-lab-page .atlas-left-panel .atlas-country-list {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .cesium-lab-page .atlas-right-stack .atlas-info-panel,
+  .cesium-lab-page .atlas-right-stack .drone-media-card,
+  .cesium-lab-page .atlas-right-stack .atlas-info-content,
+  .cesium-lab-page .atlas-right-stack .atlas-memory-panel,
+  .cesium-lab-page .atlas-right-stack .atlas-memory-track,
+  .cesium-lab-page .atlas-right-stack .drone-media-track {
+    flex: 0 0 auto;
+    min-height: auto;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .cesium-lab-page .atlas-right-stack .atlas-card-title,
+  .cesium-lab-page .atlas-right-stack .drone-media-card h2,
+  .cesium-lab-page .atlas-left-panel .truncate {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+  }
+
+  .cesium-lab-page .atlas-right-stack .atlas-info-panel[data-memory-layout='grid'] .atlas-memory-panel-grid-preview,
+  .cesium-lab-page .atlas-right-stack .atlas-info-panel[data-memory-layout='grid'] .atlas-memory-panel[data-photo-gallery='true'] {
+    flex: 0 0 auto;
+    min-height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .cesium-lab-page[data-sidebars-open='true'] .cesium-viewer-bottom {
+    left: 5px !important;
+  }
+}

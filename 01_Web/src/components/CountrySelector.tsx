@@ -174,9 +174,14 @@ export function CountrySelector({
   const moveCountryAtPointer = useCallback((countryId: CountryId, clientY: number) => {
     const container = countryListRef.current
     if (!container) return
-    const containerRect = container.getBoundingClientRect()
-    if (clientY < containerRect.top + 42) container.scrollTop -= 18
-    if (clientY > containerRect.bottom - 42) container.scrollTop += 18
+    // Mobile scrolls the whole panel; desktop scrolls the country list itself.
+    let scroller: HTMLElement = container
+    while (!['auto', 'scroll'].includes(getComputedStyle(scroller).overflowY) && scroller.parentElement) {
+      scroller = scroller.parentElement
+    }
+    const containerRect = scroller.getBoundingClientRect()
+    if (clientY < containerRect.top + 42) scroller.scrollBy({ top: -18, behavior: 'instant' })
+    if (clientY > containerRect.bottom - 42) scroller.scrollBy({ top: 18, behavior: 'instant' })
     const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-country-sort-id]'))
       .filter((row) => row.dataset.countrySortId !== countryId)
     const beforeRow = rows.find((row) => {

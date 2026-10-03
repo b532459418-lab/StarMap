@@ -59,12 +59,14 @@ const overviewDistance = 3.25
 const countryDistance = 1.95
 const cityDistance = 1.38
 const sidebarMediaQuery = '(min-width: 1100px)'
+const mobilePanelMediaQuery = '(width < 768px)'
 // 可滚动页面滚离顶部超过这个距离（px），顶部标题才换上玻璃背景。
 const headerBackdropScrollThreshold = 12
 // 概览视角目标点（PR3c）：模块级数据，引用恒定，由这里传给地图，地图不再自己读 travelAtlas。
 const overviewTarget = travelAtlasDisplay.overviewTarget
 
 type CameraScale = 'city' | 'country' | 'world'
+type MobilePanel = 'countries' | 'details'
 type ImageryTuning = {
   brightness: number
   contrast: number
@@ -178,6 +180,30 @@ function App() {
   const [sidebarsOpen, setSidebarsOpen] = useState(() => typeof restoredViewState.sidebarsOpen === 'boolean'
     ? restoredViewState.sidebarsOpen
     : typeof window === 'undefined' || window.matchMedia(sidebarMediaQuery).matches)
+  const [isMobileLayout, setIsMobileLayout] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia(mobilePanelMediaQuery).matches)
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>(restoredCityId ? 'details' : 'countries')
+  const countryPanelRef = useRef<HTMLDivElement>(null)
+  const detailsPanelRef = useRef<HTMLDivElement>(null)
+  const countriesButtonRef = useRef<HTMLButtonElement>(null)
+  const detailsButtonRef = useRef<HTMLButtonElement>(null)
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null)
+  const countriesHidden = activePage !== 'map' || !sidebarsOpen || (isMobileLayout && mobilePanel !== 'countries')
+  const detailsHidden = activePage !== 'map' || !sidebarsOpen || (isMobileLayout && mobilePanel !== 'details')
+
+  const switchMobilePanel = (panel: MobilePanel) => {
+    const hiddenPanel = panel === 'details' ? countryPanelRef.current : detailsPanelRef.current
+    if (isMobileLayout && hiddenPanel?.contains(document.activeElement)) {
+      const target = panel === 'details' ? detailsButtonRef.current : countriesButtonRef.current
+      target?.focus()
+    }
+    setMobilePanel(panel)
+  }
+
+  const openMobileDetails = () => {
+    switchMobilePanel('details')
+    if (isMobileLayout) setSidebarsOpen(true)
+  }
   const releaseUpdates = useReleaseUpdates()
   const selectedCityHasDroneMedia = selectionMode === 'city' && selectedCityId
     ? hasDroneMedia(selectedCityId)
@@ -274,6 +300,25 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia(mobilePanelMediaQuery)
+    const syncMobileLayout = (event: MediaQueryListEvent) => {
+      if (countryPanelRef.current?.contains(document.activeElement)
+        || detailsPanelRef.current?.contains(document.activeElement)
+        || countriesButtonRef.current === document.activeElement
+        || detailsButtonRef.current === document.activeElement) {
+        sidebarToggleRef.current?.focus()
+      }
+      setIsMobileLayout(event.matches)
+    }
+    mediaQuery.addEventListener('change', syncMobileLayout)
+    return () => mediaQuery.removeEventListener('change', syncMobileLayout)
+  }, [])
+
+  useEffect(() => {
+    if (detailsPanelRef.current) detailsPanelRef.current.scrollTop = 0
+  }, [selectedCountryId, selectedCityId, selectedWantToGoEntityId])
+
+  useEffect(() => {
     rememberAtlasViewState({
       selectedCountryId,
       selectedCityId,
@@ -348,6 +393,7 @@ function App() {
   )
 
   const resetOverview = () => {
+    switchMobilePanel('countries')
     setSelectedWantToGoEntityId(undefined)
     setMapFocusPlace(undefined)
     setSelectedCountryId(undefined)
@@ -376,6 +422,7 @@ function App() {
   }
 
   const selectCity = (cityId: CityId) => {
+    openMobileDetails()
     setSelectedWantToGoEntityId(undefined)
     setMapFocusPlace(undefined)
     if (selectedCityId === cityId) {
@@ -399,6 +446,7 @@ function App() {
   // FR-WTG-4：只打开右侧详情卡，不改 selectionMode、不飞相机。详情卡在右侧栏里，
   // 侧栏收起时点了会"没反应"，所以同时展开侧栏。
   const selectWantToGoPlace = (entityId: EntityId) => {
+    openMobileDetails()
     setSelectedWantToGoEntityId(entityId)
     setSidebarsOpen(true)
   }
@@ -407,6 +455,7 @@ function App() {
   // 只对有坐标且未隐藏的条目可用。选中状态的清理与 resetOverview 一致，但不递增 globeResetVersion。
   const viewOnMap = (entry: CollectionEntry) => {
     if (!entry.location || entry.hidden) return
+    openMobileDetails()
 
     // 想去图层被关掉时地图上没有这个点：打开它并记住（与图层面板的开关同一条路径）。
     if (layerVisibility[WANT_TO_GO_LAYER_ID] === false) {
@@ -460,6 +509,7 @@ function App() {
   const selectDroneMedia = (cityId: CityId) => {
     const city = cityById[cityId]
     if (!city || !hasDroneMedia(cityId)) return
+    openMobileDetails()
 
     if (activeDroneMediaCityId === cityId) {
       setActiveDroneMediaCityId(undefined)
@@ -478,6 +528,7 @@ function App() {
 
   const selectDroneMediaItem = (item: DroneMediaItem) => {
     if (!item.position) return
+    openMobileDetails()
     if (activeDroneMediaItemId === item.id) {
       setActiveDroneMediaItemId(undefined)
       setActiveDroneMediaCityId(undefined)
@@ -538,6 +589,7 @@ function App() {
   }
 
   const selectDay = (day: JourneyDay) => {
+    openMobileDetails()
     // 城市焦点的优先级低于 place 焦点：凡是"选中一个城市"的入口都要清掉 Collection 的镜头目标。
     setMapFocusPlace(undefined)
     setSelectedDayId(day.id)
@@ -602,8 +654,24 @@ function App() {
               className="atlas-overlay-frame absolute bottom-0"
               data-page={activePage}
               data-sidebars-open={sidebarsOpen}
+              data-mobile-panel={mobilePanel}
             >
-              <CountrySelector
+              <div
+                className="atlas-mobile-panel-switch"
+                role="group"
+                aria-label={t('appShell:mapPanels')}
+                aria-hidden={!isMobileLayout || activePage !== 'map' || !sidebarsOpen}
+                inert={!isMobileLayout || activePage !== 'map' || !sidebarsOpen}
+              >
+                <button ref={countriesButtonRef} type="button" aria-pressed={mobilePanel === 'countries'} aria-controls="atlas-country-panel" onClick={() => switchMobilePanel('countries')}>
+                  {t('appShell:countriesPanel')}
+                </button>
+                <button ref={detailsButtonRef} type="button" aria-pressed={mobilePanel === 'details'} aria-controls="atlas-details-panel" onClick={() => switchMobilePanel('details')}>
+                  {t('appShell:detailsPanel')}
+                </button>
+              </div>
+              <div id="atlas-country-panel" className="atlas-country-stack" ref={countryPanelRef} aria-hidden={countriesHidden} inert={countriesHidden}>
+                <CountrySelector
                 selectedCountryId={selectedCountryId}
                 selectedCityId={selectedCityId}
                 activeDroneMediaCityId={activeDroneMediaCityId}
@@ -622,8 +690,13 @@ function App() {
                 onDistanceChange={changeGlobeDistance}
                 onResetView={resetOverview}
               />
+              </div>
 
               <div
+                id="atlas-details-panel"
+                ref={detailsPanelRef}
+                aria-hidden={detailsHidden}
+                inert={detailsHidden}
                 className={`atlas-right-stack ${
                   shouldShowDronePanel ? 'atlas-right-stack-with-drone' : ''
                 }`}
@@ -664,11 +737,12 @@ function App() {
 
           <div className="atlas-map-controls">
             <button
+              ref={sidebarToggleRef}
               type="button"
               className="atlas-dock-button atlas-sidebars-toggle pointer-events-auto"
               aria-pressed={sidebarsOpen}
-              aria-label={t(sidebarsOpen ? 'appShell:hideSidebars' : 'appShell:showSidebars')}
-              title={t(sidebarsOpen ? 'appShell:hideSidebars' : 'appShell:showSidebars')}
+              aria-label={t(isMobileLayout ? (sidebarsOpen ? 'appShell:hidePanel' : 'appShell:showPanel') : (sidebarsOpen ? 'appShell:hideSidebars' : 'appShell:showSidebars'))}
+              title={t(isMobileLayout ? (sidebarsOpen ? 'appShell:hidePanel' : 'appShell:showPanel') : (sidebarsOpen ? 'appShell:hideSidebars' : 'appShell:showSidebars'))}
               onClick={() => setSidebarsOpen((open) => !open)}
             >
               <span className="atlas-sidebars-toggle-icons" aria-hidden="true">
