@@ -36,6 +36,9 @@
 import { officialLayers, TRAVEL_LAYER_ID } from './layers.ts'
 import { copyLocalizedText, type LocalizedText } from './localizedText.ts'
 import type { Anchor, Entity, EntityId, LayerId, LayerMembership, Relation, WorldGraphSnapshot } from './types.ts'
+import { membershipRecordRef, recordRefKey, type RecordRef } from './recordIdentity.ts'
+import { isTimeFilterActive } from './timeFilter.ts'
+import { evaluateTimeQueryRecords, type LayerTimeFilters, type TimeQueryContext } from './timeQuery.ts'
 
 /**
  * 地图渲染一个地点标记需要的最小信息。字段能一一对应到 CesiumAtlasGlobe 的用法。
@@ -65,6 +68,8 @@ export interface LayerPlace {
    * 一层都没有时不产出该键。同一地点有几条想去 / planned 记录，地图上仍只画一个标记（Core 方案 C4）。
    */
   recordIds?: Partial<Record<LayerId, string[]>>
+  /** Active time queries keep source identity as well as opaque original IDs. */
+  recordRefs?: Partial<Record<LayerId, RecordRef[]>>
   /** 足迹层的标记主色：地点自己足迹成员关系 metadata 的 accent，没有则取所属国家足迹成员关系的 accent */
   accent?: string
   /** 足迹层：指向本地点的 visited Relation 数量（journey → place）；不在足迹层或没有则 0 */
@@ -88,6 +93,10 @@ export interface LayerRouteSegment {
   toLng: number
   journeyId?: string
   kind: 'main' | 'dayTrip' | 'flight' | 'ferry' | 'drive'
+  /** Original endpoint records; only strict time-filtered routes carry these. */
+  fromRecordId?: string
+  toRecordId?: string
+  dateMatch?: 'definite' | 'uncertain'
 }
 
 export interface LayerQueryResult {
@@ -148,7 +157,11 @@ interface VisibleLayerMembers {
 export const queryVisiblePlaces = (
   snapshot: WorldGraphSnapshot,
   visibleLayerIds: readonly LayerId[],
+  time?: { context: TimeQueryContext; filters: LayerTimeFilters },
 ): LayerQueryResult => {
+  if (time && Object.values(time.filters).some(filter => filter !== undefined && isTimeFilterActive(filter))) {
+    return queryTimeVisiblePlaces(snapshot, visibleLayerIds, time.context, time.filters)
+  }
   const visible = new Set<LayerId>(visibleLayerIds)
   const layerOrder = new Map<LayerId, number>()
   /** LayerId → 该图层在地图上画的 subtype（Registry 的 mapSubtypes）。 */
@@ -295,6 +308,101 @@ export const queryVisiblePlaces = (
       countryIdOf,
     }) : [],
   }
+}
+
+/** Filter source records first. Never rebuild adjacency from the remaining cities. */
+const queryTimeVisiblePlaces = (
+  snapshot: WorldGraphSnapshot, visibleLayerIds: readonly LayerId[],
+  context: TimeQueryContext, filters: LayerTimeFilters,
+): LayerQueryResult => {
+  const travelActive = filters.travel !== undefined && isTimeFilterActive(filters.travel)
+  const wantActive = filters.want_to_go !== undefined && isTimeFilterActive(filters.want_to_go)
+  const matches = evaluateTimeQueryRecords(context, filters).filter(({ result }) => result.included)
+  const byKey = new Map(matches.map(match => [recordRefKey(match.record), match]))
+  const travelPlaces = new Set<string>()
+  for (const { record } of matches) {
+    if (record.sourceKind !== 'travel' && record.sourceKind !== 'country-visit') continue
+    travelPlaces.add(record.placeId)
+    if (record.countryId !== undefined) travelPlaces.add(record.countryId)
+  }
+  const memberships = snapshot.memberships.filter(membership => {
+    if (membership.layerId === TRAVEL_LAYER_ID && travelActive) return travelPlaces.has(membership.entityId)
+    if (membership.layerId !== 'want_to_go' || !wantActive) return true
+    const ref = membershipRecordRef(membership)
+    const match = ref ? byKey.get(recordRefKey(ref)) : undefined
+    return match?.record.placeId === membership.entityId
+  }).map(membership => membership.layerId === TRAVEL_LAYER_ID && travelActive && membership.metadata?.cityIds
+    ? { ...membership, metadata: { ...membership.metadata, cityIds: [] } } : membership)
+  const entityById = new Map(snapshot.entities.map(entity => [entity.id, entity]))
+  const relations = travelActive ? snapshot.relations.filter(relation => {
+    if (relation.type === 'related_to') return false
+    if (relation.type !== 'visited') return true
+    const sourceId = entityById.get(relation.fromEntityId)?.metadata.sourceId
+    if (typeof sourceId !== 'string') return false
+    const match = byKey.get(recordRefKey({ sourceKind: 'travel', recordId: sourceId }))
+    return match?.record.placeId === relation.toEntityId
+  }) : snapshot.relations
+  const result = queryVisiblePlaces({ ...snapshot, memberships, relations }, visibleLayerIds)
+  const visitsByPlace = new Map<string, RecordRef[]>()
+  for (const { record } of matches) {
+    if (record.sourceKind !== 'travel') continue
+    const refs = visitsByPlace.get(record.placeId) ?? []
+    refs.push({ sourceKind: record.sourceKind, recordId: record.recordId })
+    visitsByPlace.set(record.placeId, refs)
+  }
+  const refsByPlace = new Map<string, Map<LayerId, RecordRef[]>>()
+  for (const membership of memberships) {
+    if (membership.metadata?.hidden === true) continue
+    const ref = membershipRecordRef(membership)
+    if (!ref) continue
+    const byLayer = refsByPlace.get(membership.entityId) ?? new Map<LayerId, RecordRef[]>()
+    const refs = byLayer.get(membership.layerId) ?? []
+    if (!refs.some(existing => recordRefKey(existing) === recordRefKey(ref))) refs.push(ref)
+    byLayer.set(membership.layerId, refs)
+    refsByPlace.set(membership.entityId, byLayer)
+  }
+  for (const place of result.places) {
+    const refs: Partial<Record<LayerId, RecordRef[]>> = {}
+    for (const layerId of place.layerIds) {
+      if (layerId === TRAVEL_LAYER_ID && travelActive) {
+        const visits = visitsByPlace.get(place.entityId) ?? []
+        place.visitCount = visits.length
+        if (visits.length) refs[layerId] = visits
+      } else {
+        const members = refsByPlace.get(place.entityId)?.get(layerId)
+        if (members?.length) refs[layerId] = members
+      }
+    }
+    if (Object.keys(refs).length) place.recordRefs = refs
+  }
+  if (!travelActive) return result // Want-to-go conditions cannot change travel routes.
+  result.routes = []
+  if (!visibleLayerIds.includes(TRAVEL_LAYER_ID)) return result
+  const mapped = new Map(result.places.filter(place => place.layerIds.includes(TRAVEL_LAYER_ID)).map(place => [place.entityId, place]))
+  const seen = new Set<string>()
+  for (const candidate of context.originalRoutes) {
+    if (seen.has(candidate.id) || !candidate.journeyId.trim()) continue
+    seen.add(candidate.id)
+    const fromVisit = byKey.get(recordRefKey({ sourceKind: 'travel', recordId: candidate.fromRecordId }))
+    const toVisit = byKey.get(recordRefKey({ sourceKind: 'travel', recordId: candidate.toRecordId }))
+    if (!fromVisit || !toVisit || fromVisit.record.placeId !== candidate.fromPlaceId || toVisit.record.placeId !== candidate.toPlaceId
+      || fromVisit.record.journeyId !== candidate.journeyId || toVisit.record.journeyId !== candidate.journeyId) continue
+    const from = mapped.get(candidate.fromPlaceId)
+    const to = mapped.get(candidate.toPlaceId)
+    if (!from || !to || from.entityId === to.entityId) continue
+    const route: LayerRouteSegment = {
+      id: candidate.id, journeyId: candidate.journeyId, kind: candidate.kind,
+      fromEntityId: from.entityId, toEntityId: to.entityId,
+      fromSourceId: from.sourceId, toSourceId: to.sourceId,
+      fromLat: from.lat, fromLng: from.lng, toLat: to.lat, toLng: to.lng,
+      fromRecordId: candidate.fromRecordId, toRecordId: candidate.toRecordId,
+      dateMatch: fromVisit.result.match === 'uncertain' || toVisit.result.match === 'uncertain' ? 'uncertain' : 'definite',
+    }
+    if (from.countryId !== undefined) route.fromCountryId = from.countryId
+    if (to.countryId !== undefined) route.toCountryId = to.countryId
+    result.routes.push(route)
+  }
+  return result
 }
 
 /** buildRoutes 需要的、已经在 queryVisiblePlaces 里算好的索引。 */

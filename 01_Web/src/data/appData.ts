@@ -18,6 +18,7 @@
 
 import { canonicalForInputs } from './canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from './canonical/derive.ts'
+import { deriveTimeQueryContext } from './derive/timeQueryContext.ts'
 import { appInputs, sessionNow } from './rawInputs.ts'
 
 /** 模块加载时固定一次。适配器要求 options.now 必填且不读时钟，时间从这里注入。worldGraph.ts 以原名导出。 */
@@ -26,6 +27,11 @@ export const worldGraphSessionNow: string = sessionNow
 const canonical = canonicalForInputs(appInputs)
 
 export const appData = deriveAppDataFromCanonical(canonical, { now: worldGraphSessionNow })
+
+/** RD-04 auxiliary query input, derived from the same canonical load. It is
+ * separate from the six legacy data exports; their baseline format remains @4.
+ * Raw date evidence and original endpoints have independent semantic tests. */
+export const timeQueryContext = deriveTimeQueryContext(canonical)
 
 if (import.meta.env.DEV) {
   const { wantToGoDataSource, wantToGoProblems } = appData.wantToGo

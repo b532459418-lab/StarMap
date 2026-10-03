@@ -10,6 +10,7 @@
 
 import { WANT_TO_GO_LAYER_ID } from '../../worldgraph/layers.ts'
 import { PLANNED_SOURCE } from '../../worldgraph/adapters/plannedRecords.ts'
+import { membershipRecordRef, recordRefKey, type RecordRef } from '../../worldgraph/recordIdentity.ts'
 import type { EntityId, LayerMembership } from '../../worldgraph/types.ts'
 import type { City, TravelMapRecord } from '../../types/travel.ts'
 
@@ -65,15 +66,22 @@ export interface WantToGoCardRecord {
  * 地图上一个想去标记对应一个地点（实体 id 就是地点 id），这个地点在想去图层可能有几条记录。卡片只显示一条：
  * 该地点在想去图层里【可见】（未隐藏）的记录中，有想去条目就取第一条想去条目，否则取第一条 planned 记录
  * （与 Core-A 之前想去条目先于 planned 的优先顺序相同）。「第一条」按快照里成员关系的顺序。没有可见记录时为 undefined。
+ * 活动时间查询可传入匹配记录的完整来源身份；空集合不回落到未匹配记录。
  */
 export const wantToGoCardRecordOf = (
   memberships: readonly LayerMembership[],
   entityId: EntityId,
+  matchingRecords?: readonly RecordRef[],
 ): WantToGoCardRecord | undefined => {
+  const allowed = matchingRecords === undefined ? undefined : new Set(matchingRecords.map(recordRefKey))
   let firstPlanned: WantToGoCardRecord | undefined
   for (const membership of memberships) {
     if (membership.entityId !== entityId || membership.layerId !== WANT_TO_GO_LAYER_ID) continue
     if (membership.metadata?.hidden === true || membership.recordId === undefined) continue
+    if (allowed !== undefined) {
+      const ref = membershipRecordRef(membership)
+      if (!ref || !allowed.has(recordRefKey(ref))) continue
+    }
     if (membership.metadata?.source === PLANNED_SOURCE) {
       firstPlanned ??= { source: 'planned', recordId: membership.recordId }
       continue

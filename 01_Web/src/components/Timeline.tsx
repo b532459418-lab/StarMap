@@ -3,20 +3,32 @@ import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, Clock3, MapPin, Sparkles } from 'lucide-react'
 import { cityById, countryById, journeyDays } from '../data/travelAtlas'
 import type { CityId, JourneyDay } from '../types/travel'
+import { buildBrowseTimeProjection, journeyTimeContext, type BrowseTimeProjection } from '../data/derive/browseTimeProjection'
 
 type TimelineProps = {
   selectedDayId: string
   onSelectDay: (day: JourneyDay) => void
   onHoverCity: (cityId?: CityId) => void
+  projection?: BrowseTimeProjection
 }
 
-const orderedDays = [...journeyDays].sort((left, right) =>
-  `${right.date}-${right.id}`.localeCompare(`${left.date}-${left.id}`),
-)
-
-export function Timeline({ selectedDayId, onSelectDay, onHoverCity }: TimelineProps) {
+export function Timeline({ selectedDayId, onSelectDay, onHoverCity, projection }: TimelineProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
+  const browse = projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {})
+  const unknownDate = t('journey:unknownDate')
+  const uncertainDate = t('journey:uncertainDate')
+  const yearOnly = t('journey:yearOnly')
+  const emptyLabel = t('journey:noMatchingVisits')
+  const unknownRecordIds = new Set(browse.uncertainJourneyRecords.map(match => match.record.recordId))
+  const daysById = new Map(journeyDays.map(day => [day.id, day]))
+  const orderedDays = browse.orderedJourneyRecords.map(match => daysById.get(match.record.recordId))
+    .filter((day): day is JourneyDay => day !== undefined)
+  const knownYear = (day: JourneyDay) => {
+    const evidence = browse.travelMatchesById.get(day.id)?.record.date
+    return !unknownRecordIds.has(day.id) && evidence?.range.from
+      ? evidence.range.from.slice(0, 4) : unknownDate
+  }
   return (
     <section id="stories" className="journey-view-section journey-timeline-section">
       <div className="journey-section-heading">
@@ -31,14 +43,20 @@ export function Timeline({ selectedDayId, onSelectDay, onHoverCity }: TimelinePr
       </div>
 
       <div className="journey-timeline-rail">
+        {orderedDays.length === 0 ? <p className="journey-order-note">{emptyLabel}</p> : null}
         {orderedDays.map((day, index) => {
           const city = cityById[day.cityId]
           const country = day.countryId ? countryById[day.countryId] : undefined
           if (!city || !country) return null
 
           const isSelected = day.id === selectedDayId
-          const year = day.date.slice(0, 4)
-          const showYear = index === 0 || orderedDays[index - 1]?.date.slice(0, 4) !== year
+          const match = browse.travelMatchesById.get(day.id)
+          const year = knownYear(day)
+          const showYear = index === 0 || knownYear(orderedDays[index - 1]) !== year
+          const range = match?.record.date.range
+          const dateLabel = match?.record.date.precision === 'day' && range?.from && range.to
+            ? range.from === range.to ? range.from : `${range.from} – ${range.to}`
+            : year
 
           return (
             <article key={day.id} className="journey-timeline-entry">
@@ -58,7 +76,7 @@ export function Timeline({ selectedDayId, onSelectDay, onHoverCity }: TimelinePr
                 onMouseLeave={() => onHoverCity(undefined)}
               >
                 <span className="journey-timeline-date">
-                  <span>{day.date}</span>
+                  <span>{dateLabel}{match?.record.date.precision === 'year' ? ` · ${yearOnly}` : ''}{match?.result.match === 'uncertain' ? ` · ${uncertainDate}` : ''}</span>
                   {country.flagCode ? (
                     <span className="journey-timeline-flag" aria-hidden="true">
                       <img

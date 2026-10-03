@@ -28,6 +28,7 @@ import {
   type LocalizedText,
 } from './localizedText.ts'
 import type { Anchor, AnchorPrecision, Entity, EntityId, LayerId, WorldGraphSnapshot } from './types.ts'
+import { membershipIdentityKey, recordSourceKindOf } from './recordIdentity.ts'
 
 /** Collection 里的一行。字段都能一一对应到 CollectionPage 的用法。 */
 export interface CollectionEntry {
@@ -110,10 +111,16 @@ const nameComparator = (uiLocale: LanguageTag): CompareEntries => {
   return (left, right) => collator.compare(nameOf(left), nameOf(right))
 }
 
-/** 最后的稳定键：entityId 升序，再按 recordId 升序（没有 recordId 按空串算）。 */
+/** 最后的稳定键：entityId、recordId、固定来源依次升序；未知来源按空串算。 */
 const compareIdentity: CompareEntries = (left, right) =>
   compareCodePoints(left.entityId, right.entityId) ||
-  compareCodePoints(left.recordId ?? '', right.recordId ?? '')
+  compareCodePoints(left.recordId ?? '', right.recordId ?? '') ||
+  compareCodePoints(recordSourceKindOf(left.layerId, left.source) ?? '', recordSourceKindOf(right.layerId, right.source) ?? '')
+
+/** Stable UI identity follows the same source-aware key as snapshot merging. */
+export const collectionEntryKey = (entry: CollectionEntry): string => JSON.stringify([
+  entry.entityId, entry.layerId, recordSourceKindOf(entry.layerId, entry.source) ?? '', entry.recordId ?? '',
+])
 
 /**
  * 三种排序，名称都按界面语言比较（见 `nameComparator`）：
@@ -145,7 +152,7 @@ const comparatorsFor = (uiLocale: LanguageTag): Record<CollectionSort, CompareEn
  * 列出 `layerId` 图层的全部成员（含已隐藏、含无坐标），按默认顺序排好。
  *
  * - 只取 `type === 'place'` 且在快照里存在的 Entity；其余成员关系忽略。
- * - 同一 `(entityId, layerId, recordId)` 只取第一条成员关系（没有 recordId 按空串算；与 mergeWorldGraphSnapshots 的去重口径一致）。
+ * - 同一 `(entityId, layerId, sourceKind, recordId)` 只取第一条成员关系（与快照合并的去重口径一致）。
  *   同一实体在这个图层有几条不同记录，就列几行。
  * - 返回的对象都是新造的，不与输入共享任何引用。
  * - 默认顺序里同日的条目按名称排，名称按 `uiLocale`（界面语言）取与比较，见 `comparatorsFor`。
@@ -171,8 +178,8 @@ export const queryCollection = (
   const entries: CollectionEntry[] = []
   for (const membership of snapshot.memberships) {
     if (membership.layerId !== layerId) continue
-    // 与 snapshot.ts 的 membershipKey 同一写法：JSON 数组做键，避免 id 里的分隔符造成碰撞。
-    const key = JSON.stringify([membership.entityId, membership.layerId, membership.recordId ?? ''])
+    // 与快照合并共用来源键，避免同 ID 的收藏与 planned 记录互相吞掉。
+    const key = membershipIdentityKey(membership)
     if (seenMembershipKeys.has(key)) continue
     seenMembershipKeys.add(key)
 

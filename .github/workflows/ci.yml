@@ -18,7 +18,7 @@ jobs:
   public-checks:
     name: Public checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: 01_Web

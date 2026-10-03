@@ -7635,10 +7635,32 @@ button {
 }
 
 .atlas-country-stack { display: contents; }
+
+/* RD-04 shared controls stay mounted to preserve invalid drafts across pages. */
+.atlas-time-query-toolbar { position:absolute; z-index:38; top:195px; left:50%; transform:translateX(-50%); max-width:calc(100% - 24px); width:max-content; display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; border:1px solid rgba(255,255,255,.14); background:rgba(12,20,32,.88); color:#e2e8f0; border-radius:14px; padding:5px 12px; font-size:12px; }
+.atlas-time-query-toolbar[hidden], .atlas-time-query-panel[hidden] { display:none; }
+.atlas-time-query-toolbar button, .atlas-time-query-close, .atlas-layer-time-links button { min-height:40px; border:1px solid rgba(255,255,255,.2); border-radius:8px; padding:6px 12px; color:inherit; cursor:pointer; }
+.atlas-time-query-panel { position:absolute; z-index:49; top:250px; right:20px; width:min(430px,calc(100vw - 24px)); max-height:calc(100dvh - 265px); overflow:auto; padding:14px; border-radius:16px; color:#e2e8f0; background:rgba(14,23,37,.98); }
+.atlas-time-query-close { display:block; margin:0 0 8px auto; }
+.atlas-layer-time-links { display:grid; gap:6px; padding:10px; }
+.atlas-layer-time-links button { text-align:left; font-size:12px; }
+.atlas-time-query-evidence { grid-column:1 / -1; font-size:13px; color:#94a3b8; }
+.collection-time-hint { font-size:13px; color:#94a3b8; }
+.atlas-journey-scroll { padding-top:270px; }
+@media (min-width:821px) {
+  .journey-timeline-card { grid-template-columns:188px minmax(0,1fr) 36px; }
+}
+.atlas-time-map-empty { position:absolute; z-index:28; top:210px; left:50%; transform:translateX(-50%); width:min(450px,calc(100% - 32px)); border-radius:12px; padding:12px; color:#e2e8f0; background:rgba(14,23,37,.9); text-align:center; font-size:13px; pointer-events:none; }
+@media (width < 768px) {
+  .atlas-time-query-toolbar { top:176px; width:calc(100% - 24px); gap:2px 8px; justify-content:flex-start; padding:3px 8px; max-height:96px; overflow:auto; }
+  .atlas-time-query-toolbar button, .atlas-time-query-close { min-height:44px; }
+  .atlas-time-query-restored { display:none; }
+  .atlas-time-query-panel { top:278px; right:12px; max-height:calc(100dvh - 292px); }
+}
 .atlas-mobile-panel-switch { display: none; }
 
 @media (width < 768px) {
-  .cesium-lab-page { --atlas-overlay-top: 164px; }
+  .cesium-lab-page { --atlas-overlay-top: 284px; }
 
   .atlas-app-header[data-page='map'] p {
     min-height: 2.8em;

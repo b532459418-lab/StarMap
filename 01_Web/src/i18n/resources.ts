@@ -9,10 +9,12 @@ import { mediaImportResources } from './mediaImportResources.ts'
 import { editorResources } from './editorResources.ts'
 import { detailsResources } from './detailsResources.ts'
 import { journeyResources } from './journeyResources.ts'
+import { timeFilterResources } from './timeFilterResources.ts'
 import { DEFAULT_UI_LOCALE, EN_UI_LOCALE } from '../data/uiLocale.ts'
 
 export const resources = {
   [DEFAULT_UI_LOCALE]: {
+    timeFilter: { ...timeFilterResources.zh, noMapResults: '当前范围没有可绘制地点。无坐标记录仍可在旅程与收藏查看。', dateQuality: '全部可浏览足迹资料需核对日期：部分 {{partial}} 条、缺失 {{missing}} 条、无效 {{invalid}} 条。' },
     layer: layerResources.zh,
     auxiliary: auxiliaryResources.zh,
     appShell: appShellResources.zh,
@@ -29,7 +31,8 @@ export const resources = {
     },
     collection: {
       title: '收藏', heading: '想去的地方', description: '想去图层里的全部地点，包括地图上暂时看不到的。',
-      total: '全部', onMap: '地图上', hidden: '已隐藏', noLocation: '无坐标', fromTravelLog: '来自旅行记录',
+      total: '全部', onMap: '可映射条目', hidden: '已隐藏', noLocation: '无坐标', fromTravelLog: '来自旅行记录',
+      allDataHint: '全部资料，不受地图时间筛选影响。',
       all: '全部', visible: '显示中', recent: '最近加入', name: '名称', country: '国家',
       places_other: '{{count}} 个地点', filteredPlaces_other: '{{visible}} / {{count}} 个地点',
       add: '添加想去的地方', search: '搜索想去的地方', searchPlaceholder: '搜索名称、国家代码或备注',
@@ -47,6 +50,7 @@ export const resources = {
     },
   },
   [EN_UI_LOCALE]: {
+    timeFilter: { ...timeFilterResources.en, noMapResults: 'No mappable places in the current range. Records without coordinates remain available in Journey and Collection.', dateQuality: 'All browsable footprint data: {{partial}} partial, {{missing}} missing and {{invalid}} invalid dates to review.' },
     layer: layerResources.en,
     auxiliary: auxiliaryResources.en,
     appShell: appShellResources.en,
@@ -63,7 +67,8 @@ export const resources = {
     },
     collection: {
       title: 'Collection', heading: 'Places you want to go', description: 'Every place in your Want to Go layer, including places currently absent from the map.',
-      total: 'Total', onMap: 'On map', hidden: 'Hidden', noLocation: 'No location', fromTravelLog: 'From travel log',
+      total: 'Total', onMap: 'Mappable entries', hidden: 'Hidden', noLocation: 'No location', fromTravelLog: 'From travel log',
+      allDataHint: 'All records, unaffected by map time filters.',
       all: 'All', visible: 'Visible', recent: 'Recently added', name: 'Name', country: 'Country',
       places_one: '{{count}} place', places_other: '{{count}} places',
       filteredPlaces_one: '{{visible}} / {{count}} place', filteredPlaces_other: '{{visible}} / {{count}} places',

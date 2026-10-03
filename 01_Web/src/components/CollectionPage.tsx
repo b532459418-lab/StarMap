@@ -13,10 +13,11 @@ import {
   wantToGoItemById,
 } from '../data/wantToGo'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
-import { filterCollection } from '../worldgraph/collection'
+import { collectionEntryKey, filterCollection } from '../worldgraph/collection'
 import { originalNameSubtitle, resolveName } from '../worldgraph/localizedText'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { useTranslation } from 'react-i18next'
+import { formatRecordDate } from '../data/derive/recordDateLabel'
 import type { CollectionEntry, CollectionSort, CollectionStatusFilter } from '../worldgraph/collection'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
@@ -74,9 +75,6 @@ const regionName = (countryCode: string, locale: string) => {
 
 const isFromTravelLog = (entry: CollectionEntry) => entry.readOnly && entry.source === PLANNED_SOURCE
 
-/** 列表里每一行的 key：同一实体在想去图层可以有几条记录，所以连同 recordId 一起（与 Core 的成员关系去重键同一口径）。 */
-const collectionEntryKey = (entry: CollectionEntry) => JSON.stringify([entry.entityId, entry.recordId ?? ''])
-
 /**
  * Collection 视图（PRD R10，PR7 规格 §3.4）：以列表管理想去图层的全部条目，
  * 包括地图上看不到的（已隐藏、没有坐标、被并进足迹城市的）。
@@ -133,6 +131,7 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
             <p className="journey-kicker">{t('title')}</p>
             <h2>{t('heading')}</h2>
             <p>{t('description')}</p>
+            <p className="collection-time-hint">{t('allDataHint')}</p>
           </div>
 
           <div className="journey-stats-grid collection-stats-grid">
@@ -236,7 +235,7 @@ type CollectionCardProps = {
 
 function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCardProps) {
   const { locale } = useUiLocale()
-  const { t } = useTranslation('collection')
+  const { t } = useTranslation(['collection', 'details', 'journey'])
   const noteId = useId()
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
@@ -270,8 +269,13 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   const showConvert = convertSource !== undefined && !editingNote
 
   const countryName = entry.countryCode ? regionName(entry.countryCode, locale) : ''
-  // planned 记录的日期是计划出发日，不是加入日期（与 WantToGoCard 的写法一致）。
-  const dateLabel = fromTravelLog ? entry.addedAt : t('added', { date: entry.addedAt })
+  // Planned intervals use the original record; membership addedAt only holds its start.
+  const date = formatRecordDate(planned
+    ? { startDate: planned.start_date, endDate: planned.end_date, year: planned.year }
+    : { startDate: entry.addedAt },
+  { unknown: t('details:unknownDate'), yearOnly: t('journey:yearOnly'), partial: t('details:dateQualitypartial'),
+    missing: t('details:dateQualitymissing'), invalid: t('details:dateQualityinvalid') })
+  const dateLabel = fromTravelLog ? t('details:plannedVisit', { date }) : t('added', { date })
 
   const tags: { id: string; label: string }[] = []
   if (entry.subtype === 'country') tags.push({ id: 'country', label: t('wholeCountry') })

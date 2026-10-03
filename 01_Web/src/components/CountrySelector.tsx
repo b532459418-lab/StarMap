@@ -15,6 +15,8 @@ import { LocationSearchField } from './LocationSearchField'
 import { useFlipLayout } from './useFlipLayout'
 
 type CountrySelectorProps = {
+  /** Browsing only. Sorting, hiding, restoring and add checks retain complete inputs. */
+  browse?: { countryIds?: readonly string[]; cityIds?: readonly string[] }
   selectedCountryId?: CountryId
   selectedCityId?: CityId
   activeDroneMediaCityId?: CityId
@@ -51,6 +53,7 @@ const debugGlobeScaleChange = (value: number) => {
 }
 
 export function CountrySelector({
+  browse,
   selectedCountryId,
   selectedCityId,
   activeDroneMediaCityId,
@@ -90,7 +93,10 @@ export function CountrySelector({
   const [countryVisitedDate, setCountryVisitedDate] = useState('')
   const countryDragPointerRef = useRef<number | undefined>(undefined)
   const countriesById = new Map(countries.map((country) => [country.id, country]))
-  const displayCountries = draftCountryIds.map((id) => countriesById.get(id)).filter(Boolean)
+  const browseCountryIds = browse?.countryIds === undefined ? undefined : new Set(browse.countryIds)
+  const browseCityIds = browse?.cityIds === undefined ? undefined : new Set(browse.cityIds)
+  const displayCountries = draftCountryIds.map((id) => countriesById.get(id))
+    .filter((country) => country !== undefined && (isEditingCountries || browseCountryIds === undefined || browseCountryIds.has(country.id)))
   const countryListRef = useFlipLayout<HTMLDivElement>(draftCountryIds.join('|'))
   const searchCountryOptions = useCallback(async (query: string, signal: AbortSignal) => {
     const results = await searchLocalCountries(query, signal)
@@ -317,7 +323,8 @@ export function CountrySelector({
         {displayCountries.map((country) => {
           if (!country) return null
           const isSelected = country.id === selectedCountry?.id
-          const countryCities = getCitiesForCountry(country.id).filter((city) => !shouldHideCityFromNavigation(city))
+          const countryCities = getCitiesForCountry(country.id).filter((city) => !shouldHideCityFromNavigation(city)
+            && (isEditingCountries || browseCityIds === undefined || browseCityIds.has(city.id)))
 
           return (
             <div

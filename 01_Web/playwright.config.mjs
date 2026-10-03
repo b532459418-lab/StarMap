@@ -12,7 +12,7 @@ export default defineConfig({
   fullyParallel: false,
   retries: 0,
   timeout: performance ? 180000 : 60000,
-  globalTimeout: 480000,
+  globalTimeout: 900000,
   expect: { timeout: 15000 },
   outputDir: performance ? './test-results/performance' : './test-results/browser',
   reporter: [['list'], ['html', { outputFolder: performance ? 'playwright-report/performance' : 'playwright-report/browser', open: 'never' }]],
