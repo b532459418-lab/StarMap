@@ -12,6 +12,8 @@ dist
 dist-ssr
 .codex/
 *.tsbuildinfo
+01_Web/test-results/
+01_Web/playwright-report/
 *.local
 
 # External/private profile defense in depth

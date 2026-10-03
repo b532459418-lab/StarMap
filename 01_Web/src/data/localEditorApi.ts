@@ -2,6 +2,7 @@ import type { TravelAtlasEditorState } from './editorState'
 import type { WantToGoItem } from './derive/wantToGo.ts'
 import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
 import { parseMediaImportResponse, parseMediaUploadResponse } from './localMediaResponse.ts'
+import { LocalEditorError } from '../i18n/editorErrors.ts'
 import { assertLocalEditorReloadAllowed, withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
 
 const editorHeaders = {
@@ -186,13 +187,19 @@ export type LocalWantToGoInput = {
   addedAt?: string
 }
 
-export const addLocalWantToGo = (input: LocalWantToGoInput) => withLocalEditorWrite(async () => {
+export type ExistingPlaceWantToGoInput = { placeId: string; note?: string; addedAt?: string }
+
+export const addLocalWantToGo = (input: LocalWantToGoInput | ExistingPlaceWantToGoInput) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/wanttogo', {
     method: 'POST',
     headers: editorHeaders,
     body: JSON.stringify(input),
   })
-  return parseResponse<{ id: string; item: WantToGoItem }>(response)
+  const result = await parseResponse<{ id: string; item: WantToGoItem }>(response)
+  if (typeof result.id !== 'string' || !result.id || result.item?.id !== result.id || !result.item?.place) {
+    throw new LocalEditorError({ code: 'E_EDITOR_RESPONSE_INVALID', params: { status: response.status } })
+  }
+  return result
 })
 
 export const updateLocalWantToGo = (

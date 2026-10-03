@@ -14,6 +14,7 @@ import type { CityPhotoGalleryRequest } from './CityPhotoGalleryModal'
 import { LocationSearchField } from './LocationSearchField'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
 import { MediaImportRecovery } from './MediaImportRecovery'
+import { CityWantToGoAction } from './CityWantToGoAction'
 import { useFlipLayout } from './useFlipLayout'
 import { useMediaImportSession } from './useMediaImportSession'
 
@@ -306,6 +307,13 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, onSelectCity
       </div>
 
       <div className="atlas-info-content atlas-panel-body flex min-h-0 flex-1 flex-col gap-4">
+        {isCityMode && localEditorAvailable ? (
+          <CityWantToGoAction
+            key={city.id}
+            cityId={city.id}
+            disabled={editorActionBusy || cityEditing || photoEditing || showAddCity}
+          />
+        ) : null}
         {isOverview ? (
           <div>
             <p className="text-sm text-slate-500">

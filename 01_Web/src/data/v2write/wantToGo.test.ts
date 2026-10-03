@@ -32,6 +32,51 @@ const cityInput = (place: Record<string, unknown>, extra: Record<string, unknown
 
 const itemOf = (files: V2Files, id: string) => files.wantToGo.items.find((item) => item.id === id)
 
+test('按现有地点 id 收藏：同名城市不重解析，注册表及足迹不变，仅写想去', () => {
+  const files = migratedFiles()
+  const city = placeNamed(files, 'Reykjavik')
+  const duplicate = { ...structuredClone(city), id: GHOST_ID }
+  delete duplicate.legacyKeys
+  files.places.places.push(duplicate)
+  const before = structuredClone(files)
+  const outcome = addWantToGo(files, { placeId: city.id, note: '  再去一次  ' }, testContext())
+  assert.deepEqual(writeOrder(outcome.writes), ['wantToGo'])
+  const next = applyWrites(files, outcome.writes)
+  assertIntact(next)
+  assert.equal(itemOf(next, outcome.result.id)?.placeId, city.id)
+  assert.equal(outcome.result.item.note, '再去一次')
+  assert.deepEqual(next.places, before.places)
+  assert.deepEqual(next.travel, before.travel)
+  assert.deepEqual(files, before, '原始输入不变')
+})
+
+test('按现有地点 id 收藏：缺英文名与坐标时仍引用原地点，不能隐式创建或修改地点', () => {
+  const files = migratedFiles()
+  const city = placeNamed(files, 'Reykjavik')
+  delete city.names.en
+  delete city.location
+  const outcome = addWantToGo(files, { placeId: city.id }, testContext())
+  assert.deepEqual(writeOrder(outcome.writes), ['wantToGo'])
+  const next = applyWrites(files, outcome.writes)
+  assertIntact(next)
+  assert.equal(itemOf(next, outcome.result.id)?.placeId, city.id)
+  assert.deepEqual(next.places, files.places)
+})
+
+test('按现有地点 id 收藏：拒绝重复及隐藏条目、未知引用和混用输入，失败不改数据', () => {
+  const files = migratedFiles()
+  const before = structuredClone(files)
+  for (const name of ['Nuuk', 'Tromsø', 'Akureyri']) {
+    assertV2Error(() => addWantToGo(files, { placeId: placeNamed(files, name).id }, testContext()), 'E_WTG_EXISTS')
+  }
+  for (const input of [
+    { placeId: GHOST_ID }, { placeId: null }, { placeId: '' }, { placeId: 1 },
+    { placeId: placeNamed(files, 'Reykjavik').id, place: { kind: 'city', nameEn: 'Other', countryCode: 'IS' } },
+  ]) assertV2Error(() => addWantToGo(files, input, testContext()), 'E_UNKNOWN_PLACE_REF')
+  assertV2Error(() => addWantToGo(undefined, { placeId: GHOST_ID }, testContext()), 'E_UNKNOWN_PLACE_REF')
+  assert.deepEqual(files, before)
+})
+
 // ---------------------------------------------------------------------------
 // POST /wanttogo
 // ---------------------------------------------------------------------------

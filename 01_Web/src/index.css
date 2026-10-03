@@ -5384,6 +5384,33 @@ button {
 }
 
 /* Local editor: available only in Vite's local development state. */
+.atlas-city-wtg-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  border-radius: 9px;
+  background: rgba(248, 250, 252, 0.5);
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.atlas-city-wtg-button svg { width: 17px; height: 17px; flex-shrink: 0; }
+.atlas-city-wtg-button:focus-visible { outline: 2px solid #38bdf8; outline-offset: 3px; }
+.atlas-city-wtg-button:disabled { cursor: default; opacity: 0.6; }
+.atlas-city-wtg-button[data-saved='true'] { color: #be185d; opacity: 1; }
+.atlas-city-wtg-hint { margin-top: 7px; font-size: 12px; line-height: 1.6; color: #64748b; }
+.theme-night .atlas-city-wtg-button { background: rgba(15, 23, 42, 0.34); color: #e2e8f0; border-color: rgba(148, 163, 184, 0.3); }
+.theme-night .atlas-city-wtg-button[data-saved='true'] { color: #f9a8d4; }
+.theme-night .atlas-city-wtg-hint { color: #94a3b8; }
+
 .atlas-local-editor-actions {
   display: flex;
   flex: 0 0 auto;

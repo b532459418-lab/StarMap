@@ -77,7 +77,8 @@ const normalizePlace = (value: unknown): PlaceInput => {
 // ---------------------------------------------------------------------------
 
 /**
- * 新增想去：`{ place: { kind, nameZh?, nameEn, countryCode, lat?, lng? }, note?, addedAt? }`。
+ * 新增想去：`{ place: { kind, nameZh?, nameEn, countryCode, lat?, lng? }, note?, addedAt? }`
+ * 或 `{ placeId, note?, addedAt? }`。已有地点按 id 精确引用；两种输入不能混用。
  * - 国家按 `countryCode` 解析，没有就按目录新建；`kind: 'country'` 的条目就指向这个国家地点。
  * - `kind: 'city'`：城市按名称在该国家下解析——找到就复用（包括已在足迹里的城市，显示上自然合并），
  *   找不到就新建（坐标可空）。复用的地点没有坐标而输入带了时补上。地点名称以注册表为准。
@@ -87,7 +88,11 @@ const normalizePlace = (value: unknown): PlaceInput => {
  */
 export function addWantToGo(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<{ id: string; item: WantToGoItem }> {
   const body = bodyOf(input)
-  const place = normalizePlace(body.place)
+  const referencesPlace = Object.hasOwn(body, 'placeId')
+  if (referencesPlace && (typeof body.placeId !== 'string' || !body.placeId.trim() || Object.hasOwn(body, 'place'))) {
+    fail('E_UNKNOWN_PLACE_REF')
+  }
+  const place = referencesPlace ? undefined : normalizePlace(body.place)
   const note = normalizeNote(body.note)
   const addedAt = body.addedAt === undefined || body.addedAt === null || body.addedAt === ''
     ? localDate(ctx.now)
@@ -95,21 +100,27 @@ export function addWantToGo(files: V2FilesOrEmpty | undefined, input: unknown, c
   if (!DATE_PATTERN.test(addedAt)) fail('E_DATE_FORMAT', { field: 'addedAt' })
 
   return runV2Transaction(files, ctx, (draft) => {
-    const country = ensureCountryPlace(draft, place.countryCode)
-    let target = country.place
-    let placesChanged = country.changed
-    if (place.kind === 'city') {
-      const city = ensureCityPlace(draft, country.place.id, { zh: place.nameZh, en: place.nameEn }, place.location)
-      target = city.place
-      placesChanged ||= city.changed
-    } else {
-      placesChanged = fillMissingLocation(country.place, place.location) || placesChanged
+    let target = referencesPlace ? draft.placeById(body.placeId as string) : undefined
+    let placesChanged = false
+    if (referencesPlace && !target) fail('E_UNKNOWN_PLACE_REF')
+    if (place) {
+      const country = ensureCountryPlace(draft, place.countryCode)
+      target = country.place
+      placesChanged = country.changed
+      if (place.kind === 'city') {
+        const city = ensureCityPlace(draft, country.place.id, { zh: place.nameZh, en: place.nameEn }, place.location)
+        target = city.place
+        placesChanged ||= city.changed
+      } else {
+        placesChanged = fillMissingLocation(country.place, place.location) || placesChanged
+      }
     }
-    if (draft.files.wantToGo.items.some((item) => item.placeId === target.id)) fail('E_WTG_EXISTS', { placeId: target.id })
+    const targetId = target?.id ?? fail('E_UNKNOWN_PLACE_REF')
+    if (draft.files.wantToGo.items.some((item) => item.placeId === targetId)) fail('E_WTG_EXISTS', { placeId: targetId })
 
     const item: CanonicalWantToGoItem = {
       id: ctx.newId(),
-      placeId: target.id,
+      placeId: targetId,
       ...(note ? { note } : {}),
       addedAt,
       hidden: false,

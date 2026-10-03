@@ -46,6 +46,22 @@ npm run release:check
 
 `npm test` runs the World Graph Core unit tests with plain `node --test`; no bundler is involved. See [`src/worldgraph/README.md`](src/worldgraph/README.md).
 
+### Browser regression and performance baseline
+
+```powershell
+npx playwright install chromium
+npm run test:browser
+npm run perf:browser
+```
+
+The browser runner creates a new temporary private root from neutral tracked test fixtures, blanks map-provider credentials, uses bundled local imagery, and blocks external browser requests. It starts the standard personal Vite profile on loopback port 5173 and refuses to reuse an occupied port. Tests exercise real local writes, synthetic image upload/import (with one injected retryable failure), and Want to Go conversion; your own private root is never used. Browser contexts are separate for each case; the synthetic disk fixture is shared only within the serial run. Playwright closes its server and browsers at the end, and the runner removes only its own temporary data directory.
+
+`test:browser` covers language switches with note/date drafts, country/city selection and the city Want to Go shortcut, import retry without reupload, Collection conversion, mobile panel drafts, and the forced-sample read-only boundary. These checks run in the existing **Public checks** CI job. Reports are ignored under `playwright-report/browser/`; screenshots and traces for failures are under `test-results/browser/`.
+
+`perf:browser` adds 1,000 synthetic Want to Go places and records map UI readiness, Collection opening, scroll animation-frame intervals, long tasks, and layer toggle timing. Its JSON attachment and report are under `test-results/performance/` and `playwright-report/performance/`. Measurements use a headless browser, software WebGL, and a development server; UI readiness and two animation frames do not prove globe imagery has finished rendering. They are a descriptive local baseline, not CI performance thresholds or production-device acceptance. Performance collection is an explicit separate command and is not part of the required CI job.
+
+The server lifecycle uses [Playwright's webServer configuration](https://playwright.dev/docs/test-webserver), with `reuseExistingServer: false` to prevent writes to another preview's data.
+
 ## Public Sample and Private Data
 
 StarMap has two data layers:
@@ -56,6 +72,12 @@ StarMap has two data layers:
 The private layer is considered only in the explicit personal profile. Public preview and public build ignore it even when it exists; they, and forced sample mode (`VITE_TRAVEL_ATLAS_DATA_MODE=sample`, or `?data=sample` in development), read `src/data/v2-sample/`. Forced sample mode previews the public site: the local editor is off even in the personal profile, so the page renders exactly as in public mode, with no editing control, and nothing can be written to the private folder from it.
 
 In the personal profile, Want to Go never falls back to the sample: sample items are not in the private file, so the editor could not hide them. When the private Want to Go file does not exist yet, the list is empty. The add entry and the Hide button are rendered only for private data, in addition to the existing development-only editor gate.
+
+City details also offer **Mark as Want to Go** for the current city. This shortcut posts its existing `placeId` through the same loopback editor and write coordinator; it never resolves the selected city again by its display name or changes its travel records. Existing entries, including hidden entries, disable the add button. Hidden entries can be restored in Collection. Public and forced-sample views render no shortcut. An ambiguous or unknown write outcome locks retry until the user reloads and verifies the list.
+
+## Whole-library backup and recovery
+
+An offline directory-snapshot tool preserves the active V2 files, source index, Inbox originals/sidecars and local media. `npm run backup -- create --root <explicit-private-root> --out <fresh-backup-directory>` creates a checked snapshot; `inspect --from <backup-directory>` validates it. `restore --from <backup-directory> --to <fresh-private-root>` previews recovery, and `--apply` creates that new directory. Existing directories are always refused and activation is manual, leaving the previous root available for rollback. Use separate private storage and stop personal previews/importers before creation. Configuration and credentials are excluded. See [scope, commands, validation and limitations](../docs/local-backup.md).
 
 ## Private Data Format
 
