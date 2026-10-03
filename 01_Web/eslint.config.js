@@ -20,11 +20,15 @@ export default defineConfig([
     },
   },
   {
-    files: ['scripts/**/*.mjs'],
+    files: ['scripts/**/*.mjs', 'tests/browser/**/*.mjs', 'playwright.config.mjs'],
     extends: [js.configs.recommended],
     languageOptions: {
       globals: globals.node,
     },
+  },
+  {
+    files: ['tests/browser/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
   },
   // FR-MOD（PRD v0.4 §FR-MOD / 战略 v0.2 D25）：src/worldgraph/** 是环境无关的
   // World Graph Core，禁止反向依赖表现层、应用单例与运行环境。

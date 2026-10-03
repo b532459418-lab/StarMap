@@ -38,3 +38,12 @@ jobs:
       # release:check installs locked dependencies inside a clean Git archive.
       - name: Check privacy, lint, tests, and public build
         run: npm run release:check
+
+      - name: Install locked browser test dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Check critical browser flows with isolated synthetic data
+        run: npm run test:browser

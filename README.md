@@ -42,6 +42,7 @@ This repository is the **StarMap Core / Community Edition**, licensed under [MIT
 - Aspect-ratio-safe photo gallery for both landscape and portrait images.
 - Three-tier private media pipeline: lightweight thumbnails, viewer previews, and preserved originals.
 - An in-app GitHub Release update guide.
+- Repeatable critical browser regression with isolated synthetic data, plus a separate 1,000-place performance baseline command (see `01_Web/README.md`).
 - Privacy audit and public/private data separation designed for open-source reuse.
 
 ## Quick start
@@ -117,6 +118,7 @@ The Want to Go layer marks places you have not been to yet. The map layers butto
 In the personal profile (`npm run dev:personal`):
 
 - **Add**: the layer panel ends with **+ Add a place you want to go** (添加想去的地方). Choose a country first, then search for a city online (the same Cesium ion / OpenStreetMap lookup used for city creation) or enter its name and coordinates manually; you can also add the whole country. An optional note records why you want to go. Adding the same place twice is refused with a notice that it is already on the list.
+- **From city details**: choose **Mark as Want to Go** to save the selected city directly, including a city you want to visit again. It uses the existing place ID and keeps its names, coordinates and travel records. A saved city shows **Already on your Want to Go list**; hidden entries count too and can be restored in Collection. Finish any current city-photo edit first. Pending media imports block this action, and an unknown write result requires a reload and verification before retrying.
 - **Hide**: click a want-to-go marker to open its detail card, then choose **Hide** (隐藏). Hiding removes the marker from the map but keeps the entry.
 - **Restore or delete**: hidden places are listed under **Hidden N items** (已隐藏 N 项) below the Want to Go toggle in the layer panel. Each one can be restored (恢复) or permanently deleted (彻底删除). Only hidden places can be deleted, and deletion cannot be undone.
 
