@@ -22,12 +22,16 @@ const executionFailure = (error, stage) => {
 }
 
 /** Loopback editor importer: preflight must succeed and contain no unresolved data before apply. */
-export function createLocalEditorImporter({ webRoot, privateRoot, execFileAsync = defaultExecFileAsync }) {
-  return async () => {
+export function createLocalEditorImporter({ webRoot, privateRoot, leaseToken, execFileAsync = defaultExecFileAsync }) {
+  return async ({ leaseToken: operationLeaseToken = leaseToken } = {}) => {
     const script = path.join(webRoot, 'scripts', 'import-media.mjs')
+    const environment = { ...process.env, STARMAP_PRIVATE_ROOT: privateRoot }
+    // Only this trusted server call can grant a child lease; an ambient token never bypasses acquisition.
+    delete environment.STARMAP_LIBRARY_LEASE
+    if (operationLeaseToken !== undefined) environment.STARMAP_LIBRARY_LEASE = operationLeaseToken
     const options = {
       cwd: webRoot,
-      env: { ...process.env, STARMAP_PRIVATE_ROOT: privateRoot },
+      env: environment,
       maxBuffer: 8 * 1024 * 1024,
     }
     const execute = async (stage, args) => {

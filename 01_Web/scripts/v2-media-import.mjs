@@ -126,7 +126,7 @@ const readV2DataFiles = async (privatePaths) => {
  * 运行 V2 导入。`apply` 为 false 时只预检（不写任何文件）。返回退出码：0 完成（可能有提醒），1 有需要处理的问题或读写失败。
  * `now` 与两个输出函数可注入（测试用）。
  */
-export async function runV2MediaImport({ privatePaths, apply = false, now = () => new Date(), log = console.log, logError = console.error }) {
+export async function runV2MediaImport({ privatePaths, apply = false, now = () => new Date(), log = console.log, logError = console.error, capturePlan = false }) {
   const inboxRoot = privatePaths.inboxRoot
   const outputRoot = privatePaths.userMediaRoot
   const errors = []
@@ -135,6 +135,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
   /** 按文件夹名或旧 country.json 解析成功、还没有 place.json 的文件夹：--apply 时写入 place.json 固定下来（RFC ID-6）。 */
   const pins = []
   const relative = (filePath) => path.relative(inboxRoot, filePath)
+  const captured = (files = {}, unique = [], items = []) => ({ privatePaths, files, planned, unique, items, pins, errors, warnings })
 
   const printReport = (items) => {
     const counts = items.reduce((result, item) => {
@@ -176,12 +177,14 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
     files = await readV2DataFiles(privatePaths)
   } catch (error) {
     errors.push(error.message)
+    if (capturePlan) return captured()
     printReport([])
     return 1
   }
   const placeProblems = validateV2Files(completeForWrite(files, now())).filter((problem) => problem.file === 'places')
   if (placeProblems.length > 0) {
     errors.push(`地点注册表 ${privatePaths.v2FilePaths.places} 没有通过校验（${placeProblems.length} 处），无法解析照片归属：${placeProblems.slice(0, 5).map((problem) => `${problem.path}：${problem.message}`).join('；')}`)
+    if (capturePlan) return captured(files)
     printReport([])
     return 1
   }
@@ -211,7 +214,8 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
       warnings.push(`${relative(filePath)} 为 ${sizeInMiB.toFixed(1)} MiB，建议 Agent 生成更轻的网页版本。`)
     }
 
-    const hash = contentHashOf(await sha256(filePath))
+    const fullHash = await sha256(filePath)
+    const hash = contentHashOf(fullHash)
     const still = isStillMedia(kind, extension)
     let dimensions
     if (still) {
@@ -240,6 +244,9 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
     planned.push({
       id: item.id,
       item,
+      sha256: fullHash,
+      bytes: fileStats.size,
+      metadata,
       sourcePath: filePath,
       outputDirectory: outputPathOf(generated.directory),
       outputPath: outputPathOf(generated.original),
@@ -359,6 +366,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
     warnings.push(`发现 ${planned.length - unique.length} 个内容完全相同的重复文件，目录中只保留一份记录。`)
   }
   const items = markCovers(unique.map((entry) => entry.item))
+  if (capturePlan) return captured(files, unique, items)
   printReport(items)
 
   if (errors.length > 0) {
@@ -377,6 +385,20 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
     return 1
   }
 
+  await applyV2MediaImportScan({ privatePaths, scan: captured(files, unique, items), now, log })
+  return 0
+}
+
+/** The CLI and durable task planner share exactly one Inbox scanner. Never writes. */
+export const scanV2MediaImport = (options) => runV2MediaImport({ ...options, apply: false, capturePlan: true })
+
+/** Caller validates the full plan and holds the library lease before entering. */
+export async function applyV2MediaImportScan({ privatePaths, scan, now = () => new Date(), log = () => {}, onStage = async () => {} }) {
+  const { unique, planned, pins, items } = scan
+  const inboxRoot = privatePaths.inboxRoot
+  const relative = (filePath) => path.relative(inboxRoot, filePath)
+  const generatedAt = now().toISOString()
+  const catalog = mediaCatalogFileOf(items, generatedAt)
   for (const entry of unique) {
     await mkdir(entry.outputDirectory, { recursive: true })
     try {
@@ -393,19 +415,24 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
         .toFile(derivative.outputPath)
     }
   }
+  await onStage('generated')
 
   // RFC ID-6：按名称（或旧 country.json）匹配成功的文件夹写入 place.json，此后按 id 解析、不再按名字重新匹配。
   // 已有 place.json 的文件夹不在 pins 里，不动。
   for (const pin of pins) await atomicJsonWrite(path.join(pin.directory, 'place.json'), placeConfigOf(pin.placeId))
+  await onStage('pins')
   if (pins.length > 0) {
     log(`\n已在 ${pins.length} 个按名称匹配的收件箱文件夹写入 place.json，固定为地点 id：`)
     for (const pin of pins) log(`- ${toPosix(relative(pin.directory))}/place.json`)
   }
 
   await atomicJsonWrite(privatePaths.v2FilePaths.media, catalog)
+  await onStage('catalog')
   const sourcesById = sourcesByIdOf(planned.map((entry) => ({ id: entry.id, sourcePath: toPosix(relative(entry.sourcePath)) })))
-  await atomicJsonWrite(privatePaths.v2MediaSourceIndexPath, mediaSourceIndexFileOf(sourcesById, generatedAt))
+  const index = mediaSourceIndexFileOf(sourcesById, generatedAt)
+  await atomicJsonWrite(privatePaths.v2MediaSourceIndexPath, index)
+  await onStage('index')
   log('\n已更新私人目录 data/v2/ 中的媒体目录与源文件索引。')
   log('开发预览会自动刷新媒体目录；若页面未更新，请手动刷新一次。')
-  return 0
+  return { mediaIds: items.map((item) => item.id), catalog, index }
 }

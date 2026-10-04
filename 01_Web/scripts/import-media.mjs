@@ -12,6 +12,8 @@
 import { isLegacyUnmigrated, LEGACY_UNMIGRATED_IMPORT_MESSAGE, legacyDataStateOf } from './legacy-data.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { runV2MediaImport } from './v2-media-import.mjs'
+import { withLibraryOperation } from './library-operation-lock.mjs'
+import { assertMediaJobsClear } from './media-job-store.mjs'
 
 const privatePaths = getPrivatePaths()
 const apply = process.argv.includes('--apply')
@@ -21,7 +23,10 @@ try {
     console.error(`[import-media] ${LEGACY_UNMIGRATED_IMPORT_MESSAGE}`)
     process.exitCode = 2
   } else {
-    process.exitCode = await runV2MediaImport({ privatePaths, apply })
+    process.exitCode = await withLibraryOperation(privatePaths, async () => {
+      if (apply) await assertMediaJobsClear(privatePaths)
+      return runV2MediaImport({ privatePaths, apply })
+    }, { leaseToken: process.env.STARMAP_LIBRARY_LEASE })
   }
 } catch (error) {
   console.error(error)

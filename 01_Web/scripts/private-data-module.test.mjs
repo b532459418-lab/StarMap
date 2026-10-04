@@ -265,7 +265,7 @@ test('写入：先过本机会话检查，再判「未迁移」（未迁移时�
   const writeSection = sourceBetween(source, "if (!authorizeWrite(request)) return sendJson(response, 403", '} catch (error) {', false)
   const refusal = writeSection.indexOf('const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))\n          if (refusal) return sendJson(response, refusal.status, refusal.body)')
   const mutation = writeSection.indexOf('editorMutationDepth += 1')
-  const dispatch = writeSection.indexOf('result = await handleV2Write(request, url)')
+  const dispatch = writeSection.indexOf('return handleV2Write(request,url,leaseToken,input)')
   assert.ok(refusal > 0, '有未迁移的拒绝')
   assert.ok(mutation > refusal, '拒绝在进入写入之前（不算编辑器写入，也不抑制刷新）')
   assert.ok(dispatch > mutation, '之后无条件走 V2 写入')
@@ -300,13 +300,10 @@ test('插件对 add、change、unlink 三种事件注册同一个处理，经 sh
 
 test('V2 写入分派：先看媒体路由（上传的请求体不按 JSON 读），再看非媒体路由；插件的辅助函数原样传给媒体端点复用', () => {
   const source = pluginSource()
-  const handleV2Write = sourceBetween(source, 'const handleV2Write = async (request, url) => {', 'export function travelAtlasLocalEditor', false)
-  assert.match(handleV2Write, /^const handleV2Write = async \(request, url\) => \{\n {2}const mediaRoute = v2MediaRoute\(request\.method, url\.pathname\)\n {2}if \(mediaRoute\) return handleV2Media\(mediaRoute, request, url\)\n {2}const route = v2EditorRoute/)
-  const handleV2Media = sourceBetween(source, 'const handleV2Media = async (routeName, request, url) => {', 'const handleV2Write = async', false)
-  assert.ok(
-    handleV2Media.indexOf("if (routeName === 'upload') return handleV2Upload(") < handleV2Media.indexOf('await readJsonBody(request)'),
-    '上传在读 JSON 请求体之前分出去',
-  )
+  const handleV2Write = sourceBetween(source, 'const handleV2Write = async (request, url, leaseToken, input) => {', 'export function travelAtlasLocalEditor', false)
+  assert.match(handleV2Write, /^const handleV2Write = async \(request, url, leaseToken, input\) => \{\n {2}const mediaRoute = v2MediaRoute\(request\.method, url\.pathname\)\n {2}if \(mediaRoute\) return handleV2Media\(mediaRoute, request, url, leaseToken, input\)\n {2}const route = v2EditorRoute/)
+  const handleV2Media = sourceBetween(source, 'const handleV2Media = async (routeName, request, url, leaseToken, input) => {', 'const handleV2Write = async', false)
+  assert.doesNotMatch(handleV2Media, /readJsonBody/)
   for (const name of ['safeSegment', 'reserveDestination', 'writeUpload', 'updateDroneSidecar', 'runImporter', 'normalizeInboxRelativePath', 'removeSidecarEntries', 'isPathInside']) {
     assert.match(handleV2Media, new RegExp(`\\n {4}${name},\\n`), name)
   }

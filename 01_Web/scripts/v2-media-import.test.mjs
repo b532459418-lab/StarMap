@@ -410,7 +410,7 @@ test('入口只剩几行：import-media.mjs 不再含旧导入器，也不再按
   const source = readFileSync(path.join(webRoot, 'scripts', 'import-media.mjs'), 'utf8')
   assert.ok(source.split(/\r?\n/).length < 40, '入口文件应当只有几行')
   assert.doesNotMatch(source, /resolveDataMode|data-mode\.mjs|createLocationIndex|travel-map\.sample\.json|localTravelMapPath/)
-  assert.match(source, /process\.exitCode = await runV2MediaImport\(\{ privatePaths, apply \}\)/)
+  assert.match(source, /return runV2MediaImport\(\{ privatePaths, apply \}\)/)
 })
 
 test('未迁移：私人目录只有旧数据、data/v2/ 没有 V2 文件 → media:check 与 media:import 都拒绝，退出码 2，说明怎么迁移；不写任何文件', async () => {

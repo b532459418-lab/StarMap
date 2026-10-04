@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
         profile,
         privateRoot: privatePaths.root,
         cesiumAccessToken: personalEnv.VITE_CESIUM_ION_TOKEN,
+        forceSample: (personalEnv.VITE_TRAVEL_ATLAS_DATA_MODE ?? process.env.VITE_TRAVEL_ATLAS_DATA_MODE) === 'sample',
       }),
       react(),
       tailwindcss(),

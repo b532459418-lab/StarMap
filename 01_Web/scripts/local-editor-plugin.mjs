@@ -20,6 +20,9 @@ import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
 import { createLocalEditorImporter } from './local-editor-importer.mjs'
+import { withLibraryOperation } from './library-operation-lock.mjs'
+import { assertMediaJobsClear } from './media-job-store.mjs'
+import { mediaJobRoute, handleMediaJobRead, handleMediaJobPreview, handleMediaJobWrite } from './media-job-service.mjs'
 
 // RFC-LOC-1 PR5a：本地编辑器只读写 data/v2/（V2 写入层：v2-editor-store.mjs 与 v2-media-store.mjs）。旧格式的写入逻辑、
 // 数据模式与回滚开关都已删除。私人目录有没迁移的旧数据时（./legacy-data.mjs），全部写入端点返回 409 E_LEGACY_UNMIGRATED。
@@ -345,7 +348,7 @@ const updateDroneSidecar = async (cityRoot, destination, metadata, imageMetadata
 }
 
 // Resolve the active private root per invocation, after configurePrivatePaths.
-const runImporter = () => createLocalEditorImporter({ webRoot, privateRoot })()
+const runImporter = (options) => createLocalEditorImporter({ webRoot, privateRoot })(options)
 
 const isPathInside = (root, target) => {
   const relative = path.relative(root, target)
@@ -465,7 +468,7 @@ const authorizeWrite = (request) => (
  * 上面的辅助函数（文件名规则、接收上传、无人机 sidecar、运行导入器、删 sidecar 条目）原样传进去复用。
  * 上传的请求体是文件本身，不按 JSON 读。
  */
-const handleV2Media = async (routeName, request, url) => {
+const handleV2Media = async (routeName, request, url, leaseToken, input) => {
   const deps = {
     safeSegment,
     reserveDestination,
@@ -476,13 +479,10 @@ const handleV2Media = async (routeName, request, url) => {
     removeSidecarEntries,
     isPathInside,
   }
+  deps.runImporter = () => runImporter({ leaseToken })
+  deps.writeUpload = (stream, destination, kind) => writeUpload(stream, destination, kind, { stagingRoot: path.join(privateRoot, 'operations', 'uploads') })
+  await assertMediaJobsClear(privatePaths)
   if (routeName === 'upload') return handleV2Upload({ privatePaths, query: url.searchParams, request, deps })
-  let input
-  try {
-    input = await readJsonBody(request)
-  } catch (error) {
-    return { status: 400, body: normalizeLocalEditorError(error, 'E_REQUEST_INVALID') }
-  }
   const ctx = createV2WriteContext({ countryCatalog: countryCatalogByCode })
   if (routeName === 'import') return handleV2Import({ privatePaths, input, ctx, deps })
   return handleV2MediaDelete({ privatePaths, input, ctx, deps })
@@ -492,17 +492,11 @@ const handleV2Media = async (routeName, request, url) => {
  * RFC-LOC-1 PR3b-2 / PR3b-3：全部 11 个写入端点。三个媒体端点经 v2-media-store.mjs 的路由表，其余 8 个经 v2-editor-store.mjs 的
  * 路由表分派；两张表都没列的接口回 404。数据读写只碰 data/v2/（媒体另有收件箱与生成文件），不读旧文件、不回落样例。
  */
-const handleV2Write = async (request, url) => {
+const handleV2Write = async (request, url, leaseToken, input) => {
   const mediaRoute = v2MediaRoute(request.method, url.pathname)
-  if (mediaRoute) return handleV2Media(mediaRoute, request, url)
+  if (mediaRoute) return handleV2Media(mediaRoute, request, url, leaseToken, input)
   const route = v2EditorRoute(request.method, url.pathname)
   if (!route) return { status: 404, body: v2ErrorBody('E_UNKNOWN_ENDPOINT') }
-  let input
-  try {
-    input = await readJsonBody(request)
-  } catch (error) {
-    return { status: 400, body: normalizeLocalEditorError(error, 'E_REQUEST_INVALID') }
-  }
   return runV2Write({ privatePaths, route, input, ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }) })
 }
 
@@ -528,7 +522,7 @@ export function travelAtlasLocalEditor(options = {}) {
       return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values, legacyUnmigrated }))
     },
     configureServer(server) {
-      if (profile !== 'personal') return
+      if (profile !== 'personal' || options.forceSample === true) return
       let editorMutationDepth = 0
       let ignoreWatcherUntil = 0
       server.watcher.add(dataRoot)
@@ -561,6 +555,18 @@ export function travelAtlasLocalEditor(options = {}) {
         if (!url.pathname.startsWith('/__travelatlas/editor/')) return next()
 
         try {
+          // A sample-preview page never discovers or mutates private tasks.
+          if (request.headers.referer) {
+            let sample = false
+            try { sample = new URL(request.headers.referer).searchParams.get('data') === 'sample' } catch { /* Other authorization still applies. */ }
+            if (sample) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError(request.method === 'GET' ? 'E_EDITOR_READ_FORBIDDEN' : 'E_EDITOR_WRITE_FORBIDDEN')))
+          }
+          const jobRoute = mediaJobRoute(request.method, url.pathname)
+          if (jobRoute && request.method === 'GET') {
+            if (!authorizeWrite(request)) return sendJson(response,403,normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
+            const result = await handleMediaJobRead({ privatePaths, route: jobRoute })
+            return sendJson(response,result.status,result.body)
+          }
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
             if (!isLoopbackRequest(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
             // RFC-LOC-1 PR3b-2：读 data/v2/ 的 editor-state，转成 V1 形状返回。
@@ -591,11 +597,25 @@ export function travelAtlasLocalEditor(options = {}) {
           // 否则 data/v2/ 被写出后，迁移工具的 --apply 会因为输出目录非空而拒绝运行。每个请求现判（只看文件在不在）。
           const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
           if (refusal) return sendJson(response, refusal.status, refusal.body)
+          if (!jobRoute && !v2MediaRoute(request.method,url.pathname) && !v2EditorRoute(request.method,url.pathname)) {
+            return sendJson(response,404,v2ErrorBody('E_UNKNOWN_ENDPOINT'))
+          }
+          const input = jobRoute?.action === 'receive' || v2MediaRoute(request.method,url.pathname) === 'upload'
+            ? undefined : await readJsonBody(request)
+
+          if (jobRoute?.action === 'preview') {
+            const result = await handleMediaJobPreview({privatePaths,route:jobRoute,input})
+            return sendJson(response,result.status,result.body)
+          }
 
           editorMutationDepth += 1
           let result
           try {
-            result = await handleV2Write(request, url)
+            result = await withLibraryOperation(privatePaths, async (leaseToken) => {
+              if (!jobRoute) return handleV2Write(request,url,leaseToken,input)
+              return handleMediaJobWrite({ privatePaths, route:jobRoute, input, request, url,
+                deps:{safeSegment,reserveDestination,updateDroneSidecar}, leaseToken })
+            })
           } finally {
             editorMutationDepth -= 1
             if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
@@ -605,7 +625,7 @@ export function travelAtlasLocalEditor(options = {}) {
           }
           return sendJson(response, result.status, result.body)
         } catch (error) {
-          return sendJson(response, 400, normalizeLocalEditorError(error))
+          return sendJson(response, error?.code === 'E_LIBRARY_BUSY' ? 409 : 400, normalizeLocalEditorError(error))
         }
       })
     },

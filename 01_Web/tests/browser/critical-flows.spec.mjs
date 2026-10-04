@@ -43,30 +43,36 @@ test('country/city selection and shortcut preserve place identity, refuse duplic
   await expect(page.getByText('This entry is hidden. Restore it in Collection.', { exact: true })).toBeVisible()
 })
 
-test('media retry imports the received file once without uploading it again', async ({ page }) => {
+test('media recovery imports a received file once after explicit scope confirmation', async ({ page }) => {
   await openMap(page)
   await selectReykjavik(page)
   await page.getByRole('button', { name: 'Edit city photos', exact: true }).click()
   const image = await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 80, g: 140, b: 190 } } }).png().toBuffer()
   let uploads = 0
   let imports = 0
-  const requestedPaths = []
-  page.on('request', (request) => { if (request.url().includes('/editor/upload?')) uploads++ })
-  await page.route('**/editor/import', async (route) => {
-    imports++
-    requestedPaths.push(route.request().postDataJSON().sourcePaths)
-    if (imports === 1) return route.fulfill({ status: 400, json: { ok: false, code: 'E_MEDIA_IMPORT_FAILED', error: 'Synthetic retryable failure', params: { stage: 'import', reason: 'Synthetic retryable failure' } } })
-    return route.continue()
+  page.on('request', (request) => {
+    if (request.method() !== 'POST') return
+    if (/\/editor\/media\/jobs\/[^/]+\/files\//.test(request.url())) uploads++
+    if (/\/editor\/media\/jobs\/[^/]+\/import$/.test(request.url())) imports++
   })
   await page.locator('.atlas-info-panel input[type=file]').setInputFiles({ name: 'browser-neutral.png', mimeType: 'image/png', buffer: image })
-  await expect(page.getByRole('button', { name: 'Continue importing received files', exact: true })).toBeVisible()
+  const center = page.getByTestId('media-recovery-center')
+  await expect(center).toBeVisible()
+  await expect(center.getByRole('button', { name: 'Review import scope', exact: true })).toBeEnabled()
   expect(uploads).toBe(1)
-  await page.getByRole('button', { name: 'Continue importing received files', exact: true }).click()
+  expect(imports).toBe(0)
+  await center.getByRole('button', { name: 'Review import scope', exact: true }).click()
+  await expect(center.getByTestId('media-import-preview')).toBeVisible()
+  await expect(center.getByRole('button', { name: 'Import confirmed files', exact: true })).toBeDisabled()
+  await center.getByRole('checkbox', { name: 'I confirm this whole Inbox scope, including other cities and any removals.', exact: true }).check()
+  await center.getByRole('button', { name: 'Import confirmed files', exact: true }).click()
+  await expect(center.getByTestId('media-job-card').locator('header strong')).toHaveText('Completed', { timeout: 30000 })
+  await expect(center.getByRole('button', { name: 'Reload to view imported media', exact: true })).toBeVisible()
+  await center.getByRole('button', { name: 'Close completed task', exact: true }).click()
+  await page.reload()
   await expect(page.getByRole('button', { name: 'Open photo 1 of Reykjavik', exact: true })).toBeVisible({ timeout: 30000 })
-  expect(imports).toBe(2)
+  expect(imports).toBe(1)
   expect(uploads).toBe(1)
-  expect(requestedPaths[0]).toHaveLength(1)
-  expect(requestedPaths[1]).toEqual(requestedPaths[0])
   expect((await readFixture('media')).items.filter((item) => item.placeId === fixtureIds.reykjavik)).toHaveLength(1)
 })
 

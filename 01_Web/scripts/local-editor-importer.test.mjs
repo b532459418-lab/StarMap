@@ -107,3 +107,29 @@ test('execution failures retain existing details without duplication and never i
     })
   }
 })
+
+test('only an explicitly injected server lease is forwarded to both child stages', async () => {
+  const previous = process.env.STARMAP_LIBRARY_LEASE
+  process.env.STARMAP_LIBRARY_LEASE = 'ambient-lease-must-not-propagate'
+  try {
+    const environments = []
+    const run = createLocalEditorImporter({ webRoot, privateRoot, execFileAsync: async (_command, _args, options) => {
+      environments.push(options.env)
+      return { stdout: '', stderr: '' }
+    } })
+    await run()
+    assert.equal(environments[0].STARMAP_LIBRARY_LEASE, undefined)
+    assert.equal(environments[1].STARMAP_LIBRARY_LEASE, undefined)
+    await run({ leaseToken: 'explicit-server-lease' })
+    assert.equal(environments[2].STARMAP_LIBRARY_LEASE, 'explicit-server-lease')
+    assert.equal(environments[3].STARMAP_LIBRARY_LEASE, 'explicit-server-lease')
+    const configured = createLocalEditorImporter({ webRoot, privateRoot, leaseToken: 'configured-server-lease', execFileAsync: async (_command, _args, options) => {
+      assert.equal(options.env.STARMAP_LIBRARY_LEASE, 'configured-server-lease')
+      return { stdout: '', stderr: '' }
+    } })
+    await configured()
+  } finally {
+    if (previous === undefined) delete process.env.STARMAP_LIBRARY_LEASE
+    else process.env.STARMAP_LIBRARY_LEASE = previous
+  }
+})

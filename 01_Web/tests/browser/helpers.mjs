@@ -4,7 +4,15 @@ import path from 'node:path'
 import { fixtureFileNames } from '../../scripts/browser-fixture.mjs'
 
 export const test = base.extend({
-  page: async ({ page }, use) => {
+  // SwiftShader allocations can survive closed contexts in a long-lived process.
+  // End the actual browser after each case while retaining the shared synthetic service.
+  testBrowser: async ({ playwright, browserName, launchOptions, headless, channel }, use) => {
+    const browser = await playwright[browserName].launch({ ...launchOptions, headless, channel })
+    try { await use(browser) } finally { await browser.close() }
+  },
+  page: async ({ testBrowser, contextOptions, baseURL, viewport, locale, serviceWorkers }, use) => {
+    const context = await testBrowser.newContext({ ...contextOptions, baseURL, viewport, locale, serviceWorkers })
+    const page = await context.newPage()
     const errors = []
     page.on('pageerror', (error) => errors.push(error.message))
     await page.context().route('**/*', (route) => {
@@ -14,8 +22,10 @@ export const test = base.extend({
         : route.continue()
     })
     await page.addInitScript(() => localStorage.setItem('starmap.uiLocale', 'en'))
-    await use(page)
-    expect(errors, 'No uncaught application error').toEqual([])
+    try {
+      await use(page)
+      expect(errors, 'No uncaught application error').toEqual([])
+    } finally { await context.close() }
   },
 })
 export { expect }

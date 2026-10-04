@@ -13,6 +13,8 @@ Status: first offline implementation. A backup preserves the active V2 library a
 
 Configuration/credentials, browser storage, source code, build output, private planning documents/logs, historical `.bak`/`.tmp` files, legacy-format data and migration artifacts are outside the snapshot. Restore preserves the current runtime library, not every file in the private workspace. Credentials are configured locally after recovery. Browser language, camera and layer preferences are selected again in the new browser context.
 
+`operations/` is also excluded: operation locks/generation, media task identities/receipts and partial/staged reception are not a backed-up task queue. Restoring a new root creates a new task-library identity only on explicit future task creation. Original tasks stay in the original root; fully published Inbox sources are included normally. Finish or review pending reception before backup. See [media recovery server foundation](local-media-recovery.md).
+
 Only known data filenames, recognized media extensions, and named Inbox sidecars are eligible. Documentation/template files (`README.md`, `.gitkeep`), OS thumbnails and previous-write temporary files are skipped. Other files under the included regions cause a refusal rather than a silently incomplete backup. Symlinks, junctions, special files, ambiguous paths, Windows device/ADS names, traversal and case-insensitive file collisions are rejected. The tool does not inspect `config/.env.local`.
 
 ## Offline commands
