@@ -1,0 +1,219 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { link, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import sharp from 'sharp'
+import { getPrivatePaths } from './private-profile.mjs'
+import { createMediaImportPlan, applyMediaImportPlan, verifyMediaImportPlanInputs } from './media-import-plan.mjs'
+import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
+
+const next = sequentialUuids(Date.UTC(2026, 9, 4))
+const IDS = { country: next(), first: next(), second: next() }
+const json = async (target, value) => { await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, `${JSON.stringify(value, null, 2)}\n`) }
+const image = async (target, background = '#cc4400') => {
+  await mkdir(path.dirname(target), { recursive: true })
+  const bytes = await sharp({ create: { width: 80, height: 40, channels: 3, background } }).jpeg().toBuffer()
+  await writeFile(`${target}.replacement`, bytes)
+  await rename(`${target}.replacement`, target)
+}
+const snapshot = async (root) => {
+  const result = []
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const target = path.join(root, entry.name)
+    if (entry.isDirectory()) for (const [name, digest] of await snapshot(target)) result.push([`${entry.name}/${name}`, digest])
+    else result.push([entry.name, createHash('sha256').update(await readFile(target)).digest('hex')])
+  }
+  return result.sort(([left], [right]) => left.localeCompare(right))
+}
+const fixture = async (callback) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'starmap-import-plan-'))
+  const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: path.join(directory, 'private') })
+  const places = { schema_version: 1, generated_at: '2026-10-04T00:00:00Z', places: [
+    { id: IDS.country, subtype: 'country', names: { en: 'Neutral Country' }, externalIds: { iso3166Alpha2: 'IS' }, location: { lat: 0, lng: 0 } },
+    { id: IDS.first, subtype: 'city', names: { en: 'First City' }, partOf: IDS.country, location: { lat: 0, lng: 0 } },
+    { id: IDS.second, subtype: 'city', names: { en: 'Second City' }, partOf: IDS.country, location: { lat: 1, lng: 1 } },
+  ] }
+  await json(paths.v2FilePaths.places, places)
+  const first = path.join(paths.inboxRoot, 'Neutral Country', 'First City')
+  const second = path.join(paths.inboxRoot, 'Neutral Country', 'Second City')
+  await image(path.join(first, 'photos', 'first.jpg'))
+  try { await callback({ paths, first, second, places }) } finally { await rm(directory, { recursive: true, force: true }) }
+}
+
+test('RD-07 whole Inbox plan is byte-readonly, stable and exposes unrelated-city sources without roots', async () => fixture(async ({ paths, second }) => {
+  await image(path.join(second, 'photos', 'second.jpg'), '#00aa88')
+  const before = await snapshot(paths.root)
+  const plan = await createMediaImportPlan({ privatePaths: paths })
+  assert.deepEqual(plan.blockers, [])
+  assert.equal(plan.entries.length, 2)
+  assert.equal(plan.summary.addedIds.length, 2)
+  assert.equal(plan.summary.outputs.length, 6)
+  assert.equal(plan.summary.pins.length, 3)
+  assert.ok(plan.entries.every((entry) => /^[a-f0-9]{64}$/.test(entry.sha256)))
+  assert.ok(!JSON.stringify(plan.summary).includes(paths.root))
+  assert.deepEqual(await snapshot(paths.root), before)
+  assert.equal((await createMediaImportPlan({ privatePaths: paths })).digest, plan.digest)
+}))
+
+test('RD-07 applies existing importer stages, keeps source immutable, and reuses verified derivatives', async () => fixture(async ({ paths }) => {
+  const plan = await createMediaImportPlan({ privatePaths: paths })
+  const source = await readFile(path.join(paths.inboxRoot, plan.entries[0].sourcePath))
+  const stages = []
+  const result = await applyMediaImportPlan({ privatePaths: paths, plan, onStage: async (stage) => stages.push(stage) })
+  assert.deepEqual(stages, ['generated', 'pins', 'catalog', 'index'])
+  assert.deepEqual(result.mediaIds, plan.summary.addedIds)
+  assert.deepEqual(await readFile(path.join(paths.inboxRoot, plan.entries[0].sourcePath)), source)
+  await verifyMediaImportPlanInputs({ privatePaths: paths, plan })
+  for (const output of plan.summary.outputs) assert.equal(createHash('sha256').update(await readFile(path.join(paths.root, output.path))).digest('hex'), output.sha256)
+  const second = await createMediaImportPlan({ privatePaths: paths })
+  assert.deepEqual(second.blockers, [])
+  assert.deepEqual(second.summary.addedIds, [])
+  assert.deepEqual(second.summary.updatedIds, [])
+  const oldBytes = await snapshot(paths.userMediaRoot)
+  await applyMediaImportPlan({ privatePaths: paths, plan: second })
+  assert.deepEqual(await snapshot(paths.userMediaRoot), oldBytes)
+}))
+
+test('RD-07 digest rejects changed sources, controls, editor state and generated bytes before any new writes', async () => {
+  for (const mutation of ['source', 'sidecar', 'editor', 'output']) await fixture(async ({ paths, first }) => {
+    const initial = await createMediaImportPlan({ privatePaths: paths })
+    await applyMediaImportPlan({ privatePaths: paths, plan: initial })
+    const plan = await createMediaImportPlan({ privatePaths: paths })
+    if (mutation === 'source') await image(path.join(first, 'photos', 'first.jpg'), '#4400aa')
+    if (mutation === 'sidecar') await json(path.join(first, 'media.json'), { note: 'changed' })
+    if (mutation === 'editor') await json(paths.v2FilePaths.editorState, { schemaVersion: 999 })
+    if (mutation === 'output') await writeFile(path.join(paths.root, plan.summary.outputs[1].path), 'corrupt')
+    const changed = await snapshot(paths.root)
+    await assert.rejects(applyMediaImportPlan({ privatePaths: paths, plan }), { code: 'E_MEDIA_JOB_CONFLICT' })
+    assert.deepEqual(await snapshot(paths.root), changed)
+  })
+})
+
+test('RD-07 full SHA checks duplicate content ownership and kind before ID deduplication', async () => {
+  await fixture(async ({ paths, second }) => {
+    await image(path.join(second, 'photos', 'same.jpg'))
+    const plan = await createMediaImportPlan({ privatePaths: paths })
+    assert.ok(plan.blockers.some((entry) => entry.code === 'E_MEDIA_PLAN_CONTENT_COLLISION'))
+    const before = await snapshot(paths.root)
+    await assert.rejects(applyMediaImportPlan({ privatePaths: paths, plan }), { code: 'E_MEDIA_JOB_REVIEW' })
+    assert.deepEqual(await snapshot(paths.root), before)
+  })
+  await fixture(async ({ paths, first }) => {
+    await image(path.join(first, 'drone', 'same.jpg'))
+    await json(path.join(first, 'media.json'), { 'drone/same.jpg': { kind: 'aerialPhoto', date: '2026-10-04', resolution: '80 × 40' } })
+    assert.ok((await createMediaImportPlan({ privatePaths: paths })).blockers.some((entry) => entry.code === 'E_MEDIA_PLAN_CONTENT_COLLISION'))
+  })
+})
+
+test('RD-07 explicit ID with two different full hashes blocks; same-owner duplicate sources remain listed', async () => {
+  await fixture(async ({ paths, first }) => {
+    await rm(path.join(first, 'photos'), { recursive: true })
+    await image(path.join(first, 'drone', 'one.jpg'))
+    await image(path.join(first, 'drone', 'two.jpg'), '#119944')
+    await json(path.join(first, 'media.json'), Object.fromEntries(['one.jpg', 'two.jpg'].map((name) => [`drone/${name}`, { id: 'explicit-one', kind: 'aerialPhoto', date: '2026-10-04', resolution: '80 × 40' }])))
+    assert.ok((await createMediaImportPlan({ privatePaths: paths })).blockers.some((entry) => entry.code === 'E_MEDIA_PLAN_ID_COLLISION'))
+  })
+  await fixture(async ({ paths, first }) => {
+    await image(path.join(first, 'photos', 'copy.jpg'))
+    const plan = await createMediaImportPlan({ privatePaths: paths })
+    assert.deepEqual(plan.blockers, [])
+    assert.equal(plan.entries.length, 2)
+    assert.equal(plan.catalog.items.length, 1)
+    assert.equal(Object.values(plan.index.sourcesById)[0].length, 2)
+  })
+})
+
+test('RD-07 unknown unrelated city and uncertain drone date/type block full-scope application', async () => {
+  await fixture(async ({ paths }) => {
+    await image(path.join(paths.inboxRoot, 'Neutral Country', 'Unknown City', 'photos', 'unknown.jpg'), '#11aa33')
+    assert.ok((await createMediaImportPlan({ privatePaths: paths })).blockers.length)
+  })
+  await fixture(async ({ paths, first }) => {
+    await image(path.join(first, 'drone', 'uncertain.jpg'), '#11aa33')
+    await json(path.join(first, 'media.json'), { 'drone/uncertain.jpg': { date: '2026-02-30', resolution: '80 × 40' } })
+    const plan = await createMediaImportPlan({ privatePaths: paths })
+    assert.ok(plan.blockers.some((entry) => entry.code === 'E_MEDIA_PLAN_UNCERTAIN'))
+    assert.ok(plan.blockers.some((entry) => entry.code === 'E_MEDIA_PLAN_DATE'))
+  })
+})
+
+test('RD-07 existing catalog/index mismatch, future schema and output corruption block before writes', async () => {
+  for (const mutation of ['catalog', 'index', 'wrongsource', 'missingindex', 'original', 'derivative', 'extra']) await fixture(async ({ paths, first }) => {
+    const initial = await createMediaImportPlan({ privatePaths: paths })
+    await applyMediaImportPlan({ privatePaths: paths, plan: initial })
+    if (mutation === 'catalog') await json(paths.v2FilePaths.media, { schemaVersion: 999, items: [] })
+    if (mutation === 'index') await json(paths.v2MediaSourceIndexPath, { schemaVersion: 999, sourcesById: {} })
+    if (mutation === 'wrongsource') {
+      await image(path.join(first, 'photos', 'second.jpg'), '#117744')
+      await json(paths.v2MediaSourceIndexPath, { schemaVersion: 1, sourcesById: { [initial.entries[0].id]: ['Neutral Country/First City/photos/second.jpg'] } })
+    }
+    if (mutation === 'missingindex') await rm(paths.v2MediaSourceIndexPath)
+    if (mutation === 'original') await image(path.join(paths.root, initial.summary.outputs[0].path), '#abcdef')
+    if (mutation === 'derivative') await writeFile(path.join(paths.root, initial.summary.outputs[1].path), 'unknown webp')
+    if (mutation === 'extra') await writeFile(path.join(path.dirname(path.join(paths.root, initial.summary.outputs[0].path)), 'unexpected.txt'), 'unknown')
+    const before = await snapshot(paths.root)
+    const plan = await createMediaImportPlan({ privatePaths: paths })
+    assert.ok(plan.blockers.length, mutation)
+    await assert.rejects(applyMediaImportPlan({ privatePaths: paths, plan }), { code: 'E_MEDIA_JOB_REVIEW' })
+    assert.deepEqual(await snapshot(paths.root), before)
+  })
+})
+
+test('RD-07 hardlinked controls are refused without touching either link', async () => fixture(async ({ paths, first }) => {
+  const control = path.join(first, 'place.json')
+  await json(control, { placeId: IDS.first })
+  await link(control, path.join(first, 'control-copy.json'))
+  const before = await snapshot(paths.root)
+  const plan = await createMediaImportPlan({ privatePaths: paths })
+  assert.ok(plan.blockers.some((entry) => entry.code === 'E_MEDIA_PLAN_LINK'))
+  assert.deepEqual(await snapshot(paths.root), before)
+}))
+
+test('RD-07 historical full content prevents a changed explicit ID from bypassing ownership', async () => fixture(async ({ paths, first, second }) => {
+  const initial = await createMediaImportPlan({ privatePaths: paths })
+  await applyMediaImportPlan({ privatePaths: paths, plan: initial })
+  const source = path.join(first, 'photos', 'first.jpg')
+  const bytes = await readFile(source)
+  await rm(source)
+  await mkdir(path.join(second, 'drone'), { recursive: true })
+  await writeFile(path.join(second, 'drone', 'same.jpg'), bytes)
+  await json(path.join(second, 'media.json'), { 'drone/same.jpg': { id: 'changed-explicit-id', kind: 'aerialPhoto', date: '2026-10-04', resolution: '80 × 40' } })
+  const before = await snapshot(paths.root)
+  const plan = await createMediaImportPlan({ privatePaths: paths })
+  assert.ok(plan.blockers.some((entry) => entry.code === 'E_MEDIA_PLAN_OWNERSHIP'))
+  assert.ok(plan.blockers.some((entry) => entry.code === 'E_MEDIA_PLAN_ID_COLLISION'))
+  await assert.rejects(applyMediaImportPlan({ privatePaths: paths, plan }), { code: 'E_MEDIA_JOB_REVIEW' })
+  assert.deepEqual(await snapshot(paths.root), before)
+}))
+
+test('RD-07 initial empty schema3 catalog needs no historical source index', async () => fixture(async ({ paths }) => {
+  await json(paths.v2FilePaths.media, { schemaVersion: 3, generatedAt: '2026-10-04T00:00:00Z', privacyLevel: 'local-only', items: [] })
+  const plan = await createMediaImportPlan({ privatePaths: paths })
+  assert.deepEqual(plan.blockers, [])
+  const result = await applyMediaImportPlan({ privatePaths: paths, plan })
+  assert.equal(result.mediaIds.length, 1)
+  assert.equal(Object.keys(result.index.sourcesById).length, 1)
+}))
+
+test('RD-07 stage faults stop progress and mid-application control changes cannot produce success', async () => {
+  for (const target of ['generated', 'pins', 'catalog', 'index']) await fixture(async ({ paths }) => {
+    const plan = await createMediaImportPlan({ privatePaths: paths })
+    const stages = []
+    await assert.rejects(applyMediaImportPlan({ privatePaths: paths, plan, onStage: async (stage) => { stages.push(stage); if (stage === target) throw new Error('injected') } }), /injected/)
+    assert.deepEqual(stages, ['generated', 'pins', 'catalog', 'index'].slice(0, ['generated', 'pins', 'catalog', 'index'].indexOf(target) + 1))
+  })
+  await fixture(async ({ paths, first }) => {
+    const plan = await createMediaImportPlan({ privatePaths: paths })
+    await assert.rejects(applyMediaImportPlan({ privatePaths: paths, plan, onStage: async (stage) => { if (stage === 'catalog') await json(path.join(first, 'media.json'), { changed: true }) } }), { code: 'E_MEDIA_JOB_REVIEW' })
+  })
+})
+
+test('RD-07 generator timestamps do not invalidate scope; metadata and ID changes do', async () => fixture(async ({ paths, places }) => {
+  const plan = await createMediaImportPlan({ privatePaths: paths })
+  await json(paths.v2FilePaths.places, { ...places, generated_at: '2027-01-01T12:00:00.000Z' })
+  assert.equal((await createMediaImportPlan({ privatePaths: paths })).digest, plan.digest)
+  await json(paths.v2FilePaths.places, { ...places, places: places.places.map((item) => item.id === IDS.first ? { ...item, names: { en: 'Changed City' } } : item) })
+  assert.notEqual((await createMediaImportPlan({ privatePaths: paths })).digest, plan.digest)
+}))

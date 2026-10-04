@@ -4,6 +4,7 @@ import { parseLocalEditorResponse as parseResponse } from './localEditorResponse
 import { parseMediaImportResponse, parseMediaUploadResponse } from './localMediaResponse.ts'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 import { assertLocalEditorReloadAllowed, withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
+import { assertMediaJob, assertMediaJobsRead, assertMediaJobPreview, type MediaJob, type MediaJobsRead, type MediaJobPreview, type MediaJobIntent, type MediaJobVersion } from './mediaJobs.ts'
 
 const editorHeaders = {
   'content-type': 'application/json',
@@ -127,6 +128,53 @@ export const importLocalMedia = (sourcePaths: string[] = [], permit?: MediaImpor
   })
   return parseMediaImportResponse(response, sourcePaths)
 }, permit)
+
+const mediaJobsPath = '/__travelatlas/editor/media/jobs'
+const responseInvalid = () => new LocalEditorError({ code: 'E_EDITOR_RESPONSE_INVALID' })
+const jobResponse = async (response: Response, expectedJobId?: string): Promise<MediaJob> => {
+  const body = await parseResponse<{job: unknown}>(response)
+  assertMediaJob(body.job)
+  if (expectedJobId && body.job.jobId !== expectedJobId) throw responseInvalid()
+  return body.job
+}
+export const readMediaJobs = async (): Promise<MediaJobsRead> => {
+  const response = await fetch(mediaJobsPath, {cache: 'no-store', headers: {'x-travelatlas-local-editor': '1'}})
+  const body = await parseResponse<MediaJobsRead>(response)
+  assertMediaJobsRead(body)
+  return {libraryId: body.libraryId, jobs: body.jobs, ...(body.status ? {status: body.status} : {})}
+}
+export const createMediaJob = (intent: MediaJobIntent, permit: MediaImportPermit) => withLocalEditorWrite(async () => {
+  const response = await fetch(mediaJobsPath, {method: 'POST', headers: editorHeaders, body: JSON.stringify(intent)})
+  return jobResponse(response)
+}, permit)
+export const receiveMediaJobFile = (jobId: string, fileId: string,
+  input: MediaJobVersion & {operationId: string; sha256: string}, file: File, permit: MediaImportPermit) => withLocalEditorWrite(async () => {
+  const query = new URLSearchParams({...input, revision: String(input.revision)})
+  const response = await fetch(`${mediaJobsPath}/${encodeURIComponent(jobId)}/files/${encodeURIComponent(fileId)}?${query}`, {
+    method: 'POST', headers: {'content-type': file.type || 'application/octet-stream', 'x-travelatlas-local-editor': '1'}, body: file,
+  })
+  return jobResponse(response, jobId)
+}, permit)
+export const previewMediaJob = async (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]}): Promise<MediaJobPreview> => {
+  const response = await fetch(`${mediaJobsPath}/${encodeURIComponent(jobId)}/preview`, {method: 'POST', headers: editorHeaders, body: JSON.stringify(input)})
+  const body = await parseResponse<{job: unknown; plan: unknown}>(response)
+  assertMediaJob(body.job)
+  if (body.job.jobId !== jobId || body.job.libraryId !== input.libraryId || body.job.revision !== input.revision || body.plan === null || typeof body.plan !== 'object') throw responseInvalid()
+  const plan = body.plan as Record<string, unknown>
+  const result = {jobId, revision: body.job.revision, plan: {digest: plan.digest, summary: plan.summary}, selectedFileIds: plan.selectedFileIds, blockers: plan.blockers}
+  assertMediaJobPreview(result)
+  if (body.job.canImport !== (result.blockers.length === 0)) throw responseInvalid()
+  return result
+}
+const mutateMediaJob = (action: 'import' | 'pause' | 'close', jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => withLocalEditorWrite(async () => {
+  const response = await fetch(`${mediaJobsPath}/${encodeURIComponent(jobId)}/${action}`, {method: 'POST', headers: editorHeaders, body: JSON.stringify(input)})
+  const job = await jobResponse(response, jobId)
+  if (job.libraryId !== input.libraryId || job.revision < input.revision) throw responseInvalid()
+  return job
+}, permit)
+export const importMediaJob = (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string}, permit: MediaImportPermit) => mutateMediaJob('import', jobId, input, permit)
+export const pauseMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('pause', jobId, input, permit)
+export const closeMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('close', jobId, input, permit)
 
 export const deleteHiddenLocalMedia = (cityId: string, ids: string[]) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/media/delete', {

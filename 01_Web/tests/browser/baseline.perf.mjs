@@ -2,7 +2,7 @@ import { test, expect, openCollection } from './helpers.mjs'
 import { writeFile } from 'node:fs/promises'
 import os from 'node:os'
 
-test('record a descriptive browser baseline with 1000 synthetic Want to Go entries', async ({ page, browser }, testInfo) => {
+test('record a descriptive browser baseline with 1000 synthetic Want to Go entries', async ({ page, testBrowser }, testInfo) => {
   await page.addInitScript(() => {
     window.__baselineLongTasks = []
     new PerformanceObserver((list) => window.__baselineLongTasks.push(...list.getEntries().map((entry) => entry.duration))).observe({ type: 'longtask', buffered: true })
@@ -49,7 +49,7 @@ test('record a descriptive browser baseline with 1000 synthetic Want to Go entri
   const quantile = (values, fraction) => [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(values.length * fraction))]
   const baseline = {
     measuredAt: new Date().toISOString(),
-    environment: { platform: os.platform(), architecture: os.arch(), cpu: os.cpus()[0]?.model, browserVersion: browser.version(), viewport: page.viewportSize(), rendering: 'headless Chromium, SwiftShader software WebGL', profile: 'Vite personal development, bundled local imagery, no external providers' },
+    environment: { platform: os.platform(), architecture: os.arch(), cpu: os.cpus()[0]?.model, browserVersion: testBrowser.version(), viewport: page.viewportSize(), rendering: 'headless Chromium, SwiftShader software WebGL', profile: 'Vite personal development, bundled local imagery, no external providers' },
     dataset: { extraWantToGo: 1000, collectionCards: 1004 },
     mapUiReadyMs, collectionOpenMs,
     scroll: { samples: scroll.frames.length, medianFrameMs: quantile(scroll.frames, 0.5), p95FrameMs: quantile(scroll.frames, 0.95), framesOver50Ms: scroll.frames.filter((value) => value > 50).length },

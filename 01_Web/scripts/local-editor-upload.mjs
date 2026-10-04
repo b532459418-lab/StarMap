@@ -1,9 +1,11 @@
 /** Local-editor upload validation and byte-preserving delivery, without private-profile state. */
-import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, unlink } from 'node:fs/promises'
+import { createWriteStream } from 'node:fs'
+import { mkdir, unlink, link, lstat, open } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import { Transform } from 'node:stream'
+import { createHash, randomUUID } from 'node:crypto'
 import sharp from 'sharp'
 import { exists } from './json-file.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
@@ -49,39 +51,75 @@ export const isLikelyEquirectangularPanorama = (dimensions) => {
 
 const tooLarge = () => new V2WriteError('E_MEDIA_UPLOAD_TOO_LARGE', { limitMiB: 250, limitBytes: MAX_UPLOAD_BYTES })
 
-export const writeUpload = async (request, destination, kind) => {
+/** Reject links and non-directory ancestors before touching a bounded private path. */
+export const assertUploadPath = async (root, target) => {
+  const relative = path.relative(path.resolve(root), path.resolve(target))
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new V2WriteError('E_MEDIA_JOB_REVIEW')
+  let current = path.resolve(root)
+  for (const part of ['', ...relative.split(path.sep)]) {
+    if (part) current = path.join(current, part)
+    try {
+      const info = await lstat(current)
+      if (info.isSymbolicLink() || (current !== path.resolve(target) && !info.isDirectory())) throw new V2WriteError('E_MEDIA_JOB_REVIEW')
+    } catch (error) { if (error.code !== 'ENOENT') throw error }
+  }
+}
+
+/** Receive and fully decode before publishing; caller chooses a private staging path. */
+export const stageUpload = async (request, temporaryPath, kind, expectedBytes) => {
   const contentLength = Number(request.headers['content-length'] ?? 0)
   if (!Number.isFinite(contentLength) || contentLength <= 0) throw new V2WriteError('E_MEDIA_UPLOAD_EMPTY')
   if (contentLength > MAX_UPLOAD_BYTES) throw tooLarge()
-
-  const temporaryPath = path.join(tmpdir(), `travelatlas-upload-${process.pid}-${Date.now()}`)
+  if (!Number.isSafeInteger(contentLength) || (expectedBytes !== undefined && contentLength !== expectedBytes)) throw new V2WriteError('E_MEDIA_JOB_CONFLICT')
   let received = 0
-  request.on('data', (chunk) => {
-    received += chunk.length
-    if (received > MAX_UPLOAD_BYTES) request.destroy(tooLarge())
-  })
-
+  const hash = createHash('sha256')
+  const counter = new Transform({ transform(chunk, _encoding, callback) {
+    received += chunk.length; hash.update(chunk)
+    callback(received > MAX_UPLOAD_BYTES ? tooLarge() : null, chunk)
+  } })
+  await pipeline(request, counter, createWriteStream(temporaryPath, { flags: 'wx' }))
+  if (!received) throw new V2WriteError('E_MEDIA_UPLOAD_EMPTY')
+  if (received !== contentLength) throw new V2WriteError('E_MEDIA_JOB_CONFLICT')
+  const handle = await open(temporaryPath, 'r+')
+  try { await handle.sync() } finally { await handle.close() }
+  let imageMetadata
   try {
-    await pipeline(request, createWriteStream(temporaryPath, { flags: 'wx' }))
-    if (received === 0) throw new V2WriteError('E_MEDIA_UPLOAD_EMPTY')
-    let imageMetadata
-    try {
-      imageMetadata = await sharp(temporaryPath).metadata()
-    } catch (cause) {
-      const error = new V2WriteError('E_MEDIA_IMAGE_INVALID')
-      if (cause instanceof Error) error.details = cause.message
-      throw error
-    }
-    if (!imageMetadata.width || !imageMetadata.height) throw new V2WriteError('E_MEDIA_IMAGE_INVALID')
-    const dimensions = orientedImageDimensions(imageMetadata)
-    if (kind === 'panorama360' && !isLikelyEquirectangularPanorama(dimensions)) {
-      throw new V2WriteError('E_MEDIA_PANORAMA_RATIO', {
-        width: dimensions?.width ?? imageMetadata.width,
-        height: dimensions?.height ?? imageMetadata.height,
-      })
-    }
-    await mkdir(path.dirname(destination), { recursive: true })
-    await pipeline(createReadStream(temporaryPath), createWriteStream(destination, { flags: 'wx' }))
+    imageMetadata = await sharp(temporaryPath, { failOn: 'error' }).metadata()
+    // Metadata alone may succeed for a truncated image; force a decode of all input.
+    await sharp(temporaryPath, { failOn: 'error' }).resize(1, 1).raw().toBuffer()
+  } catch (cause) {
+    const failure = new V2WriteError('E_MEDIA_IMAGE_INVALID')
+    if (cause instanceof Error) failure.details = cause.message
+    throw failure
+  }
+  if (!imageMetadata.width || !imageMetadata.height) throw new V2WriteError('E_MEDIA_IMAGE_INVALID')
+  const dimensions = orientedImageDimensions(imageMetadata)
+  if (kind === 'panorama360' && !isLikelyEquirectangularPanorama(dimensions)) {
+    throw new V2WriteError('E_MEDIA_PANORAMA_RATIO', {
+      width: dimensions?.width ?? imageMetadata.width,
+      height: dimensions?.height ?? imageMetadata.height,
+    })
+  }
+  return { imageMetadata, bytes: received, sha256: hash.digest('hex') }
+}
+
+/** Same-volume hard-link publication exposes a complete file and never replaces one. */
+export const publishUpload = async (temporaryPath, destination) => {
+  await mkdir(path.dirname(destination), { recursive: true })
+  await link(temporaryPath, destination)
+}
+
+export const writeUpload = async (request, destination, kind, { stagingRoot } = {}) => {
+  const directory = stagingRoot ?? tmpdir()
+  if (stagingRoot) {
+    await assertUploadPath(path.dirname(path.dirname(stagingRoot)), path.join(stagingRoot, 'probe'))
+    await mkdir(stagingRoot, { recursive: true })
+  }
+  const temporaryPath = path.join(directory, `travelatlas-upload-${randomUUID()}.part`)
+  try {
+    const { imageMetadata } = await stageUpload(request, temporaryPath, kind)
+    if (stagingRoot) await assertUploadPath(path.dirname(path.dirname(stagingRoot)), destination)
+    await publishUpload(temporaryPath, destination)
     return imageMetadata
   } finally {
     await unlink(temporaryPath).catch(() => undefined)

@@ -97,7 +97,7 @@ VITE_TIANDITU_TOKEN=
 
 Development mode includes local editing controls. Use them to add or reorder countries and cities, hide or restore items, choose photo covers, and import city or drone media. Production builds do not include these write controls.
 
-Known editing and location-search failures follow the interface language. If an edit returns an unreadable response, its result may be unknown: reload to check your data before retrying. A partially saved conversion also requires a reload before another attempt. Media upload errors distinguish empty or oversized files, invalid images, unusable names and incorrect panorama ratios. Import errors identify preflight or import execution failures and preserve the original diagnostics. If import fails after files are received, use Continue importing received files to retry without uploading again. A partial upload can import its confirmed files separately. Pending paths survive closing and reopening a panel or changing cities in the current page; refreshing or closing the page clears this retry record, so check the Inbox first. Unknown upload or partial-write results require a reload and manual verification. Diagnostic details retain their original text.
+Known editing and location-search failures follow the interface language. An unreadable ordinary edit requires a reload and verification before retrying. Photo and drone uploads create a durable local task before receiving bytes. Open Media tasks after a refresh or a new browser session to read the server facts. Review the whole Inbox, including other cities, and explicitly confirm its scope before importing. Unsent files require explicit reselection and confirmation; uncertain writes are never replayed. Pause keeps originals and allows ordinary editing, while another media batch and media deletion wait. A verified completed task displays history and can be closed without deleting its files.
 
 City creation uses Cesium ion geocoding first when the personal token is configured with the `geocode` public scope. If ion is unavailable, has no result, or exceeds nine seconds, StarMap falls back to an explicitly triggered, country-filtered OpenStreetMap lookup. The interface never spins indefinitely: users can retry with the local/English city name or switch to manual latitude and longitude entry.
 
@@ -112,6 +112,8 @@ npm run media:import
 
 The importer never rewrites Inbox originals. Personal source media, generated derivatives, local travel records, editor state, and `.env.local` stay in the external private layer and never enter the source repository.
 
+Media recovery is connected to the photo and drone panels and discovers durable tasks on startup. Task reads and import previews write no library files. Completed operations retain historical results without restoring later hide/order/delete decisions. CLI preflight changes only coordination records; backup excludes tasks, locks and staging. See [recovery contracts and limits](docs/local-media-recovery.md).
+
 ## Places you want to go
 
 The Want to Go layer marks places you have not been to yet. The map layers button in the bottom dock (地图图层, a separate button from the imagery-source menu) opens the layer panel, where the Travel and Want to Go layers can be shown or hidden independently. The browser remembers the choice across sessions.
@@ -119,7 +121,7 @@ The Want to Go layer marks places you have not been to yet. The map layers butto
 In the personal profile (`npm run dev:personal`):
 
 - **Add**: the layer panel ends with **+ Add a place you want to go** (添加想去的地方). Choose a country first, then search for a city online (the same Cesium ion / OpenStreetMap lookup used for city creation) or enter its name and coordinates manually; you can also add the whole country. An optional note records why you want to go. Adding the same place twice is refused with a notice that it is already on the list.
-- **From city details**: choose **Mark as Want to Go** to save the selected city directly, including a city you want to visit again. It uses the existing place ID and keeps its names, coordinates and travel records. A saved city shows **Already on your Want to Go list**; hidden entries count too and can be restored in Collection. Finish any current city-photo edit first. Pending media imports block this action, and an unknown write result requires a reload and verification before retrying.
+- **From city details**: choose **Mark as Want to Go** to save the selected city directly, including a city you want to visit again. It uses the existing place ID and keeps its names, coordinates and travel records. A saved city shows **Already on your Want to Go list**; hidden entries count too and can be restored in Collection. Finish any current city-photo edit first. Active media operations block this action, and an unknown write result requires a reload and verification before retrying.
 - **Hide**: click a want-to-go marker to open its detail card, then choose **Hide** (隐藏). Hiding removes the marker from the map but keeps the entry.
 - **Restore or delete**: hidden places are listed under **Hidden N items** (已隐藏 N 项) below the Want to Go toggle in the layer panel. Each one can be restored (恢复) or permanently deleted (彻底删除). Only hidden places can be deleted, and deletion cannot be undone.
 

@@ -7779,3 +7779,124 @@ button {
     left: 5px !important;
   }
 }
+
+/* Local media recovery keeps the existing map panels in place. */
+.atlas-media-recovery-entry {
+  position: fixed;
+  right: 16px;
+  bottom: 20px;
+  z-index: 55;
+  border: 1px solid rgba(125, 211, 252, 0.4);
+  border-radius: 16px;
+  padding: 10px 16px;
+  background: rgba(11, 28, 43, 0.95);
+  color: #e0f2fe;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+}
+
+.atlas-media-recovery-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(2, 8, 18, 0.65);
+}
+
+.atlas-media-recovery-center {
+  width: min(760px, 100%);
+  max-height: calc(100dvh - 40px);
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(148, 188, 221, 0.35);
+  border-radius: 20px;
+  padding: 22px;
+  background: #102131;
+  color: #e2edf5;
+  box-shadow: 0 18px 64px rgba(0, 0, 0, 0.4);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.atlas-media-recovery-header,
+.atlas-media-recovery-job > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.atlas-media-recovery-center h2,
+.atlas-media-recovery-center h3,
+.atlas-media-recovery-center h4 {
+  margin: 0;
+  color: #f0f7fb;
+}
+
+.atlas-media-recovery-center h2 { font-size: 21px; }
+.atlas-media-recovery-center h3 { font-size: 16px; }
+.atlas-media-recovery-center h4 { font-size: 15px; }
+.atlas-media-recovery-center p { margin: 10px 0; }
+.atlas-media-recovery-center small { display: block; color: #b7cbdc; }
+
+.atlas-media-recovery-center button {
+  min-height: 36px;
+  border: 1px solid rgba(147, 197, 253, 0.4);
+  border-radius: 10px;
+  padding: 6px 12px;
+  background: rgba(56, 139, 194, 0.16);
+  color: #e0f2fe;
+  font: inherit;
+  cursor: pointer;
+  max-width: 100%;
+}
+
+.atlas-media-recovery-center button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.atlas-media-recovery-center :focus-visible,
+.atlas-media-recovery-entry:focus-visible {
+  outline: 2px solid #8dcaff;
+  outline-offset: 3px;
+}
+
+.atlas-media-recovery-job {
+  min-width: 0;
+  margin-top: 18px;
+  border: 1px solid rgba(147, 184, 208, 0.25);
+  border-radius: 14px;
+  padding: 16px;
+  background: rgba(4, 13, 24, 0.3);
+}
+
+.atlas-media-recovery-job[data-selected='true'] { border-color: rgba(125, 211, 252, 0.7); }
+.atlas-media-recovery-job > header strong { color: #c7e8ff; font-size: 13px; }
+.atlas-media-recovery-files,
+.atlas-media-recovery-sources { margin: 10px 0; padding-left: 22px; }
+ol.atlas-media-recovery-sources { list-style: decimal; }
+.atlas-media-recovery-files li,
+.atlas-media-recovery-sources li { padding: 4px 0; }
+.atlas-media-recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.atlas-media-recovery-preview,
+.atlas-media-recovery-reselect { margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(148, 188, 221, 0.25); }
+.atlas-media-recovery-checkbox { display: flex; align-items: flex-start; gap: 9px; margin: 12px 0; }
+.atlas-media-recovery-checkbox input { flex: 0 0 auto; margin-top: 5px; }
+.atlas-media-recovery-file-input { display: grid; gap: 6px; min-width: 0; }
+.atlas-media-recovery-file-input input { width: 100%; min-width: 0; font: inherit; }
+.atlas-media-recovery-error { color: #ffd2ac; white-space: pre-line; }
+.atlas-media-recovery-center details > summary { cursor: pointer; }
+
+@media (max-width: 640px) {
+  .atlas-media-recovery-backdrop { padding: 8px; }
+  .atlas-media-recovery-center { max-height: calc(100dvh - 16px); padding: 14px; border-radius: 15px; }
+  .atlas-media-recovery-job { padding: 12px; }
+  .atlas-media-recovery-entry { right: 10px; bottom: 10px; padding: 8px 12px; }
+}

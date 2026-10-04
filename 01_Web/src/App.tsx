@@ -17,6 +17,8 @@ import { MapSourceSwitcher } from './components/MapSourceSwitcher'
 import { MouseControlGuide } from './components/MouseControlGuide'
 import { DroneMediaCard } from './components/DroneMediaCard'
 import { InfoCard } from './components/InfoCard'
+import { MediaRecoveryCenter } from './components/MediaRecoveryCenter'
+import { mediaJobs } from './data/mediaJobs'
 import { CityPhotoGalleryModal } from './components/CityPhotoGalleryModal'
 import type { CityPhotoGalleryRequest } from './components/CityPhotoGalleryModal'
 import { Timeline } from './components/Timeline'
@@ -95,6 +97,18 @@ const cameraScaleForDistance = (distance: number): CameraScale => {
 
 function App() {
   const { locale, t } = useUiLocale()
+  useEffect(() => {
+    if (!localEditorAvailable) return
+    const discover = () => { void mediaJobs.refresh().catch(() => undefined) }
+    const visible = () => { if (document.visibilityState === 'visible') discover() }
+    discover()
+    window.addEventListener('focus', discover)
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      window.removeEventListener('focus', discover)
+      document.removeEventListener('visibilitychange', visible)
+    }
+  }, [])
   const restoredViewState = useMemo(() => readAtlasViewState(), [])
   const restoredCityId = restoredViewState.selectedCityId && cityById[restoredViewState.selectedCityId]
     ? restoredViewState.selectedCityId
@@ -979,6 +993,22 @@ function App() {
       ) : null}
 
       {/* FR-PUB-2 / AC-10：公开构建不挂载添加对话框与转换对话框。 */}
+      {localEditorAvailable ? (
+        <MediaRecoveryCenter onOpenTarget={(_countryId, cityId) => {
+          const city = cityById[cityId]
+          if (!city) return
+          changePrimaryPage('map')
+          openMobileDetails()
+          setSelectedWantToGoEntityId(undefined)
+          setMapFocusPlace(undefined)
+          setSelectedCountryId(city.countryId)
+          setSelectedCityId(cityId)
+          setActiveDroneMediaCityId(undefined)
+          setActiveDroneMediaItemId(undefined)
+          setSelectionMode('city')
+          setGlobeDistance(cityDistance)
+        }} />
+      ) : null}
       {localEditorAvailable ? (
         <WantToGoAddDialog
           open={isAddWantToGoOpen}

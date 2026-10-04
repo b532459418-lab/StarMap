@@ -11,6 +11,8 @@ import { createBackup, inspectBackup, restoreBackup, portablePath } from './libr
 import { createBrowserFixture, fixtureIds } from './browser-fixture.mjs'
 import { getPrivatePaths, V2_DATA_FILE_NAMES } from './private-profile.mjs'
 import { runV2MediaImport } from './v2-media-import.mjs'
+import { withLibraryOperation } from './library-operation-lock.mjs'
+import { createMediaJobStore } from './media-job-store.mjs'
 
 const writeJson = async (target, value) => {
   await mkdir(path.dirname(target), { recursive: true })
@@ -71,6 +73,63 @@ test('full roundtrip preserves V2 bytes, IDs, hidden/cover state, imported origi
   const restoredPaths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: restored })
   assert.equal(await runV2MediaImport({ privatePaths: restoredPaths, apply: true, log: () => {}, logError: () => {} }), 0)
   assert.deepEqual((await readJson(restoredPaths.v2FilePaths.media)).items.map(item => item.id), before.items.map(item => item.id))
+})
+
+test('backup roundtrip excludes RD-07 jobs and staging, preserves original pending bytes, and initializes a new restored-library identity only on explicit create', async t => {
+  const { root, paths, bundle, restored } = await fixture(t, { media: true })
+  const store = createMediaJobStore(paths)
+  const task = await withLibraryOperation(paths, () => store.create({
+    countryId: fixtureIds.iceland, cityId: fixtureIds.reykjavik, kind: 'photo',
+    files: [{ fileName: 'neutral-pending.png', bytes: 32 }],
+  }))
+  const staging = path.join(root, 'operations', 'media-import', 'v1', 'staging', task.jobId, 'synthetic.part')
+  await mkdir(path.dirname(staging), { recursive: true })
+  await writeFile(staging, 'Synthetic incomplete task bytes')
+  const taskPath = path.join(root, 'operations', 'media-import', 'v1', 'jobs', `${task.jobId}.json`)
+  const taskBytes = await readFile(taskPath)
+  const stagingBytes = await readFile(staging)
+  async function dataDigests(base) {
+    const entries = []
+    async function walk(relative) {
+      for (const entry of await readdir(path.join(base, relative), { withFileTypes: true })) {
+        const name = path.join(relative, entry.name)
+        if (entry.isDirectory()) await walk(name)
+        else entries.push([name, createHash('sha256').update(await readFile(path.join(base, name))).digest('hex')])
+      }
+    }
+    for (const scope of ['data/v2', 'MediaInbox', 'media/user']) await walk(scope)
+    return entries.sort((a, b) => a[0].localeCompare(b[0]))
+  }
+  const before = await dataDigests(root)
+  // The existing backup contract deliberately excludes editor .bak history.
+  // Preserve that original history byte-for-byte while comparing restored active data.
+  const activeData = before.filter(([name]) => !name.endsWith('.bak'))
+  await createBackup(root, bundle)
+  const { manifest } = await inspectBackup(bundle)
+  assert.ok(manifest.entries.every(entry => !entry.path.startsWith('operations/')))
+  assert.ok(manifest.entries.some(entry => entry.path === 'data/v2/media-source-index.local.json'))
+  assert.equal((await restoreBackup(bundle, restored, { apply: true })).status, 'restored-new-directory')
+  assert.deepEqual(await dataDigests(root), before)
+  assert.deepEqual(await dataDigests(restored), activeData)
+  assert.deepEqual(await readFile(taskPath), taskBytes)
+  assert.deepEqual(await readFile(staging), stagingBytes)
+  assert.deepEqual(await store.read(task.jobId), task)
+
+  const restoredPaths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: restored })
+  const restoredStore = createMediaJobStore(restoredPaths)
+  assert.deepEqual(await restoredStore.discover(), { libraryId: null, jobs: [] })
+  await assert.rejects(readdir(path.join(restored, 'operations')), { code: 'ENOENT' })
+  const newTask = await withLibraryOperation(restoredPaths, () => restoredStore.create({
+    countryId: fixtureIds.iceland, cityId: fixtureIds.reykjavik, kind: 'photo',
+    files: [{ fileName: 'new-explicit-intent.png', bytes: 32 }],
+  }))
+  assert.notEqual(newTask.libraryId, task.libraryId)
+  assert.notEqual(newTask.jobId, task.jobId)
+  assert.equal((await restoredStore.discover()).jobs[0].jobId, newTask.jobId)
+  assert.deepEqual(await dataDigests(root), before)
+  assert.deepEqual(await dataDigests(restored), activeData)
+  assert.deepEqual(await readFile(taskPath), taskBytes)
+  assert.deepEqual(await readFile(staging), stagingBytes)
 })
 
 test('existing restore target and existing backup directory are refused without changing original bytes', async t => {

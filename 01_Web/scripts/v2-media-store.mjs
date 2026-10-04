@@ -126,8 +126,7 @@ const chooseInboxFolder = async (parentDirectory, parentLabel, displayName, plac
  * `query` 是请求的查询参数（URLSearchParams），`request` 是请求本身（文件内容的流，交给 deps.writeUpload）。
  * 成功：201 `{ ok, fileName, bytes, sourcePath }`（同旧）。
  */
-export async function handleV2Upload({ privatePaths, query, request, deps, now = new Date() }) {
-  try {
+export async function prepareV2Upload({ privatePaths, query, deps, now = new Date() }) {
     const kind = uploadKindOf(query)
     const files = await readV2Files(privatePaths)
     const target = uploadTargetOf(files, { countryId: query.get('countryId') ?? '', cityId: query.get('cityId') ?? '' }, now)
@@ -145,6 +144,12 @@ export async function handleV2Upload({ privatePaths, query, request, deps, now =
     if (!UPLOAD_EXTENSIONS.has(path.extname(destination).toLowerCase())) throw new V2WriteError('E_MEDIA_EXTENSION')
     const droneMetadata = kind === 'photo' ? undefined : droneUploadMetadataOf(query, kind, target.cityFolderName)
 
+    return { kind, target, cityRoot, claims, destination, droneMetadata }
+}
+
+export async function handleV2Upload({ privatePaths, query, request, deps, now = new Date() }) {
+  try {
+    const { kind, cityRoot, claims, destination, droneMetadata } = await prepareV2Upload({ privatePaths, query, deps, now })
     const imageMetadata = await deps.writeUpload(request, destination, kind)
     for (const claim of claims) await atomicJsonWrite(claim.file, claim.value)
     if (droneMetadata) await deps.updateDroneSidecar(cityRoot, destination, droneMetadata, imageMetadata)

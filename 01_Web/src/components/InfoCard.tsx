@@ -6,17 +6,19 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource } from '../data/mediaCatalog'
-import { addLocalTravelRecord, deleteHiddenLocalMedia, importLocalMedia, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState, uploadLocalMedia } from '../data/localEditorApi'
+import { addLocalTravelRecord, deleteHiddenLocalMedia, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState } from '../data/localEditorApi'
 import type { CitySearchOption } from '../data/localEditorApi'
 import { cityById, countryById, countryIdOfCity, getCitiesForCountry } from '../data/travelAtlas'
 import type { CityId, Country, CountryId, SelectionMode, TravelMapRecord } from '../types/travel'
 import type { CityPhotoGalleryRequest } from './CityPhotoGalleryModal'
 import { LocationSearchField } from './LocationSearchField'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
-import { MediaImportRecovery } from './MediaImportRecovery'
+import { MediaRecoveryEntry } from './MediaRecoveryCenter'
+import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { CityWantToGoAction } from './CityWantToGoAction'
 import { useFlipLayout } from './useFlipLayout'
-import { useMediaImportSession } from './useMediaImportSession'
+import { useMediaJobs } from './useMediaJobs'
+import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 import type { DateEvidence } from '../worldgraph/timeFilter'
 import { formatRecordDate, formatRecordDateSummary } from '../data/derive/recordDateLabel'
 
@@ -97,14 +99,16 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   const [editorNotice, setEditorNotice] = useLocalizedNotice()
   const [editorBusy, setEditorBusy] = useState(false)
   const photoImportTarget = isCityMode ? JSON.stringify([country.id, city.id, 'photos']) : undefined
-  const mediaSession = useMediaImportSession(photoImportTarget)
+  const mediaSession = useMediaJobs()
+  const coordination = useLocalEditorCoordination()
   const photoImportTargetRef = useRef<string | undefined>(undefined)
   useLayoutEffect(() => {
     photoImportTargetRef.current = photoImportTarget
     return () => { photoImportTargetRef.current = undefined }
   }, [photoImportTarget])
-  const photoImportLocked = mediaSession.state.phase !== 'idle'
-  const editorActionBusy = editorBusy || photoImportLocked || mediaSession.blocked
+  const photoImportLocked = mediaSession.loading || mediaSession.busy || Boolean(mediaSession.error || mediaSession.status)
+    || mediaSession.jobs.some(job => job.phase !== 'completed' && job.phase !== 'closed')
+  const editorActionBusy = editorBusy || coordination.blocked
   const [draggedCityId, setDraggedCityId] = useState<CityId>()
   const [draggedPhotoId, setDraggedPhotoId] = useState<string>()
   const [draftCityIds, setDraftCityIds] = useState<CityId[]>(memoryCities.map((item) => item.id))
@@ -236,7 +240,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   }
 
   const uploadPhotos = async (files: FileList | null) => {
-    if (!files?.length || !localEditorAvailable || !isCityMode || !country || !city || editorActionBusy) return
+    if (!files?.length || !localEditorAvailable || !isCityMode || !country || !city || editorActionBusy || photoImportLocked) return
     const target = photoImportTarget
     const countryId = country.id
     const cityId = city.id
@@ -244,33 +248,18 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:receivingPhotos', values: { count: files.length } })
     try {
-      await mediaSession.upload(Array.from(files), (file, permit) => uploadLocalMedia({ countryId, cityId, kind: 'photo', file }, permit))
+      await mediaSession.uploadBatch(Array.from(files, file => ({ countryId, cityId, kind: 'photo' as const, file })))
       if (!isCurrentTarget()) return
-      setEditorNotice({ key: 'editor:importingPhotos' })
-      await mediaSession.importMedia(importLocalMedia)
-      if (isCurrentTarget()) reloadAfterLocalSave()
+      setEditorNotice('')
+      requestMediaRecovery()
     } catch {
+      requestMediaRecovery()
       if (isCurrentTarget()) setEditorNotice('')
     } finally {
       if (isCurrentTarget()) {
         if (photoInputRef.current) photoInputRef.current.value = ''
-        setEditorBusy(false)
       }
-    }
-  }
-  const retryPhotoImport = async () => {
-    if (editorBusy || mediaSession.blocked || mediaSession.state.phase !== 'pending') return
-    const target = photoImportTarget
-    const isCurrentTarget = () => photoImportTargetRef.current === target
-    setEditorBusy(true)
-    setEditorNotice({ key: 'editor:importingPhotos' })
-    try {
-      await mediaSession.importMedia(importLocalMedia)
-      if (isCurrentTarget()) reloadAfterLocalSave()
-    } catch {
-      if (isCurrentTarget()) setEditorNotice('')
-    } finally {
-      if (isCurrentTarget()) setEditorBusy(false)
+      setEditorBusy(false)
     }
   }
   const visitedCityCount = matchingRecordIds === undefined ? country?.cityIds.length ?? 0 : browseMemoryCities.length
@@ -469,6 +458,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                       setEditorNotice({ key: 'editor:undoPhotos' })
                     }}
                     onAdd={() => {
+                      if (photoImportLocked) { requestMediaRecovery(); return }
                       if (!editorActionBusy) photoInputRef.current?.click()
                     }}
                     onSave={savePhotoDraft}
@@ -482,7 +472,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                     type="file"
                     accept="image/jpeg,image/png,image/webp,image/avif"
                     multiple
-                    disabled={editorActionBusy}
+                    disabled={editorActionBusy || photoImportLocked}
                     onChange={(event) => void uploadPhotos(event.currentTarget.files)}
                   />
                 ) : null}
@@ -596,14 +586,14 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
 
             {editorNotice ? <p className="atlas-local-editor-notice atlas-local-editor-notice-dark" role="status">{editorNotice}</p> : null}
 
-            {localEditorAvailable && mediaSession.blocked ? (
+            {localEditorAvailable && coordination.blocked ? (
               <p className="atlas-local-editor-notice atlas-local-editor-notice-dark" role="status">
-                {t(mediaSession.otherWriting ? 'mediaImport:otherWriting' : 'mediaImport:otherPending')}
+                {t(coordination.otherWriting ? 'mediaImport:otherWriting' : 'mediaImport:otherPending')}
               </p>
             ) : null}
 
             {localEditorAvailable && isCityMode ? (
-              <MediaImportRecovery state={mediaSession.state} busy={editorBusy || mediaSession.blocked} onRetry={retryPhotoImport} />
+              <MediaRecoveryEntry countryId={country.id} cityId={city.id} />
             ) : null}
 
             {isCountryGrid && cityEditing && hiddenCityIdsForCountry.length > 0 ? (
@@ -652,10 +642,10 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                 <button
                   type="button"
                   className="atlas-local-editor-delete"
-                  disabled={editorActionBusy}
+                  disabled={editorActionBusy || photoImportLocked}
                   onClick={(event) => {
                     event.stopPropagation()
-                    if (editorActionBusy) return
+                    if (editorActionBusy || photoImportLocked) return
                     const confirmed = window.confirm(t('editor:deletePhotosConfirm', { count: hiddenPhotoIdsForCity.length }))
                     if (!confirmed) return
                     setEditorBusy(true)

@@ -104,11 +104,56 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.deepEqual(captured.watched, [])
       assert.equal(captured.watcherCallbacks.size, 0)
     })
+    await t.test('Forced sample profile registers no private task endpoints or watcher', () => {
+      const captured = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: root, forceSample: true }))
+      assert.deepEqual(captured.handlers, [])
+      assert.deepEqual(captured.watched, [])
+    })
 
     const captured = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: root }))
     assert.equal(captured.handlers.length, 1)
     assert.deepEqual(captured.watched, [path.join(root, 'data')])
     const handler = captured.handlers[0]
+    await t.test('Task discovery requires loopback, editor header, allowed origin and non-sample page', async () => {
+      for (const overrides of [
+        {address:'203.0.113.10'}, {headers:{}},
+        {headers:{...authorizedHeaders,origin:'https://example.com'}},
+        {headers:{...authorizedHeaders,referer:'http://127.0.0.1:5173/?data=sample'}},
+      ]) {
+        const result = await requestTo(handler,{url:editorPrefix+'media/jobs',method:'GET',...overrides})
+        assertError(result,403,'E_EDITOR_READ_FORBIDDEN')
+        assert.equal(result.bodyReads,0)
+      }
+      const result = await requestTo(handler,{url:editorPrefix+'media/jobs',method:'GET'})
+      assert.equal(result.status,200)
+      assert.deepEqual(result.body,{ok:true,libraryId:null,jobs:[]})
+      assert.equal(result.bodyReads,0)
+      assert.deepEqual(await readdir(root),[])
+    })
+
+    await t.test('Task preview/import/close keep authorization ahead of body parsing', async () => {
+      const jobId = '018bd504-c600-7000-8000-000000000001'
+      for (const action of ['preview','import','close']) {
+        for (const overrides of [{address:'203.0.113.10'},{headers:{}},
+          {headers:{...authorizedHeaders,origin:'https://example.com'}},
+          {headers:{...authorizedHeaders,referer:'http://127.0.0.1:5173/?data=sample'}}]) {
+          const result = await requestTo(handler,{url:`${editorPrefix}media/jobs/${jobId}/${action}`,content:Buffer.from('{'),...overrides})
+          assertError(result,403,'E_EDITOR_WRITE_FORBIDDEN')
+          assert.equal(result.bodyReads,0)
+        }
+      }
+      assert.deepEqual(await readdir(root),[])
+    })
+
+    await t.test('Task preview never creates a coordination lease or invalidates editor data', async () => {
+      const id = '018bd504-c600-7000-8000-000000000001'
+      const result = await requestTo(handler,{url:`${editorPrefix}media/jobs/${id}/preview`,
+        content:Buffer.from(JSON.stringify({libraryId:id,revision:0,selectedFileIds:[id]}))})
+      assertError(result,404,'E_MEDIA_JOB_NOT_FOUND')
+      assert.deepEqual(await readdir(root),[])
+      assert.deepEqual(captured.invalidations,[])
+      assert.deepEqual(captured.reloads,[])
+    })
 
     await t.test('Three catalog/state GET endpoints reject remote reads before handling input', async () => {
       for (const route of ['state', 'catalog/countries', 'catalog/cities']) {
@@ -170,7 +215,8 @@ test('Local editor middleware preserves authorization, error codes and private f
     })
 
     await t.test('JSON routes return distinct malformed/oversize errors without writes', async () => {
-      for (const route of ['records', 'import', 'media/delete']) {
+      for (const route of ['records', 'import', 'media/delete',
+        ...['preview','import','close'].map(action => `media/jobs/018bd504-c600-7000-8000-000000000001/${action}`)]) {
         const malformed = await requestTo(handler, { url: editorPrefix + route, content: Buffer.from('{') })
         assertError(malformed, 400, 'E_REQUEST_INVALID')
         assert.equal(typeof malformed.body.params.reason, 'string')
@@ -196,7 +242,8 @@ test('Local editor middleware preserves authorization, error codes and private f
       })
       assertError(forbidden, 403, 'E_EDITOR_WRITE_FORBIDDEN')
       assert.equal(forbidden.bodyReads, 0)
-      for (const route of ['records', 'import', 'media/delete', 'unknown']) {
+      for (const route of ['records', 'import', 'media/delete', 'unknown',
+        ...['preview','import','close'].map(action => `media/jobs/018bd504-c600-7000-8000-000000000001/${action}`)]) {
         const result = await requestTo(handler, { url: editorPrefix + route, content: Buffer.from('{') })
         assertError(result, 409, 'E_LEGACY_UNMIGRATED', { legacyFiles: ['travel-map.local.json'] })
         assert.equal(result.bodyReads, 0)

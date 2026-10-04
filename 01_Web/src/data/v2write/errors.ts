@@ -131,6 +131,12 @@ export const V2_WRITE_MESSAGES = {
     const folders = Array.isArray(params.folders) ? params.folders.map(String).join('、') : ''
     return `投递箱文件夹 ${folders} 的 place.json 都指向别的地点（或内容无效），未写入文件。请先确认这些文件夹属于哪个地点。`
   },
+  E_LIBRARY_BUSY: () => '这个私人库正在处理另一项操作，或保留了中断操作的锁。请先核对当前操作，不要重复写入。',
+  E_MEDIA_JOB_INVALID: () => '媒体待办请求或记录格式无效。',
+  E_MEDIA_JOB_PENDING: () => '这个私人库还有未结媒体待办。请先核对并完成原任务，再开始其他媒体写入。',
+  E_MEDIA_JOB_CONFLICT: () => '媒体待办的版本、库身份或操作意图已经改变。请重新核对，未执行本次写入。',
+  E_MEDIA_JOB_REVIEW: () => '媒体待办的实际结果需要核对。记录与原文件保留，不会自动重传或导入。',
+  E_MEDIA_JOB_NOT_FOUND: () => '找不到这个媒体待办。',
   E_UNKNOWN_ENDPOINT: () => '未知的本地编辑接口。',
   E_EDITOR_READ_FORBIDDEN: () => '仅允许本机编辑会话读取。',
   E_EDITOR_WRITE_FORBIDDEN: () => '仅允许本机编辑会话写入。',
