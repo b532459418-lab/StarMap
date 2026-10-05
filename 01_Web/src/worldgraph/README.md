@@ -38,6 +38,52 @@ The product editions that build on it are described in
 
 Run the tests with `npm test` from `01_Web/` (plain `node --test`, no bundler).
 
+## Experimental logical store (RD-08 G1)
+
+`store/` adds a versioned **experimental** Entity / Layer / LayerEntry contract
+alongside the existing V0.4 graph. The App still uses the V2 adapters and original
+two-layer queries. This is not a storage migration, a stable SDK, or a custom-layer UI.
+
+| File | Responsibility |
+| --- | --- |
+| `store/types.ts` | Deeply readonly JSON-shaped definitions, facts, source/evidence/review references, anchors, relations, assets, original entry sequences and view state; pending proposals live outside the fact store. |
+| `store/schema.ts` | Version 1 runtime shape and semantic validation, UUIDv7 entity/entry IDs, registered types, field constraints, source identities, closed references, safe JSON and immutable copies. |
+| `store/commands.ts` | Explicit in-memory command batches with world/object revision checks; reject conflicts, schema reinterpretation and deletion with dangling references. Removing the last entry preserves its entity. |
+| `store/query.ts` | Complete management rows, RD-04 classification of verbatim raw dates, and original adjacency without bridging a filtered middle entry. |
+| `store/conflicts.ts` | Merge preflight: structural duplicates are idempotent; same-ID different payloads return conflicts and no partial command plan. |
+| `store/proposals.ts` | Separate proposal validation and explicit review acceptance/rejection. Accepted AI facts retain their source, evidence and review receipt. |
+
+Layer/type IDs are open registry IDs. Entity/entry IDs are injected UUIDv7 values;
+Core does not generate them. `sourceRecordKey` / `entryIdentityKey` preserve opaque
+source record IDs and distinguish colliding planned/saved sources. Persisting a
+stable source-to-entry allocation manifest belongs to the forthcoming V2 bridge.
+
+`date` fields require complete calendar dates. `date_evidence` retains raw
+start/end/year values, including historical invalid or partial values; quality is
+derived with the existing RD-04 classifier, never repaired. Opaque `extensions`
+preserve additional JSON source fields without treating them as references or
+capabilities. Field definitions cannot contain executable code.
+
+System keys require an explicit trusted host binding. Visibility fields and
+review receipts are consistency/audit data, **not authorization enforcement**.
+The host must authorize access and review decisions. A proposed AI change cannot
+register new sources/types or fabricate receipts through ordinary commands.
+
+These functions make defensive immutable copies for small contract workloads.
+They do not implement IO, disk transactions, multi-process concurrency,
+authentication, schema migrations, persistent proposal ledgers, external import
+history policy, or performance guarantees. New review receipts and nonzero
+revision history require a later explicit import policy. A Repository must
+commit reviewed facts and proposal status durably together; in-memory acceptance
+does not prove restart recovery or network idempotency. Backup/restore scope is
+unchanged. Package extraction remains gated on the overall RFC being accepted.
+
+Focused verification from `01_Web/`:
+
+```powershell
+node --test --test-isolation=none src/worldgraph/store/*.test.ts
+```
+
 ## Names and UI locale
 
 Entity, place-input, map-query and Collection titles use `LocalizedText`:
@@ -133,12 +179,61 @@ stabilize:
 
 ## What does *not* belong here
 
+RD-08 G2's experimental V2 bridge lives in the App's pure data layer:
+`src/data/canonical/storeBridge.ts`, `storeBridgeIdentity.ts`, and
+`storeBridgeProjection.ts`. It accepts complete validated V2 objects, builds
+the isolated Store, and keeps a caller-owned allocation ledger and opaque
+compatibility metadata. Its diagnostic projection reconstructs the five JSON
+values before using the existing pure App projectors; the separate sequence
+projection reads Store entries directly. Neither is an active App loader or
+writer. File bytes, media resolution, persistence, authorization, and any
+planned-to-visited write transition remain host responsibilities for later
+phases. Core must not import that bridge or the Canonical domain types.
+
+RD-08 G3's Node-only persistence foundation is separately implemented in
+`scripts/world-store-repository.mjs`. Its experimental SQLite transaction stores
+the world, G2 allocation ledger, proposals, retired IDs and operation receipt
+together. Repository versions also advance on proposal-only/audit saves;
+Core world revisions advance on fact changes. Commit acknowledgement loss
+requires operation discovery; the repository never automatically retries.
+Core stays pure, and the current App/V2 writer does not use this repository.
+The tests require Node 24 with `node:sqlite` and use temporary synthetic databases
+plus bounded, terminated child workers. Device power-loss, hostile filesystem
+changes, advanced history import and schema upgrades are not
+established by these tests.
+
+G3b's isolated `scripts/world-store-backup.mjs` uses SQLite `VACUUM INTO` for a
+consistent database snapshot, then validates and seals a new directory. Restore
+copies a verified package into another new directory, preserving facts, allocation
+identities, proposal states, retired IDs and all operation receipts. It never
+overwrites an existing destination. Completion/discovery helpers reject partial
+or corrupt packages. A restore marker describes the initial restored snapshot;
+later application writes legitimately invalidate that snapshot checksum. These
+packages contain database metadata and asset references, not external media,
+V2 files or configuration. The current library-backup CLI retains its V2/media
+scope. This prototype trusts caller-owned directories and has no App endpoint,
+schema migration, cryptographic authenticity or device power-loss guarantee.
+
+G3b history intake now has a read-only preflight in
+`scripts/world-store-history-preview.mjs`. It binds a validated backup to a
+host-supplied source label and exact byte digest, compares record/identity/
+proposal/retired-ID conflicts, and checks the merged semantics for fresh-only
+input. Every report has `executable: false` and no commands. Refresh validation
+binds the full target state, package and entire report; it does not hold a write
+lock. Foreign receipts stay in their original backup package. Existing receipts
+store commit summaries and request hashes, not every prior value or request body;
+therefore this evidence is a validated current snapshot, not a complete edit log.
+Stable repository identity, foreign archives, persisted import decisions and
+schema upgrades remain later work. No App, repository writes or schema changes
+are introduced by this preflight.
+
 - React components, hooks, CSS, browser storage, or anything that touches
   `window`. Example: `src/data/layerVisibility.ts` reads `localStorage`, so it
   lives in `src/data/`, not here, even though it only wraps `officialLayers`.
 - Loading, parsing, or persisting files. Adapters receive loaded objects.
-- Runtime registration of custom layers. `officialLayers` is intentionally a
-  read-only array; custom layers are a later milestone.
+- App runtime registration and custom-layer UI. `officialLayers` remains a
+  read-only array for the current App; the separate experimental `store/`
+  contract accepts data-defined registry rows without mutating that global list.
 - Cloud, sync, sharing, or AI features. Those are separate editions; see
   [docs/editions.md](../../../docs/editions.md).
 
