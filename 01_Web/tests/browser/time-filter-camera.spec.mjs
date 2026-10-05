@@ -35,34 +35,57 @@ async function closeFilters(page) {
   if (await panel(page).isVisible()) await panel(page).getByRole('button', { name: 'Close', exact: true }).click()
 }
 
-const cameraPose = (page) => page.evaluate(() => window.__travelAtlasDebugCamera?.getCameraPose())
 const poseTolerances = { height: 0.1, heading: 0.000001, lat: 0.000001, lng: 0.000001, pitch: 0.000001, roll: 0.000001 }
 const samePose = (left, right) => left && right && Object.entries(poseTolerances)
   .every(([key, tolerance]) => Number.isFinite(left[key]) && Number.isFinite(right[key]) && Math.abs(left[key] - right[key]) <= tolerance)
 
-async function settledCameraPose(page) {
+const cameraSnapshot = (page) => page.evaluate(() => ({
+  pose: window.__travelAtlasDebugCamera?.getCameraPose(),
+  command: window.__travelAtlasDebugCamera?.getCameraCommandState(),
+  observedAt: Date.now(),
+}))
+
+async function settledCameraPose(page, commands, baselineCommand, samples) {
   let previous
   let stableSamples = 0
+  // Completion and stability share the original 15-second budget. Repeated
+  // identical poses during a paused software-rendered flight are not completion.
   await expect.poll(async () => {
-    const current = await cameraPose(page)
-    stableSamples = samePose(current, previous) ? stableSamples + 1 : 0
-    previous = current
+    if (baselineCommand.commandNumber === undefined) baselineCommand.commandNumber = commands.findLast(
+      command => command.source === 'city' && command.selectedCityId === fixtureIds.reykjavik)?.commandNumber
+    const snapshot = await cameraSnapshot(page)
+    samples.push({ phase: 'settling', expectedCommandNumber: baselineCommand.commandNumber, ...snapshot })
+    const completed = baselineCommand.commandNumber !== undefined &&
+      snapshot.command?.commandNumber === baselineCommand.commandNumber &&
+      snapshot.command.source === 'city' && snapshot.command.selectedCityId === fixtureIds.reykjavik &&
+      snapshot.command.status === 'completed'
+    stableSamples = completed && samePose(snapshot.pose, previous) ? stableSamples + 1 : 0
+    previous = completed ? snapshot.pose : undefined
     return stableSamples
   }, { timeout: 15000, intervals: [150, 250, 350] }).toBeGreaterThanOrEqual(3)
   return previous
 }
 
-async function expectCameraUnchanged(page, baseline) {
+async function expectCameraUnchanged(page, baseline, commandNumber, samples, phase) {
   // Observe several frames after the UI change, not just a pose before a flight starts.
   for (let index = 0; index < 3; index++) {
     await page.waitForTimeout(250)
-    expect(samePose(await cameraPose(page), baseline), 'Time browsing preserves the settled camera pose').toBe(true)
+    const snapshot = await cameraSnapshot(page)
+    samples.push({ phase, ...snapshot })
+    expect(samePose(snapshot.pose, baseline), 'Time browsing preserves the settled camera pose').toBe(true)
+    expect(snapshot.command?.commandNumber, 'Time browsing keeps the completed command').toBe(commandNumber)
+    expect(snapshot.command?.status).toBe('completed')
   }
 }
 
 test('excluding and clearing the selected city keeps its identity, camera pose and application camera command count', async ({ page }, testInfo) => {
   const commands = []
   const selectionStates = []
+  const samples = []
+  let phase = 'open-map'
+  let baselinePose
+  let baselineCommandCount
+  const baselineCommand = { commandNumber: undefined }
   // Existing dev logs expose application-issued camera commands. This is not a
   // count of every Cesium internal setView/lookAt call and does not expose viewer.
   page.on('console', (message) => {
@@ -70,40 +93,66 @@ test('excluding and clearing the selected city keeps its identity, camera pose a
     for (const [prefix, target] of [['[camera-command] ', commands], ['[cesium-globe-scale-prop] ', selectionStates]]) {
       if (!text.startsWith(prefix)) continue
       const details = JSON.parse(text.slice(prefix.length))
-      target.push({ commandNumber: details.commandNumber, source: details.source,
+      target.push({ observedAt: Date.now(), commandNumber: details.commandNumber, source: details.source,
         selectedCityId: details.selectedCityId, selectedCountryId: details.selectedCountryId })
     }
   })
-  await openMap(page)
-  await selectReykjavik(page)
-  await expect.poll(() => commands.some(command => command.source === 'city' && command.selectedCityId === fixtureIds.reykjavik)).toBe(true)
-  const baselinePose = await settledCameraPose(page)
-  const baselineCommandCount = commands.length
-  expect(selectionStates.at(-1).selectedCityId).toBe(fixtureIds.reykjavik)
+  try {
+    await openMap(page)
+    phase = 'select-city'
+    await selectReykjavik(page)
+    phase = 'settling'
+    baselinePose = await settledCameraPose(page, commands, baselineCommand, samples)
+    baselineCommandCount = commands.length
+    expect(selectionStates.at(-1).selectedCityId).toBe(fixtureIds.reykjavik)
 
-  await year(page, 2023)
-  await closeFilters(page)
-  const info = page.locator('.atlas-info-panel')
-  await expect(info.locator('h2')).toHaveText('Reykjavik')
-  await expect(info.locator('[data-time-filter-outside]')).toBeVisible()
-  await expectCameraUnchanged(page, baselinePose)
-  expect(commands).toHaveLength(baselineCommandCount)
-  expect(selectionStates.at(-1).selectedCityId).toBe(fixtureIds.reykjavik)
+    phase = 'exclude-city'
+    await year(page, 2023)
+    await closeFilters(page)
+    const info = page.locator('.atlas-info-panel')
+    await expect(info.locator('h2')).toHaveText('Reykjavik')
+    await expect(info.locator('[data-time-filter-outside]')).toBeVisible()
+    await expectCameraUnchanged(page, baselinePose, baselineCommand.commandNumber, samples, phase)
+    expect(commands).toHaveLength(baselineCommandCount)
+    expect(selectionStates.at(-1).selectedCityId).toBe(fixtureIds.reykjavik)
 
-  await filters(page)
-  await panel(page).getByRole('button', { name: 'Clear all', exact: true }).click()
-  await closeFilters(page)
-  await expect(info.locator('[data-time-filter-outside]')).toHaveCount(0)
-  await expect(info.locator('h2')).toHaveText('Reykjavik')
-  await expectCameraUnchanged(page, baselinePose)
-  expect(commands).toHaveLength(baselineCommandCount)
-  expect(selectionStates.at(-1).selectedCityId).toBe(fixtureIds.reykjavik)
-  await testInfo.attach('camera-browse-evidence', {
-    body: JSON.stringify({ selectedCityId: fixtureIds.reykjavik, baselinePose, finalPose: await cameraPose(page),
+    phase = 'clear-filter'
+    await filters(page)
+    await panel(page).getByRole('button', { name: 'Clear all', exact: true }).click()
+    await closeFilters(page)
+    await expect(info.locator('[data-time-filter-outside]')).toHaveCount(0)
+    await expect(info.locator('h2')).toHaveText('Reykjavik')
+    await expectCameraUnchanged(page, baselinePose, baselineCommand.commandNumber, samples, phase)
+    expect(commands).toHaveLength(baselineCommandCount)
+    expect(selectionStates.at(-1).selectedCityId).toBe(fixtureIds.reykjavik)
+    phase = 'completed'
+  } finally {
+    // Preserve evidence on assertion/timeout failure too. Diagnostic collection
+    // must not hide the original failure if the page has already closed/crashed.
+    const evidence = { phase, selectedCityId: fixtureIds.reykjavik, baselinePose, baselineCommandNumber: baselineCommand.commandNumber,
       baselineApplicationCommandCount: baselineCommandCount, finalApplicationCommandCount: commands.length,
-      limitation: 'Counts existing application selection-command logs, not all low-level Cesium calls.' }),
-    contentType: 'application/json',
-  })
+      commands, selectionStates, samples, poseTolerances,
+      limitation: 'Only application-issued commands; completion callbacks observed only for city/country/place/overview flights. Raw pose comparisons and tolerances are unchanged.' }
+    let readTimer
+    try {
+      evidence.finalSnapshot = await Promise.race([
+        cameraSnapshot(page),
+        new Promise((_, reject) => {
+          readTimer = setTimeout(() => reject(new Error('Final camera read exceeded two seconds')), 2000)
+          readTimer.unref()
+        }),
+      ])
+      evidence.finalPose = evidence.finalSnapshot.pose
+      if (baselinePose && evidence.finalPose) evidence.rawPoseDelta = Object.fromEntries(
+        Object.keys(poseTolerances).map(key => [key, evidence.finalPose[key] - baselinePose[key]]))
+    } catch (error) { evidence.diagnosticReadError = String(error) }
+    finally { clearTimeout(readTimer) }
+    // CI retains stdout even when no trace-artifact uploader is configured.
+    console.info('[camera-browse-evidence]', JSON.stringify(evidence))
+    try {
+      await testInfo.attach('camera-browse-evidence', { body: JSON.stringify(evidence), contentType: 'application/json' })
+    } catch (error) { console.warn('[camera-browse-evidence-attachment-error]', String(error)) }
+  }
 })
 
 test('both layer toggles retain their conditions and Collection restores a hidden item from the complete source set', async ({ page }) => {
