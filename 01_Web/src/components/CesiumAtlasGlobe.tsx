@@ -44,6 +44,8 @@ import type { EntityId } from '../worldgraph/types'
 import { resolveName } from '../worldgraph/localizedText'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
+import { createCameraCommandObserver } from './cameraCommandObservation'
+import type { CameraCommandObservation, CameraCommandState } from './cameraCommandObservation'
 import {
   bindTrackpadOrbit,
   globeLookEventTypes,
@@ -456,7 +458,7 @@ type CameraCommandSource =
 type CameraCommandRequest = {
   details: Record<string, unknown>
   reason: string
-  run: (viewer: CesiumViewer) => void
+  run: (viewer: CesiumViewer, observation?: CameraCommandObservation) => void
   source: CameraCommandSource
 }
 
@@ -470,6 +472,7 @@ const droneLockAllowedCameraSources = new Set<CameraCommandSource>([
 ])
 
 type TravelAtlasDebugCamera = {
+  getCameraCommandState: () => Readonly<CameraCommandState> | undefined
   getCameraPose: () => {
     height: number
     heading: number
@@ -491,6 +494,7 @@ const installDebugCameraApi = (
   viewer: CesiumViewer,
   executeCameraCommand: ExecuteCameraCommand,
   activateDebugDroneCameraLock: () => void,
+  readCameraCommand: () => Readonly<CameraCommandState> | undefined,
 ) => {
   if (import.meta.env.PROD) return undefined
 
@@ -561,6 +565,7 @@ const installDebugCameraApi = (
   }
 
   const debugCamera: TravelAtlasDebugCamera = {
+    getCameraCommandState: readCameraCommand,
     getCameraPose: () => {
       const { positionCartographic } = viewer.camera
 
@@ -624,6 +629,7 @@ export function CesiumAtlasGlobe({
   const lastCameraFocusKeyRef = useRef<string | undefined>(undefined)
   const worldCenterLockSuspendedRef = useRef(false)
   const cameraCommandCountRef = useRef(0)
+  const cameraCommandObserverRef = useRef(import.meta.env.DEV ? createCameraCommandObserver() : undefined)
   const debugDroneCameraLockUntilRef = useRef(0)
   const [viewerReadyVersion, setViewerReadyVersion] = useState(0)
   const updateVisibleHemisphereRef = useRef<() => void>(() => undefined)
@@ -1154,8 +1160,23 @@ export function CesiumAtlasGlobe({
       },
       ...request.details,
     })
+    // Issue before cancelling the previous flight so its cancel callback cannot
+    // overwrite this command. Production installs no diagnostic API or tracker.
+    const observer = cameraCommandObserverRef.current
+    if (import.meta.env.DEV) observer?.bind(viewer)
+    const observation = import.meta.env.DEV ? observer?.issue({
+      commandNumber: cameraCommandNumber,
+      source: request.source,
+      selectedCityId,
+      selectedCountryId,
+    }) : undefined
     viewer.camera.cancelFlight()
-    request.run(viewer)
+    try {
+      request.run(viewer, observation)
+    } catch (error) {
+      observation?.fail()
+      throw error
+    }
     return true
   }, [])
 
@@ -1381,12 +1402,16 @@ export function CesiumAtlasGlobe({
     if (import.meta.env.PROD) return undefined
 
     const viewer = viewerRef.current?.cesiumElement
-    if (!viewer) return undefined
-
+    const observer = cameraCommandObserverRef.current
+    if (!viewer || !observer) return undefined
+    // Reinstalling the API for the same live viewer must retain its flight.
+    // Replacing the viewer invalidates callbacks owned by the previous instance.
+    observer.bind(viewer)
     const debugCamera = installDebugCameraApi(
       viewer,
       executeCameraCommand,
       activateDebugDroneCameraLock,
+      () => viewer.isDestroyed() ? undefined : observer.read(viewer),
     )
 
     return () => {
@@ -1639,7 +1664,8 @@ export function CesiumAtlasGlobe({
           destination: 'cartesian-height',
           rangeOrHeight: cameraState.rangeOrHeight,
         },
-        run: (currentViewer) => {
+        run: (currentViewer, observation) => {
+          observation?.start()
           currentViewer.camera.flyTo({
             destination,
             duration: cameraState.duration,
@@ -1647,7 +1673,8 @@ export function CesiumAtlasGlobe({
               direction,
               up,
             },
-            complete: updateFocusOffset,
+            complete: () => { updateFocusOffset(); observation?.complete() },
+            cancel: () => observation?.cancel(),
           })
         },
       })
@@ -1673,7 +1700,8 @@ export function CesiumAtlasGlobe({
         destination: 'bounding-sphere',
         rangeOrHeight: cameraState.rangeOrHeight,
       },
-      run: (currentViewer) => {
+      run: (currentViewer, observation) => {
+        observation?.start()
         currentViewer.camera.flyToBoundingSphere(
           new BoundingSphere(
             targetPosition,
@@ -1686,7 +1714,8 @@ export function CesiumAtlasGlobe({
               CesiumMath.toRadians(cameraState.pitch),
               cameraState.rangeOrHeight,
             ),
-            complete: updateFocusOffset,
+            complete: () => { updateFocusOffset(); observation?.complete() },
+            cancel: () => observation?.cancel(),
           },
         )
       },

@@ -64,6 +64,8 @@ The browser runner creates a new temporary private root from neutral tracked tes
 
 For a focused recheck, use `npm run test:browser -- --time-filters`, `--critical-flows`, `--media-recovery` or `--media-lifecycle`. The last option selects only the recovery lifecycle case. All retain the isolated synthetic-data and port safeguards; the default CI command runs the critical-flow, media-recovery and time-filter suites.
 
+The camera time-filter regression waits for the selected city's actual Cesium flight-completion callback and then checks stable pose samples within one 15-second budget. Pose tolerances remain 0.1 metres for height and 0.000001 degrees for each angle/coordinate. It preserves the original baseline when excluding the city or clearing filters. The DEV-only read-only command snapshot observes completion/cancellation for city, country, place and overview flights; other command types remain `issued` rather than implying completion. No viewer is exposed by this snapshot and public builds do not install it. The test writes `camera-browse-evidence` to its attachment and stdout on success or failure, including command identity/status, pose samples and raw deltas; this is diagnostic evidence, not proof of every low-level Cesium call or a past CI failure's cause.
+
 ### Browsing by time
 
 Open **Time filters** on Map or Journey, or a layer's time entry in the Layers menu. Each layer has independent year shortcuts, inclusive start/end dates (either may be open), uncertain-date inclusion and clearing. Travel uses original visit intervals; saved places use their added date, while travel plans use their planned visit interval, including its end date. Valid conditions are remembered locally; invalid drafts remain editable and are never saved.
