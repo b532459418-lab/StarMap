@@ -15,6 +15,37 @@ import { syntheticBridgeFixture, BRIDGE_NOW } from '../src/data/canonical/storeB
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { restoreBridgeV2 } from '../src/data/canonical/storeBridgeProjection.ts'
 const errorCode = code => e => e.code === code
+
+test('an old AI review cannot approve a new unrelated fact; ordinary edits retain provenance', async t => {
+  const { database } = await temporary(t), repository = createWorldRepository(database, seed())
+  try {
+    repository.apply(stageRequest()); repository.apply(acceptRequest())
+    const before = repository.snapshot()
+    assert.throws(() => repository.apply({ id: 'unreviewed-ai', expectedRevision: 2, action: { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: { ...entry(51), source: { sourceId: 'test:ai', recordId: 'never-approved', evidenceIds: ['proof-one'], reviewId: 'synthetic-review' } } }] } }), errorCode('E_UNCONFIRMED'))
+    assert.deepEqual(repository.snapshot(), before)
+    const approved = before.world.entries.find(row => row.id === id(50))
+    const repeated = repository.apply({ id: 'approved-noop', expectedRevision: 2, action: { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: approved }] } })
+    assert.equal(repeated.worldRevision, before.world.revision)
+    repository.apply({ id: 'manual-edit', expectedRevision: 3, action: { kind: 'commands', commands: [{ op: 'update', table: 'entries', id: approved.id, expectedRevision: approved.revision, value: { ...approved, revision: approved.revision + 1, fields: { ...approved.fields, note: 'Owner edit' } } }] } })
+    assert.equal(repository.snapshot().world.entries.find(row => row.id === id(50)).fields.note, 'Owner edit')
+  } finally { repository.close() }
+})
+
+test('merge preflight rejects a conflicting reserved source identity before declaring ready', async t => {
+  const { database } = await temporary(t), initial = seed()
+  initial.world = structuredClone(initial.world)
+  initial.world.sources.push({ id: 'v2:travel', revision: 0, title: { names: { en: 'Legacy source' } }, origin: 'import' })
+  initial.identities = { format: 'starmap.v2-store-identities', version: 1, identities: [{ kind: 'entry', sourceId: 'v2:travel', recordId: 'stable', id: id(60) }] }
+  const repository = createWorldRepository(database, initial)
+  try {
+    const incoming = structuredClone(repository.snapshot().world)
+    incoming.entries.push({ ...entry(61), source: { sourceId: 'v2:travel', recordId: 'stable', evidenceIds: [] } })
+    assert.throws(() => repository.preflightMerge(incoming), errorCode('E_REPO_IDENTITY'))
+    incoming.entries.at(-1).id = id(60)
+    assert.equal(repository.preflightMerge(incoming).plan.status, 'ready')
+    assert.equal(repository.snapshot().revision, 0)
+  } finally { repository.close() }
+})
 async function temporary(t) {
   const base = path.resolve(tmpdir()), root = await mkdtemp(path.join(base, 'starmap-g3-synthetic-'))
   t.after(() => {

@@ -41,6 +41,7 @@ function ImportScope({ job, preview, disabled, onImport }: {
     E_MEDIA_PLAN_OUTPUT: t('blockerOutput'), E_MEDIA_PLAN_OWNERSHIP: t('blockerOwnership'), E_MEDIA_PLAN_CHANGED: t('blockerChanged'),
   }
   const summary = preview.plan.summary
+  const largeSources = summary.sources.filter(source => source.bytes > (source.kind === 'panorama360' ? 40 : 16) * 1024 * 1024).length
   const sourcesById = new Map(summary.sources.map((source) => [source.id, source]))
   const placeLabel = (id: string | undefined) => id && places.has(id)
     ? name({ id }) || t('placeRecord', { id })
@@ -69,6 +70,7 @@ function ImportScope({ job, preview, disabled, onImport }: {
   const stale = job.revision !== preview.revision
   return <section className="atlas-media-recovery-preview" data-testid="media-import-preview" aria-label={t('planTitle')}>
     <h4>{t('planTitle')}</h4>
+    {largeSources > 0 ? <p>{t('largeSourceHint', { count: largeSources })}</p> : null}
     <p>{t('planNotice')}</p>
     <p>{t('planCounts', { added: summary.addedIds.length, updated: summary.updatedIds.length, removed: summary.removedIds.length })}</p>
     <p>{t('planEffects', { restored: summary.editorEffects.restoredMediaIds.length, pins: summary.pins.length, outputs: summary.outputs.length })}</p>

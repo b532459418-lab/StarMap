@@ -1,4 +1,5 @@
 import { LocalEditorError } from '../i18n/editorErrors.ts'
+import { fileSha256 } from './fileSha256.ts'
 import { localEditorCoordination, type LocalEditorCoordination, type MediaImportPermit } from './localEditorCoordination.ts'
 import { readMediaJobs, createMediaJob, receiveMediaJobFile, previewMediaJob, importMediaJob, pauseMediaJob, closeMediaJob, type LocalMediaUpload } from './localEditorApi.ts'
 
@@ -128,7 +129,7 @@ const checkContinuation = (before: MediaJob, after: MediaJob) => {
 
 /** Durable facts come only from the server. A failed write is followed by GET, never a replay. */
 export function createMediaJobs({api = defaultApi, coordination = localEditorCoordination,
-  hashFile = async (file: File) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())), b => b.toString(16).padStart(2, '0')).join(''),
+  hashFile = fileSha256,
   operationId = () => crypto.randomUUID() as string,
 }: {api?: MediaJobsApi; coordination?: LocalEditorCoordination; hashFile?: (file: File) => Promise<string>; operationId?: () => string} = {}) {
   let state: MediaJobsSnapshot = Object.freeze({jobs: [], libraryId: null, loading: false, busy: false})

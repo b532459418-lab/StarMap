@@ -29,6 +29,15 @@ async function inventory(root, prefix = '') {
 }
 const jobPath = (fixture, job) => path.join(fixture.controls, 'jobs', `${job.jobId}.json`)
 
+test('one validated task snapshot is detached and read-only', async t => {
+  const f = await fixture(t), job = await f.store.create(input()), before = await inventory(f.root)
+  const snapshot = await f.store.readSnapshot()
+  assert.equal(snapshot.libraryId, job.libraryId); assert.deepEqual(snapshot.jobs, [job])
+  snapshot.jobs[0].phase = 'closed'
+  assert.equal((await f.store.read(job.jobId)).phase, 'open')
+  assert.deepEqual(await inventory(f.root), before)
+})
+
 test('construction, empty discovery and legacy checks never initialize a library', async (t) => {
   const f = await fixture(t)
   const before = await inventory(f.root)

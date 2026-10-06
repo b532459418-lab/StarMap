@@ -227,6 +227,26 @@ Stable repository identity, foreign archives, persisted import decisions and
 schema upgrades remain later work. No App, repository writes or schema changes
 are introduced by this preflight.
 
+The separate experimental v2 host now uses SQLite storage version 3 while
+retaining logical envelope version 2. Baseline, current state and compact
+request/receipt history have separate tables and commit atomically. Opening a
+file or observing another connection's change validates the complete semantic
+history; normal same-connection `state()` reads use immutable verified state.
+`snapshot()` explicitly materializes full historical states for export/review,
+so large history exports and first-open replay still have linear cost. Old
+storage-version-2 files remain readable with `readOnly: true`; writing them
+requires explicit creation of a new file from the validated snapshot. No
+existing database is silently migrated. This host has no App endpoint or
+external-media backup contract.
+
+New AI-origin facts must come through proposal acceptance, and repository
+validation binds their source/record identity to the approved commands. Later
+ordinary edits to that approved identity remain allowed. Upgrade artifact
+sealing holds a consistent SQLite source read snapshot through completion;
+competing writers may need operation discovery after a refused commit.
+Sealing supports the repository's default DELETE journal mode; WAL sources are
+refused before target creation because WAL read locks do not exclude commits.
+
 - React components, hooks, CSS, browser storage, or anything that touches
   `window`. Example: `src/data/layerVisibility.ts` reads `localStorage`, so it
   lives in `src/data/`, not here, even though it only wraps `officialLayers`.

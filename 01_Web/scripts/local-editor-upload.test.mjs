@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import sharp from 'sharp'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
 import {
@@ -12,20 +13,25 @@ import {
   orientedImageDimensions,
   reserveDestination,
   safeSegment,
-  writeUpload,
+  writeUpload as actualWriteUpload,
 } from './local-editor-upload.mjs'
 
-const uploadTemporaryFiles = async () => (await readdir(tmpdir()))
-  .filter((name) => name.startsWith(`travelatlas-upload-${process.pid}-`)).sort()
+const uploadRoots = new AsyncLocalStorage()
+const writeUpload = (request, destination, kind) => actualWriteUpload(request, destination, kind,
+  { stagingRoot: path.join(uploadRoots.getStore(), 'operations', 'uploads') })
 
 const fixture = async (run) => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'starmap-upload-test-'))
-  const before = await uploadTemporaryFiles()
+  const root = await mkdtemp(path.join(tmpdir(), 'starmap-upload-test-'))
+  const directory = path.join(root, 'files')
+  await mkdir(directory)
   try {
-    await run(directory)
-    assert.deepEqual(await uploadTemporaryFiles(), before, 'Every upload temporary file must be removed')
+    await uploadRoots.run(root, () => run(directory))
+    const files = await readdir(path.join(root, 'operations', 'uploads')).catch(error => { if (error.code === 'ENOENT') return []; throw error })
+    assert.deepEqual(files, [], 'Every test-owned upload temporary file must be removed')
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    assert.equal(path.dirname(path.resolve(root)), path.resolve(tmpdir()))
+    assert.ok(path.basename(root).startsWith('starmap-upload-test-'))
+    await rm(root, { recursive: true, force: true })
   }
 }
 

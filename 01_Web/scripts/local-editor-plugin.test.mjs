@@ -9,6 +9,7 @@ const editorPrefix = '/__travelatlas/editor/'
 const authorizedHeaders = {
   'x-travelatlas-local-editor': '1',
   origin: 'http://127.0.0.1:5173',
+  host: '127.0.0.1:5173',
 }
 
 function captureMiddleware(plugin, privateModule) {
@@ -118,6 +119,8 @@ test('Local editor middleware preserves authorization, error codes and private f
       for (const overrides of [
         {address:'203.0.113.10'}, {headers:{}},
         {headers:{...authorizedHeaders,origin:'https://example.com'}},
+        {headers:{...authorizedHeaders,origin:'http://127.0.0.1:9999'}},
+        {headers:{...authorizedHeaders,origin:'http://localhost:5173'}},
         {headers:{...authorizedHeaders,referer:'http://127.0.0.1:5173/?data=sample'}},
       ]) {
         const result = await requestTo(handler,{url:editorPrefix+'media/jobs',method:'GET',...overrides})
@@ -136,6 +139,7 @@ test('Local editor middleware preserves authorization, error codes and private f
       for (const action of ['preview','import','close']) {
         for (const overrides of [{address:'203.0.113.10'},{headers:{}},
           {headers:{...authorizedHeaders,origin:'https://example.com'}},
+          {headers:{...authorizedHeaders,origin:'http://localhost:9999'}},
           {headers:{...authorizedHeaders,referer:'http://127.0.0.1:5173/?data=sample'}}]) {
           const result = await requestTo(handler,{url:`${editorPrefix}media/jobs/${jobId}/${action}`,content:Buffer.from('{'),...overrides})
           assertError(result,403,'E_EDITOR_WRITE_FORBIDDEN')
@@ -174,6 +178,7 @@ test('Local editor middleware preserves authorization, error codes and private f
         { headers: { origin: authorizedHeaders.origin } },
         { headers: { ...authorizedHeaders, origin: 'https://127.0.0.1:5173' } },
         { headers: { ...authorizedHeaders, origin: 'http://example.com' } },
+        { headers: { ...authorizedHeaders, origin: 'http://127.0.0.1:9999' } },
         { headers: { ...authorizedHeaders, origin: 'not a URL' } },
       ]) {
         const result = await requestTo(handler, {

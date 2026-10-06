@@ -49,6 +49,9 @@ npm run release:check
 ```
 
 `npm test` runs the World Graph Core unit tests with plain `node --test`; no bundler is involved. See [`src/worldgraph/README.md`](src/worldgraph/README.md).
+The runner uses at most two file workers to bound memory while synthetic image
+and process-exit checks run. This is a test-resource limit, not an application
+memory requirement.
 
 ### Browser regression and performance baseline
 

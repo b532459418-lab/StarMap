@@ -447,6 +447,8 @@ const allowedOrigins = (request) => {
     const parsed = new URL(origin)
     return (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost')
       && parsed.protocol === 'http:'
+      && typeof request.headers.host === 'string'
+      && parsed.origin === new URL(`http://${request.headers.host}`).origin
   } catch {
     return false
   }

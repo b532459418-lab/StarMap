@@ -42,6 +42,31 @@ const fixture = async (callback) => {
   try { await callback({ paths, first, second, places }) } finally { await rm(directory, { recursive: true, force: true }) }
 }
 
+test('large valid photos retain advisory size warnings without blocking import', async () => fixture(async ({ paths, first }) => {
+  const file = path.join(first, 'photos', 'first.jpg'), original = await readFile(file)
+  await writeFile(file, Buffer.concat([original, Buffer.alloc(20 * 1024 * 1024 - original.length)]))
+  const plan = await createMediaImportPlan({ privatePaths: paths })
+  assert.deepEqual(plan.blockers, [])
+  assert.ok(plan.scan.advisoryWarnings.some(warning => warning.includes('20.0 MiB')))
+  const result = await applyMediaImportPlan({ privatePaths: paths, plan })
+  assert.equal(result.mediaIds.length, 1)
+}))
+
+test('verified derivative fingerprints avoid repeat decoding but still detect corrupt outputs', async () => fixture(async ({ paths, first }) => {
+  await image(path.join(first, 'photos', 'cache-unique.jpg'), '#23b5a1')
+  let computed = 0
+  const plan = await createMediaImportPlan({ privatePaths: paths, unsafeTestDerivativeComputed: () => { computed++ } })
+  assert.ok(computed > 0)
+  computed = 0
+  const repeated = await createMediaImportPlan({ privatePaths: paths, unsafeTestDerivativeComputed: () => { computed++ } })
+  assert.equal(computed, 0); assert.equal(repeated.digest, plan.digest)
+  await applyMediaImportPlan({ privatePaths: paths, plan })
+  const derivative = plan.summary.outputs.find(output => !output.path.includes('/original.'))
+  await writeFile(path.join(paths.root, ...derivative.path.split('/')), 'damaged')
+  const corrupt = await createMediaImportPlan({ privatePaths: paths, unsafeTestDerivativeComputed: () => { computed++ } })
+  assert.equal(computed, 0); assert.ok(corrupt.blockers.some(blocker => blocker.code === 'E_MEDIA_PLAN_OUTPUT'))
+}))
+
 test('RD-07 whole Inbox plan is byte-readonly, stable and exposes unrelated-city sources without roots', async () => fixture(async ({ paths, second }) => {
   await image(path.join(second, 'photos', 'second.jpg'), '#00aa88')
   const before = await snapshot(paths.root)
