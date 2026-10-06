@@ -1,5 +1,5 @@
 /** Experimental standalone writable fork: logical format 3, SQLite storage 4.
- * V2 source snapshots are archived intact; local operations never adopt parent
+ * Supported v2/v3 source snapshots are archived intact; local operations never adopt parent
  * receipts. Caller-owned explicit paths only; no App/private-root discovery.
  * Fingerprints/bindings detect mistakes or corruption, not same-user forgery.
  */
@@ -9,9 +9,10 @@ import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rea
 import path from 'node:path'
 import { freezeCopy, opaqueId, shape, validateJson } from '../src/worldgraph/store/schema.ts'
 import { RepositoryError, readRepositoryState, transitionRepositoryState } from './world-store-repository.mjs'
-import { openRepositoryV2, replayRepositoryV2 } from './world-store-repository-v2.mjs'
+import { openRepositoryV2 } from './world-store-repository-v2.mjs'
 import { repositoryStateDigest as digest } from './world-store-repository-v2-contract.mjs'
-import { assertBranchSource, assertBranchWriteBinding, readBranchDescriptor, readBranchOperationManifest } from './world-store-branch-contract.mjs'
+import { assertBranchWriteBinding, readBranchDescriptor, readBranchOperationManifest } from './world-store-branch-contract.mjs'
+import { readBranchMetadata as validateMetadata, previewRepositoryArchive as preview, readCreationContext } from './world-store-branch-snapshot.mjs'
 
 const APP = 0x534d4736
 const META_SQL = 'CREATE TABLE branch_metadata (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT'
@@ -56,15 +57,6 @@ function readLocationMarker(root) {
   readBranchDescriptor(value.descriptor)
   return freezeCopy(value)
 }
-function sourceReference(archive) {
-  return { repositoryFormatVersion: 2, identityStatus: 'known', identity: archive.identity,
-    snapshotDigest: digest(archive.state), repositoryRevision: archive.state.revision, archiveDigest: digest(archive) }
-}
-function preview(archive, policy) {
-  const checked = replayRepositoryV2(archive, policy)
-  const value = { format: 'starmap.repository-fork-preview', formatVersion: 1, source: sourceReference(checked), archive: checked, policyDigest: digest(policy) }
-  return freezeCopy({ ...value, previewDigest: digest(value) })
-}
 function withSource(sourceFile, options, callback) {
   let guard, source
   try {
@@ -75,7 +67,12 @@ function withSource(sourceFile, options, callback) {
     if (guard.prepare('PRAGMA journal_mode').get().journal_mode !== 'delete') fail('E_BRANCH_SOURCE_JOURNAL')
     guard.exec('BEGIN')
     guard.prepare('SELECT count(*) AS tables FROM sqlite_schema').get() // Hold DELETE-mode source read lock through sealing.
-    source = openRepositoryV2(file, { readOnly: true, policy: options.policy })
+    if (guard.prepare('PRAGMA journal_mode').get().journal_mode !== 'delete') fail('E_BRANCH_SOURCE_JOURNAL')
+    const app = guard.prepare('PRAGMA application_id').get().application_id
+    if (app === APP) {
+      if ((process.platform === 'win32' ? path.basename(file).toLowerCase() : path.basename(file)) !== 'world.sqlite') fail('E_BRANCH_PATH')
+      source = openRepositoryBranch(path.dirname(file), { readOnly: true, policy: options.policy })
+    } else source = openRepositoryV2(file, { readOnly: true, policy: options.policy })
     const value = preview(source.snapshot(), options.policy ?? {})
     return callback(value)
   } catch (error) { throw translated(error) }
@@ -99,20 +96,9 @@ function parse(row) {
 }
 function readMetadata(db, policy, marker) {
   const value = parse(db.prepare('SELECT payload,digest FROM branch_metadata WHERE singleton=1').get())
-  shape(value, ['format', 'formatVersion', 'descriptor', 'sourceArchive', 'creation', 'markerDigest'])
-  if (value.format !== 'starmap.world-repository-branch' || value.formatVersion !== 3) fail('E_BRANCH_VERSION')
-  const descriptor = readBranchDescriptor(value.descriptor)
-  if (value.markerDigest !== digest(marker) || digest(marker.descriptor) !== digest(descriptor) || digest(marker.creation) !== digest(value.creation)) fail('E_BRANCH_CORRUPT')
-  if (descriptor.origin.kind !== 'fork') fail('E_BRANCH_VERSION')
-  const archive = replayRepositoryV2(value.sourceArchive, policy)
-  assertBranchSource(descriptor, sourceReference(archive))
-  shape(value.creation, ['status', 'operationId', 'requestDigest', 'previewDigest', 'policyDigest'])
-  if (value.creation.status !== 'completed') fail('E_BRANCH_INCOMPLETE')
-  opaqueId(value.creation.operationId, 'operationId')
-  const expected = preview(archive, policy)
-  if (value.creation.previewDigest !== expected.previewDigest || value.creation.policyDigest !== expected.policyDigest
-    || value.creation.requestDigest !== digest({ operationId: value.creation.operationId, previewDigest: expected.previewDigest, binding: descriptor.binding })) fail('E_BRANCH_CORRUPT')
-  return freezeCopy(value)
+  const checked = validateMetadata(value, policy)
+  if (value.markerDigest !== digest(marker)) fail('E_BRANCH_CORRUPT')
+  return checked
 }
 function replay(db, metadata, policy, collect = false) {
   let state = metadata.sourceArchive.state
@@ -184,7 +170,10 @@ export function openRepositoryBranch(target, options = {}) {
   }
   function read(callback) {
     if (db.isTransaction) fail('E_REPO_BUSY')
-    try { db.exec('BEGIN'); return callback(current()) }
+    try {
+      if (digest(readLocationMarker(root)) !== digest(marker)) fail('E_BRANCH_CORRUPT')
+      db.exec('BEGIN'); return callback(current())
+    }
     catch (error) { throw translated(error) }
     finally { if (db.isTransaction) db.exec('ROLLBACK') }
   }
@@ -193,6 +182,13 @@ export function openRepositoryBranch(target, options = {}) {
     creation() { return metadata.creation },
     state() { return read(value => value.state) },
     snapshot() { return read(() => freezeCopy({ ...metadata, ...replay(db, metadata, policy, true) })) },
+    withSnapshot(callback) {
+      return read(() => {
+        const result = callback(freezeCopy({ ...metadata, ...replay(db, metadata, policy, true) }))
+        if (result && typeof result.then === 'function') fail('E_BRANCH_ASYNC_HOOK')
+        return result
+      })
+    },
     findOperation(id) {
       opaqueId(id, 'operationId')
       return read(() => { const row = db.prepare('SELECT payload,digest FROM branch_history WHERE operation_id=?').get(id); return row ? freezeCopy(parse(row).receipt) : undefined })
@@ -252,21 +248,25 @@ export function discoverRepositoryFork(target, options = {}) {
 }
 /** Exclusive target creation; transaction seals metadata, full parent archive,
  * baseline facts and empty local log. Incomplete targets are never overwritten. */
-export function forkRepositoryToDirectory(sourceFile, target, input, operationId, options = {}) {
+function prepareFork(target, input, operationId, options) {
   opaqueId(operationId, 'operationId'); validateJson(input)
   shape(input, ['format', 'formatVersion', 'source', 'archive', 'policyDigest', 'previewDigest'])
   const policy = freezeCopy(options.policy ?? {}), expected = preview(input.archive, policy)
   if (digest(input) !== digest(expected)) fail('E_BRANCH_PREVIEW')
   const root = targetPath(target), binding = observedBinding(root, options.hostId)
-  const requestDigest = digest({ operationId, previewDigest: input.previewDigest, binding })
+  const context = options.context === undefined ? undefined : readCreationContext(options.context)
+  const requestDigest = digest({ operationId, previewDigest: input.previewDigest, binding, ...(context ? { context } : {}) })
   const existing = discoverRepositoryFork(root, { policy })
   if (existing.status === 'completed') {
     if (existing.creation.operationId !== operationId || existing.creation.requestDigest !== requestDigest) fail('E_BRANCH_EXISTS')
     // Historical completed result; a later source edit does not undo creation.
-    return existing
+    return { existing }
   }
   if (existing.status !== 'absent') fail(existing.status === 'recovery-required' ? 'E_BRANCH_RECOVERY_REQUIRED' : 'E_BRANCH_INCOMPLETE')
-  return withSource(sourceFile, { policy }, current => {
+  return { policy, root, binding, requestDigest, input, operationId, context }
+}
+function writeFork(current, prepared, options) {
+    const { policy, root, binding, requestDigest, input, operationId, context } = prepared
     if (digest(current) !== digest(input)) fail('E_BRANCH_SOURCE_CHANGED')
     let db, attempted = false
     try {
@@ -274,8 +274,8 @@ export function forkRepositoryToDirectory(sourceFile, target, input, operationId
       const file = path.join(root, 'world.sqlite'), fd = openSync(file, 'wx', 0o600)
       try { fsyncSync(fd) } finally { closeSync(fd) }
       const descriptor = readBranchDescriptor({ format: 'starmap.repository-branch', formatVersion: 1,
-        identity: { libraryId: current.archive.identity.libraryId, branchId: randomUUID(), genesisId: randomUUID() }, origin: { kind: 'fork', source: current.source }, binding })
-      const creation = { status: 'completed', operationId, requestDigest, previewDigest: input.previewDigest, policyDigest: input.policyDigest }
+        identity: { libraryId: current.source.identity.libraryId, branchId: randomUUID(), genesisId: randomUUID() }, origin: { kind: 'fork', source: current.source }, binding })
+      const creation = { status: 'completed', operationId, requestDigest, previewDigest: input.previewDigest, policyDigest: input.policyDigest, ...(context ? { context } : {}) }
       const marker = { format: 'starmap.repository-branch-location', formatVersion: 1, descriptor, creation }
       const markerFd = openSync(path.join(root, 'binding.json'), 'wx', 0o600)
       try { writeFileSync(markerFd, JSON.stringify(marker)); fsyncSync(markerFd) } finally { closeSync(markerFd) }
@@ -296,5 +296,16 @@ export function forkRepositoryToDirectory(sourceFile, target, input, operationId
       if (error.code === 'EEXIST') fail('E_BRANCH_EXISTS')
       throw translated(error)
     }
-  })
+}
+export function forkRepositoryToDirectory(sourceFile, target, input, operationId, options = {}) {
+  const prepared = prepareFork(target, input, operationId, options)
+  if (prepared.existing) return prepared.existing
+  return withSource(sourceFile, { policy: prepared.policy }, current => writeFork(current, prepared, options))
+}
+/** Archive is a validated immutable value, not a live source path. Restore
+ * tools must pin/recheck their external package before sealing when required. */
+export function forkRepositoryArchiveToDirectory(archive, target, input, operationId, options = {}) {
+  const prepared = prepareFork(target, input, operationId, options)
+  if (prepared.existing) return prepared.existing
+  return writeFork(preview(archive, prepared.policy), prepared, options)
 }
