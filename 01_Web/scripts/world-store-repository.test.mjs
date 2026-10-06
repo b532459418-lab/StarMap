@@ -16,6 +16,30 @@ import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { restoreBridgeV2 } from '../src/data/canonical/storeBridgeProjection.ts'
 const errorCode = code => e => e.code === code
 
+test('large allocation and retirement sets preserve identities, original removal order and reopen semantics', async t => {
+  const { database } = await temporary(t), initial = seed()
+  initial.world = structuredClone(initial.world)
+  initial.world.sources.push({ id: 'v2:travel', revision: 0, title: { names: { en: 'Synthetic legacy' } }, origin: 'import' })
+  const extras = Array.from({ length: 1000 }, (_, index) => ({ ...entry(index + 100), source: { sourceId: 'v2:travel', recordId: 'record-' + index, evidenceIds: [] } }))
+  initial.world.entries.push(...extras)
+  initial.identities = { format: 'starmap.v2-store-identities', version: 1, identities: extras.map(row => ({ kind: 'entry', ...row.source, id: row.id })).map(({ kind, sourceId, recordId, id }) => ({ kind, sourceId, recordId, id })) }
+  const repository = createWorldRepository(database, initial)
+  try {
+    repository.apply({ id: 'remove-two', expectedRevision: 0, action: { kind: 'commands', commands: [extras.at(-1), extras[0]].map(row => ({ op: 'remove', table: 'entries', id: row.id, expectedRevision: 0 })) } })
+    const state = repository.snapshot()
+    assert.deepEqual(state.retired, [extras[0], extras.at(-1)].map(row => ({ table: 'entries', id: row.id })))
+    assert.deepEqual(state.identities, initial.identities)
+  } finally { repository.close() }
+  const reopened = openWorldRepository(database)
+  try {
+    const state = reopened.snapshot(), incoming = structuredClone(state.world)
+    incoming.entries.push(extras[0])
+    assert.throws(() => reopened.preflightMerge(incoming), errorCode('E_REPO_RETIRED_ID'))
+    assert.equal(state.identities.identities.length, 1000)
+    assert.equal(reopened.findOperation('remove-two').repositoryRevision, 1)
+  } finally { reopened.close() }
+})
+
 test('an old AI review cannot approve a new unrelated fact; ordinary edits retain provenance', async t => {
   const { database } = await temporary(t), repository = createWorldRepository(database, seed())
   try {

@@ -29,8 +29,11 @@ const translate = error => {
 /** A G2 manifest is append-only. Absent mappings are tombstones, not recycled
  * identities. It maps legacy allocation, not every native Core entity type. */
 function validateIdentityBindings(world, identities) {
+  const entitiesById = new Map(world.entities.map(row => [row.id, row]))
+  const entriesById = new Map(world.entries.map(row => [row.id, row]))
+  const mappingsByKey = new Map(identities.identities.map(row => [identityKey(row), row]))
   for (const mapping of identities.identities) {
-    const entity = world.entities.find(row => row.id === mapping.id), entry = world.entries.find(row => row.id === mapping.id)
+    const entity = entitiesById.get(mapping.id), entry = entriesById.get(mapping.id)
     if (mapping.kind === 'entry') {
       if (entity || (entry && (entry.source.sourceId !== mapping.sourceId || entry.source.recordId !== mapping.recordId))) fail('E_REPO_IDENTITY')
     } else {
@@ -40,7 +43,7 @@ function validateIdentityBindings(world, identities) {
   for (const row of [...world.entries, ...world.entities.filter(e => ['bridge:media', 'bridge:journey'].includes(e.typeId))]) {
     if (!row.source.sourceId.startsWith('v2:')) continue
     const kind = 'layerId' in row ? 'entry' : row.typeId.slice('bridge:'.length)
-    if (!identities.identities.some(m => identityKey(m) === identityKey({ kind, ...row.source }) && m.id === row.id)) fail('E_REPO_IDENTITY')
+    if (mappingsByKey.get(identityKey({ kind, ...row.source }))?.id !== row.id) fail('E_REPO_IDENTITY')
   }
 }
 export function readRepositoryState(value, policy = {}) {
@@ -52,25 +55,28 @@ export function readRepositoryState(value, policy = {}) {
   validateIdentityBindings(world, identities)
   if (!Array.isArray(value.retired)) fail('E_REPO_HISTORY')
   const retiredKeys = new Set()
+  const activeIds = new Map(STORE_TABLES.map(table => [table, new Set(world[table].map(row => row.id))]))
   for (const row of value.retired) {
     shape(row, ['table', 'id']); opaqueId(row.id, 'retired.id')
     const key = jsonKey(row)
     if (!STORE_TABLES.includes(row.table) || retiredKeys.has(key)) fail('E_REPO_HISTORY')
-    if (world[row.table].some(current => current.id === row.id)) fail('E_REPO_RETIRED_ID')
+    if (activeIds.get(row.table).has(row.id)) fail('E_REPO_RETIRED_ID')
     retiredKeys.add(key)
   }
   if (!Array.isArray(value.proposals)) fail('E_REPO_PROPOSALS')
   const proposals = value.proposals.map(p => readStoreProposal(p, world, policy)), seen = new Set()
+  const proposalsById = new Map(proposals.map(row => [row.id, row]))
+  const reviewsByProposal = new Map(world.reviews.map(row => [row.proposalId, row]))
   for (const p of proposals) {
     if (seen.has(p.id) || p.baseRevision > world.revision) fail('E_REPO_PROPOSALS')
     seen.add(p.id)
-    const reviews = world.reviews.filter(r => r.proposalId === p.id)
-    if (p.status === 'accepted' ? reviews.length !== 1 || reviews[0].sourceId !== p.sourceId : reviews.length !== 0) fail('E_REPO_PROPOSALS')
+    const review = reviewsByProposal.get(p.id)
+    if (p.status === 'accepted' ? !review || review.sourceId !== p.sourceId : review !== undefined) fail('E_REPO_PROPOSALS')
   }
-  if (world.reviews.some(r => !proposals.some(p => p.id === r.proposalId && p.status === 'accepted'))) fail('E_REPO_PROPOSALS')
+  if (world.reviews.some(row => proposalsById.get(row.proposalId)?.status !== 'accepted')) fail('E_REPO_PROPOSALS')
   const aiSources = new Set(world.sources.filter(row => row.origin === 'ai').map(row => row.id))
   const approved = new Map(world.reviews.map(review => {
-    const proposal = proposals.find(row => row.id === review.proposalId)
+    const proposal = proposalsById.get(review.proposalId)
     return [review.id, new Set(proposal.commands.filter(command => command.op !== 'remove' && command.value.source)
       .map(command => jsonKey([command.table, command.value.id, command.value.source.recordId])))]
   }))
@@ -120,7 +126,10 @@ function nextState(current, request, policy) {
     } else proposals[index] = rejectStoreProposal(world, proposals[index], policy)
   }
   const retired = [...current.retired]
-  for (const table of STORE_TABLES) for (const row of current.world[table]) if (!world[table].some(after => after.id === row.id)) retired.push({ table, id: row.id })
+  for (const table of STORE_TABLES) {
+    const retained = new Set(world[table].map(row => row.id))
+    for (const row of current.world[table]) if (!retained.has(row.id)) retired.push({ table, id: row.id })
+  }
   return readRepositoryState({ ...current, revision: current.revision + 1, world, proposals, retired, identities: appendIdentities(current.identities, request.identities) }, policy)
 }
 /** Pure transition shared by experimental v2 replay. No IO or receipt writes. */
