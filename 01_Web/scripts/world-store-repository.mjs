@@ -113,6 +113,12 @@ function nextState(current, request, policy) {
   for (const table of STORE_TABLES) for (const row of current.world[table]) if (!world[table].some(after => after.id === row.id)) retired.push({ table, id: row.id })
   return readRepositoryState({ ...current, revision: current.revision + 1, world, proposals, retired, identities: appendIdentities(current.identities, request.identities) }, policy)
 }
+/** Pure transition shared by experimental v2 replay. No IO or receipt writes. */
+export function transitionRepositoryState(current, input, policy = {}) {
+  const state = readRepositoryState(current, policy), request = readRequest(input)
+  if (request.expectedRevision !== state.revision) fail('E_REPO_STALE')
+  return nextState(state, request, policy)
+}
 function location(file, create) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) fail('E_REPO_PATH')
   const parent = realpathSync(path.dirname(file)), resolved = path.join(parent, path.basename(file))
