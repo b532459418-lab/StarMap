@@ -173,14 +173,18 @@ function handle(db, options) {
     snapshot() { try { return snapshotFromDb(db, policy) } catch (e) { throw translate(e) } },
     findOperation(id) {
       opaqueId(id, 'operation.id')
+      // Do not roll back a transaction owned by apply or another caller.
+      if (db.isTransaction) fail('E_REPO_BUSY')
       try { db.exec('BEGIN'); stateFromDb(db, policy); return receiptFromDb(db, id)?.receipt }
       catch (e) { throw translate(e) }
       finally { if (db.isTransaction) db.exec('ROLLBACK') }
     },
     preflightMerge(incoming) {
+      // Validate and detach before reading tables or invoking array methods.
+      const candidate = readWorldStore(incoming, policy)
       const state = this.snapshot()
-      if (state.retired.some(row => incoming[row.table]?.some(value => value.id === row.id))) fail('E_REPO_RETIRED_ID')
-      return freezeCopy({ repositoryRevision: state.revision, plan: planStoreMerge(state.world, incoming, policy) })
+      if (state.retired.some(row => candidate[row.table].some(value => value.id === row.id))) fail('E_REPO_RETIRED_ID')
+      return freezeCopy({ repositoryRevision: state.revision, plan: planStoreMerge(state.world, candidate, policy) })
     },
     /** Snapshot export only: never replace an existing destination or copy a
      * live main file. The host must validate/seal the resulting package. */

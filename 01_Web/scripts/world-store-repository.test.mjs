@@ -267,3 +267,52 @@ test('opening a valid database leaves committed main-file bytes unchanged', asyn
   reopened.snapshot(); reopened.findOperation('create'); reopened.close()
   assert.equal(digest(await readFile(database)), before)
 })
+
+test('merge preflight rejects getter-bearing tables before observing retired identities', async t => {
+  const { database } = await temporary(t), repository = createWorldRepository(database, seed())
+  try {
+    repository.apply(createRequest())
+    repository.apply({ id: 'retire', expectedRevision: 1, action: { kind: 'commands', commands: [{ op: 'remove', table: 'entries', id: id(60), expectedRevision: 0 }] } })
+    const before = repository.snapshot(), incoming = structuredClone(fixture()); let reads = 0
+    Object.defineProperty(incoming, 'entries', { enumerable: true, get() { reads++; return [] } })
+    assert.throws(() => repository.preflightMerge(incoming), errorCode('E_JSON'))
+    assert.equal(reads, 0); assert.deepEqual(repository.snapshot(), before)
+  } finally { repository.close() }
+})
+
+test('merge preflight never invokes methods on a non-JSON table value', async t => {
+  const { database } = await temporary(t), repository = createWorldRepository(database, seed())
+  try {
+    repository.apply(createRequest())
+    repository.apply({ id: 'retire', expectedRevision: 1, action: { kind: 'commands', commands: [{ op: 'remove', table: 'entries', id: id(60), expectedRevision: 0 }] } })
+    const before = repository.snapshot(), incoming = structuredClone(fixture()); let calls = 0
+    incoming.entries = { some() { calls++; return false } }
+    assert.throws(() => repository.preflightMerge(incoming), errorCode('E_JSON'))
+    assert.equal(calls, 0); assert.deepEqual(repository.snapshot(), before)
+  } finally { repository.close() }
+})
+
+for (const phase of ['locked', 'state-written', 'receipt-written', 'before-commit']) test(`receipt discovery during ${phase} cannot roll back the caller's save`, async t => {
+  const { database } = await temporary(t); let repository, observed, calls = 0
+  repository = createWorldRepository(database, seed(), { unsafeTestPhase(current) {
+    if (current !== phase) return
+    calls++
+    try { repository.findOperation('create') } catch (error) { observed = error.code }
+  } })
+  try {
+    const receipt = repository.apply(createRequest())
+    assert.equal(observed, 'E_REPO_BUSY'); assert.equal(calls, 1)
+    assert.equal(receipt.repositoryRevision, 1); assert.deepEqual(repository.findOperation('create'), receipt)
+    assert.equal(repository.snapshot().world.entries.length, 4); assert.equal(repository.snapshot().identities.identities.length, 1)
+  } finally { repository.close() }
+  const reopened = openWorldRepository(database)
+  try { assert.equal(reopened.snapshot().revision, 1); assert.equal(reopened.findOperation('create').status, 'committed'); assert.equal(reopened.snapshot().world.entries.length, 4) }
+  finally { reopened.close() }
+})
+
+test('receipt discovery before a save begins remains available and does not prevent commit', async t => {
+  const { database } = await temporary(t); let repository, result = 'not-called'
+  repository = createWorldRepository(database, seed(), { unsafeTestPhase(phase) { if (phase === 'before-begin') result = repository.findOperation('create') } })
+  try { const receipt = repository.apply(createRequest()); assert.equal(result, undefined); assert.deepEqual(repository.findOperation('create'), receipt); assert.equal(repository.snapshot().revision, 1) }
+  finally { repository.close() }
+})
