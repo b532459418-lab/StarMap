@@ -31,12 +31,12 @@ export function applyStoreCommands(
     if (c.table==='reviews') reject('E_REVIEW_COMMAND','reviews')
     const rows=mutable[c.table]
     if (c.op==='create') {
-      const inputSource = 'source' in c.value ? c.value.source : undefined
-      if (inputSource && world.sources.some(source => source.id === inputSource.sourceId && source.origin === 'ai')
-        && (!context.acceptedReview || inputSource.reviewId !== context.acceptedReview.id || inputSource.sourceId !== context.acceptedReview.sourceId)) reject('E_UNCONFIRMED','command.create')
       if(removed.has(JSON.stringify([c.table,c.value.id])))reject('E_RECREATE_ID',c.table)
       const before=rows.find(r=>r.id===c.value.id)
       if (before) { if(jsonKey(before)!==jsonKey(c.value))reject('E_CONFLICT',c.table); continue }
+      const inputSource = 'source' in c.value ? c.value.source : undefined
+      if (inputSource && world.sources.some(source => source.id === inputSource.sourceId && source.origin === 'ai')
+        && (!context.acceptedReview || inputSource.reviewId !== context.acceptedReview.id || inputSource.sourceId !== context.acceptedReview.sourceId)) reject('E_UNCONFIRMED','command.create')
       if(c.value.revision!==0)reject('E_REVISION',c.table)
       rows.push(structuredClone(c.value)); changed=true
     } else {

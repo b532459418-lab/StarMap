@@ -24,7 +24,9 @@ test('an old AI review cannot approve a new unrelated fact; ordinary edits retai
     assert.throws(() => repository.apply({ id: 'unreviewed-ai', expectedRevision: 2, action: { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: { ...entry(51), source: { sourceId: 'test:ai', recordId: 'never-approved', evidenceIds: ['proof-one'], reviewId: 'synthetic-review' } } }] } }), errorCode('E_UNCONFIRMED'))
     assert.deepEqual(repository.snapshot(), before)
     const approved = before.world.entries.find(row => row.id === id(50))
-    repository.apply({ id: 'manual-edit', expectedRevision: 2, action: { kind: 'commands', commands: [{ op: 'update', table: 'entries', id: approved.id, expectedRevision: approved.revision, value: { ...approved, revision: approved.revision + 1, fields: { ...approved.fields, note: 'Owner edit' } } }] } })
+    const repeated = repository.apply({ id: 'approved-noop', expectedRevision: 2, action: { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: approved }] } })
+    assert.equal(repeated.worldRevision, before.world.revision)
+    repository.apply({ id: 'manual-edit', expectedRevision: 3, action: { kind: 'commands', commands: [{ op: 'update', table: 'entries', id: approved.id, expectedRevision: approved.revision, value: { ...approved, revision: approved.revision + 1, fields: { ...approved.fields, note: 'Owner edit' } } }] } })
     assert.equal(repository.snapshot().world.entries.find(row => row.id === id(50)).fields.note, 'Owner edit')
   } finally { repository.close() }
 })
