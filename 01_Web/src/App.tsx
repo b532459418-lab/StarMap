@@ -35,7 +35,8 @@ import type { LocalConvertToTravelResult } from './data/localEditorApi'
 import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
 import { readLayerTimeFilters, rememberLayerTimeFilters } from './data/layerTimeFilters'
 import { timeQueryContext } from './data/appData'
-import { buildBrowseTimeProjection, includedBrowseRecordKeys } from './data/derive/browseTimeProjection'
+import { buildBrowseTimeProjection, includedBrowseRecordKeys, countMappedTravelRecords } from './data/derive/browseTimeProjection'
+import { coordinateForRecord } from './data/derive/travelAtlas'
 import { wantToGoCardRecordOf, type WantToGoCardRecord } from './data/derive/wantToGo'
 import { City3DToggle } from './extensions/City3DToggle'
 import { getInitialCity3DEnabled, rememberCity3DEnabled } from './extensions/city3dPreference'
@@ -454,14 +455,15 @@ function App() {
   // 快照是模块级常量；语言切换时重算名称排序，写入后整页刷新拿到新数据。
   const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID, locale), [locale])
 
+  const mappedTravelRecordIds = useMemo(() => new Set(Object.values(cityById).flatMap(city => (city.records ?? []).filter(record => coordinateForRecord(record)).map(record => record.id))), [])
   const atlasStats = useMemo(
     () => [
       { value: `${browseProjection.travelStats.definite.countries}`, label: t('journey:countries') },
       { value: `${browseProjection.travelStats.definite.cities}`, label: t('journey:cities') },
       { value: `${browseProjection.travelStats.definite.records}`, label: t('journey:records') },
-      { value: `${layerData.places.filter(place => place.layerIds.includes(TRAVEL_LAYER_ID) && browseProjection.definiteCityIds.has(place.entityId)).length}`, label: t('journey:mapped') },
+      { value: `${countMappedTravelRecords(browseProjection, mappedTravelRecordIds)}`, label: t('journey:mapped') },
     ],
-    [t, browseProjection, layerData],
+    [t, browseProjection, mappedTravelRecordIds],
   )
 
   const resetOverview = () => {

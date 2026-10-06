@@ -68,6 +68,16 @@ export function readRepositoryState(value, policy = {}) {
     if (p.status === 'accepted' ? reviews.length !== 1 || reviews[0].sourceId !== p.sourceId : reviews.length !== 0) fail('E_REPO_PROPOSALS')
   }
   if (world.reviews.some(r => !proposals.some(p => p.id === r.proposalId && p.status === 'accepted'))) fail('E_REPO_PROPOSALS')
+  const aiSources = new Set(world.sources.filter(row => row.origin === 'ai').map(row => row.id))
+  const approved = new Map(world.reviews.map(review => {
+    const proposal = proposals.find(row => row.id === review.proposalId)
+    return [review.id, new Set(proposal.commands.filter(command => command.op !== 'remove' && command.value.source)
+      .map(command => jsonKey([command.table, command.value.id, command.value.source.recordId])))]
+  }))
+  for (const table of STORE_TABLES) for (const row of world[table]) {
+    if (row.source && aiSources.has(row.source.sourceId)
+      && !approved.get(row.source.reviewId)?.has(jsonKey([table, row.id, row.source.recordId]))) fail('E_REPO_REVIEW_BINDING')
+  }
   return freezeCopy({ ...value, world, identities, proposals })
 }
 function appendIdentities(previous, additions = []) {
@@ -176,6 +186,20 @@ function handle(db, options) {
     if (result && typeof result.then === 'function') fail('E_REPO_ASYNC_HOOK')
   }
   return {
+    /** Hold a shared SQLite read lock until the synchronous callback ends. */
+    withSnapshot(callback) {
+      if (db.isTransaction) fail('E_REPO_BUSY')
+      try {
+        db.exec('BEGIN')
+        // WAL readers do not prevent concurrent commits; sealing requires the
+        // rollback journal mode used by this repository's creation contract.
+        if (db.prepare('PRAGMA journal_mode').get().journal_mode !== 'delete') fail('E_REPO_JOURNAL')
+        const result = callback(stateFromDb(db, policy))
+        if (result && typeof result.then === 'function') fail('E_REPO_ASYNC_HOOK')
+        return result
+      } catch (error) { throw translate(error) }
+      finally { if (db.isTransaction) db.exec('ROLLBACK') }
+    },
     snapshot() { try { return snapshotFromDb(db, policy) } catch (e) { throw translate(e) } },
     findOperation(id) {
       opaqueId(id, 'operation.id')
@@ -185,12 +209,17 @@ function handle(db, options) {
       catch (e) { throw translate(e) }
       finally { if (db.isTransaction) db.exec('ROLLBACK') }
     },
-    preflightMerge(incoming) {
+    preflightMerge(incoming, identityAdditions = []) {
       // Validate and detach before reading tables or invoking array methods.
       const candidate = readWorldStore(incoming, policy)
       const state = this.snapshot()
       if (state.retired.some(row => candidate[row.table].some(value => value.id === row.id))) fail('E_REPO_RETIRED_ID')
-      return freezeCopy({ repositoryRevision: state.revision, plan: planStoreMerge(state.world, candidate, policy) })
+      const plan = planStoreMerge(state.world, candidate, policy)
+      if (plan.status !== 'conflict') {
+        const world = plan.commands.length ? applyStoreCommands(state.world, plan.commands, state.world.revision, { policy }) : state.world
+        readRepositoryState({ ...state, world, identities: appendIdentities(state.identities, identityAdditions) }, policy)
+      }
+      return freezeCopy({ repositoryRevision: state.revision, plan })
     },
     /** Snapshot export only: never replace an existing destination or copy a
      * live main file. The host must validate/seal the resulting package. */

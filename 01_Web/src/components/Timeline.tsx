@@ -1,4 +1,5 @@
 import { usePlaceNames } from '../i18n/usePlaceNames'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, Clock3, MapPin, Sparkles } from 'lucide-react'
 import { cityById, countryById, journeyDays } from '../data/travelAtlas'
@@ -15,15 +16,16 @@ type TimelineProps = {
 export function Timeline({ selectedDayId, onSelectDay, onHoverCity, projection }: TimelineProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
-  const browse = projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {})
+  const browse = useMemo(() => projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {}), [projection])
   const unknownDate = t('journey:unknownDate')
   const uncertainDate = t('journey:uncertainDate')
   const yearOnly = t('journey:yearOnly')
   const emptyLabel = t('journey:noMatchingVisits')
-  const unknownRecordIds = new Set(browse.uncertainJourneyRecords.map(match => match.record.recordId))
-  const daysById = new Map(journeyDays.map(day => [day.id, day]))
-  const orderedDays = browse.orderedJourneyRecords.map(match => daysById.get(match.record.recordId))
-    .filter((day): day is JourneyDay => day !== undefined)
+  const unknownRecordIds = useMemo(() => new Set(browse.uncertainJourneyRecords.map(match => match.record.recordId)), [browse])
+  const orderedDays = useMemo(() => {
+    const daysById = new Map(journeyDays.map(day => [day.id, day]))
+    return browse.orderedJourneyRecords.map(match => daysById.get(match.record.recordId)).filter((day): day is JourneyDay => day !== undefined)
+  }, [browse])
   const knownYear = (day: JourneyDay) => {
     const evidence = browse.travelMatchesById.get(day.id)?.record.date
     return !unknownRecordIds.has(day.id) && evidence?.range.from

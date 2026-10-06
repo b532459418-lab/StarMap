@@ -1,4 +1,5 @@
 import { usePlaceNames } from '../i18n/usePlaceNames'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CalendarDays, MapPin } from 'lucide-react'
 import { cityById, countryById, journeyDays, shouldHideCityFromNavigation } from '../data/travelAtlas'
@@ -53,7 +54,7 @@ const buildYearGroups = (projection: BrowseTimeProjection): YearGroup[] => {
 export function JourneyYearCards({ projection }: { projection?: BrowseTimeProjection } = {}) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
-  const yearGroups = buildYearGroups(projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {}))
+  const yearGroups = useMemo(() => buildYearGroups(projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {})), [projection])
   const unknownDate = t('journey:unknownDate')
   const uncertainDate = t('journey:uncertainDate')
   const yearOnly = t('journey:includesYearOnly')

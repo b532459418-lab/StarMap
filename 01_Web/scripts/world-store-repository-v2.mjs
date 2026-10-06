@@ -1,14 +1,18 @@
-/** Experimental writable v2 host, separate from immutable upgrade artifacts.
- * Full snapshot history is deliberately simple; no large-library cost claim. */
+/** Experimental host: logical envelope v2, SQLite storage v3.
+ * Current state and compact logs commit together. Full history is materialized
+ * only for explicit snapshots; ordinary state reads do not replay history. */
 import { DatabaseSync } from 'node:sqlite'
 import { closeSync, fsyncSync, lstatSync, openSync, realpathSync } from 'node:fs'
 import path from 'node:path'
-import { freezeCopy, opaqueId, validateJson } from '../src/worldgraph/store/schema.ts'
-import { RepositoryError, transitionRepositoryState } from './world-store-repository.mjs'
+import { freezeCopy, opaqueId, shape, validateJson } from '../src/worldgraph/store/schema.ts'
+import { RepositoryError, readRepositoryState, transitionRepositoryState } from './world-store-repository.mjs'
 import { readRepositoryV2, repositoryStateDigest as digest } from './world-store-repository-v2-contract.mjs'
-
 const APP = 0x534d4735
-const SQL = 'CREATE TABLE repository_v2 (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT'
+const LEGACY_SQL = 'CREATE TABLE repository_v2 (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT'
+const BASE_SQL = 'CREATE TABLE repository_baseline (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT'
+const STATE_SQL = 'CREATE TABLE repository_current (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT'
+const HISTORY_SQL = 'CREATE TABLE operation_history (operation_id TEXT PRIMARY KEY, repository_revision INTEGER NOT NULL UNIQUE, payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT'
+const supported = new Set(['commands', 'stage-proposal', 'accept-proposal', 'reject-proposal'])
 const fail = code => { throw new RepositoryError(code) }
 function location(file, create = false) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) fail('E_REPO_PATH')
@@ -20,7 +24,6 @@ function translated(error) {
   if (error?.code?.startsWith('E_')) return error
   return new RepositoryError([5, 6].includes(error?.errcode) ? 'E_REPO_BUSY' : 'E_REPO_IO')
 }
-/** Verify request semantics in addition to structural chain integrity. */
 export function replayRepositoryV2(input, policy = {}) {
   const value = readRepositoryV2(input, policy)
   let state = value.baseline.state
@@ -31,72 +34,133 @@ export function replayRepositoryV2(input, policy = {}) {
   }
   return value
 }
-function read(db, policy) {
-  const rows = db.prepare('SELECT payload,digest FROM repository_v2').all()
-  if (rows.length !== 1) fail('E_REPO_CORRUPT')
-  const value = replayRepositoryV2(JSON.parse(rows[0].payload), policy)
-  if (digest(value) !== rows[0].digest) fail('E_REPO_CORRUPT')
+function parsed(row) {
+  if (!row) fail('E_REPO_CORRUPT')
+  const value = JSON.parse(row.payload)
+  validateJson(value)
+  if (digest(value) !== row.digest) fail('E_REPO_CORRUPT')
   return value
 }
-function handle(db, options) {
+const compact = full => { const row = { ...full }; delete row.after; return row }
+function replayDatabase(db, policy, collect = false) {
+  const metadata = parsed(db.prepare('SELECT payload,digest FROM repository_baseline WHERE singleton=1').get())
+  shape(metadata, ['format', 'formatVersion', 'identity', 'baseline'])
+  const base = readRepositoryV2({ ...metadata, history: [], state: metadata.baseline.state }, policy)
+  let state = base.state
+  const history = []
+  for (const stored of db.prepare('SELECT * FROM operation_history ORDER BY repository_revision').iterate()) {
+    const row = parsed(stored)
+    shape(row, ['operationId', 'request', 'requestDigest', 'beforeDigest', 'afterDigest', 'receipt'])
+    if (row.operationId !== stored.operation_id || row.operationId !== row.request?.id
+      || !supported.has(row.request?.action?.kind) || row.requestDigest !== digest(row.request)
+      || row.beforeDigest !== digest(state)) fail('E_REPO_V2_CHAIN')
+    const after = transitionRepositoryState(state, row.request, policy)
+    shape(row.receipt, ['status', 'operationId', 'repositoryRevision', 'worldRevision'])
+    if (stored.repository_revision !== after.revision || row.afterDigest !== digest(after)
+      || row.receipt.status !== 'committed' || row.receipt.operationId !== row.operationId
+      || row.receipt.repositoryRevision !== after.revision || row.receipt.worldRevision !== after.world.revision) fail('E_REPO_V2_REPLAY')
+    if (collect) history.push(Object.freeze({ ...freezeCopy(row), after }))
+    state = after
+  }
+  const current = readRepositoryState(parsed(db.prepare('SELECT payload,digest FROM repository_current WHERE singleton=1').get()), policy)
+  if (digest(current) !== digest(state)) fail('E_REPO_V2_CHAIN')
+  return { base, state: current, ...(collect ? { full: Object.freeze({ ...base, state: current, history: Object.freeze(history) }) } : {}) }
+}
+function handle(db, options, legacy = false) {
+  const policy = freezeCopy(options.policy ?? {})
+  let verified, observedVersion, fullSnapshot
   const phase = name => {
     const result = options.unsafeTestPhase?.(name)
     if (result && typeof result.then === 'function') fail('E_REPO_ASYNC_HOOK')
   }
+  function current() {
+    const version = db.prepare('PRAGMA data_version').get().data_version
+    if (!verified || version !== observedVersion) {
+      if (legacy) {
+        const full = replayRepositoryV2(parsed(db.prepare('SELECT payload,digest FROM repository_v2 WHERE singleton=1').get()), policy)
+        verified = { base: full, state: full.state }; fullSnapshot = full
+      } else { verified = replayDatabase(db, policy); fullSnapshot = undefined }
+      observedVersion = version
+    }
+    return verified
+  }
   const transactionRead = callback => {
     if (db.isTransaction) fail('E_REPO_BUSY')
-    try { db.exec('BEGIN'); return callback(read(db, options.policy)) }
+    try { db.exec('BEGIN'); return callback(current()) }
     catch (error) { throw translated(error) }
     finally { if (db.isTransaction) db.exec('ROLLBACK') }
   }
-  return {
-    snapshot() { return transactionRead(value => value) },
+  const result = {
+    state() { return transactionRead(value => value.state) },
+    snapshot() {
+      return transactionRead(() => {
+        if (!fullSnapshot) fullSnapshot = replayDatabase(db, policy, true).full
+        return fullSnapshot
+      })
+    },
     findOperation(id) {
       opaqueId(id, 'operationId')
-      return transactionRead(value => value.history.find(row => row.operationId === id)?.receipt)
+      return transactionRead(() => {
+        if (legacy) return fullSnapshot.history.find(row => row.operationId === id)?.receipt
+        const row = db.prepare('SELECT payload,digest FROM operation_history WHERE operation_id=?').get(id)
+        return row ? freezeCopy(parsed(row).receipt) : undefined
+      })
     },
     apply(input) {
       validateJson(input); opaqueId(input?.id, 'operationId')
+      if (!supported.has(input.action?.kind)) fail('E_REPO_V2_REQUEST')
       const request = freezeCopy(input), requestDigest = digest(request)
+      if (legacy) fail('E_REPO_UPGRADE_REQUIRED')
       if (options.readOnly) fail('E_REPO_READONLY')
       if (db.isTransaction) fail('E_REPO_BUSY')
       let attempted = false
       try {
         db.exec('BEGIN IMMEDIATE'); phase('locked')
-        const current = read(db, options.policy)
-        const previous = current.history.find(row => row.operationId === request.id)
-        if (previous) {
+        const value = current(), previousRow = db.prepare('SELECT payload,digest FROM operation_history WHERE operation_id=?').get(request.id)
+        if (previousRow) {
+          const previous = parsed(previousRow)
           if (previous.requestDigest !== requestDigest) fail('E_REPO_OPERATION_CONFLICT')
-          db.exec('ROLLBACK'); return previous.receipt
+          db.exec('ROLLBACK'); return freezeCopy(previous.receipt)
         }
-        const after = transitionRepositoryState(current.state, request, options.policy)
-        const receipt = { status: 'committed', operationId: request.id, repositoryRevision: after.revision, worldRevision: after.world.revision }
-        const row = { operationId: request.id, request, requestDigest, beforeDigest: digest(current.state), afterDigest: digest(after), after, receipt }
-        const next = readRepositoryV2({ ...current, state: after, history: [...current.history, row] }, options.policy)
-        db.prepare('UPDATE repository_v2 SET payload=?,digest=? WHERE singleton=1').run(JSON.stringify(next), digest(next))
+        const after = transitionRepositoryState(value.state, request, policy)
+        const receipt = freezeCopy({ status: 'committed', operationId: request.id, repositoryRevision: after.revision, worldRevision: after.world.revision })
+        const row = Object.freeze({ operationId: request.id, request, requestDigest, beforeDigest: digest(value.state), afterDigest: digest(after), receipt })
+        db.prepare('UPDATE repository_current SET payload=?,digest=? WHERE singleton=1').run(JSON.stringify(after), digest(after))
+        db.prepare('INSERT INTO operation_history VALUES (?,?,?,?)').run(request.id, after.revision, JSON.stringify(row), digest(row))
         phase('state-written'); phase('before-commit'); attempted = true
-        db.exec('COMMIT'); phase('committed')
-        return freezeCopy(receipt)
+        db.exec('COMMIT')
+        verified = { base: value.base, state: after }
+        if (fullSnapshot) fullSnapshot = Object.freeze({ ...fullSnapshot, state: after, history: Object.freeze([...fullSnapshot.history, Object.freeze({ ...row, after })]) })
+        phase('committed'); return receipt
       } catch (error) {
         try { if (db.isTransaction) db.exec('ROLLBACK') } catch { /* Discover outcome on reopen. */ }
+        verified = undefined; fullSnapshot = undefined
         if (attempted) fail('E_REPO_OUTCOME_UNKNOWN')
         throw translated(error)
       }
     },
     close() { db.close() },
   }
+  transactionRead(() => undefined)
+  return result
 }
 export function createRepositoryV2(file, input, options = {}) {
-  const value = replayRepositoryV2(input, options.policy)
-  const target = location(file, true)
+  const value = replayRepositoryV2(input, options.policy), target = location(file, true)
   let db
   try {
     const fd = openSync(target, 'wx', 0o600)
     try { fsyncSync(fd) } finally { closeSync(fd) }
     db = new DatabaseSync(target, { allowExtension: false, timeout: 0 })
     db.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; BEGIN IMMEDIATE')
-    db.exec(SQL); db.exec(`PRAGMA application_id=${APP}; PRAGMA user_version=2;`)
-    db.prepare('INSERT INTO repository_v2 VALUES (1,?,?)').run(JSON.stringify(value), digest(value))
+    db.exec(BASE_SQL); db.exec(STATE_SQL); db.exec(HISTORY_SQL)
+    db.exec('PRAGMA application_id=' + APP + '; PRAGMA user_version=3;')
+    const { state, history, ...base } = value
+    db.prepare('INSERT INTO repository_baseline VALUES (1,?,?)').run(JSON.stringify(base), digest(base))
+    db.prepare('INSERT INTO repository_current VALUES (1,?,?)').run(JSON.stringify(state), digest(state))
+    for (const full of history) {
+      const row = compact(full)
+      db.prepare('INSERT INTO operation_history VALUES (?,?,?,?)').run(row.operationId, row.receipt.repositoryRevision, JSON.stringify(row), digest(row))
+    }
     db.exec('COMMIT'); return handle(db, options)
   } catch (error) {
     if (db) { try { if (db.isTransaction) db.exec('ROLLBACK'); db.close() } catch { /* Preserve partial file. */ } }
@@ -108,10 +172,14 @@ export function openRepositoryV2(file, options = {}) {
   let db
   try {
     db = new DatabaseSync(location(file), { readOnly: options.readOnly === true, allowExtension: false, timeout: 0 })
-    if (db.prepare('PRAGMA application_id').get().application_id !== APP || db.prepare('PRAGMA user_version').get().user_version !== 2) fail('E_REPO_VERSION')
+    const version = db.prepare('PRAGMA user_version').get().user_version
+    if (db.prepare('PRAGMA application_id').get().application_id !== APP || ![2, 3].includes(version)) fail('E_REPO_VERSION')
+    const expected = version === 2 ? new Map([['repository_v2', LEGACY_SQL]]) : new Map([['repository_baseline', BASE_SQL], ['repository_current', STATE_SQL], ['operation_history', HISTORY_SQL]])
     const schema = db.prepare("SELECT name,type,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").all()
-    if (schema.length !== 1 || schema[0].name !== 'repository_v2' || schema[0].type !== 'table' || schema[0].sql !== SQL || db.prepare('PRAGMA quick_check').get().quick_check !== 'ok') fail('E_REPO_CORRUPT')
+    if (schema.length !== expected.size || schema.some(row => row.type !== 'table' || expected.get(row.name) !== row.sql)
+      || db.prepare('PRAGMA quick_check').get().quick_check !== 'ok') fail('E_REPO_CORRUPT')
+    if (version === 2 && !options.readOnly) fail('E_REPO_UPGRADE_REQUIRED')
     if (!options.readOnly) db.exec('PRAGMA synchronous=FULL')
-    read(db, options.policy); return handle(db, options)
+    return handle(db, options, version === 2)
   } catch (error) { if (db) db.close(); throw translated(error) }
 }

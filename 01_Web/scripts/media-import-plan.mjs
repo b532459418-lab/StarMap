@@ -10,6 +10,10 @@ import { catalogIntegrityProblems, mediaCatalogFileOf, mediaSourceIndexFileOf, s
 const PLAN_TIME = new Date('2026-01-01T00:00:00.000Z')
 const posix = (value) => value.split(path.sep).join('/')
 const hash = (value) => createHash('sha256').update(value).digest('hex')
+// Only fingerprints of decoded deterministic outputs, keyed by complete source
+// content and generator settings/version. Every on-disk result is still hashed.
+const derivativeFingerprints = new Map()
+const FINGERPRINT_LIMIT = 20000
 const fileHash = (target) => new Promise((resolve, reject) => {
   const digest = createHash('sha256')
   const stream = createReadStream(target)
@@ -77,7 +81,7 @@ async function snapshot(privatePaths, blockers) {
 }
 
 /** No directories/files are created. The summary alone is safe to send to a loopback client. */
-export async function createMediaImportPlan({ privatePaths }) {
+export async function createMediaImportPlan({ privatePaths, unsafeTestDerivativeComputed }) {
   const blockers = []
   let inputs
   try { inputs = await snapshot(privatePaths, blockers) } catch { blockers.push({ code: 'E_MEDIA_PLAN_READ' }); inputs = [] }
@@ -88,7 +92,7 @@ export async function createMediaImportPlan({ privatePaths }) {
   if (!scan) return { digest: hash(stable(inputs)), summary: empty, blockers, entries: [], catalog: undefined, index: undefined }
   for (const ignored of scan.errors) { void ignored; blockers.push({ code: 'E_MEDIA_PLAN_SCAN' }) }
   for (const warning of scan.warnings) {
-    if (!warning.includes('内容完全相同的重复文件')) blockers.push({ code: 'E_MEDIA_PLAN_UNCERTAIN' })
+    if (!scan.advisoryWarnings.includes(warning)) blockers.push({ code: 'E_MEDIA_PLAN_UNCERTAIN' })
   }
   const entries = scan.planned.map((entry) => ({ id: entry.id, sourcePath: relative(privatePaths.inboxRoot, entry.sourcePath), sha256: entry.sha256, bytes: entry.bytes, kind: entry.item.kind, placeId: entry.item.placeId }))
   const byId = new Map()
@@ -163,8 +167,16 @@ export async function createMediaImportPlan({ privatePaths }) {
     const expected = [{ target: entry.outputPath, digest: entry.sha256 }]
     try {
       for (const derivative of entry.derivatives) {
-        const bytes = await sharp(entry.sourcePath, { failOn: 'error' }).rotate().resize({ width: derivative.maxEdge, height: derivative.maxEdge, fit: 'inside', withoutEnlargement: true }).webp({ quality: derivative.quality, effort: 4 }).toBuffer()
-        expected.push({ target: derivative.outputPath, digest: hash(bytes) })
+        const key = stable({ source: entry.sha256, width: derivative.maxEdge, quality: derivative.quality, effort: 4, versions: sharp.versions, pipeline: 'rotate-resize-inside-webp-v1' })
+        let fingerprint = derivativeFingerprints.get(key)
+        if (!fingerprint) {
+          const bytes = await sharp(entry.sourcePath, { failOn: 'error' }).rotate().resize({ width: derivative.maxEdge, height: derivative.maxEdge, fit: 'inside', withoutEnlargement: true }).webp({ quality: derivative.quality, effort: 4 }).toBuffer()
+          fingerprint = hash(bytes)
+          if (derivativeFingerprints.size >= FINGERPRINT_LIMIT) derivativeFingerprints.delete(derivativeFingerprints.keys().next().value)
+          derivativeFingerprints.set(key, fingerprint)
+          unsafeTestDerivativeComputed?.()
+        }
+        expected.push({ target: derivative.outputPath, digest: fingerprint })
       }
       const allowed = new Set(expected.map(({ target }) => path.basename(target)))
       const directory = await exists(entry.outputDirectory)

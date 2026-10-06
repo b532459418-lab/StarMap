@@ -2,6 +2,20 @@ import { test, expect, openMap, selectReykjavik, openCollection, readFixture } f
 import { fixtureIds } from '../../scripts/browser-fixture.mjs'
 import sharp from 'sharp'
 
+test('Journey mapped visit count stays unchanged when map footprints are hidden', async ({ page }) => {
+  await openMap(page)
+  const nav = page.getByRole('navigation', { name: 'Primary navigation' })
+  await nav.getByRole('button', { name: 'Journey', exact: true }).click()
+  const mapped = page.locator('.journey-stat-card').filter({ has: page.locator('.journey-stat-label', { hasText: /^Mapped$/ }) }).locator('.journey-stat-value')
+  const before = await mapped.textContent()
+  expect(Number(before)).toBeGreaterThan(0)
+  await nav.getByRole('button', { name: 'Map', exact: true }).click()
+  await page.getByRole('button', { name: /Map layers, .* layers shown/ }).click()
+  await page.getByRole('menuitemcheckbox', { name: /^Travel Shown$/ }).click()
+  await nav.getByRole('button', { name: 'Journey', exact: true }).click()
+  await expect(mapped).toHaveText(before)
+})
+
 test('language switching keeps Collection note drafts and conversion dates', async ({ page }) => {
   await openMap(page)
   await openCollection(page)

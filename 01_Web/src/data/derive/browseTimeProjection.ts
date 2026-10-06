@@ -153,3 +153,8 @@ export const journeyTimeContext = (
 /** Source-aware membership lookup used by browse consumers without string IDs. */
 export const includedBrowseRecordKeys = (projection: BrowseTimeProjection): ReadonlySet<string> =>
   new Set(projection.includedRecords.map(match => recordRefKey(match.record)))
+
+/** Count actual matched visits, independently of marker/layer visibility. */
+export const countMappedTravelRecords = (projection: BrowseTimeProjection, coordinateRecordIds: ReadonlySet<string>): number =>
+  projection.includedRecords.filter(({ record, result }) => record.sourceKind === 'travel'
+    && result.match === 'definite' && coordinateRecordIds.has(record.recordId)).length

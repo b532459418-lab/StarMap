@@ -5,7 +5,7 @@ import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, rea
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { freezeCopy, opaqueId, shape, validateJson } from '../src/worldgraph/store/schema.ts'
-import { RepositoryError } from './world-store-repository.mjs'
+import { openWorldRepository, RepositoryError } from './world-store-repository.mjs'
 import { readRepositoryV2, repositoryStateDigest } from './world-store-repository-v2-contract.mjs'
 import { revalidateRepositoryUpgrade } from './world-store-upgrade-preview.mjs'
 
@@ -74,6 +74,8 @@ export function upgradeRepositoryToDirectory(sourceFile, target, preview, operat
     return existing
   }
   if (existing.status !== 'absent') fail('E_UPGRADE_INCOMPLETE')
+  const source = openWorldRepository(sourceFile, { readOnly: true, policy: options.policy })
+  try { return source.withSnapshot(() => {
   const current = revalidateRepositoryUpgrade(sourceFile, preview, options)
   mkdirSync(root, { mode: 0o700 }); phase(options, 'directory-created')
   const file = path.join(root, 'world.sqlite')
@@ -98,4 +100,5 @@ export function upgradeRepositoryToDirectory(sourceFile, target, preview, operat
   exclusive(path.join(root, 'complete.json'), JSON.stringify(completion))
   phase(options, 'completed')
   return discoverRepositoryUpgrade(root, options)
+  }) } finally { source.close() }
 }

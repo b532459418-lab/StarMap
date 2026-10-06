@@ -131,11 +131,12 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
   const outputRoot = privatePaths.userMediaRoot
   const errors = []
   const warnings = []
+  const advisoryWarnings = []
   const planned = []
   /** 按文件夹名或旧 country.json 解析成功、还没有 place.json 的文件夹：--apply 时写入 place.json 固定下来（RFC ID-6）。 */
   const pins = []
   const relative = (filePath) => path.relative(inboxRoot, filePath)
-  const captured = (files = {}, unique = [], items = []) => ({ privatePaths, files, planned, unique, items, pins, errors, warnings })
+  const captured = (files = {}, unique = [], items = []) => ({ privatePaths, files, planned, unique, items, pins, errors, warnings, advisoryWarnings })
 
   const printReport = (items) => {
     const counts = items.reduce((result, item) => {
@@ -211,7 +212,8 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
     const sizeInMiB = fileStats.size / 1024 / 1024
     const warningThreshold = kind === 'panorama360' ? 40 : kind === 'video' ? 120 : 16
     if (sizeInMiB > warningThreshold) {
-      warnings.push(`${relative(filePath)} 为 ${sizeInMiB.toFixed(1)} MiB，建议 Agent 生成更轻的网页版本。`)
+      const warning = `${relative(filePath)} 为 ${sizeInMiB.toFixed(1)} MiB，建议 Agent 生成更轻的网页版本。`
+      warnings.push(warning); advisoryWarnings.push(warning)
     }
 
     const fullHash = await sha256(filePath)
@@ -363,7 +365,8 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
 
   const unique = uniqueById(planned)
   if (unique.length !== planned.length) {
-    warnings.push(`发现 ${planned.length - unique.length} 个内容完全相同的重复文件，目录中只保留一份记录。`)
+    const warning = `发现 ${planned.length - unique.length} 个内容完全相同的重复文件，目录中只保留一份记录。`
+    warnings.push(warning); advisoryWarnings.push(warning)
   }
   const items = markCovers(unique.map((entry) => entry.item))
   if (capturePlan) return captured(files, unique, items)

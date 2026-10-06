@@ -58,7 +58,7 @@ const selectionOf = (job, ids) => {
 const assertIntent = (job, input) => {
   if (input?.libraryId !== job.libraryId || !Number.isSafeInteger(input?.revision) || input.revision < 0) fail('E_MEDIA_JOB_CONFLICT')
 }
-async function history(paths, job) {
+async function history(paths, job, resourceChecks = new Map()) {
   const result = summary(job)
   result.status = job.phase === 'closed' ? 'closed' : 'completed'
   result.completion = {
@@ -69,10 +69,15 @@ async function history(paths, job) {
   result.warnings = []
   for (const output of job.import.receipt.outputs) {
     const target = path.join(paths.root, ...output.path.split('/'))
-    try {
+    if (!resourceChecks.has(target)) resourceChecks.set(target, (async () => {
       await assertUploadPath(paths.root, target)
       const info = await stat(target)
-      if (!info.isFile() || info.size !== output.bytes || await digestFile(target) !== output.sha256) throw new Error('changed')
+      if (!info.isFile()) throw new Error('changed')
+      return { bytes: info.size, sha256: await digestFile(target) }
+    })().catch(() => null))
+    try {
+      const found = await resourceChecks.get(target)
+      if (!found || found.bytes !== output.bytes || found.sha256 !== output.sha256) throw new Error('changed')
     } catch { result.warnings.push({ kind: 'changed_resource', path: output.path }) }
   }
   result.files.forEach(file => {
@@ -115,10 +120,10 @@ async function pinsAndMetadataMatch(paths, job, file) {
   }
   return true
 }
-async function reconcile(paths, job) {
+async function reconcile(paths, job, resourceChecks) {
   // A structurally sealed record is historical proof of that operation. Later edits do not
   // rewind it into an import retry, even when the original target or resources were deleted.
-  if (['completed', 'closed'].includes(job.phase)) return history(paths, job)
+  if (['completed', 'closed'].includes(job.phase)) return history(paths, job, resourceChecks)
   const result = summary(job)
   if (job.import) {
     result.status = 'needs_review'
@@ -325,9 +330,12 @@ export async function handleMediaJobRead({ privatePaths, route }) {
     const before = await inspectLibraryOperation(privatePaths)
     if (before.state !== 'idle') return { status: 200, body: { ok: true, libraryId: null, status: before.state === 'busy' ? 'processing' : 'needs_review', ...(route.action === 'get' ? {job:null} : {jobs:[]}) } }
     const store = createMediaJobStore(privatePaths)
-    const discovered = await store.discover()
-    const jobs = route.action === 'get' ? [await store.read(route.jobId)] : await Promise.all(discovered.jobs.map(job=>store.read(job.jobId)))
-    const summaries = await Promise.all(jobs.map(job=>reconcile(privatePaths,job)))
+    const discovered = await store.readSnapshot()
+    const selected = route.action === 'get' ? discovered.jobs.find(job => job.jobId === route.jobId) : undefined
+    if (route.action === 'get' && !selected) fail('E_MEDIA_JOB_NOT_FOUND')
+    const jobs = route.action === 'get' ? [selected] : discovered.jobs
+    const resourceChecks = new Map()
+    const summaries = await Promise.all(jobs.map(job=>reconcile(privatePaths,job,resourceChecks)))
     const after = await inspectLibraryOperation(privatePaths)
     if (after.state !== 'idle' || after.generation !== before.generation) fail('E_MEDIA_JOB_CONFLICT')
     return { status:200, body: {ok:true,libraryId:discovered.libraryId,...(route.action === 'get' ? {job:summaries[0]} : {jobs:summaries})} }

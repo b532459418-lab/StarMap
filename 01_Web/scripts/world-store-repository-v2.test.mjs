@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
+import { DatabaseSync } from 'node:sqlite'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
@@ -62,6 +63,39 @@ test('nested receipt discovery refuses ownership of outer transaction', async t 
   active = repository
   try { repository.apply(createRequest()); assert.equal(repository.snapshot().history.length, 1) }
   finally { repository.close() }
+})
+
+test('incremental storage keeps compact logs; another connection invalidates cached state', async t => {
+  const { file, repository } = await setup(t), other = openRepositoryV2(file)
+  try {
+    repository.apply(createRequest())
+    assert.equal(other.state().revision, 1)
+    const db = new DatabaseSync(file)
+    try {
+      const row = db.prepare('SELECT payload FROM operation_history').get()
+      assert.equal(Object.hasOwn(JSON.parse(row.payload), 'after'), false)
+      const state = repository.state(), corrupted = { ...state, revision: 2 }
+      db.prepare('UPDATE repository_current SET payload=?,digest=?').run(JSON.stringify(corrupted), digest(corrupted))
+    } finally { db.close() }
+    assert.throws(() => repository.state(), e => e.code === 'E_REPO_V2_CHAIN')
+    assert.throws(() => other.snapshot(), e => e.code === 'E_REPO_V2_CHAIN')
+  } finally { repository.close(); other.close() }
+})
+
+test('legacy whole-envelope storage remains read-only and is preserved for explicit new-file upgrade', async t => {
+  const { file, envelope, repository } = await setup(t); repository.close()
+  const legacy = path.join(path.dirname(file), 'legacy.sqlite'), db = new DatabaseSync(legacy)
+  try {
+    db.exec('CREATE TABLE repository_v2 (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT')
+    db.exec('PRAGMA application_id=1397573429; PRAGMA user_version=2')
+    db.prepare('INSERT INTO repository_v2 VALUES (1,?,?)').run(JSON.stringify(envelope), digest(envelope))
+  } finally { db.close() }
+  const before = await readFile(legacy)
+  assert.throws(() => openRepositoryV2(legacy), e => e.code === 'E_REPO_UPGRADE_REQUIRED')
+  const readonly = openRepositoryV2(legacy, { readOnly: true })
+  try { assert.deepEqual(readonly.snapshot(), envelope); assert.throws(() => readonly.apply(createRequest()), e => e.code === 'E_REPO_UPGRADE_REQUIRED') }
+  finally { readonly.close() }
+  assert.deepEqual(await readFile(legacy), before)
 })
 for (const phase of ['locked', 'state-written', 'before-commit', 'committed']) test(`killed writer at ${phase} recovers state and full history together`, async t => {
   const { file, repository } = await setup(t); repository.close()

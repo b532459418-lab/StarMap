@@ -12,7 +12,7 @@
     "build:personal": "tsc -b && vite build --mode personal",
     "lint": "eslint src scripts tests/browser playwright.config.mjs vite.config.ts && npm run i18n:check",
     "i18n:check": "node scripts/i18n-check.mjs",
-    "test": "node --test \"src/**/*.test.ts\" \"scripts/**/*.test.mjs\"",
+    "test": "node --test --test-concurrency=2 \"src/**/*.test.ts\" \"scripts/**/*.test.mjs\"",
     "test:browser": "node scripts/run-browser-tests.mjs",
     "perf:browser": "node scripts/run-browser-tests.mjs --performance",
     "baseline": "node scripts/baseline.mjs",
@@ -24,6 +24,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@noble/hashes": "2.4.0",
     "@photo-sphere-viewer/core": "^5.14.1",
     "@tailwindcss/vite": "^4.3.0",
     "cesium": "^1.142.0",

@@ -287,6 +287,7 @@ export function createMediaJobStore(privatePaths) {
     return structuredClone(next)
   }
   return {
+    readSnapshot: async () => { const state = await snapshot(); return { libraryId: state.library?.libraryId ?? null, jobs: state.jobs } },
     discover: async () => { const state = await snapshot(); return { libraryId: state.library?.libraryId ?? null, jobs: state.jobs.map(summary) } },
     read, create, update, assertClear,
     pause: (jobId, revision) => update(jobId, revision, (job) => {

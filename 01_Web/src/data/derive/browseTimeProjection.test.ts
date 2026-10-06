@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildBrowseTimeProjection, journeyTimeContext } from './browseTimeProjection.ts'
+import { buildBrowseTimeProjection, journeyTimeContext, countMappedTravelRecords } from './browseTimeProjection.ts'
 import { classifyRecordDate, type RecordDateInput } from '../../worldgraph/timeFilter.ts'
 import { TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from '../../worldgraph/layers.ts'
 import type { TimeQueryContext, TimeQueryRecord } from '../../worldgraph/timeQuery.ts'
@@ -15,6 +15,14 @@ const yearFilter = (year: number, includeUncertain = false) => ({
   [TRAVEL_LAYER_ID]: { from: `${year}-01-01`, to: `${year}-12-31`, includeUncertain },
 })
 const ids = (records: readonly { record: TimeQueryRecord }[]) => records.map(match => match.record.recordId)
+
+test('mapped visits count repeated records independently of map layer visibility', () => {
+  const data = context(visit('first', { startDate: '2025-01-01' }), visit('repeat', { startDate: '2025-03-01' }), visit('unmapped', { startDate: '2025-04-01' }), visit('old', { startDate: '2022-01-01' }))
+  const mapped = new Set(['first', 'repeat', 'old'])
+  assert.equal(countMappedTravelRecords(buildBrowseTimeProjection(data, {}), mapped), 3)
+  assert.equal(countMappedTravelRecords(buildBrowseTimeProjection(data, yearFilter(2025)), mapped), 2)
+  assert.equal(countMappedTravelRecords(buildBrowseTimeProjection(data, yearFilter(2024)), mapped), 0)
+})
 
 test('same city visits match individual dates and visits count independently', () => {
   const data = context(visit('old', { startDate: '2022-06-01' }), visit('new', { startDate: '2025-06-01' }))

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
 import { createWorldRepository, openWorldRepository } from './world-store-repository.mjs'
 import { seed, createRequest } from './world-store-repository.fixture.mjs'
 import { previewRepositoryUpgrade } from './world-store-upgrade-preview.mjs'
@@ -60,15 +61,42 @@ test('modified marker cannot claim a different source', async t => {
   marker.sourceDigest = '0'.repeat(64); await writeFile(fileMarker, JSON.stringify(marker))
   assert.throws(() => discoverRepositoryUpgrade(target), e => e.code === 'E_UPGRADE_CORRUPT')
 })
-test('source modification during conversion prevents completion seal', async t => {
+test('source modification during conversion is refused while sealing holds a snapshot', async t => {
   const { file, target, preview } = await setup(t)
   assert.throws(() => upgradeRepositoryToDirectory(file, target, preview, 'upgrade', { unsafeTestPhase(name) {
     if (name !== 'database-committed') return
     const repository = openWorldRepository(file)
     try { repository.apply({ id: 'after-preview', expectedRevision: 1, action: { kind: 'merge', incoming: repository.snapshot().world } }) }
     finally { repository.close() }
-  } }), e => e.code === 'E_UPGRADE_STALE')
+  } }), e => e.code === 'E_REPO_OUTCOME_UNKNOWN')
   assert.equal(discoverRepositoryUpgrade(target).status, 'incomplete')
+})
+
+test('a normal writer cannot slip between final validation and completion marker', async t => {
+  const { file, target, preview } = await setup(t)
+  const result = upgradeRepositoryToDirectory(file, target, preview, 'upgrade', { unsafeTestPhase(name) {
+    if (name !== 'before-completion') return
+    const competing = openWorldRepository(file)
+    try {
+      assert.throws(() => competing.apply({ id: 'concurrent', expectedRevision: 1, action: { kind: 'merge', incoming: competing.snapshot().world } }), e => e.code === 'E_REPO_OUTCOME_UNKNOWN')
+      assert.equal(competing.findOperation('concurrent'), undefined)
+    }
+    finally { competing.close() }
+  } })
+  assert.equal(result.status, 'completed')
+  const source = openWorldRepository(file)
+  try { assert.deepEqual(source.snapshot(), result.envelope.state); assert.equal(source.apply({ id: 'later', expectedRevision: 1, action: { kind: 'merge', incoming: source.snapshot().world } }).repositoryRevision, 2) }
+  finally { source.close() }
+})
+
+test('WAL source is refused before reserving a target because its read lock cannot seal out writers', async t => {
+  const { file, target, preview } = await setup(t), db = new DatabaseSync(file)
+  try { assert.equal(db.prepare('PRAGMA journal_mode=WAL').get().journal_mode, 'wal') }
+  finally { db.close() }
+  const before = await readFile(file)
+  assert.throws(() => upgradeRepositoryToDirectory(file, target, preview, 'upgrade'), e => e.code === 'E_REPO_SETTINGS')
+  assert.equal(discoverRepositoryUpgrade(target).status, 'absent')
+  assert.deepEqual(await readFile(file), before)
 })
 
 async function killUpgrade(file, target, preview, phase) {
