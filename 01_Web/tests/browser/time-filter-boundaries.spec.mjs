@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure } from './helpers.mjs'
 import { createBrowserFixture, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -12,7 +12,11 @@ if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).sta
 const storageKey = 'starmap.layerTimeFilters.v1'
 const panel = page => page.locator('#atlas-time-query-panel')
 test.beforeEach(async () => { await createBrowserFixture(root) })
-test.afterEach(async ({ page }) => { await page.close(); await createBrowserFixture(root) })
+test.afterEach(async ({ page }, testInfo) => {
+  await retainReloadFailure(page, testInfo)
+  await page.close()
+  await createBrowserFixture(root)
+})
 
 async function patchFixture(key, change) {
   const value = await readFixture(key)
@@ -83,13 +87,16 @@ test('conversion preserves the selected result outside the active travel range a
   await dialog.locator('input[type=date]').first().fill('2026-01-12')
   await dialog.locator('input[type=date]').nth(1).fill('2026-01-13')
   await dialog.locator('input[type=checkbox]').check()
+  recordReloadCheckpoint(page, 'before converting Nuuk')
   const saved = page.waitForResponse(response => response.url().endsWith('/wanttogo/convert'))
   await dialog.locator('button[type=submit]').click()
   expect((await saved).ok()).toBe(true)
+  recordReloadCheckpoint(page, 'conversion response accepted')
   const info = page.locator('.atlas-info-panel')
   await expect(info.locator('h2')).toHaveText('Nuuk')
   await expect(info.locator('[data-time-filter-outside]')).toBeVisible()
   await expect(info).toContainText('Matching visits: 0')
+  recordReloadCheckpoint(page, 'converted selection restored outside time range')
   expect(await page.evaluate(key => localStorage.getItem(key), storageKey)).toBe(filters)
   const created = (await readFixture('travel')).records.filter(record => record.placeId === fixtureIds.nuuk && record.status !== 'planned')
   expect(created).toHaveLength(1)
