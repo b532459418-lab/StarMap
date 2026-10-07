@@ -5,7 +5,7 @@ import os from 'node:os'
 import { fixtureFileNames } from '../../scripts/browser-fixture.mjs'
 
 const reloadObservations = new WeakMap()
-const diagnosticFiles = new Set(['time-filter-boundaries.spec.mjs', 'time-filter-camera.spec.mjs'])
+const diagnosticFiles = new Set(['critical-flows.spec.mjs', 'time-filter-boundaries.spec.mjs', 'time-filter-camera.spec.mjs'])
 const safePath = value => {
   try { const url = new URL(value); return url.origin === 'http://127.0.0.1:5173' ? url.pathname : '[other origin]' } catch { return '[invalid URL]' }
 }
@@ -47,6 +47,18 @@ export function recordReloadCheckpoint(page, label) {
   const probe = readReloadState(page).then(snapshot => observe(state, { event: 'snapshot', label, snapshot }))
   state.pending.add(probe)
   void probe.finally(() => state.pending.delete(probe))
+}
+// Register before the save; waiting for the current document's load state alone
+// can finish before the save triggers its same-URL reload. Keep configured
+// navigation/action deadlines and all subsequent assertions unchanged.
+export async function saveAndWaitForReload(page, save) {
+  const expectedUrl = page.url()
+  recordReloadCheckpoint(page, 'before save and same-URL reload')
+  const reloaded = page.waitForEvent('framenavigated', {
+    predicate: frame => frame === page.mainFrame() && frame.url() === expectedUrl,
+  }).then(frame => frame.waitForLoadState('domcontentloaded'))
+  await Promise.all([reloaded, save()])
+  recordReloadCheckpoint(page, 'saved document reached DOM content loaded')
 }
 export async function retainReloadFailure(page, testInfo) {
   const state = reloadObservations.get(page)
