@@ -1,5 +1,5 @@
 /** Experimental standalone writable fork: logical format 3, SQLite storage 4.
- * Supported v2/v3 source snapshots are archived intact; local operations never adopt parent
+ * Supported legacy/v2/v3 source snapshots are archived intact; local operations never adopt parent
  * receipts. Caller-owned explicit paths only; no App/private-root discovery.
  * Fingerprints/bindings detect mistakes or corruption, not same-user forgery.
  */
@@ -274,7 +274,8 @@ function writeFork(current, prepared, options) {
       const file = path.join(root, 'world.sqlite'), fd = openSync(file, 'wx', 0o600)
       try { fsyncSync(fd) } finally { closeSync(fd) }
       const descriptor = readBranchDescriptor({ format: 'starmap.repository-branch', formatVersion: 1,
-        identity: { libraryId: current.source.identity.libraryId, branchId: randomUUID(), genesisId: randomUUID() }, origin: { kind: 'fork', source: current.source }, binding })
+        identity: { libraryId: current.source.identityStatus === 'unknown' ? randomUUID() : current.source.identity.libraryId, branchId: randomUUID(), genesisId: randomUUID() },
+        origin: { kind: current.source.identityStatus === 'unknown' ? 'upgrade' : 'fork', source: current.source }, binding })
       const creation = { status: 'completed', operationId, requestDigest, previewDigest: input.previewDigest, policyDigest: input.policyDigest, ...(context ? { context } : {}) }
       const marker = { format: 'starmap.repository-branch-location', formatVersion: 1, descriptor, creation }
       const markerFd = openSync(path.join(root, 'binding.json'), 'wx', 0o600)

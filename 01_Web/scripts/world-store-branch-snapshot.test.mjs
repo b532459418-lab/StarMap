@@ -84,3 +84,16 @@ test('accessor/cycle/primitive archives are refused without executing accessor',
   assert.throws(() => readRepositoryArchive(value)); assert.equal(calls, 0)
   for (const invalid of [null, 'archive', 3, []]) assert.throws(() => readRepositoryArchive(invalid))
 })
+test('upgrade origin matches an unknown v1 archive rather than inventing a parent family', () => {
+  const archive = { format: 'starmap.world-repository-legacy', formatVersion: 1, coverage: 'baselineOnly', editBodies: 'unavailable', state: parent().state, receipts: [] }
+  const preview = previewRepositoryArchive(archive), value = branch()
+  value.sourceArchive = archive
+  value.descriptor.identity.libraryId = 'new-host-family'
+  value.descriptor.origin = { kind: 'upgrade', source: preview.source }
+  value.creation.previewDigest = preview.previewDigest
+  value.creation.requestDigest = digest({ operationId: value.creation.operationId, previewDigest: preview.previewDigest, binding: value.descriptor.binding })
+  value.markerDigest = digest({ format: 'starmap.repository-branch-location', formatVersion: 1, descriptor: value.descriptor, creation: value.creation })
+  assert.equal(readBranchSnapshot(value).descriptor.origin.source.identity, null)
+  value.descriptor.origin.kind = 'fork'
+  assert.throws(() => readBranchSnapshot(value))
+})
