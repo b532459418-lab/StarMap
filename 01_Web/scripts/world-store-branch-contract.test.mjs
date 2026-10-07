@@ -24,6 +24,11 @@ test('new library has no invented parent source', () => {
   const value = fixture(); value.origin = { kind: 'new', source: null }
   assert.deepEqual(readBranchDescriptor(value).origin, value.origin)
 })
+test('v3 parent is explicit rather than disguised as legacy or v2', () => {
+  const value = fixture(); value.origin.source.repositoryFormatVersion = 3
+  assert.equal(readBranchDescriptor(value).origin.source.repositoryFormatVersion, 3)
+  assertBranchSource(value, value.origin.source)
+})
 test('legacy upgrade preserves unknown source identity without inventing a family link', () => {
   const value = fixture(); value.origin = { kind: 'upgrade', source: legacy() }
   value.identity.libraryId = 'new-host-family'
@@ -41,7 +46,7 @@ const invalid = [
   ['path as identity', v => { v.identity.path = 'copy.sqlite' }, 'E_SHAPE'],
   ['missing binding', v => { delete v.binding }, 'E_SHAPE'],
   ['raw binding path', v => { v.binding.path = '/copy' }, 'E_SHAPE'],
-  ['unknown source version', v => { v.origin.source.repositoryFormatVersion = 3 }, 'E_BRANCH_SOURCE_VERSION'],
+  ['unknown source version', v => { v.origin.source.repositoryFormatVersion = 4 }, 'E_BRANCH_SOURCE_VERSION'],
   ['invented legacy identity', v => { v.origin.source.repositoryFormatVersion = 1 }, 'E_BRANCH_SOURCE_IDENTITY'],
   ['unknown v2 identity', v => { v.origin.source.identityStatus = 'unknown'; v.origin.source.identity = null }, 'E_BRANCH_SOURCE_IDENTITY'],
   ['missing known parent', v => { v.origin.source.identity = null }, 'E_SHAPE'],

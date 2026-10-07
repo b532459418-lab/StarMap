@@ -26,7 +26,7 @@ function source(value, path) {
   if (value.repositoryFormatVersion === 1) {
     // Legacy labels/file names are not permanent source identity evidence.
     if (value.identityStatus !== 'unknown' || value.identity !== null) reject('E_BRANCH_SOURCE_IDENTITY', path)
-  } else if (value.repositoryFormatVersion === 2) {
+  } else if (value.repositoryFormatVersion === 2 || value.repositoryFormatVersion === 3) {
     if (value.identityStatus !== 'known') reject('E_BRANCH_SOURCE_IDENTITY', path)
     identity(value.identity, path + '.identity')
   } else reject('E_BRANCH_SOURCE_VERSION', path)
