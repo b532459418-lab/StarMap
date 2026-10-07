@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure } from './helpers.mjs'
 import { createBrowserFixture, fixtureIds } from '../../scripts/browser-fixture.mjs'
 import path from 'node:path'
 import os from 'node:os'
@@ -11,7 +11,8 @@ const storageKey = 'starmap.layerTimeFilters.v1'
 const panel = (page) => page.locator('#atlas-time-query-panel')
 
 test.beforeEach(async () => { await createBrowserFixture(root) })
-test.afterEach(async ({ page }) => {
+test.afterEach(async ({ page }, testInfo) => {
+  await retainReloadFailure(page, testInfo)
   await page.close()
   await createBrowserFixture(root)
 })
@@ -188,11 +189,14 @@ test('both layer toggles retain their conditions and Collection restores a hidde
   const hiddenCard = cards.filter({ has: page.getByRole('button', { name: 'Restore: Tromsø', exact: true }) })
   await expect(hiddenCard).toHaveCount(1)
   await expect(hiddenCard).toHaveAttribute('data-hidden', 'true')
+  recordReloadCheckpoint(page, 'before restoring Tromsø')
   const restored = page.waitForResponse(response => response.url().endsWith('/editor/wanttogo/update') && response.request().method() === 'POST')
   await hiddenCard.getByRole('button', { name: 'Restore: Tromsø', exact: true }).click()
   expect((await restored).ok()).toBe(true)
+  recordReloadCheckpoint(page, 'restore response accepted')
   await expect.poll(async () => (await readFixture('wantToGo')).items.find(item => item.id === 'wtg_2026-08-12_tromso')?.hidden).toBe(false)
   await expect(cards).toHaveCount(4)
+  recordReloadCheckpoint(page, 'four Collection cards restored after reload')
   await expect(cards.filter({ has: page.getByRole('button', { name: 'Hide: Tromsø', exact: true }) })).toHaveAttribute('data-hidden', 'false')
   const afterWantToGo = await readFixture('wantToGo')
   expect(afterWantToGo.items.map(item => item.id).sort()).toEqual(beforeWantToGo.items.map(item => item.id).sort())
