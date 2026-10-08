@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promi
 import os from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
-import { test, expect, openMap, openCollection, readFixture } from './helpers.mjs'
+import { test, expect, openMap, openCollection, readFixture, recordMediaPhase, closeMediaTestContext, saveAndWaitForReload, retainMediaFailure } from './helpers.mjs'
 import { fixtureIds } from '../../scripts/browser-fixture.mjs'
 
 const jobsUrl = '/__travelatlas/editor/media/jobs'
@@ -35,6 +35,7 @@ function installGraphicsEvents() {
 }
 
 test.afterEach(async ({ page }, testInfo) => {
+  await retainMediaFailure(page, testInfo)
   const diagnostic = lifecycleDiagnostics.get(page)
   if (!diagnostic) return
   try {
@@ -59,10 +60,18 @@ async function artifactPath(testInfo, name) {
 async function selectReykjavik(page) {
   const countries = page.locator('.atlas-country-list')
   const country = countries.locator('.atlas-country-button').filter({ has: page.getByText('Iceland', { exact: true }) })
-  if (await country.getAttribute('aria-expanded') !== 'true') await country.click()
+  if (await country.getAttribute('aria-expanded') !== 'true') {
+    await country.scrollIntoViewIfNeeded()
+    await expect(country).toBeInViewport()
+    await country.click()
+  }
   // Accessible names also include the real drone-availability badge once media exists.
   const city = countries.locator('.atlas-city-button').filter({ has: page.getByText('Reykjavik', { exact: true }) })
-  if (await city.getAttribute('data-selected') !== 'true') await city.click()
+  if (await city.getAttribute('data-selected') !== 'true') {
+    await city.scrollIntoViewIfNeeded()
+    await expect(city).toBeInViewport()
+    await city.click()
+  }
   await expect(page.locator('.atlas-info-panel h2')).toHaveText('Reykjavik')
 }
 
@@ -122,8 +131,11 @@ async function review(page, id) {
   return { ...preview, selectedFileIds: preview.plan.selectedFileIds }
 }
 
-async function receivePhotos(page, files) {
-  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 45000 })
+async function receivePhotos(page, files, reuseReadyDocument = false) {
+  // Only the second lifecycle batch reuses the document whose photo save has
+  // already completed a real reload. All first/fresh entry points still navigate.
+  if (reuseReadyDocument) expect(page.url()).toBe('http://127.0.0.1:5173/')
+  else await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 45000 })
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
   await expect(page.locator('.cesium-widget canvas')).toBeVisible()
   await selectReykjavik(page)
@@ -141,14 +153,18 @@ async function seedHiddenAndRemovedMedia(page, first) {
   const removed = await image('old-removed-from-inbox.png', { r: 19, g: 58, b: 81 })
   const baseline = { ...first, name: 'old-hidden-photo.png' }
   const id = await receivePhotos(page, [removed, baseline])
+  recordMediaPhase(page, 'baseline files received')
   await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.files.map(file => file.status), { timeout: 30000 }).toEqual(['pending', 'pending'])
   await expect(exactCard(page, id).getByRole('button', { name: 'Review import scope', exact: true })).toBeEnabled()
   await review(page, id)
+  recordMediaPhase(page, 'baseline import preview complete')
   await exactCard(page, id).getByRole('checkbox', { name: confirmScope, exact: true }).check()
   await exactCard(page, id).getByRole('button', { name: 'Import confirmed files', exact: true }).click()
   await expect(exactCard(page, id).locator('header strong')).toHaveText('Completed', { timeout: 30000 })
+  recordMediaPhase(page, 'baseline import completed')
   await exactCard(page, id).getByRole('button', { name: 'Close completed task', exact: true }).click()
   await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.status).toBe('closed')
+  recordMediaPhase(page, 'baseline task closed')
   await center(page).getByRole('button', { name: 'Close panel', exact: true }).click()
   await page.reload({ waitUntil: 'domcontentloaded' })
   await selectReykjavik(page)
@@ -163,6 +179,7 @@ async function seedHiddenAndRemovedMedia(page, first) {
     page.getByRole('button', { name: 'Save city photos', exact: true }).click(),
   ])
   expect(response.ok()).toBe(true)
+  recordMediaPhase(page, 'baseline hidden-photo save / real reload complete')
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
   await expect(page.locator('.cesium-widget canvas')).toBeVisible()
   await expect.poll(async () => (await readFixture('editorState')).hiddenMediaIds).toContain(hiddenId)
@@ -206,12 +223,13 @@ async function verifyLiveScene(page, returnFromCollection = false, sample = asyn
     return stable
   }, { timeout: 15000, intervals: [250, 350] }).toBeGreaterThanOrEqual(2)
   const before = await canvasState(page)
-  await sample('before reset camera')
+  await sample('before reset camera', before)
   await countryPanel.getByRole('button', { name: 'Reset globe to overview', exact: true }).click()
+  let after
   try {
     await expect.poll(async () => Math.abs((await canvasState(page)).pose?.height - before.pose.height), { timeout: 15000 }).toBeGreaterThan(1)
-  } finally { await sample('after reset camera poll, including failure') }
-  const after = await canvasState(page)
+    after = await canvasState(page)
+  } finally { await sample('after reset camera poll, including failure', after) }
   for (const dimension of ['width', 'height', 'clientWidth', 'clientHeight']) expect(after[dimension], `Live canvas ${dimension}`).toBeGreaterThan(0)
   expect(after.contextLost).toBe(false)
   expect(after.errorPanel).toBe(false)
@@ -223,17 +241,18 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
   test.setTimeout(360000)
   page.setDefaultTimeout(15000)
   page.setDefaultNavigationTimeout(45000)
+  recordMediaPhase(page, 'lifecycle body started / original 360-second budget')
   const graphics = []
   const samples = []
   const errorSamples = new Set()
   let errorSampleCount = 0
   let phase = 'baseline and original page'
-  const capture = async (target, label, reason) => {
+  const capture = async (target, label, reason, observedHealth) => {
     const observedPhase = phase
     let timer
     let entry
     try {
-      const health = await Promise.race([canvasState(target), new Promise((_, reject) => {
+      const health = observedHealth ?? await Promise.race([canvasState(target), new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error('Read-only scene sampling exceeded 2000ms')), 2000)
       })])
       entry = { page: label, phase: observedPhase, reason, health }
@@ -262,6 +281,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
   const first = await image('recovery-first.png', { r: 42, g: 118, b: 210 })
   const second = await image('recovery-second.png', { r: 183, g: 96, b: 51 })
   const baseline = await seedHiddenAndRemovedMedia(page, first)
+  recordMediaPhase(page, 'baseline import / hide / source index complete')
   console.info('MR lifecycle: actual baseline imported, one photo hidden, removable source indexed')
   let receives = 0
   let imports = 0
@@ -275,7 +295,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
       await route.abort('failed')
     } else await route.continue()
   })
-  const id = await receivePhotos(page, [first, second])
+  const id = await receivePhotos(page, [first, second], true)
   await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.files.map(file => file.status)).toEqual(['pending', 'not_received'])
   expect(receives).toBe(1)
   expect(imports).toBe(0)
@@ -290,6 +310,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
   expect(imports).toBe(0)
   expect(await sourceSnapshot()).toEqual(initialSources)
   console.info('MR lifecycle: lost reception and storage-clear reload recovered from GET')
+  recordMediaPhase(page, 'lost reception and storage-clear discovery complete')
 
   await exactCard(page, id).getByRole('button', { name: 'Pause for now', exact: true }).click()
   await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.paused).toBe(true)
@@ -298,7 +319,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
   await page.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
   await page.locator('.collection-card textarea').fill('Durable media pause permits ordinary edits')
   const saved = page.waitForResponse(response => response.url().includes('/editor/wanttogo/') && response.request().method() === 'POST')
-  await page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click()
+  await saveAndWaitForReload(page, () => page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click(), { navigationTimeout: 45000 })
   expect((await saved).ok()).toBe(true)
   await expect(page.locator('.collection-card textarea')).toHaveCount(0)
   await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
@@ -307,12 +328,15 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
   await expect(page.locator('.atlas-info-panel input[type=file]')).toBeDisabled()
   await openTasks(page)
   console.info('MR lifecycle: paused task allowed ordinary note save; new photo selection blocked')
+  recordMediaPhase(page, 'paused task / ordinary edit / blocked photo complete')
   await center(page).getByRole('button', { name: 'Close panel', exact: true }).click()
   await openCollection(page)
   await openTasks(page)
 
   const otherContext = await testBrowser.newContext({ baseURL: 'http://127.0.0.1:5173', viewport: { width: 1440, height: 1000 }, locale: 'en-US', serviceWorkers: 'block' })
   const other = await otherContext.newPage()
+  otherContext.on('close', () => recordMediaPhase(page, 'secondary context closed event'))
+  recordMediaPhase(page, 'secondary context created')
   other.setDefaultTimeout(15000)
   other.setDefaultNavigationTimeout(45000)
   const errors = []
@@ -335,6 +359,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     expect((await checkTasks(other)).jobs.find(job => job.jobId === id)?.files.map(file => file.status)).toEqual(['pending', 'not_received'])
     const stale = await review(other, id)
     console.info('MR lifecycle: fresh browser context found partial task and previewed scope')
+    recordMediaPhase(page, 'secondary context / partial discovery / stale preview complete')
     expect(stale.selectedFileIds).toHaveLength(1)
     expect(imports).toBe(0)
 
@@ -349,6 +374,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     expect(receives).toBe(1)
     await checkTasks(page)
     console.info('MR lifecycle: wrong name rejected locally; explicit discovery restored controls')
+    recordMediaPhase(page, 'wrong name refusal / control discovery complete')
     await current.getByLabel('Reselect unsent files', { exact: true }).setInputFiles({ ...second, buffer: Buffer.concat([second.buffer, Buffer.from([0])]) })
     await current.getByRole('checkbox', { name: confirmFiles, exact: true }).check()
     await current.getByRole('button', { name: 'Receive selected files', exact: true }).click()
@@ -356,6 +382,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     expect(receives).toBe(1)
     await checkTasks(page)
     console.info('MR lifecycle: wrong size rejected locally; explicit discovery restored controls')
+    recordMediaPhase(page, 'wrong size refusal / control discovery complete')
     await current.getByLabel('Reselect unsent files', { exact: true }).setInputFiles(second)
     await current.getByRole('checkbox', { name: confirmFiles, exact: true }).check()
     const receivedResponse = page.waitForResponse(response => isReceive(response.request()), { timeout: 45000 })
@@ -367,6 +394,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.files.map(file => file.status), { timeout: 30000 }).toEqual(['pending', 'pending'])
     expect(receives).toBe(2)
     console.info('MR lifecycle: wrong name and size made no writes; original unsent file received once')
+    recordMediaPhase(page, 'correct unsent reception complete')
 
     const staleResponse = await other.request.post(`${jobsUrl}/${id}/import`, { headers: { 'x-travelatlas-local-editor': '1' }, data: {
       libraryId: stale.job.libraryId, revision: stale.job.revision, selectedFileIds: stale.selectedFileIds, planDigest: stale.plan.digest, operationId: randomUUID(),
@@ -377,6 +405,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     await checkTasks(other)
     await expect(exactCard(other, id).getByTestId('media-import-preview')).toHaveCount(0)
     console.info('MR lifecycle: server rejected stale cross-tab plan and client discarded it')
+    recordMediaPhase(page, 'stale import refusal / preview discard complete')
 
     // A neutral external delivery in another real fixture city demonstrates whole-Inbox scope.
     const places = (await readFixture('places')).places
@@ -417,8 +446,11 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     const order = preview.getByTestId('media-scope-orders').locator(`[data-city-id="${fixtureIds.reykjavik}"][data-order-kind="photos"]`)
     expect(await order.locator('ol li').evaluateAll(items => items.map(item => item.dataset.mediaId))).toEqual(proposedOrder)
     const desktopPath = await artifactPath(testInfo, 'batch3-recovery-desktop.png')
+    recordMediaPhase(page, 'whole scope screenshot started')
     await other.screenshot({ path: desktopPath, fullPage: true })
+    recordMediaPhase(page, 'whole scope screenshot finished')
     await testInfo.attach('Recovery desktop with complete scope details', { path: desktopPath, contentType: 'image/png' })
+    recordMediaPhase(page, 'whole Inbox preview / receipt / original scope complete')
     await expect(exactCard(other, id).getByRole('button', { name: 'Import confirmed files', exact: true })).toBeDisabled()
     expect(imports).toBe(0)
     let importDropped = false
@@ -434,6 +466,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     await exactCard(other, id).getByRole('button', { name: 'Import confirmed files', exact: true }).click()
     await expect.poll(async () => (await checkTasks(other)).jobs.find(job => job.jobId === id)?.status).toBe('completed')
     console.info('MR lifecycle: lost import response recovered sealed completion without retry')
+    recordMediaPhase(page, 'lost import response / sealed completion discovered')
     expect(imports).toBe(1)
     expect(receives).toBe(2)
     expect(await sourceSnapshot()).toEqual(beforeImport)
@@ -452,22 +485,27 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     // Reload the tab the user has explicitly returned to, before checking its live scene.
     await other.bringToFront()
     const beforeReload = await canvasState(other)
-    await capture(other, 'fresh', 'before completion reload')
+    await capture(other, 'fresh', 'before completion reload', beforeReload)
     phase = 'completion reload / old document disposal'
+    recordMediaPhase(page, 'completion reload started')
     console.info('MR lifecycle: foreground completed tab starts read-only reload')
     await other.reload({ waitUntil: 'domcontentloaded', timeout: 45000 })
     phase = 'completion reload / live document'
-    await capture(other, 'fresh', 'after completion reload')
+    recordMediaPhase(page, 'completion reload DOM content loaded')
+    // The next required live-scene assertions provide the health samples; do
+    // not issue a redundant diagnostic evaluate into this newly loaded document.
     console.info('MR lifecycle: completed tab reloaded; checking retained receipt and live scene')
     await openTasks(other)
     expect((await checkTasks(other)).jobs.find(job => job.jobId === id).completion).toEqual(completion)
     expect(await readFile(receiptPath)).toEqual(sealedBytes)
-    const liveScene = await verifyLiveScene(other, false, reason => capture(other, 'fresh', reason))
+    const liveScene = await verifyLiveScene(other, false, (reason, health) => capture(other, 'fresh', reason, health))
+    recordMediaPhase(page, 'secondary context live scene / real camera verified')
     await checkTasks(page)
     await expect(exactCard(page, id).locator('header strong')).toHaveText('Completed')
     phase = 'original page returns from Collection to Map'
     console.info('MR lifecycle: new context live scene healthy; checking original page return to Map')
-    const originalLiveScene = await verifyLiveScene(page, true, reason => capture(page, 'original', reason))
+    const originalLiveScene = await verifyLiveScene(page, true, (reason, health) => capture(page, 'original', reason, health))
+    recordMediaPhase(page, 'original context live scene / real camera verified')
     console.info('MR graphics diagnostic', JSON.stringify({ beforeReload, graphics, liveScene, originalLiveScene }))
     const sourceHashes = Object.fromEntries(await Promise.all(['src/components/MediaRecoveryCenter.tsx', 'src/components/CesiumAtlasGlobe.tsx', 'tests/browser/media-recovery.spec.mjs', 'tests/browser/helpers.mjs'].map(async file => [file, createHash('sha256').update(await readFile(file)).digest('hex')])))
     const diagnosticPath = await artifactPath(testInfo, 'batch3-render-diagnostic.json')
@@ -475,15 +513,18 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     await testInfo.attach('Actual scene and camera health after recovery', { path: diagnosticPath, contentType: 'application/json' })
     expect(imports).toBe(1)
     expect(receives).toBe(2)
+    recordMediaPhase(page, 'final Close UI action started')
     await exactCard(other, id).getByRole('button', { name: 'Close completed task', exact: true }).click()
+    recordMediaPhase(page, 'final Close UI action finished / Check tasks poll started')
     await expect.poll(async () => (await checkTasks(other)).jobs.find(job => job.jobId === id)?.status).toBe('closed')
+    recordMediaPhase(page, 'final Check tasks closed fact verified')
     expect(await sourceSnapshot()).toEqual(beforeImport)
     expect(errors).toEqual([])
     console.info('MR lifecycle: completion history and originals unchanged after reload and close')
   } finally {
     await capture(other, 'fresh', 'before context disposal')
     phase = 'context disposal'
-    await otherContext.close()
+    await closeMediaTestContext(otherContext, page, testInfo)
   }
 })
 

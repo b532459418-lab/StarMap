@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  public-checks:
-    name: Public checks
+  source-checks:
+    name: Source checks
     runs-on: ubuntu-latest
     timeout-minutes: 35
     defaults:
@@ -35,9 +35,40 @@ jobs:
           cache: npm
           cache-dependency-path: 01_Web/package-lock.json
 
-      # release:check installs locked dependencies inside a clean Git archive.
+      # Keep the clean Git archive privacy/lint/unit/build verification.
       - name: Check privacy, lint, tests, and public build
         run: npm run release:check
+
+  browser-checks:
+    name: Browser checks (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - suite: critical
+            flag: --critical-flows
+          - suite: media
+            flag: --media-recovery
+          - suite: time
+            flag: --time-filters
+    defaults:
+      run:
+        working-directory: 01_Web
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: 01_Web/package-lock.json
 
       - name: Install locked browser test dependencies
         run: npm ci
@@ -45,18 +76,33 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Check critical browser flows with isolated synthetic data
-        run: npm run test:browser
+      # Independent runners keep one worker, port 5173 and private fixture per group.
+      - name: Check browser group with isolated synthetic data
+        run: npm run test:browser -- ${{ matrix.flag }}
 
-      # Only the isolated browser runner writes these paths; no private-root data.
       - name: Preserve failed synthetic browser evidence
         if: failure() && !cancelled()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: synthetic-browser-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          name: synthetic-browser-failure-${{ matrix.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             01_Web/test-results/browser/
             01_Web/playwright-report/browser/
           if-no-files-found: ignore
           retention-days: 7
           include-hidden-files: false
+
+  public-checks:
+    name: Public checks
+    needs: [source-checks, browser-checks]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every source and browser check to succeed
+        env:
+          SOURCE_RESULT: ${{ needs['source-checks'].result }}
+          BROWSER_RESULT: ${{ needs['browser-checks'].result }}
+        run: |
+          test "$SOURCE_RESULT" = success
+          test "$BROWSER_RESULT" = success
