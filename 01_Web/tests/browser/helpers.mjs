@@ -1,15 +1,55 @@
 import { test as base, expect } from '@playwright/test'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { fixtureFileNames } from '../../scripts/browser-fixture.mjs'
 
 const reloadObservations = new WeakMap()
+const mediaPhases = new WeakMap()
+const mediaTests = new WeakMap()
 const diagnosticFiles = new Set(['critical-flows.spec.mjs', 'time-filter-boundaries.spec.mjs', 'time-filter-camera.spec.mjs', 'time-filters.spec.mjs'])
 const safePath = value => {
   try { const url = new URL(value); return url.origin === 'http://127.0.0.1:5173' ? url.pathname : '[other origin]' } catch { return '[invalid URL]' }
 }
 const safeMessage = value => String(value).replace(/https?:\/\/[^\s"'<>]+/g, safePath).slice(0, 1200)
+function mediaPhase(state, label, details = {}) {
+  if (!state) return
+  const elapsedMs = performance.now() - state.startedAt
+  const event = { at: Date.now(), label, elapsedMs, observedTimeoutMs: state.testInfo.timeout,
+    remainingEstimateMs: Math.max(0, state.testInfo.timeout - elapsedMs), ...details }
+  if (state.events.length < 160) state.events.push(event)
+  else { state.droppedEvents++; return }
+  console.info('MR phase', JSON.stringify(event))
+}
+// Node-side observations only. The clock starts at this fixture, not at the
+// runner's budget origin; its remaining estimate never controls test execution.
+export function recordMediaPhase(page, label) {
+  mediaPhase(mediaPhases.get(page), label)
+}
+export async function retainMediaFailure(page, testInfo) {
+  if (testInfo.status === testInfo.expectedStatus) return
+  try {
+    const target = testInfo.outputPath('media-failure.png')
+    await mkdir(path.dirname(target), { recursive: true })
+    await page.screenshot({ path: target, timeout: 1500 })
+    await testInfo.attach('Media failure viewport', { path: target, contentType: 'image/png' })
+  } catch (error) { console.warn('MR failure screenshot unavailable:', safeMessage(error.message)) }
+}
+export async function closeMediaTestContext(context, page, testInfo) {
+  const state = mediaPhases.get(page)
+  mediaPhase(state, 'secondary context close started', { connected: context.browser()?.isConnected() })
+  try {
+    await context.close()
+    mediaPhase(state, 'secondary context close finished')
+  } catch (error) {
+    const connected = context.browser()?.isConnected()
+    mediaPhase(state, 'secondary context close error', { connected, error: safeMessage(error.message) })
+    // Only a recorded primary failure plus confirmed browser teardown permits
+    // ignoring this secondary cleanup error. Success-path errors still fail.
+    if (testInfo.status !== testInfo.expectedStatus && testInfo.errors.length && connected === false) return
+    throw error
+  }
+}
 function observe(state, event) {
   if (state.events.length < 160) state.events.push({ at: Date.now(), ...event })
   else state.droppedEvents++
@@ -59,11 +99,12 @@ export function recordReloadCheckpoint(page, label) {
 // Register before the save; waiting for the current document's load state alone
 // can finish before the save triggers its same-URL reload. Keep configured
 // navigation/action deadlines and all subsequent assertions unchanged.
-export async function saveAndWaitForReload(page, save) {
+export async function saveAndWaitForReload(page, save, options = {}) {
   const expectedUrl = page.url()
   recordReloadCheckpoint(page, 'before save and same-URL reload')
   const reloaded = page.waitForEvent('framenavigated', {
     predicate: frame => frame === page.mainFrame() && frame.url() === expectedUrl,
+    ...(options.navigationTimeout === undefined ? {} : { timeout: options.navigationTimeout }),
   }).then(frame => frame.waitForLoadState('domcontentloaded'))
   await Promise.all([reloaded, save()])
   recordReloadCheckpoint(page, 'saved document reached DOM content loaded')
@@ -87,15 +128,43 @@ export async function retainReloadFailure(page, testInfo) {
 export const test = base.extend({
   // SwiftShader allocations can survive closed contexts in a long-lived process.
   // End the actual browser after each case while retaining the shared synthetic service.
-  testBrowser: async ({ playwright, browserName, launchOptions, headless, channel }, use) => {
+  testBrowser: async ({ playwright, browserName, launchOptions, headless, channel }, use, testInfo) => {
+    const state = path.basename(testInfo.file) === 'media-recovery.spec.mjs'
+      ? { testInfo, startedAt: performance.now(), events: [], droppedEvents: 0 } : null
+    if (state) mediaTests.set(testInfo, state)
+    mediaPhase(state, 'fixture browser launch started')
     const browser = await playwright[browserName].launch({ ...launchOptions, headless, channel })
-    try { await use(browser) } finally { await browser.close() }
+    mediaPhase(state, 'fixture browser launch finished')
+    if (state) browser.on('disconnected', () => mediaPhase(state, 'fixture browser disconnected'))
+    try { await use(browser) } finally {
+      mediaPhase(state, 'fixture browser close started', { status: testInfo.status })
+      try { await browser.close(); mediaPhase(state, 'fixture browser close finished') }
+      finally {
+        if (state) {
+          try {
+            const target = testInfo.outputPath('media-phase-observations.json')
+            await mkdir(path.dirname(target), { recursive: true })
+            await writeFile(target, JSON.stringify({ status: testInfo.status,
+              clockOrigin: 'custom browser fixture start; remaining estimate is not runner authority',
+              events: state.events, droppedEvents: state.droppedEvents }, null, 2) + '\n')
+            await testInfo.attach('Media phase and cleanup observations', { path: target, contentType: 'application/json' })
+          } catch (error) { console.warn('MR phase evidence unavailable:', safeMessage(error.message)) }
+          finally { mediaTests.delete(testInfo) }
+        }
+      }
+    }
   },
   page: async ({ testBrowser, contextOptions, baseURL, viewport, locale, serviceWorkers }, use, testInfo) => {
     const root = path.resolve(process.env.STARMAP_BROWSER_TEST_ROOT ?? '')
     if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('starmap-browser-')) throw new Error('Browser observations require isolated synthetic data.')
     const context = await testBrowser.newContext({ ...contextOptions, baseURL, viewport, locale, serviceWorkers })
     const page = await context.newPage()
+    const media = mediaTests.get(testInfo)
+    if (media) {
+      mediaPhases.set(page, media)
+      mediaPhase(media, 'fixture page ready')
+      context.on('close', () => mediaPhase(media, 'fixture context closed'))
+    }
     const errors = []
     page.on('pageerror', (error) => errors.push(error.message))
     const diagnostic = diagnosticFiles.has(path.basename(testInfo.file))
@@ -135,7 +204,9 @@ export const test = base.extend({
           await testInfo.attach('Reload evidence collection error', { body: Buffer.from(safeMessage(error.message)), contentType: 'text/plain' })
         }
       }
+      mediaPhase(media, 'fixture context close started', { status: testInfo.status })
       await context.close()
+      mediaPhase(media, 'fixture context close finished')
     }
   },
 })
