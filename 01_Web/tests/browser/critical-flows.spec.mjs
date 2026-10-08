@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, saveAndWaitForReload } from './helpers.mjs'
 import { fixtureIds } from '../../scripts/browser-fixture.mjs'
 import sharp from 'sharp'
 
@@ -41,16 +41,18 @@ test('country/city selection and shortcut preserve place identity, refuse duplic
   const beforeTravel = await readFixture('travel')
   let writes = 0
   page.on('request', (request) => { if (request.url().endsWith('/editor/wanttogo') && request.method() === 'POST') writes++ })
-  const saved = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo') && response.request().method() === 'POST')
-  await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).evaluate((button) => { button.click(); button.click() })
-  expect((await saved).status()).toBe(201)
+  await saveAndWaitForReload(page, async () => {
+    const saved = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo') && response.request().method() === 'POST')
+    await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).evaluate((button) => { button.click(); button.click() })
+    expect((await saved).status()).toBe(201)
+  })
   await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
   expect(writes).toBe(1)
   expect((await readFixture('wantToGo')).items.filter((item) => item.placeId === fixtureIds.reykjavik)).toHaveLength(1)
   expect(await readFixture('places')).toEqual(beforePlaces)
   expect(await readFixture('travel')).toEqual(beforeTravel)
   await openCollection(page)
-  await page.getByRole('button', { name: 'Hide: Reykjavik', exact: true }).click()
+  await saveAndWaitForReload(page, () => page.getByRole('button', { name: 'Hide: Reykjavik', exact: true }).click())
   await expect(page.getByRole('button', { name: 'Restore: Reykjavik', exact: true })).toBeVisible()
   await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()

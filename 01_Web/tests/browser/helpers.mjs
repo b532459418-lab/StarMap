@@ -5,7 +5,7 @@ import os from 'node:os'
 import { fixtureFileNames } from '../../scripts/browser-fixture.mjs'
 
 const reloadObservations = new WeakMap()
-const diagnosticFiles = new Set(['time-filter-boundaries.spec.mjs', 'time-filter-camera.spec.mjs'])
+const diagnosticFiles = new Set(['critical-flows.spec.mjs', 'time-filter-boundaries.spec.mjs', 'time-filter-camera.spec.mjs', 'time-filters.spec.mjs'])
 const safePath = value => {
   try { const url = new URL(value); return url.origin === 'http://127.0.0.1:5173' ? url.pathname : '[other origin]' } catch { return '[invalid URL]' }
 }
@@ -25,12 +25,20 @@ async function readReloadState(page) {
           view = raw && Object.fromEntries(['activePage', 'selectionMode', 'selectedCityId', 'selectedCountryId', 'selectedDayId'].map(key => [key, raw[key]]))
         } catch { view = { unreadable: true } }
         const navigation = performance.getEntriesByType('navigation')[0]
+        const collectionScroll = document.querySelector('.atlas-collection-stage .atlas-journey-scroll')
+        const bounds = node => {
+          const rect = node.getBoundingClientRect()
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+        }
         return {
           observedAt: Date.now(), pathname: location.pathname, readyState: document.readyState,
           visibility: document.visibilityState, view,
           headings: [...document.querySelectorAll('.atlas-info-panel h2')].map(node => node.textContent?.slice(0, 80)),
           collectionCards: document.querySelectorAll('.collection-card').length,
           canvasCount: document.querySelectorAll('.cesium-widget canvas').length,
+          viewport: { width: innerWidth, height: innerHeight },
+          collectionScroll: collectionScroll && { scrollTop: collectionScroll.scrollTop, scrollLeft: collectionScroll.scrollLeft, ...bounds(collectionScroll) },
+          collectionActions: [...document.querySelectorAll('.collection-card .collection-action-primary')].slice(0, 12).map(node => ({ label: node.getAttribute('aria-label')?.slice(0, 100), disabled: node.disabled, ...bounds(node) })),
           navigation: navigation && Object.fromEntries(['type', 'startTime', 'domInteractive', 'domContentLoadedEventEnd', 'loadEventEnd', 'duration'].map(key => [key, navigation[key]])),
         }
       }),
@@ -47,6 +55,18 @@ export function recordReloadCheckpoint(page, label) {
   const probe = readReloadState(page).then(snapshot => observe(state, { event: 'snapshot', label, snapshot }))
   state.pending.add(probe)
   void probe.finally(() => state.pending.delete(probe))
+}
+// Register before the save; waiting for the current document's load state alone
+// can finish before the save triggers its same-URL reload. Keep configured
+// navigation/action deadlines and all subsequent assertions unchanged.
+export async function saveAndWaitForReload(page, save) {
+  const expectedUrl = page.url()
+  recordReloadCheckpoint(page, 'before save and same-URL reload')
+  const reloaded = page.waitForEvent('framenavigated', {
+    predicate: frame => frame === page.mainFrame() && frame.url() === expectedUrl,
+  }).then(frame => frame.waitForLoadState('domcontentloaded'))
+  await Promise.all([reloaded, save()])
+  recordReloadCheckpoint(page, 'saved document reached DOM content loaded')
 }
 export async function retainReloadFailure(page, testInfo) {
   const state = reloadObservations.get(page)

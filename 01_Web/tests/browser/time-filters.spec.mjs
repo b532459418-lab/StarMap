@@ -1,4 +1,4 @@
-import { test, expect, openMap, openCollection, readFixture } from './helpers.mjs'
+import { test, expect, openMap, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure } from './helpers.mjs'
 import { createBrowserFixture, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -15,7 +15,8 @@ const panel = (page) => page.locator('#atlas-time-query-panel')
 const layer = (page, id = 'travel') => panel(page).locator(`.layer-time-filter[data-layer="${id}"]`)
 
 test.beforeEach(async () => { await createBrowserFixture(root) })
-test.afterEach(async ({ page }) => {
+test.afterEach(async ({ page }, testInfo) => {
+  await retainReloadFailure(page, testInfo)
   await page.close()
   await createBrowserFixture(root)
 })
@@ -208,12 +209,24 @@ test('Collection retains colliding sources and explicit viewing preserves the ex
   await page.getByRole('combobox', { name: 'Interface language' }).selectOption('zh-Hans')
   await expect(planned).toContainText('计划到访：2027-12-30 – 2028-01-03')
   await page.getByRole('combobox', { name: '界面语言' }).selectOption('en')
-  await saved.getByRole('button', { name: 'View on map: Bergen', exact: true }).click()
+  const savedView = saved.getByRole('button', { name: 'View on map: Bergen', exact: true })
+  recordReloadCheckpoint(page, 'saved source before viewport preparation')
+  await savedView.scrollIntoViewIfNeeded()
+  await expect(savedView).toBeInViewport()
+  recordReloadCheckpoint(page, 'saved source ready for real click')
+  await savedView.click()
+  recordReloadCheckpoint(page, 'saved source click completed')
   await expect(page.locator('.atlas-wtg-card')).toContainText('Synthetic saved source')
   await expect(page.locator('.atlas-wtg-card [data-time-filter-outside]')).toBeVisible()
   expect(JSON.parse(await savedFilters(page)).filters.want_to_go.from).toBe('2028-01-01')
   await openCollection(page)
-  await planned.getByRole('button', { name: 'View on map: Bergen', exact: true }).click()
+  const plannedView = planned.getByRole('button', { name: 'View on map: Bergen', exact: true })
+  recordReloadCheckpoint(page, 'planned source before viewport preparation')
+  await plannedView.scrollIntoViewIfNeeded()
+  await expect(plannedView).toBeInViewport()
+  recordReloadCheckpoint(page, 'planned source ready for real click')
+  await plannedView.click()
+  recordReloadCheckpoint(page, 'planned source click completed')
   await expect(page.locator('.atlas-wtg-card')).toContainText('Synthetic planned source')
   await expect(page.locator('.atlas-wtg-card')).toContainText('2027-12-30')
   await expect(page.locator('.atlas-wtg-card')).toContainText('2028-01-03')
