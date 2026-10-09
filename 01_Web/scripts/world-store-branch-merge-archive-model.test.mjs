@@ -64,6 +64,17 @@ const refuses = action => assert.throws(action, error => typeof error.code === '
 function rehash(value) { const raw = { ...value }; delete raw.modelDigest; value.modelDigest = digest(raw); return value }
 const key = row => operationIdentityKey(row.identity, row.operationId)
 
+test('over-budget arrays are refused before allocating their complete index-key list', () => {
+  const input = ['', '', ''], ownKeys = Reflect.ownKeys
+  let enumerations = 0
+  Reflect.ownKeys = value => { if (value === input) enumerations++; return ownKeys(value) }
+  try {
+    for (const action of [read, index]) assert.throws(() => action(input, {}, { maxNodes: 4 }),
+      error => error.code === 'E_BRANCH_MERGE_ARCHIVE_NODES')
+  } finally { Reflect.ownKeys = ownKeys }
+  assert.equal(enumerations, 0)
+})
+
 test('object, array, nested and revoked Proxies are refused before any caller trap executes', () => {
   const { target, request, model } = incoming()
   let calls = 0

@@ -54,7 +54,9 @@ function boundedJson(values, limits) {
     const array = Array.isArray(value), proto = Object.getPrototypeOf(value)
     if (array ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) fail('E_BRANCH_MERGE_ARCHIVE_JSON')
     if (active.has(value)) fail('E_BRANCH_MERGE_ARCHIVE_CYCLE')
-    const keys = Reflect.ownKeys(value), length = array ? Object.getOwnPropertyDescriptor(value, 'length').value : keys.length
+    const arrayLength = array ? Object.getOwnPropertyDescriptor(value, 'length').value : null
+    if (array && arrayLength > limits.maxNodes - nodes) fail('E_BRANCH_MERGE_ARCHIVE_NODES')
+    const keys = Reflect.ownKeys(value), length = array ? arrayLength : keys.length
     if (array && keys.length !== length + 1) fail('E_BRANCH_MERGE_ARCHIVE_JSON')
     if (length > limits.maxNodes - nodes) fail('E_BRANCH_MERGE_ARCHIVE_NODES')
     nodes += length // Reserve queued children before allocating their work items.
