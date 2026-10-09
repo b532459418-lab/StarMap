@@ -2,9 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, mkdir, rm, cp, copyFile, rename, readFile, writeFile, link, unlink, symlink } from 'node:fs/promises'
-import { realpathSync, existsSync, renameSync, copyFileSync } from 'node:fs'
+import { realpathSync, existsSync, renameSync, copyFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { spawn, execFile } from 'node:child_process'
+import { spawn, execFile, spawnSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
@@ -85,6 +85,58 @@ async function pausedWorker(t, value, spec) {
   return child
 }
 async function stop(child) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited }
+
+test('withSnapshot holds a real read transaction through synchronous callback and expires its verifier', async t => {
+  const value = await setup(t); create(value)
+  const store = open(t, value, value.a, { readOnly: true }), before = store.snapshot()
+  let escaped
+  const result = store.withSnapshot((saved, verify) => {
+    assert.deepEqual(saved, before); assert.ok(Object.isFrozen(saved)); assert.ok(Object.isFrozen(saved.events))
+    verify(); escaped = verify
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e',
+      'import {DatabaseSync} from "node:sqlite"; const db=new DatabaseSync(process.argv[1],{timeout:0}); try {db.exec("BEGIN EXCLUSIVE"); process.exitCode=3} catch(e) {console.log(e.errcode); process.exitCode=0} finally {db.close()}',
+      path.join(value.a, 'world.sqlite')], { encoding: 'utf8', timeout: 10000 })
+    assert.equal(child.status, 0, child.stderr); assert.match(child.stdout, /5/)
+    refuses(() => store.snapshot(), 'E_REPO_BUSY')
+    refuses(() => store.apply(editRequestFromSaved(saved)), 'E_REPO_READONLY')
+    return 'complete'
+  })
+  assert.equal(result, 'complete'); refuses(() => escaped(), 'E_MERGE_STORE_ASYNC')
+  assert.deepEqual(store.snapshot(), before)
+  const db = new DatabaseSync(path.join(value.a, 'world.sqlite'), { timeout: 0 })
+  try { db.exec('BEGIN EXCLUSIVE; ROLLBACK') } finally { db.close() }
+})
+
+function editRequestFromSaved(saved) {
+  const row = saved.projection.state.world.entries[0]
+  return operation({ id: 'readonly-refused', expectedRevision: saved.projection.state.revision,
+    action: { kind: 'commands', commands: [{ op: 'update', table: 'entries', id: row.id, expectedRevision: row.revision,
+      value: { ...row, revision: row.revision + 1, fields: { ...row.fields, note: 'refused' } } }] } }, saved)
+}
+
+test('withSnapshot rejects async/nonfunction callbacks and releases every failed read transaction', async t => {
+  const value = await setup(t); create(value)
+  const store = open(t, value), before = store.snapshot()
+  refuses(() => store.withSnapshot(undefined), 'E_MERGE_STORE_ASYNC')
+  refuses(() => store.withSnapshot(async () => before), 'E_MERGE_STORE_ASYNC')
+  refuses(() => store.withSnapshot(() => ({ then() {} })), 'E_MERGE_STORE_ASYNC')
+  refuses(() => store.withSnapshot(() => { throw new Error('callback failed') }), 'E_MERGE_STORE_IO')
+  assert.deepEqual(store.snapshot(), before)
+  assert.equal(store.apply(editRequest(store, 'after-failed-read', 'still writable')).status, 'committed')
+})
+
+test('withSnapshot verifies marker both before seal and after callback without changing original receipt rules', async t => {
+  const value = await setup(t); create(value)
+  const store = open(t, value, value.a, { readOnly: true }), before = store.snapshot()
+  const marker = path.join(value.a, 'binding.json'), original = await readFile(marker)
+  try {
+    refuses(() => store.withSnapshot((_saved, verify) => { writeFileSync(marker, '{}'); verify() }), 'E_MERGE_STORE_BINDING')
+  } finally { writeFileSync(marker, original) }
+  try {
+    refuses(() => store.withSnapshot(() => { writeFileSync(marker, '{}'); return 'unverified' }), 'E_MERGE_STORE_BINDING')
+  } finally { writeFileSync(marker, original) }
+  assert.deepEqual(store.snapshot(), before); assert.equal(store.findOperation('readonly-refused'), undefined)
+})
 
 test('initial creation commits a distinct schema and a complete native anchor with fresh identity', async t => {
   const value = await setup(t), before = await readFile(path.join(value.source, 'world.sqlite'))
