@@ -64,6 +64,26 @@ const refuses = action => assert.throws(action, error => typeof error.code === '
 function rehash(value) { const raw = { ...value }; delete raw.modelDigest; value.modelDigest = digest(raw); return value }
 const key = row => operationIdentityKey(row.identity, row.operationId)
 
+test('object, array, nested and revoked Proxies are refused before any caller trap executes', () => {
+  const { target, request, model } = incoming()
+  let calls = 0
+  const trap = () => { calls++; throw new Error('Proxy trap must never run') }
+  const handler = { get: trap, getPrototypeOf: trap, ownKeys: trap, getOwnPropertyDescriptor: trap }
+  const object = new Proxy(model, handler), array = new Proxy([], handler)
+  const revokedObject = Proxy.revocable({}, handler), revokedArray = Proxy.revocable([], handler)
+  revokedObject.revoke(); revokedArray.revoke()
+  const refused = action => assert.throws(action, error => error.code === 'E_BRANCH_MERGE_ARCHIVE_JSON')
+  for (const value of [object, array, revokedObject.proxy, revokedArray.proxy]) {
+    refused(() => read(value)); refused(() => index(value))
+    refused(() => create(value, request)); refused(() => create(target, value))
+    refused(() => read(model, value)); refused(() => index(model, value))
+    refused(() => read(model, {}, value)); refused(() => index(model, {}, value))
+    refused(() => read({ ...model, state: value }))
+  }
+  assert.equal(calls, 0)
+  assert.deepEqual(read(model), model)
+})
+
 test('the complete model replays PR58 exactly, freezes its output and preserves inputs without persistence or authority', () => {
   const { target, source, request } = incoming(), before = structuredClone({ target, source, request })
   const model = create(target, request), expected = replay(request, target)

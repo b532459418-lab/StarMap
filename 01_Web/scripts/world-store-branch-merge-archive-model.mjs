@@ -3,6 +3,7 @@
  * No IO, locks, ID allocation, local approval or committed receipts are issued.
  */
 import { freezeCopy, jsonKey, shape } from '../src/worldgraph/store/schema.ts'
+import { types } from 'node:util'
 import { RepositoryError } from './world-store-repository.mjs'
 import { repositoryStateDigest as digest } from './world-store-repository-v2-contract.mjs'
 import { readRepositoryArchive, MAX_BRANCH_ANCESTRY } from './world-store-branch-snapshot.mjs'
@@ -49,6 +50,7 @@ function boundedJson(values, limits) {
       addBytes(Buffer.byteLength(JSON.stringify(value), 'utf8')); continue
     }
     if (!value || typeof value !== 'object') fail('E_BRANCH_MERGE_ARCHIVE_JSON')
+    if (types.isProxy(value)) fail('E_BRANCH_MERGE_ARCHIVE_JSON')
     const array = Array.isArray(value), proto = Object.getPrototypeOf(value)
     if (array ? proto !== Array.prototype : proto !== Object.prototype && proto !== null) fail('E_BRANCH_MERGE_ARCHIVE_JSON')
     if (active.has(value)) fail('E_BRANCH_MERGE_ARCHIVE_CYCLE')
