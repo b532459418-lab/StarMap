@@ -10,7 +10,8 @@ import { readRepositoryBranchMergeArchiveModel, checkRepositoryMergeArchiveInput
 import { readRepositoryContinuousMergeModel as read, indexRepositoryContinuousMergeModel as index,
   previewRepositoryContinuousBranchHistory as preview, createRepositoryContinuousBranchMergePlan as plan,
   simulateRepositoryContinuousBranchMerge as simulate, createRepositoryContinuousBranchMergeRequest as request,
-  replayRepositoryContinuousBranchMerge as replay } from './world-store-branch-continuous-merge-model.mjs'
+  replayRepositoryContinuousBranchMerge as replay, createRepositoryContinuousOperationRequest as ordinaryRequest,
+  replayRepositoryContinuousOperation as ordinaryReplay } from './world-store-branch-continuous-merge-model.mjs'
 
 function parent(family = 'synthetic-family') {
   const state = readRepositoryState({ format: 'starmap.world-repository', formatVersion: 1, revision: 0, world: seed().world,
@@ -62,6 +63,15 @@ const merge = (target, source, operationId, select) => replay(commit(target, sou
 const refuses = (action, code) => assert.throws(action, error => code ? error.code === code : typeof error.code === 'string')
 function rehash(value) { const raw = { ...value }; delete raw.modelDigest; return { ...raw, modelDigest: digest(raw) } }
 function first() { const [target, source, third, fourth] = siblings(); edit(source, 'foreign', 'first'); return { target, source, third, fourth, model: merge(target, source, 'merge-1') } }
+function ordinary(target, name, action, identities) {
+  const input = { id: name, expectedRevision: target.state.revision, action, ...(identities ? { identities } : {}) }
+  return ordinaryReplay(ordinaryRequest(input, target), target)
+}
+function modeledEdit(target, name, note) {
+  const row = target.state.world.entries[0]
+  return ordinary(target, name, { kind: 'commands', commands: [{ op: 'update', table: 'entries', id: row.id,
+    expectedRevision: row.revision, value: { ...row, revision: row.revision + 1, fields: { ...row.fields, note } } }] })
+}
 
 test('two successive target merges replay complete sources, preserve descriptor and keep hypothetical receipts separate', () => {
   const { target, source, third, model } = first(), before = structuredClone({ target, source, third, model })
@@ -363,4 +373,186 @@ test('tight node preflight rejects arrays before payload keys enumeration', () =
     refuses(() => inspectRepositoryMergeArchiveInputs([payload], { maxNodes: 3 }), 'E_BRANCH_MERGE_ARCHIVE_NODES')
   } finally { Reflect.ownKeys = ownKeys }
   assert.equal(enumerations, 0)
+})
+
+test('PR61 version1 merge-only model and whole archive digests remain byte-for-byte compatible', () => {
+  // Oracle computed from the exact merged PR61 source, not this implementation.
+  const { model } = first()
+  assert.equal(model.formatVersion, 1)
+  assert.equal(model.modelDigest, '78a9f8dab91224b3474da4b0057efda2b50b7b5d97d9aa6d7f0bc65f55c966b1')
+  assert.equal(digest(model), 'a21212ac7901445f84853653364de08c3c55afb7585c78a01f4a5a669ba3389a')
+  assert.deepEqual(read(model), model)
+})
+
+test('edit merge edit merge replays a complete mixed DAG without mutating its inputs', () => {
+  const [target, source, third] = siblings(), original = structuredClone(target)
+  const edited = modeledEdit(target, 'before-merge', 'local before')
+  edit(source, 'foreign', 'source before')
+  const merged = merge(edited, source, 'merge-first'), afterEdit = modeledEdit(merged, 'after-merge', 'local after')
+  edit(third, 'third-edit', 'source after')
+  const final = merge(afterEdit, third, 'merge-second')
+  assert.equal(final.formatVersion, 2); assert.equal(final.state.world.entries[0].fields.note, 'source after')
+  assert.equal(final.state.revision, target.state.revision + 4)
+  assert.deepEqual(read(final), final); assert.deepEqual(target, original)
+  assert.equal(final.nodes.filter(row => row.kind === 'operation').length, 2)
+  assert.equal(final.nodes.filter(row => row.kind === 'merge').length, 2)
+  assert.equal(index(final).hypotheticalOperations.length, 4)
+  assert.equal(index(final).archivedOperations.length, 2)
+  assert.deepEqual(final.descriptor, target.descriptor)
+  assert.ok(Object.isFrozen(final.nodes)); assert.ok(Object.isFrozen(final.state.world.entries[0]))
+})
+
+test('mixed history can become an incoming source with all ordinary and merge nodes intact', () => {
+  const { model, third } = first(), edited = modeledEdit(model, 'incoming-ordinary', 'mixed source')
+  const final = merge(third, edited, 'adopt-mixed')
+  assert.equal(final.formatVersion, 2); assert.equal(final.state.world.entries[0].fields.note, 'mixed source')
+  for (const node of edited.nodes) assert.ok(final.nodes.some(row => row.nodeId === node.nodeId))
+  assert.equal(index(final).hypotheticalOperations.length, 3)
+  assert.deepEqual(read(final), final)
+})
+
+test('ordinary stage merge accept/reject uses genuine pure candidate rules and remains hypothetical', () => {
+  for (const action of ['accept-proposal', 'reject-proposal']) {
+    const [target, source, third] = siblings()
+    const staged = ordinary(target, 'stage', { kind: 'stage-proposal', proposal: candidate() })
+    const merged = merge(staged, source, 'between')
+    const operation = { id: 'decide', expectedRevision: merged.state.revision, action: { kind: action,
+      proposalId: candidate().id, ...(action === 'accept-proposal' ? { decision: { reviewId: 'modeled-review', acceptedAt: NOW } } : {}) } }
+    const expected = transitionRepositoryState(merged.state, operation)
+    const decided = ordinaryReplay(ordinaryRequest(operation, merged), merged)
+    assert.deepEqual(decided.state, expected)
+    assert.equal(decided.state.proposals[0].status, action === 'accept-proposal' ? 'accepted' : 'rejected')
+    assert.equal(decided.newLocalApprovalIssued, false); assert.equal(decided.persisted, false)
+    const retained = merge(decided, third, 'after-decision')
+    assert.equal(retained.state.proposals[0].status, decided.state.proposals[0].status)
+    if (action === 'accept-proposal') assert.deepEqual(retained.state.world.reviews, decided.state.world.reviews)
+    for (const row of index(retained).hypotheticalOperations) { assert.ok(!Object.hasOwn(row, 'receipt')); assert.ok(!Object.hasOwn(row, 'status')) }
+  }
+})
+
+test('ordinary requests bind full history even when two target states are identical', () => {
+  const [target] = siblings(), action = { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: target.state.world.entries[0] }] }
+  const a = ordinary(target, 'history-a', action), b = ordinary(target, 'history-b', action)
+  assert.deepEqual(a.state, b.state); assert.notEqual(a.modelDigest, b.modelDigest)
+  const value = ordinaryRequest({ id: 'next', expectedRevision: a.state.revision, action }, a)
+  refuses(() => ordinaryReplay(value, b), 'E_CONTINUOUS_OPERATION_STALE')
+  const stale = { id: 'old-revision', expectedRevision: 0, action }
+  refuses(() => ordinaryRequest(stale, a), 'E_REPO_STALE')
+})
+
+test('ordinary and merge operations share the same local namespace collision boundary', () => {
+  const { model, third } = first(), row = model.state.world.entries[0]
+  const action = { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: row }] }
+  refuses(() => ordinary(model, 'merge-1', action), 'E_REPO_OPERATION_CONFLICT')
+  const withOperation = ordinary(model, 'ordinary-id', action)
+  refuses(() => commit(withOperation, third, 'ordinary-id'), 'E_REPO_OPERATION_CONFLICT')
+  refuses(() => ordinary(withOperation, 'ordinary-id', action), 'E_REPO_OPERATION_CONFLICT')
+  const distinctForeign = ordinary(model, 'foreign', action)
+  assert.equal(index(distinctForeign).archivedOperations.filter(row => row.operationId === 'foreign').length, 1)
+  assert.equal(index(distinctForeign).hypotheticalOperations.filter(row => row.operationId === 'foreign').length, 1)
+})
+
+test('ordinary accepts only four supported actions, never the bare merge shortcut or forged receipt fields', () => {
+  const { model } = first()
+  for (const kind of ['merge', 'authorize', 'unknown']) refuses(() => ordinaryRequest({ id: 'bad', expectedRevision: model.state.revision,
+    action: { kind, incoming: model.state.world } }, model), 'E_CONTINUOUS_OPERATION_KIND')
+  const input = { id: 'forged', expectedRevision: model.state.revision,
+    action: { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: model.state.world.entries[0] }] }, receipt: { status: 'committed' } }
+  refuses(() => ordinaryRequest(input, model))
+  const result = ordinary(model, 'normal', { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: model.state.world.entries[0] }] })
+  assert.deepEqual(result.commands, []); assert.equal(result.persisted, false); assert.equal(result.executable, false)
+  assert.ok(result.nodes.find(row => row.kind === 'operation').request.operation.action.commands.length)
+  assert.ok(!Object.hasOwn(result, 'receipt'))
+})
+
+test('tampered ordinary envelope and stored event reject despite recomputed node/model digests', () => {
+  const { model } = first(), row = model.state.world.entries[0]
+  const input = { id: 'ordinary', expectedRevision: model.state.revision,
+    action: { kind: 'commands', commands: [{ op: 'update', table: 'entries', id: row.id, expectedRevision: row.revision,
+      value: { ...row, revision: row.revision + 1, fields: { ...row.fields, note: 'next' } } }] } }
+  const value = ordinaryRequest(input, model), result = ordinaryReplay(value, model)
+  for (const mutate of [r => { r.format = 'forged' }, r => { r.formatVersion = 99 }, r => { r.policyDigest = 'f'.repeat(64) },
+    r => { r.resultDigest = 'e'.repeat(64) }, r => { r.target.archiveDigest = 'd'.repeat(64) },
+    r => { r.operation.action.commands[0].value.fields.note = 'changed' }]) {
+    const envelope = structuredClone(value); mutate(envelope); refuses(() => ordinaryReplay(envelope, model))
+    const graph = structuredClone(result), node = graph.nodes.find(row => row.kind === 'operation')
+    mutate(node.request)
+    const raw = { ...node }; delete raw.nodeId; node.nodeId = digest(raw); graph.headId = node.nodeId
+    graph.nodes.sort((a, b) => a.nodeId < b.nodeId ? -1 : 1)
+    refuses(() => read(rehash(graph)))
+  }
+  const forged = structuredClone(result); forged.state.revision++
+  refuses(() => read(rehash(forged)), 'E_CONTINUOUS_MERGE_STALE')
+})
+
+test('version2 is derived from ordinary events, not a freely retaggable version1 archive', () => {
+  const { model } = first(), mixed = modeledEdit(model, 'ordinary', 'next')
+  const fake1 = structuredClone(mixed); fake1.formatVersion = 1
+  refuses(() => read(rehash(fake1)), 'E_CONTINUOUS_MERGE_VERSION')
+  const fake2 = structuredClone(model); fake2.formatVersion = 2
+  refuses(() => read(rehash(fake2)), 'E_CONTINUOUS_MERGE_STALE')
+  refuses(() => readRepositoryArchive(mixed), 'E_BRANCH_VERSION')
+})
+
+test('more than eight ordinary edits do not consume branch ancestry but still obey event quotas', () => {
+  const [target, source] = siblings()
+  let model = target
+  for (let i = 0; i < 10; i++) model = modeledEdit(model, 'edit-' + i, 'note-' + i)
+  assert.equal(index(model).hypotheticalOperations.length, 10)
+  assert.deepEqual(read(model, {}, { maxAncestry: 1 }), model)
+  // Eleven graph nodes fit the outer shape, but the v3 leaf's complete v2
+  // ancestor plus ten events need twelve distinct archived/event records.
+  refuses(() => read(model, {}, { maxArchives: 11 }), 'E_BRANCH_MERGE_ARCHIVE_COUNT')
+  const prepared = prepare(model, source), value = request('after-many', prepared.simulation, prepared.plan, prepared.report, model, source, {}, { maxAncestry: 2 })
+  assert.equal(replay(value, model, {}, { maxAncestry: 2 }).formatVersion, 2)
+})
+
+test('ordinary nodes do not hide over-deep merge ancestry', () => {
+  const [target, source] = siblings()
+  let model = modeledEdit(target, 'ordinary-first', 'local')
+  for (let i = 0; i < 7; i++) model = merge(model, source, 'depth-' + i)
+  const edited = modeledEdit(model, 'ordinary-last', 'last')
+  assert.deepEqual(read(edited), edited)
+  refuses(() => commit(edited, source, 'depth-nine'), 'E_BRANCH_ANCESTRY_LIMIT')
+  refuses(() => read(edited, {}, { maxAncestry: 7 }), 'E_BRANCH_ANCESTRY_LIMIT')
+})
+
+test('ordinary commands retain canonical identity and permanent tombstone validation', () => {
+  const { model } = first(), row = model.state.world.entries[0]
+  refuses(() => ordinary(model, 'reassign', { kind: 'commands', commands: [{ op: 'update', table: 'entries', id: row.id,
+    expectedRevision: row.revision, value: { ...row, revision: row.revision + 1, source: { ...row.source, recordId: 'other' } } }] }), 'E_SOURCE_IDENTITY')
+  const added = ordinary(model, 'add', { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: entry(60) }] })
+  const removed = ordinary(added, 'remove', { kind: 'commands', commands: [{ op: 'remove', table: 'entries', id: id(60), expectedRevision: 0 }] })
+  refuses(() => ordinary(removed, 'revive', { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: entry(60) }] }))
+  assert.ok(removed.state.retired.some(value => value.table === 'entries' && value.id === id(60)))
+})
+
+test('ordinary identity additions are explicit data, validated against the adopted canonical rows', () => {
+  const { model } = first(), mapping = { kind: 'entry', sourceId: 'v2:want-to-go', recordId: 'foreign-record', id: id(60) }
+  const source = { id: 'v2:want-to-go', revision: 0, title: { names: { en: 'Synthetic source' } }, origin: 'import' }
+  const mapped = { ...entry(60), source: { sourceId: 'v2:want-to-go', recordId: 'foreign-record', evidenceIds: [] } }
+  const action = { kind: 'commands', commands: [{ op: 'create', table: 'sources', value: source }, { op: 'create', table: 'entries', value: mapped }] }
+  const after = ordinary(model, 'allocate-data', action, [mapping])
+  assert.deepEqual(after.state.identities.identities, [mapping])
+  assert.equal(after.newLocalApprovalIssued, false); assert.equal(after.executable, false)
+  refuses(() => ordinary(model, 'wrong-allocation', action, [{ ...mapping, id: id(61) }]))
+})
+
+test('ordinary APIs reject Proxy/getter/policy/limits before executing caller accessors', () => {
+  const { model } = first(), input = { id: 'normal', expectedRevision: model.state.revision,
+    action: { kind: 'commands', commands: [{ op: 'create', table: 'entries', value: model.state.world.entries[0] }] } }
+  const value = ordinaryRequest(input, model)
+  let calls = 0
+  const trap = () => { calls++; throw new Error('must not execute') }
+  const proxy = new Proxy({}, { get: trap, getPrototypeOf: trap, ownKeys: trap, getOwnPropertyDescriptor: trap })
+  const getter = { get action() { return trap() } }, revoked = Proxy.revocable([], {}); revoked.revoke()
+  for (const bad of [proxy, getter, revoked.proxy]) {
+    for (const action of [() => ordinaryRequest(bad, model), () => ordinaryRequest(input, bad), () => ordinaryRequest(input, model, bad),
+      () => ordinaryRequest(input, model, {}, bad), () => ordinaryReplay(bad, model), () => ordinaryReplay(value, bad),
+      () => ordinaryReplay(value, model, bad), () => ordinaryReplay(value, model, {}, bad)]) refuses(action, 'E_BRANCH_MERGE_ARCHIVE_JSON')
+  }
+  assert.equal(calls, 0)
+  for (const limits of [{ maxNodes: 3 }, { maxBytes: 10 }, { maxArchives: 4 }, { maxAncestry: 1 }]) {
+    refuses(() => ordinaryRequest(input, model, {}, limits)); refuses(() => ordinaryReplay(value, model, {}, limits))
+  }
 })
