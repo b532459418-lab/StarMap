@@ -13,6 +13,11 @@ const content = row => { const value = { ...row }; delete value.revision; return
 export function simulateRepositoryBranchMerge(plan, report, targetInput, sourceInput, policy = {}) {
   const current = assertRepositoryBranchMergePlanCurrent(plan, report, targetInput, sourceInput, policy)
   const target = readRepositoryArchive(targetInput, policy).state, source = readRepositoryArchive(sourceInput, policy).state
+  return simulateValidatedRepositoryBranchMerge(current, target, source, policy)
+}
+
+/** Pure combination kernel; no claimed caller validation is persisted. */
+export function simulateValidatedRepositoryBranchMerge(current, target, source, policy = {}) {
   const candidate = structuredClone(target), decisions = new Map(current.decisions.map(row => [row.itemId, row.choice]))
   const retired = new Map(candidate.retired.map(row => [jsonKey([row.table, row.id]), row]))
   const rows = new Map(STORE_TABLES.map(table => [table, new Map(candidate.world[table].map(row => [row.id, row]))]))

@@ -13,7 +13,7 @@ const retiredKey = row => jsonKey([row.table, row.id])
 const branchKey = identity => jsonKey([identity.libraryId, identity.branchId])
 const fail = code => { throw new RepositoryError(code) }
 
-function historyIndex(archive) {
+export function indexValidatedRepositoryBranchHistory(archive) {
   const operations = new Map(), branches = new Map(), checkpoints = [], legacy = new Map()
   const checkpoint = (identity, state, historyDigest) => {
     const stateDigest = digest(state)
@@ -155,12 +155,24 @@ export function previewRepositoryBranchHistory(targetInput, sourceInput, policy 
   validateJson(policy)
   policy = freezeCopy(policy)
   const target = readRepositoryArchive(targetInput, policy), source = readRepositoryArchive(sourceInput, policy)
+  const targetHistory = indexValidatedRepositoryBranchHistory(target), sourceHistory = indexValidatedRepositoryBranchHistory(source)
   const targetRef = branchSourceReference(target), sourceRef = branchSourceReference(source)
-  const conflicts = [], targetHistory = historyIndex(target), sourceHistory = historyIndex(source)
+  const sameFamily = targetRef.identityStatus === 'known' && sourceRef.identityStatus === 'known'
+    && targetRef.identity.libraryId === sourceRef.identity.libraryId
+  return previewValidatedRepositoryBranchHistory(target, source, policy, targetHistory, sourceHistory,
+    commonCheckpoint(targetHistory, sourceHistory, sameFamily))
+}
+
+/** Calculation kernel for already replayed archives and checked indexes.
+ * Public legacy entry points still validate only their supported v1/v2/v3.
+ */
+export function previewValidatedRepositoryBranchHistory(target, source, policy, targetHistory, sourceHistory, common, extraConflicts = [], references) {
+  const targetRef = references?.target ?? branchSourceReference(target), sourceRef = references?.source ?? branchSourceReference(source)
+  const conflicts = [...extraConflicts]
   const known = targetRef.identityStatus === 'known' && sourceRef.identityStatus === 'known'
   const sameFamily = known && targetRef.identity.libraryId === sourceRef.identity.libraryId
   if (known && !sameFamily) conflicts.push({ kind: 'library-family', current: targetRef.identity.libraryId, incoming: sourceRef.identity.libraryId })
-  const history = compareHistory(targetHistory, sourceHistory, conflicts), common = commonCheckpoint(targetHistory, sourceHistory, sameFamily)
+  const history = compareHistory(targetHistory, sourceHistory, conflicts)
   const state = compareState(target.state, source.state, common?.state, conflicts)
   const classification = conflicts.length ? 'conflict' : targetRef.archiveDigest === sourceRef.archiveDigest ? 'identical-archive'
     : !known ? 'identity-insufficient' : !common ? 'ancestry-unproven' : 'review-required'

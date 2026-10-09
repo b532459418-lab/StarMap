@@ -69,6 +69,7 @@ function boundedJson(values, limits) {
       stack.push({ value: descriptor.value, depth: entry.depth + 1 })
     }
   }
+  return { nodes, bytes }
 }
 function readLimits(value) {
   boundedJson([value], MAXIMUM)
@@ -77,6 +78,31 @@ function readLimits(value) {
     if (!Number.isSafeInteger(amount) || amount < 0 || amount > MAXIMUM[key]) fail('E_BRANCH_MERGE_ARCHIVE_LIMIT')
   }
   return { ...MAXIMUM, ...value }
+}
+
+/** Shared pure preflight: inspect data descriptors before any schema/hash work.
+ * Callers can only tighten the existing limits. This grants no authority.
+ */
+export function checkRepositoryMergeArchiveInputs(values, inputLimits = {}) {
+  return inspectRepositoryMergeArchiveInputs(values, inputLimits).limits
+}
+
+/** Usage is measured without serializing large strings or invoking accessors. */
+export function inspectRepositoryMergeArchiveInputs(values, inputLimits = {}) {
+  // The exported container itself is untrusted, before length/map access.
+  if (types.isProxy(values)) fail('E_BRANCH_MERGE_ARCHIVE_JSON')
+  const limits = readLimits(inputLimits)
+  if (!Array.isArray(values) || Object.getPrototypeOf(values) !== Array.prototype) fail('E_BRANCH_MERGE_ARCHIVE_JSON')
+  const length = Object.getOwnPropertyDescriptor(values, 'length').value
+  if (length > limits.maxNodes) fail('E_BRANCH_MERGE_ARCHIVE_NODES')
+  if (Reflect.ownKeys(values).length !== length + 1) fail('E_BRANCH_MERGE_ARCHIVE_JSON')
+  const roots = []
+  for (let i = 0; i < length; i++) {
+    const descriptor = Object.getOwnPropertyDescriptor(values, String(i))
+    if (!descriptor?.enumerable || !('value' in descriptor)) fail('E_BRANCH_MERGE_ARCHIVE_JSON')
+    roots.push(descriptor.value)
+  }
+  return { limits, ...boundedJson(roots, limits) }
 }
 
 // Enforce both chains before readRepositoryArchive recursively copies them.
