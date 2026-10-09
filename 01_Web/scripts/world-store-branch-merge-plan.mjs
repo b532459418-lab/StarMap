@@ -68,7 +68,14 @@ export function createRepositoryBranchMergePlan(report, targetInput, sourceInput
   if (!Array.isArray(choices)) fail('E_BRANCH_MERGE_CHOICES')
   const preview = assertRepositoryBranchHistoryCurrent(report, targetInput, sourceInput, policy)
   const target = readRepositoryArchive(targetInput, policy), source = readRepositoryArchive(sourceInput, policy)
-  const items = catalogue(preview, target.state, source.state), byId = new Map(items.map(row => [row.itemId, row]))
+  return planValidatedRepositoryBranchMerge(preview, target.state, source.state, choices)
+}
+
+/** Pure kernel; callers must replay archives and reconstruct the full preview. */
+export function planValidatedRepositoryBranchMerge(preview, targetState, sourceState, choices = []) {
+  validateJson(choices)
+  if (!Array.isArray(choices)) fail('E_BRANCH_MERGE_CHOICES')
+  const items = catalogue(preview, targetState, sourceState), byId = new Map(items.map(row => [row.itemId, row]))
   const selected = new Map()
   for (const row of choices) {
     shape(row, ['itemId', 'choice'])
@@ -79,7 +86,7 @@ export function createRepositoryBranchMergePlan(report, targetInput, sourceInput
   }
   const decisions = items.map(item => ({ itemId: item.itemId, choice: selected.get(item.itemId) ?? 'defer', explicit: selected.has(item.itemId) }))
   const blockingConflicts = preview.conflicts.filter(row => ['operation-identity', 'branch-genesis', 'branch-origin', 'library-family',
-    'identity-record', 'identity-id', 'identity-target-row'].includes(row.kind))
+    'identity-record', 'identity-id', 'identity-target-row', 'ambiguous-common-history'].includes(row.kind))
   const identical = preview.target.archiveDigest === preview.source.archiveDigest
   const blockingReasons = !identical && !preview.commonBase ? ['unproven-common-history'] : []
   const pending = decisions.filter(row => row.choice === 'defer').map(row => row.itemId)
