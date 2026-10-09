@@ -390,6 +390,21 @@ export function openRepositoryMergeStore(target, options = {}) {
   return {
     state() { return read(value => value.saved.projection.state) },
     snapshot() { return read(value => value.saved) },
+    withSnapshot(callback) {
+      if (typeof callback !== 'function') fail('E_MERGE_STORE_ASYNC')
+      return read(value => {
+        let active = true
+        const verify = () => {
+          if (!active) fail('E_MERGE_STORE_ASYNC')
+          verifyPath()
+        }
+        try {
+          const result = callback(value.saved, verify)
+          if (result && typeof result.then === 'function') fail('E_MERGE_STORE_ASYNC')
+          return result
+        } finally { active = false }
+      })
+    },
     findOperation(id) { opaqueId(id, 'operationId'); return read(value => value.receipts.get(id)) },
     apply(input, applyOptions = {}) {
       if (options.readOnly) fail('E_REPO_READONLY')
