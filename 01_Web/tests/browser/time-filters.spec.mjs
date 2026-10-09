@@ -1,4 +1,5 @@
-import { test, expect, openMap, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure } from './helpers.mjs'
+import { test, expect, openMap, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure,
+  screenshotWithObservations, retainScreenshotObservations, settleScreenshotObservations } from './helpers.mjs'
 import { createBrowserFixture, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -16,8 +17,10 @@ const layer = (page, id = 'travel') => panel(page).locator(`.layer-time-filter[d
 
 test.beforeEach(async () => { await createBrowserFixture(root) })
 test.afterEach(async ({ page }, testInfo) => {
+  await retainScreenshotObservations(page, testInfo)
   await retainReloadFailure(page, testInfo)
   await page.close()
+  await settleScreenshotObservations(page, testInfo)
   await createBrowserFixture(root)
 })
 
@@ -144,7 +147,7 @@ test('a cross-year visit belongs to both years in all time and only the queried 
   })
   expect(shell).toEqual({ mainScroll: 0, experienceScroll: 0, x: 0 })
   await mkdir(screenshots(), { recursive: true })
-  await page.screenshot({ path: path.join(screenshots(), 'ui-desktop-journey.png') })
+  await screenshotWithObservations(page, test.info(), { path: path.join(screenshots(), 'ui-desktop-journey.png') })
 })
 
 test('uncertain evidence is separated, year-only bounds exclude other years, and hidden records stay out', async ({ page }) => {
