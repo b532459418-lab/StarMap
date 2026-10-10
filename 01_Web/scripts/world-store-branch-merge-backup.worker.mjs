@@ -2,7 +2,8 @@
 import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { createRepositoryMergeBackupHost, backupRepositoryMergeStore } from './world-store-branch-merge-backup.mjs'
+import { createRepositoryMergeBackupHost, backupRepositoryMergeStore, restoreRepositoryMergeBackup } from './world-store-branch-merge-backup.mjs'
+import { createRepositoryMergeStoreHost } from './world-store-branch-merge-store.mjs'
 
 const file = process.argv[2]
 if (typeof file !== 'string' || !path.isAbsolute(file) || path.normalize(file) !== file
@@ -35,13 +36,17 @@ const spec = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buffer)
 if (spec.sandboxRoot !== lab) throw new Error('Invalid synthetic worker scope')
 const host = createRepositoryMergeBackupHost({ sandboxRoot: lab, hostId: 'synthetic-host', authorize: () => true })
 try {
-  backupRepositoryMergeStore(spec.source, spec.target, spec.preview, spec.operationId, { host, unsafeTestPhase(name) {
+  const options = { host, unsafeTestPhase(name) {
     if (name === spec.phase) {
       writeSync(1, 'paused:' + name + '\n')
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20000)
       throw new Error('Synthetic worker was not terminated in time')
     }
-  } })
+  } }
+  if (spec.kind === 'restore') {
+    options.restoreHost = createRepositoryMergeStoreHost({ sandboxRoot: lab, hostId: 'synthetic-host', authorize: () => true })
+    restoreRepositoryMergeBackup(spec.source, spec.target, spec.preview, spec.operationId, options)
+  } else backupRepositoryMergeStore(spec.source, spec.target, spec.preview, spec.operationId, options)
 } catch (error) {
   writeSync(2, JSON.stringify({ code: error.code ?? error.message }) + '\n')
   process.exitCode = 2

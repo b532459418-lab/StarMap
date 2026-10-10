@@ -4,12 +4,17 @@ import { seed, entry, id, candidate, NOW } from './world-store-repository.fixtur
 import { readRepositoryState, transitionRepositoryState } from './world-store-repository.mjs'
 import { repositoryStateDigest as digest } from './world-store-repository-v2-contract.mjs'
 import { previewRepositoryArchive, readRepositoryArchive } from './world-store-branch-snapshot.mjs'
+import { inspectRepositoryMergeArchiveInputs } from './world-store-branch-merge-archive-model.mjs'
 import { readRepositoryContinuousMergeModel } from './world-store-branch-continuous-merge-model.mjs'
 import { createRepositoryMergeSavedArchive as create, readRepositoryMergeSavedArchive as read,
   createRepositoryMergeStoreOperationRequest as operationRequest, createRepositoryMergeStoreRequest as mergeRequest,
   projectRepositoryMergeStoreRequest as project, appendRepositoryMergeSavedEvent as append,
   previewRepositoryMergeStore as preview, readRepositoryMergeStoreSource as readSource,
-  repositoryMergeStoreProjection as projection } from './world-store-branch-merge-store-contract.mjs'
+  repositoryMergeStoreProjection as projection, expectedRepositoryMergeRestoreReceipt as restoreReceipt,
+  createRepositoryMergeRestoredSavedArchive as createRestored, withRepositoryMergeSavedValidation as validationScope } from './world-store-branch-merge-store-contract.mjs'
+
+import { previewRepositorySavedBranchFork as forkPreview, createRepositorySavedBranchForkRequest as forkRequest,
+  replayRepositorySavedBranchFork as forkReplay } from './world-store-saved-branch-fork-contract.mjs'
 
 function root(family = 'synthetic-store-family') {
   const state = readRepositoryState({ format: 'starmap.world-repository', formatVersion: 1, revision: 0, world: seed().world,
@@ -232,4 +237,162 @@ test('cycles, sparse arrays and data with unexpected properties fail before norm
   refuses(() => read(cycle), 'E_BRANCH_MERGE_ARCHIVE_CYCLE')
   const sparse = structuredClone(value); sparse.events = Array(1); refuses(() => read(sparse), 'E_BRANCH_MERGE_ARCHIVE_JSON')
   const extra = structuredClone(value); extra.actualCommitted = true; refuses(() => read(rehash(extra)))
+})
+
+function restoreModel(saved, name = 'restored', operationId = 'restore-' + name, packageDigest = 'c'.repeat(64)) {
+  const input = { operationId, identity: { libraryId: saved.baseArchive.descriptor.identity.libraryId,
+    branchId: name, genesisId: name + '-initial' }, binding: { hostId: 'new-synthetic-host', locationDigest: 'b'.repeat(64) },
+  restoreContext: { kind: 'backup-restore', packageDigest } }
+  return forkReplay(forkRequest(forkPreview(saved), saved, input), saved)
+}
+function restored(saved, name = 'restored', operationId) {
+  const model = restoreModel(saved, name, operationId)
+  return createRestored(model, restoreReceipt(model))
+}
+
+test('Saved v2 initializes from the complete Saved fork model and independent continuous fork', () => {
+  const source = edited(local(), 'old-event'), model = restoreModel(source), comparison = restoreReceipt(model), value = createRestored(model, comparison)
+  assert.equal(value.formatVersion, 2); assert.deepEqual(read(value), value)
+  assert.deepEqual(value.baseArchive, model); assert.deepEqual(value.baseArchive.sourceArchive, source)
+  assert.deepEqual(value.initialization, { receipt: comparison }); assert.deepEqual(value.events, [])
+  assert.equal(value.projection.formatVersion, 3); assert.equal(value.projection.descriptor.identity.branchId, 'restored')
+  assert.deepEqual(value.projection.state, source.projection.state)
+  assert.deepEqual(readSource(value), value); assert.deepEqual(projection(value), value.projection)
+  assert.equal(value.projection.persisted, false); assert.equal(value.projection.executable, false); assert.deepEqual(value.projection.commands, [])
+})
+
+test('restore receipt is exact deterministic comparison data without a Saved digest cycle or authority claim', () => {
+  const source = local(), model = restoreModel(source), value = restoreReceipt(model)
+  assert.deepEqual(Object.keys(value), ['status', 'kind', 'identity', 'operationId', 'requestDigest', 'sourceArchiveDigest',
+    'forkModelDigest', 'packageDigest', 'repositoryRevision', 'worldRevision'])
+  assert.equal(value.requestDigest, digest(model.request)); assert.equal(value.sourceArchiveDigest, digest(source))
+  assert.equal(value.forkModelDigest, model.modelDigest); assert.equal(value.packageDigest, model.restoreContext.packageDigest)
+  assert.equal(Object.hasOwn(value, 'savedDigest'), false); assert.equal(Object.hasOwn(value, 'authorized'), false)
+  assert.equal(source.events.length, 0); assert.equal(model.persisted, false)
+  assert.ok(Object.isFrozen(value)); assert.deepEqual(value, restoreReceipt(model))
+})
+
+test('every initialization receipt field is bound to full replay and extra success claims fail', () => {
+  const model = restoreModel(edited(local(), 'old-edit')), receipt = restoreReceipt(model)
+  for (const [key, changed] of Object.entries({ status: 'pending', kind: 'fork', identity: model.sourceArchive.baseArchive.descriptor.identity,
+    operationId: 'other', requestDigest: 'f'.repeat(64), sourceArchiveDigest: 'f'.repeat(64), forkModelDigest: 'f'.repeat(64),
+    packageDigest: 'f'.repeat(64), repositoryRevision: 99, worldRevision: 99 }))
+    refuses(() => createRestored(model, { ...receipt, [key]: changed }), 'E_MERGE_STORE_RESTORE_RECEIPT')
+  refuses(() => createRestored(model, { ...receipt, savedDigest: 'f'.repeat(64) }))
+  refuses(() => createRestored(model, { ...receipt, actualAuthorized: true }))
+})
+
+test('ordinary edit merge then edit remains Saved v2 in the restored local namespace', () => {
+  const parent = root(), source = edited(local('old-local', parent), 'old-edit', 'old note'), value = restored(source)
+  const before = edited(value, 'before', 'restored note'), incoming = edited(local('incoming', parent), 'foreign', 'incoming')
+  const combined = merged(before, incoming, 'merge-restored'), after = edited(combined, 'after', 'after restored merge')
+  assert.deepEqual(read(after), after); assert.equal(after.formatVersion, 2)
+  assert.deepEqual(after.baseArchive, value.baseArchive); assert.deepEqual(after.initialization, value.initialization)
+  assert.deepEqual(after.events.map(row => row.receipt.operationId), ['before', 'merge-restored', 'after'])
+  assert.ok(after.events.every(row => row.receipt.identity.branchId === 'restored'))
+  assert.equal(after.projection.formatVersion, 3); assert.equal(after.projection.state.world.entries[0].fields.note, 'after restored merge')
+})
+
+test('a restored Saved is a complete source while its pure model or projection remains inadmissible', () => {
+  const parent = root(), source = restored(edited(local('old-local', parent), 'old-edit', 'incoming note'))
+  const combined = merged(local('target', parent), source, 'import-restored')
+  assert.deepEqual(read(combined), combined); assert.deepEqual(combined.events[0].storeRequest.sourceArchive, source)
+  assert.equal(combined.events[0].receipt.identity.branchId, 'target')
+  assert.equal(combined.events[0].storeRequest.sourceArchive.initialization.receipt.identity.branchId, 'restored')
+  for (const bare of [source.baseArchive, source.projection, source.projection.state]) {
+    refuses(() => readSource(bare)); refuses(() => create(bare)); refuses(() => mergeRequest('bad-source', local('other', parent), bare, []))
+  }
+})
+
+test('restored creation IDs are reserved locally while identically named inherited foreign events remain foreign', () => {
+  const source = edited(local(), 'same-name', 'old note'), value = restored(source, 'restored', 'same-name')
+  assert.equal(value.initialization.receipt.operationId, 'same-name')
+  assert.equal(value.baseArchive.sourceArchive.events[0].receipt.operationId, 'same-name')
+  assert.notDeepEqual(value.initialization.receipt.identity, value.baseArchive.sourceArchive.events[0].receipt.identity)
+  refuses(() => operationRequest(edit(value, 'same-name'), value), 'E_REPO_OPERATION_CONFLICT')
+  refuses(() => mergeRequest('same-name', value, source, []), 'E_REPO_OPERATION_CONFLICT')
+  const changed = edited(value, 'later')
+  refuses(() => operationRequest(edit(changed, 'later'), changed), 'E_REPO_OPERATION_CONFLICT')
+})
+
+test('Saved v1 cannot carry restored initialization and Saved v2 cannot omit it or fabricate a native anchor', () => {
+  const original = local(), value = restored(original)
+  refuses(() => read(rehash({ ...original, initialization: value.initialization })))
+  const omitted = structuredClone(value); delete omitted.initialization; refuses(() => read(rehash(omitted)))
+  refuses(() => read(rehash({ ...value, baseArchive: original.baseArchive })))
+  refuses(() => read(rehash({ ...value, formatVersion: 1 })))
+  refuses(() => read(rehash({ ...value, initialization: { ...value.initialization, committed: true } })))
+})
+
+test('full Saved source history and copied restore state cannot be forged through outer rehash', () => {
+  const value = restored(edited(local(), 'old-event'))
+  for (const change of [item => { item.baseArchive.sourceArchive.events = [] },
+    item => { item.baseArchive.sourceArchive.events[0].receipt.requestDigest = 'f'.repeat(64) },
+    item => { item.projection.state.world.entries[0].fields.note = 'forged' },
+    item => { item.initialization.receipt.packageDigest = 'f'.repeat(64) }]) {
+    const modified = structuredClone(value); change(modified); refuses(() => read(rehash(modified)))
+  }
+})
+
+test('restore constructor binds backup-restore context without authenticating a filesystem package', () => {
+  const value = local(), input = { operationId: 'pure-fork', identity: { libraryId: value.baseArchive.descriptor.identity.libraryId,
+    branchId: 'fresh', genesisId: 'fresh-initial' }, binding: { hostId: 'synthetic', locationDigest: 'b'.repeat(64) } }
+  const model = forkReplay(forkRequest(forkPreview(value), value, input), value)
+  refuses(() => restoreReceipt(model), 'E_MERGE_STORE_RESTORE_CONTEXT')
+  refuses(() => createRestored(model, {}), 'E_MERGE_STORE_RESTORE_CONTEXT')
+  assert.equal(restoreModel(value).backupPackageVerified, false)
+})
+
+test('nested validation contexts are branded synchronous opaque tokens and JSON cannot bypass quota', () => {
+  const value = local()
+  for (const token of [{}, { validated: true }, { limits: {} }]) refuses(() => read(value, {}, {}, token), 'E_MERGE_STORE_VALIDATION_CONTEXT')
+  let escaped
+  validationScope([value], {}, undefined, ctx => {
+    escaped = ctx
+    assert.ok(Object.isFrozen(ctx)); assert.ok(Object.isFrozen(ctx.limits))
+    assert.deepEqual(read(value, {}, ctx.limits, ctx), value)
+    assert.throws(() => { ctx.limits.maxNodes = 500001 }, TypeError)
+    refuses(() => read(value, {}, { maxNodes: 499999 }, ctx), 'E_BRANCH_MERGE_ARCHIVE_LIMIT')
+  })
+  refuses(() => read(value, {}, escaped.limits, escaped), 'E_MERGE_STORE_VALIDATION_CONTEXT')
+  refuses(() => escaped.measure(value), 'E_MERGE_STORE_VALIDATION_CONTEXT')
+})
+
+test('restored envelopes remain immutable and reject accessor Proxy or forged completion data without executing it', () => {
+  const model = restoreModel(local()), receipt = restoreReceipt(model), before = structuredClone({ model, receipt })
+  const value = createRestored(model, receipt)
+  assert.deepEqual({ model, receipt }, before); assert.ok(Object.isFrozen(value.initialization.receipt)); assert.ok(Object.isFrozen(value.baseArchive.sourceArchive))
+  let traps = 0
+  const proxy = new Proxy(model, { get() { traps++; throw Error('trap') }, ownKeys() { traps++; throw Error('trap') } })
+  refuses(() => restoreReceipt(proxy)); refuses(() => createRestored(proxy, receipt)); assert.equal(traps, 0)
+  const badReceipt = { ...receipt }; Object.defineProperty(badReceipt, 'packageDigest', { enumerable: true, get() { traps++; return receipt.packageDigest } })
+  refuses(() => createRestored(model, badReceipt)); assert.equal(traps, 0)
+})
+
+test('Shared derived node budget is accumulated across nested Saved and fork readers rather than reset per module', () => {
+  const source = local(), model = restoreModel(source), value = createRestored(model, restoreReceipt(model))
+  const inputUsage = inspectRepositoryMergeArchiveInputs([value, {}])
+  // Raw input fits, but cumulative derivation across both modules must not reset.
+  inspectRepositoryMergeArchiveInputs([value, {}], { maxNodes: inputUsage.nodes * 2 })
+  refuses(() => read(value, {}, { maxNodes: inputUsage.nodes * 2 }), 'E_SAVED_FORK_DERIVED_BUDGET')
+  let actual
+  validationScope([value], {}, undefined, ctx => {
+    const original = ctx.measure
+    assert.equal(typeof original, 'function')
+    actual = read(value, {}, ctx.limits, ctx)
+  })
+  assert.deepEqual(actual, value)
+  for (const limits of [{ maxNodes: 1000 }, { maxBytes: 1000 }, { maxArchives: 1 }, { maxAncestry: 0 }, { maxDepth: 1 }]) refuses(() => read(value, {}, limits))
+})
+
+
+test('new restored local edits may reuse an old foreign event name without relabeling the inherited receipt', () => {
+  const source = edited(local(), 'old-name', 'foreign original'), value = restored(source)
+  const changed = edited(value, 'old-name', 'new local edit')
+  assert.deepEqual(read(changed), changed)
+  assert.equal(changed.events[0].receipt.operationId, source.events[0].receipt.operationId)
+  assert.equal(changed.events[0].receipt.identity.branchId, 'restored')
+  assert.equal(changed.baseArchive.sourceArchive.events[0].receipt.identity.branchId, 'local')
+  assert.deepEqual(changed.baseArchive.sourceArchive.events[0].receipt, source.events[0].receipt)
+  assert.equal(changed.projection.state.world.entries[0].fields.note, 'new local edit')
 })

@@ -11,7 +11,8 @@ import { RepositoryError } from './world-store-repository.mjs'
 import { repositoryStateDigest as digest } from './world-store-repository-v2-contract.mjs'
 import { checkRepositoryMergeArchiveInputs } from './world-store-branch-merge-archive-model.mjs'
 import { readRepositoryMergeSavedArchive } from './world-store-branch-merge-store-contract.mjs'
-import { createRepositoryMergeStoreHost, openRepositoryMergeStore } from './world-store-branch-merge-store.mjs'
+import { createRepositoryMergeStoreHost, openRepositoryMergeStore, restoreRepositoryMergeStoreFromBackup } from './world-store-branch-merge-store.mjs'
+import { previewRepositorySavedBranchFork } from './world-store-saved-branch-fork-contract.mjs'
 
 export const MAX_MERGE_BACKUP_BYTES = 128 * 1024 * 1024
 const FORMAT = 'starmap.repository-merge-backup', PREVIEW = FORMAT + '-preview'
@@ -241,13 +242,69 @@ export function openRepositoryMergeBackup(target, options = {}) {
     snapshot: () => pkg.saved,
     findArchivedOperation(operationId) {
       opaqueId(operationId, 'operationId')
+      const initialization = pkg.saved.initialization?.receipt
+      if (initialization?.operationId === operationId) return freezeCopy({ archived: true, receipt: initialization })
       const event = pkg.saved.events.find(row => row.storeRequest.operationId === operationId)
       return event ? freezeCopy({ archived: true, receipt: event.receipt }) : undefined
     },
   })
 }
 export function previewRepositoryMergeBackupRestore(target, options = {}) {
-  const pkg = verifyRepositoryMergeBackup(target, options)
-  return freezeCopy({ status: 'blocked', reason: 'saved-origin-fork-not-implemented', writableRestoreSupported: false,
-    executable: false, commands: [], packageDigest: digest(pkg.manifest), savedDigest: pkg.saved.savedDigest })
+  return withVerifiedRepositoryMergeBackup(target, options, (pkg, _verify, evidence) =>
+    repositoryMergeBackupRestorePreview(pkg, evidence, options.policy ?? {}))
+}
+/** Deterministic comparison data; actual restore obtains pkg/evidence from IO. */
+export function repositoryMergeBackupRestorePreview(pkg, evidence, policy = {}) {
+  checkRepositoryMergeArchiveInputs([pkg, evidence, policy])
+  const raw = { format: 'starmap.repository-merge-backup-restore-preview', formatVersion: 1,
+    packageDigest: digest(pkg.manifest), packageEvidenceDigest: evidence, savedDigest: pkg.saved.savedDigest,
+    sourceArchiveDigest: digest(pkg.saved), forkPreview: previewRepositorySavedBranchFork(pkg.saved, policy),
+    policyDigest: digest(policy), executable: false, persisted: false, commands: [] }
+  return freezeCopy({ ...raw, previewDigest: digest(raw) })
+}
+/** Holds real member descriptors and pins bytes throughout synchronous restore.
+ * No database capability is provided to the callback or backup context. */
+export function withVerifiedRepositoryMergeBackup(target, options, callback) {
+  const context = host(options), pin = location(target, context), rootIdentity = fileId(pin.root)
+  const pkg = readPackage(target, options), handles = []
+  let active = true, outcome, failure, hasFailure = false
+  try {
+    const members = ['saved.json', 'complete.json'].map(name => {
+      const file = path.join(pin.root, name), limit = name === 'complete.json' ? 128 * 1024 : MAX_MERGE_BACKUP_BYTES
+      const captured = bytes(file, limit)
+      if (name === 'saved.json' && hash(captured.buffer) !== pkg.manifest.snapshot.sha256) fail('E_MERGE_BACKUP_CORRUPT')
+      if (name === 'complete.json' && !equal(parse(captured.buffer), pkg.manifest)) fail('E_MERGE_BACKUP_CORRUPT')
+      const fd = openSync(file, 'r'); handles.push(fd)
+      if (!equal(idOf(fstatSync(fd, { bigint: true })), captured.identity)) fail('E_MERGE_BACKUP_PATH')
+      return { file, limit, fd, identity: captured.identity, sha256: hash(captured.buffer), size: captured.buffer.length }
+    })
+    const evidence = digest({ rootIdentity, ancestors: pin.ancestors,
+      members: members.map(({ identity, sha256, size }) => ({ identity, sha256, size })) })
+    const verify = () => {
+      if (!active) fail('E_MERGE_BACKUP_ASYNC')
+      verifyLocation(pin, context, rootIdentity)
+      if (!equal(readdirSync(pin.root).sort(), ['complete.json', 'saved.json'])) fail('E_MERGE_BACKUP_CORRUPT')
+      for (const member of members) {
+        const opened = fstatSync(member.fd, { bigint: true }), actual = bytes(member.file, member.limit)
+        if (!equal(idOf(opened), member.identity) || opened.nlink !== 1n || opened.size !== BigInt(member.size)
+          || !equal(actual.identity, member.identity) || hash(actual.buffer) !== member.sha256) fail('E_MERGE_BACKUP_CORRUPT')
+      }
+    }
+    verify()
+    const result = callback(pkg, verify, evidence)
+    if (result && typeof result.then === 'function') fail('E_MERGE_BACKUP_ASYNC')
+    verify(); outcome = result
+  } catch (error) { failure = error; hasFailure = true }
+  finally {
+    active = false
+    for (const fd of handles.reverse()) {
+      try { closeSync(fd) } catch (error) { if (!hasFailure) { failure = error; hasFailure = true } }
+    }
+  }
+  if (hasFailure) throw translate(failure)
+  return outcome
+}
+export function restoreRepositoryMergeBackup(backup, target, inputPreview, operationId, options = {}) {
+  return restoreRepositoryMergeStoreFromBackup(backup, target, inputPreview, operationId,
+    { ...options, host: options.restoreHost, backupHost: options.host })
 }

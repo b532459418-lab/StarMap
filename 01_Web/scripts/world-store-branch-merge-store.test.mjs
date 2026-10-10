@@ -152,6 +152,19 @@ test('initial creation commits a distinct schema and a complete native anchor wi
   refuses(() => readRepositoryArchive(saved))
 })
 
+test('existing schema one exposes no restore preview and authorized maintenance does not upgrade it', async t => {
+  const value = await setup(t); create(value)
+  const store = open(t, value), before = store.snapshot()
+  assert.equal(store.restorePreview(), undefined)
+  recoverRepositoryMergeStore(value.a, { host: value.host })
+  assert.deepEqual(store.snapshot(), before); assert.equal(store.restorePreview(), undefined)
+  const db = new DatabaseSync(path.join(value.a, 'world.sqlite'), { readOnly: true })
+  try {
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, MERGE_STORE_SQLITE_VERSION)
+    assert.equal(db.prepare("SELECT count(*) AS count FROM sqlite_schema WHERE type='table' AND name='store_initialization_receipt'").get().count, 0)
+  } finally { db.close() }
+})
+
 test('creation retry discovers original IDs even after source and target have advanced', async t => {
   const value = await setup(t), preview = previewRepositoryMergeStoreCreation(value.source, { host: value.host })
   const result = createRepositoryMergeStore(value.source, value.a, preview, 'create-a', { host: value.host }), store = open(t, value)

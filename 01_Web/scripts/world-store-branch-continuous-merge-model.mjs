@@ -6,7 +6,7 @@ import { freezeCopy, jsonKey, opaqueId, shape } from '../src/worldgraph/store/sc
 import { RepositoryError, transitionRepositoryState } from './world-store-repository.mjs'
 import { repositoryStateDigest as digest } from './world-store-repository-v2-contract.mjs'
 import { readRepositoryArchive, branchSourceReference } from './world-store-branch-snapshot.mjs'
-import { operationIdentityKey } from './world-store-branch-contract.mjs'
+import { operationIdentityKey, readBranchDescriptor } from './world-store-branch-contract.mjs'
 import { checkRepositoryMergeArchiveInputs, inspectRepositoryMergeArchiveInputs } from './world-store-branch-merge-archive-model.mjs'
 import { indexValidatedRepositoryBranchHistory, previewValidatedRepositoryBranchHistory } from './world-store-branch-history-preview.mjs'
 import { planValidatedRepositoryBranchMerge } from './world-store-branch-merge-plan.mjs'
@@ -15,6 +15,8 @@ import { simulateValidatedRepositoryBranchMerge } from './world-store-branch-mer
 const FORMAT = 'starmap.repository-continuous-merge-model'
 const REQUEST = 'starmap.repository-continuous-merge-request'
 const OPERATION_REQUEST = 'starmap.repository-continuous-operation-request'
+const FORK_REQUEST = 'starmap.repository-continuous-fork-request'
+const FORK_KEYS = ['format', 'formatVersion', 'operationId', 'source', 'policyDigest', 'target', 'resultDigest']
 const ordinaryActions = new Set(['commands', 'stage-proposal', 'accept-proposal', 'reject-proposal'])
 const OPERATION_KEYS = ['format', 'formatVersion', 'target', 'policyDigest', 'operation', 'resultDigest']
 const flags = () => ({ executable: false, persisted: false, commands: [], foreignReceiptsBecomeLocal: false, newLocalApprovalIssued: false })
@@ -201,9 +203,51 @@ function appendOrdinaryView(target, input, policy, limits, budget) {
   // Ordinary local events do not add a fork/merge ancestry generation. Their
   // chain length is bounded independently by the whole graph/event quota.
   const view = { state: after, descriptor: target.descriptor, graph, headId: id, height: target.height,
-    archives: target.archives, modelVersion: 2,
+    archives: target.archives, modelVersion: Math.max(target.modelVersion ?? 1, 2),
     history: { ...target.history, operations, checkpoints: [...target.history.checkpoints, checkpoint] },
     parents, checkpointKey: checkpoint.key, modeledOperations, archivedOperations: target.archivedOperations }
+  view.archive = makeModel(view, policy, limits, budget)
+  view.reference = modelReference(view.archive)
+  return view
+}
+function appendForkView(source, operationId, inputTarget, policy, limits, budget) {
+  opaqueId(operationId, '$.operationId')
+  shape(inputTarget, ['identity', 'binding'])
+  // Reuse only identity/binding syntax. This independent descriptor never
+  // masquerades as a native v3 fork, and caller IDs are not allocations.
+  const syntax = readBranchDescriptor({ format: 'starmap.repository-branch', formatVersion: 1,
+    identity: inputTarget.identity, binding: inputTarget.binding, origin: { kind: 'new', source: null } })
+  if (source.reference.identityStatus !== 'known' || syntax.identity.libraryId !== source.reference.identity.libraryId) fail('E_CONTINUOUS_FORK_TARGET')
+  for (const identity of [source.reference.identity, ...[...source.history.branches.values()].map(row => row.identity)]) {
+    if (syntax.identity.branchId === identity.branchId || syntax.identity.genesisId === identity.genesisId) fail('E_CONTINUOUS_FORK_TARGET')
+  }
+  const height = source.height + 1
+  if (height > limits.maxAncestry) fail('E_BRANCH_ANCESTRY_LIMIT')
+  graphBudget(source, source, limits, 1)
+  const target = { identity: syntax.identity, binding: syntax.binding }
+  const request = { format: FORK_REQUEST, formatVersion: 1, operationId, source: source.reference,
+    policyDigest: digest(policy), target, resultDigest: digest(source.state) }
+  const raw = { kind: 'fork', sourceId: source.headId, request }, id = nodeId(raw)
+  preflight([raw, source.state, policy], limits)
+  const graph = new Map(source.graph); graph.set(id, { nodeId: id, ...raw })
+  const descriptor = { format: 'starmap.repository-continuous-fork-branch', formatVersion: 1,
+    ...target, origin: { kind: 'saved-fork', source: source.reference } }
+  const operation = { identity: target.identity, operationId, requestDigest: digest(request),
+    beforeDigest: request.resultDigest, afterDigest: request.resultDigest }
+  const key = operationIdentityKey(target.identity, operationId), operations = new Map(source.history.operations)
+  if (operations.has(key)) fail('E_REPO_OPERATION_CONFLICT')
+  operations.set(key, operation)
+  const modeledOperations = new Map(source.modeledOperations); modeledOperations.set(key, operation)
+  const branches = new Map(source.history.branches)
+  branches.set(jsonKey([target.identity.libraryId, target.identity.branchId]), { identity: target.identity, originDigest: digest({ nodeId: id }) })
+  const checkpoint = { identity: target.identity, repositoryRevision: source.state.revision,
+    stateDigest: request.resultDigest, historyDigest: digest({ nodeId: id }), state: source.state }
+  checkpoint.key = jsonKey([checkpoint.identity, checkpoint.repositoryRevision, checkpoint.stateDigest, checkpoint.historyDigest])
+  const parents = new Map(source.parents)
+  parents.set(checkpoint.key, new Set([source.checkpointKey].filter(value => value !== null)))
+  const view = { state: source.state, descriptor, graph, headId: id, height, archives: source.archives, modelVersion: 3,
+    history: { ...source.history, operations, branches, checkpoints: [...source.history.checkpoints, checkpoint] },
+    parents, checkpointKey: checkpoint.key, modeledOperations, archivedOperations: source.archivedOperations }
   view.archive = makeModel(view, policy, limits, budget)
   view.reference = modelReference(view.archive)
   return view
@@ -211,14 +255,18 @@ function appendOrdinaryView(target, input, policy, limits, budget) {
 function readView(input, policy, limits, budget = { nodes: 0, bytes: 0 }) {
   if (input?.format !== FORMAT) return leafView(input, policy, limits)
   shape(input, MODEL_KEYS)
-  if (![1, 2].includes(input.formatVersion) || !Array.isArray(input.nodes) || input.nodes.length > limits.maxArchives) fail('E_CONTINUOUS_MERGE_VERSION')
+  if (![1, 2, 3].includes(input.formatVersion) || !Array.isArray(input.nodes) || input.nodes.length > limits.maxArchives) fail('E_CONTINUOUS_MERGE_VERSION')
   const nodes = new Map()
   for (const node of input.nodes) {
     if (node.kind === 'archive') shape(node, ['nodeId', 'kind', 'archive'])
     else if (node.kind === 'merge') shape(node, ['nodeId', 'kind', 'targetId', 'sourceId', 'request'])
     else if (node.kind === 'operation') {
-      if (input.formatVersion !== 2) fail('E_CONTINUOUS_MERGE_VERSION')
+      if (input.formatVersion < 2) fail('E_CONTINUOUS_MERGE_VERSION')
       shape(node, ['nodeId', 'kind', 'targetId', 'request'])
+    }
+    else if (node.kind === 'fork') {
+      if (input.formatVersion !== 3) fail('E_CONTINUOUS_MERGE_VERSION')
+      shape(node, ['nodeId', 'kind', 'sourceId', 'request'])
     }
     else fail('E_CONTINUOUS_MERGE_NODE')
     const { nodeId: id, ...raw } = node
@@ -239,6 +287,9 @@ function readView(input, policy, limits, budget = { nodes: 0, bytes: 0 }) {
     else if (node.kind === 'operation') {
       shape(node.request, OPERATION_KEYS)
       view = appendOrdinaryView(visit(node.targetId, depth + 1), node.request.operation, policy, limits, budget)
+    } else if (node.kind === 'fork') {
+      shape(node.request, FORK_KEYS)
+      view = appendForkView(visit(node.sourceId, depth + 1), node.request.operationId, node.request.target, policy, limits, budget)
     } else {
       shape(node.request, REQUEST_KEYS)
       const target = visit(node.targetId, depth + 1), source = visit(node.sourceId, depth + 1)
@@ -249,7 +300,7 @@ function readView(input, policy, limits, budget = { nodes: 0, bytes: 0 }) {
     return view
   }
   const view = visit(input.headId, 0)
-  if (cache.size !== nodes.size || !['merge', 'operation'].includes(nodes.get(input.headId)?.kind)) fail('E_CONTINUOUS_MERGE_ORPHAN')
+  if (cache.size !== nodes.size || !['merge', 'operation', 'fork'].includes(nodes.get(input.headId)?.kind)) fail('E_CONTINUOUS_MERGE_ORPHAN')
   if (!equal(input, view.archive)) fail('E_CONTINUOUS_MERGE_STALE')
   return view
 }
@@ -328,6 +379,24 @@ export function replayRepositoryContinuousOperation(request, target, policy = {}
   if (!equal(request.target, before.reference) || request.policyDigest !== digest(policy)) fail('E_CONTINUOUS_OPERATION_STALE')
   const view = appendOrdinaryView(before, request.operation, policy, limits, budget)
   if (!equal(request, view.graph.get(view.headId).request)) fail('E_CONTINUOUS_OPERATION_STALE')
+  return view.archive
+}
+/** Pure new-namespace checkpoint on a complete validated source graph. No
+ * saved reader is imported here; a storage layer must bind its complete Saved
+ * anchor separately, allocate IDs and issue receipts only after real COMMIT.
+ */
+export function createRepositoryContinuousBranchForkRequest(operationId, sourceProjection, target, policy = {}, inputLimits = {}) {
+  const limits = preflight([operationId, sourceProjection, target, policy], inputLimits), budget = { nodes: 0, bytes: 0 }
+  const view = appendForkView(readView(sourceProjection, policy, limits, budget), operationId, target, policy, limits, budget)
+  return freezeCopy(view.graph.get(view.headId).request)
+}
+export function replayRepositoryContinuousBranchFork(request, sourceProjection, policy = {}, inputLimits = {}) {
+  const limits = preflight([request, sourceProjection, policy], inputLimits), budget = { nodes: 0, bytes: 0 }
+  shape(request, FORK_KEYS)
+  const source = readView(sourceProjection, policy, limits, budget)
+  if (!equal(request.source, source.reference) || request.policyDigest !== digest(policy)) fail('E_CONTINUOUS_FORK_STALE')
+  const view = appendForkView(source, request.operationId, request.target, policy, limits, budget)
+  if (!equal(request, view.graph.get(view.headId).request)) fail('E_CONTINUOUS_FORK_STALE')
   return view.archive
 }
 export function indexRepositoryContinuousMergeModel(value, policy = {}, inputLimits = {}) {

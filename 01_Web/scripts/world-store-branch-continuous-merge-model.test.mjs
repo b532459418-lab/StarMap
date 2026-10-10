@@ -11,7 +11,8 @@ import { readRepositoryContinuousMergeModel as read, indexRepositoryContinuousMe
   previewRepositoryContinuousBranchHistory as preview, createRepositoryContinuousBranchMergePlan as plan,
   simulateRepositoryContinuousBranchMerge as simulate, createRepositoryContinuousBranchMergeRequest as request,
   replayRepositoryContinuousBranchMerge as replay, createRepositoryContinuousOperationRequest as ordinaryRequest,
-  replayRepositoryContinuousOperation as ordinaryReplay } from './world-store-branch-continuous-merge-model.mjs'
+  replayRepositoryContinuousOperation as ordinaryReplay, createRepositoryContinuousBranchForkRequest as forkRequest,
+  replayRepositoryContinuousBranchFork as forkReplay } from './world-store-branch-continuous-merge-model.mjs'
 
 function parent(family = 'synthetic-family') {
   const state = readRepositoryState({ format: 'starmap.world-repository', formatVersion: 1, revision: 0, world: seed().world,
@@ -555,4 +556,172 @@ test('ordinary APIs reject Proxy/getter/policy/limits before executing caller ac
   for (const limits of [{ maxNodes: 3 }, { maxBytes: 10 }, { maxArchives: 4 }, { maxAncestry: 1 }]) {
     refuses(() => ordinaryRequest(input, model, {}, limits)); refuses(() => ordinaryReplay(value, model, {}, limits))
   }
+})
+
+const forkTarget = (source, name) => ({ identity: { libraryId: source.descriptor?.identity.libraryId ?? source.identity.libraryId,
+  branchId: name, genesisId: name + '-genesis' }, binding: { hostId: 'synthetic', locationDigest: 'b'.repeat(64) } })
+const forkModel = (source, name, operationId = 'fork-' + name) => forkReplay(forkRequest(operationId, source, forkTarget(source, name)), source)
+
+test('continuous fork preserves full mixed source and exact state at a new namespace checkpoint', () => {
+  const { model } = first(), source = modeledEdit(model, 'before-fork', 'full source'), original = structuredClone(source)
+  const target = forkTarget(source, 'restored'), request = forkRequest('restore-create', source, target)
+  const restored = forkReplay(request, source), report = index(restored)
+  assert.equal(restored.formatVersion, 3); assert.deepEqual(read(restored), restored)
+  assert.deepEqual(restored.state, source.state); assert.deepEqual(source, original)
+  assert.equal(restored.state.revision, source.state.revision); assert.equal(restored.state.world.revision, source.state.world.revision)
+  assert.deepEqual(restored.descriptor, { format: 'starmap.repository-continuous-fork-branch', formatVersion: 1,
+    ...target, origin: { kind: 'saved-fork', source: request.source } })
+  assert.deepEqual(request.source, index(source).source)
+  for (const node of source.nodes) assert.ok(restored.nodes.some(value => value.nodeId === node.nodeId))
+  assert.equal(report.branches.length, index(source).branches.length + 1)
+  assert.deepEqual(report.archivedOperations, index(source).archivedOperations)
+  assert.equal(report.hypotheticalOperations.length, index(source).hypotheticalOperations.length + 1)
+  const creation = report.hypotheticalOperations.find(row => row.identity.branchId === 'restored')
+  assert.equal(creation.operationId, 'restore-create'); assert.equal(creation.beforeDigest, creation.afterDigest)
+  assert.ok(!Object.hasOwn(creation, 'receipt')); assert.ok(!Object.hasOwn(creation, 'status'))
+  const checkpoint = report.checkpoints.find(row => row.identity.branchId === 'restored')
+  assert.equal(checkpoint.parents.length, 1)
+  assert.ok(index(source).checkpoints.some(row => digest([row.identity, row.repositoryRevision, row.stateDigest, row.historyDigest]) === digest(JSON.parse(checkpoint.parents[0]))))
+  assert.equal(restored.executable, false); assert.equal(restored.persisted, false); assert.deepEqual(restored.commands, [])
+  assert.equal(restored.foreignReceiptsBecomeLocal, false); assert.equal(restored.newLocalApprovalIssued, false)
+  assert.ok(Object.isFrozen(restored.nodes)); assert.ok(Object.isFrozen(request.target)); assert.ok(!Object.hasOwn(restored, 'receipt'))
+})
+
+test('fork then edit then merge retains version3 and all source/fork/ordinary nodes', () => {
+  const { model, third } = first(), restored = forkModel(model, 'restored'), edited = modeledEdit(restored, 'local-edit', 'restored edit')
+  edit(third, 'incoming-edit', 'source edit')
+  const result = merge(edited, third, 'local-merge')
+  assert.equal(edited.formatVersion, 3); assert.equal(result.formatVersion, 3)
+  assert.equal(result.state.world.entries[0].fields.note, 'source edit'); assert.deepEqual(read(result), result)
+  assert.deepEqual(result.descriptor, restored.descriptor)
+  assert.equal(result.state.revision, restored.state.revision + 2)
+  for (const node of edited.nodes) assert.ok(result.nodes.some(row => row.nodeId === node.nodeId))
+  assert.equal(result.nodes.filter(row => row.kind === 'fork').length, 1)
+  const incoming = merge(third, edited, 'adopt-fork')
+  assert.equal(incoming.formatVersion, 3); assert.deepEqual(read(incoming), incoming)
+  assert.deepEqual(incoming.descriptor, third.descriptor)
+})
+
+test('fork reserves creation only in new namespace and foreign same-name remains separate', () => {
+  const { model, third } = first(), restored = forkModel(model, 'restored', 'merge-1')
+  assert.equal(index(restored).hypotheticalOperations.filter(row => row.operationId === 'merge-1').length, 2)
+  refuses(() => modeledEdit(restored, 'merge-1', 'conflict'), 'E_REPO_OPERATION_CONFLICT')
+  refuses(() => commit(restored, third, 'merge-1'), 'E_REPO_OPERATION_CONFLICT')
+  const next = modeledEdit(restored, 'foreign', 'same foreign archived id')
+  assert.equal(index(next).archivedOperations.filter(row => row.operationId === 'foreign').length, 1)
+  assert.equal(index(next).hypotheticalOperations.filter(row => row.operationId === 'foreign').length, 1)
+  assert.deepEqual(read(next), next)
+})
+
+test('fork identity rejects family, every ancestor branch and genesis collision', () => {
+  const { model } = first(), restored = forkModel(model, 'restored'), fresh = forkTarget(restored, 'fresh')
+  for (const identity of index(restored).branches.map(row => row.identity)) {
+    refuses(() => forkRequest('new', restored, { ...fresh, identity: { ...fresh.identity, branchId: identity.branchId } }), 'E_CONTINUOUS_FORK_TARGET')
+    refuses(() => forkRequest('new', restored, { ...fresh, identity: { ...fresh.identity, genesisId: identity.genesisId } }), 'E_CONTINUOUS_FORK_TARGET')
+  }
+  refuses(() => forkRequest('new', restored, { ...fresh, identity: { ...fresh.identity, libraryId: 'other-family' } }), 'E_CONTINUOUS_FORK_TARGET')
+  const legacy = parent().baseline
+  const old = { format: 'starmap.world-repository-legacy', formatVersion: 1, state: legacy.state,
+    receipts: [], coverage: 'baselineOnly', editBodies: 'unavailable' }
+  refuses(() => forkRequest('new', old, fresh), 'E_CONTINUOUS_FORK_TARGET')
+})
+
+test('eight continuous fork generations fit and ninth refuses; ordinary events consume no extra height', () => {
+  let source = parent()
+  for (let i = 0; i < 8; i++) source = forkModel(source, 'generation-' + i)
+  assert.equal(source.nodes.filter(row => row.kind === 'fork').length, 8); assert.deepEqual(read(source), source)
+  refuses(() => forkRequest('ninth', source, forkTarget(source, 'generation-8')), 'E_BRANCH_ANCESTRY_LIMIT')
+  const edited = modeledEdit(source, 'ordinary-at-height-eight', 'allowed')
+  assert.deepEqual(read(edited), edited)
+  refuses(() => forkRequest('still-ninth', edited, forkTarget(edited, 'generation-8')), 'E_BRANCH_ANCESTRY_LIMIT')
+  refuses(() => read(edited, {}, { maxAncestry: 7 }), 'E_BRANCH_ANCESTRY_LIMIT')
+})
+
+test('fork history inherits merge ancestry instead of resetting it', () => {
+  const { model, source } = first(), restored = forkModel(model, 'restored')
+  refuses(() => forkRequest('tight', model, forkTarget(model, 'tight'), {}, { maxAncestry: 2 }), 'E_BRANCH_ANCESTRY_LIMIT')
+  let next = restored
+  for (let i = 0; i < 5; i++) next = merge(next, source, 'after-fork-' + i)
+  assert.deepEqual(read(next), next)
+  refuses(() => commit(next, source, 'ninth'), 'E_BRANCH_ANCESTRY_LIMIT')
+})
+
+test('fork request binds full source reference, target binding, policy and state', () => {
+  const { model } = first(), value = forkRequest('create', model, forkTarget(model, 'restored'))
+  for (const mutate of [row => { row.format = 'forged' }, row => { row.formatVersion = 99 },
+    row => { row.source.archiveDigest = 'a'.repeat(64) }, row => { row.source.snapshotDigest = 'b'.repeat(64) },
+    row => { row.policyDigest = 'c'.repeat(64) }, row => { row.resultDigest = 'd'.repeat(64) },
+    row => { row.receipt = { status: 'committed' } }]) {
+    const forged = structuredClone(value); mutate(forged); refuses(() => forkReplay(forged, model))
+  }
+  const changedSource = modeledEdit(model, 'changed', 'new source')
+  refuses(() => forkReplay(value, changedSource), 'E_CONTINUOUS_FORK_STALE')
+  // Native source metadata itself binds the original policy and rejects first.
+  refuses(() => forkReplay(value, model, { limit: 'different' }), 'E_BRANCH_CORRUPT')
+  const altered = structuredClone(forkReplay(value, model)), fork = altered.nodes.find(row => row.kind === 'fork')
+  // structuredClone preserves the request/descriptor binding alias; pin the
+  // declared outer descriptor so this is an inconsistent stored-event edit.
+  altered.descriptor = structuredClone(altered.descriptor)
+  fork.request.target.binding.locationDigest = 'e'.repeat(64)
+  const raw = { ...fork }; delete raw.nodeId; fork.nodeId = digest(raw); altered.headId = fork.nodeId
+  altered.nodes.sort((a, b) => a.nodeId < b.nodeId ? -1 : 1)
+  refuses(() => read(rehash(altered)), 'E_CONTINUOUS_MERGE_STALE')
+})
+
+test('fork stored event tampering refuses after node and outer digests are recomputed', () => {
+  const { model } = first(), restored = forkModel(model, 'restored')
+  for (const mutate of [node => { node.request.resultDigest = 'f'.repeat(64) }, node => { node.request.source.archiveDigest = 'a'.repeat(64) },
+    node => { node.request.target.identity.branchId = 'root' }, node => { node.request.target.identity.genesisId = 'initial' },
+    node => { node.request.policyDigest = 'b'.repeat(64) }]) {
+    const forged = structuredClone(restored), node = forged.nodes.find(row => row.kind === 'fork'); mutate(node)
+    const raw = { ...node }; delete raw.nodeId; node.nodeId = digest(raw); forged.headId = node.nodeId
+    forged.nodes.sort((a, b) => a.nodeId < b.nodeId ? -1 : 1); refuses(() => read(rehash(forged)))
+  }
+  const forgedState = structuredClone(restored); forgedState.state.revision++
+  refuses(() => read(rehash(forgedState)), 'E_CONTINUOUS_MERGE_STALE')
+})
+
+test('fork version3 cannot be retagged, nested in archive nodes or opened by native readers', () => {
+  const { model } = first(), restored = forkModel(model, 'restored')
+  for (const version of [1, 2, 4]) {
+    const forged = structuredClone(restored); forged.formatVersion = version
+    refuses(() => read(rehash(forged)), 'E_CONTINUOUS_MERGE_VERSION')
+  }
+  const retagged = structuredClone(model); retagged.formatVersion = 3
+  refuses(() => read(rehash(retagged)), 'E_CONTINUOUS_MERGE_STALE')
+  refuses(() => readRepositoryArchive(restored), 'E_BRANCH_VERSION')
+  refuses(() => readRepositoryBranchMergeArchiveModel(restored), 'E_SHAPE')
+  const hidden = structuredClone(restored), leaf = hidden.nodes.find(row => row.kind === 'archive')
+  leaf.archive = model
+  const raw = { ...leaf }; delete raw.nodeId; leaf.nodeId = digest(raw)
+  hidden.nodes.sort((a, b) => a.nodeId < b.nodeId ? -1 : 1)
+  refuses(() => read(rehash(hidden)))
+})
+
+test('fork preflight and cumulative budgets remain bounded without invoking accessors', () => {
+  const { model } = first(), target = forkTarget(model, 'restored'), value = forkRequest('create', model, target)
+  let calls = 0
+  const trap = () => { calls++; throw new Error('must not execute') }
+  const proxy = new Proxy({}, { get: trap, ownKeys: trap, getPrototypeOf: trap, getOwnPropertyDescriptor: trap })
+  for (const bad of [proxy, { get identity() { return trap() } }]) {
+    for (const action of [() => forkRequest('new', bad, target), () => forkRequest('new', model, bad),
+      () => forkRequest('new', model, target, bad), () => forkRequest('new', model, target, {}, bad),
+      () => forkReplay(bad, model), () => forkReplay(value, bad), () => forkReplay(value, model, bad),
+      () => forkReplay(value, model, {}, bad)]) refuses(action, 'E_BRANCH_MERGE_ARCHIVE_JSON')
+  }
+  assert.equal(calls, 0)
+  for (const limits of [{ maxNodes: 2 }, { maxBytes: 16 }, { maxArchives: 4 }, { maxAncestry: 2 }]) {
+    refuses(() => forkRequest('new', model, target, {}, limits)); refuses(() => forkReplay(value, model, {}, limits))
+  }
+  const restored = forkReplay(value, model), usage = inspectRepositoryMergeArchiveInputs([restored, {}])
+  refuses(() => read(restored, {}, { maxNodes: usage.nodes + 100 }), 'E_CONTINUOUS_MERGE_DERIVED_BUDGET')
+})
+
+test('pre-fork version2 ordinary model and whole archive retain independently measured golden digests', () => {
+  // Measured from the exact pre-change HEAD module in the external oracle.
+  const model = modeledEdit(first().model, 'ordinary-oracle', 'golden-v2')
+  assert.equal(model.formatVersion, 2)
+  assert.equal(model.modelDigest, '71809a0a71dc3e080b5541d033300440b5332b80c4c514e735e29cc9499a727a')
+  assert.equal(digest(model), '2f9a6122218c572eff6aec20013be12bb015f6bbadf45df745a55d236c04cd53')
+  assert.deepEqual(read(model), model)
 })
