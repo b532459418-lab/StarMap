@@ -59,9 +59,11 @@ migration, production identity generator or OS authorization implementation.
 
 Reload explicitly captures the Store again. Inconsistent, changed or replaced
 data fails instead of falling back to sample data; `?data=sample` cannot replace
-an explicitly activated preview. Preview production builds are refused. Server
-shutdown disposes only its owned temporary fixture, preserving unknown or
-replaced filesystem objects for review. Port 5173 remains loopback-only and
+an explicitly activated preview. Preview production builds are refused. Orderly
+Vite shutdown disposes only its owned temporary fixture, preserving unknown or
+replaced filesystem objects for review. Forced termination (including Playwright
+server teardown) or a crash can retain the neutral temporary lab; it is never
+automatically adopted or removed by a later run. Port 5173 remains loopback-only and
 strict; an existing server is never reused or stopped by the test runner.
 
 ```powershell
