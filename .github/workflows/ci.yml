@@ -54,6 +54,8 @@ jobs:
             flag: --media-recovery
           - suite: time
             flag: --time-filters
+          - suite: repository-preview
+            flag: --repository-preview
     defaults:
       run:
         working-directory: 01_Web

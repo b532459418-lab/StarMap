@@ -20,11 +20,47 @@ import { canonicalForInputs } from './canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from './canonical/derive.ts'
 import { deriveTimeQueryContext } from './derive/timeQueryContext.ts'
 import { appInputs, sessionNow } from './rawInputs.ts'
+import { repositoryPreview } from 'virtual:starmap-repository-preview'
+
+const repositoryPreviewMode = import.meta.env.MODE === 'repository-preview'
+const previewPresent = repositoryPreview !== null
+if (repositoryPreviewMode !== previewPresent || (previewPresent && !import.meta.env.DEV)) {
+  throw new Error('E_REPOSITORY_PREVIEW_ACTIVATION')
+}
+if (previewPresent && (typeof repositoryPreview !== 'object' || Array.isArray(repositoryPreview))) {
+  throw new Error('E_REPOSITORY_PREVIEW_PAYLOAD')
+}
+if (repositoryPreview) {
+  const { identity, canonical, now } = repositoryPreview
+  const digestPattern = /^[0-9a-f]{64}$/
+  if (repositoryPreview.format !== 'starmap.repository-readonly-preview'
+    || repositoryPreview.formatVersion !== 1 || repositoryPreview.readOnly !== true
+    || repositoryPreview.synthetic !== true
+    || typeof now !== 'string' || !Number.isFinite(Date.parse(now))
+    || new Date(now).toISOString() !== now
+    || !identity || ['libraryId', 'branchId', 'genesisId'].some(key =>
+      typeof identity[key as keyof typeof identity] !== 'string' || identity[key as keyof typeof identity].length === 0)
+    || ![repositoryPreview.savedDigest, repositoryPreview.stateDigest, repositoryPreview.projectionEnvelopeDigest]
+      .every(value => typeof value === 'string' && digestPattern.test(value))
+    || !canonical || !Array.isArray(canonical.places) || !Array.isArray(canonical.travel?.records)
+    || !canonical.travel.meta || !canonical.travel.display
+    || !Array.isArray(canonical.wantToGo?.items) || !Array.isArray(canonical.wantToGo.problems)
+    || canonical.wantToGo.problems.length !== 0
+    || canonical.editorState?.schemaVersion !== 2
+    || !Array.isArray(canonical.media?.items) || !Array.isArray(canonical.media.problems)
+    || canonical.media.problems.length !== 0) {
+    throw new Error('E_REPOSITORY_PREVIEW_PAYLOAD')
+  }
+}
+
+export const repositoryPreviewActive: boolean = repositoryPreviewMode && previewPresent
 
 /** 模块加载时固定一次。适配器要求 options.now 必填且不读时钟，时间从这里注入。worldGraph.ts 以原名导出。 */
-export const worldGraphSessionNow: string = sessionNow
+export const worldGraphSessionNow: string = repositoryPreview?.now ?? sessionNow
 
-const canonical = canonicalForInputs(appInputs)
+// Derive live Maps and callable helpers from Canonical, never from the projection DTO.
+// Explicit preview selection takes precedence over rawInputs' ?data=sample switch.
+const canonical = repositoryPreview?.canonical ?? canonicalForInputs(appInputs)
 
 export const appData = deriveAppDataFromCanonical(canonical, { now: worldGraphSessionNow })
 

@@ -40,6 +40,39 @@ All editor writes and media CLI commands share a private-library filesystem leas
 
 ## Verification
 
+### Read-only synthetic repository preview
+
+```powershell
+npm run dev:repository-preview
+```
+
+This explicit development mode creates one owned temporary SQLite Merge Store
+from the neutral tracked sample. A committed synthetic note distinguishes its
+facts from the normal sample fallback. Map, Collection and Journey read the
+selected Store through a validated Canonical snapshot; the browser derives its
+normal queries and helpers. The bilingual header identifies the read-only mode.
+
+It exposes no editor or mutation API and does not load the personal data layer
+or its configuration. Imagery uses the bundled local fallback. Public and
+personal modes keep their existing behavior. This is not a real-library switch,
+migration, production identity generator or OS authorization implementation.
+
+Reload explicitly captures the Store again. Inconsistent, changed or replaced
+data fails instead of falling back to sample data; `?data=sample` cannot replace
+an explicitly activated preview. Preview production builds are refused. Server
+shutdown disposes only its owned temporary fixture, preserving unknown or
+replaced filesystem objects for review. Port 5173 remains loopback-only and
+strict; an existing server is never reused or stopped by the test runner.
+
+```powershell
+npm run test:browser -- --repository-preview
+```
+
+The dedicated suite uses no private V2 fixture and has the same browser action,
+assertion and test budgets as the ordinary suites. CI runs it as a fourth isolated
+group under the existing mandatory Public checks gate, alongside the complete
+critical, media and time suites. The original 29 browser cases remain unchanged.
+
 ```powershell
 npm run lint
 npm test

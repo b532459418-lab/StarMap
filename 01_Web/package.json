@@ -7,6 +7,7 @@
     "dev": "npm run dev:public",
     "dev:public": "vite --mode public --host 127.0.0.1 --port 5173 --strictPort",
     "dev:personal": "vite --mode personal --host 127.0.0.1 --port 5173 --strictPort",
+    "dev:repository-preview": "vite --mode repository-preview --host 127.0.0.1 --port 5173 --strictPort",
     "build": "npm run build:public",
     "build:public": "tsc -b && vite build --mode public",
     "build:personal": "tsc -b && vite build --mode personal",
