@@ -4,7 +4,7 @@
  */
 import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
-import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { closeSync, fsyncSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { freezeCopy, jsonKey, opaqueId, shape } from '../src/worldgraph/store/schema.ts'
@@ -15,10 +15,14 @@ import { openRepositoryBranch } from './world-store-branch.mjs'
 import { previewRepositoryArchive } from './world-store-branch-snapshot.mjs'
 import { checkRepositoryMergeArchiveInputs } from './world-store-branch-merge-archive-model.mjs'
 import { createRepositoryMergeSavedArchive, readRepositoryMergeSavedArchive,
+  expectedRepositoryMergeRestoreReceipt, createRepositoryMergeRestoredSavedArchive,
   projectRepositoryMergeStoreRequest, appendRepositoryMergeSavedEvent } from './world-store-branch-merge-store-contract.mjs'
+import { previewRepositorySavedBranchFork, createRepositorySavedBranchForkRequest, replayRepositorySavedBranchFork } from './world-store-saved-branch-fork-contract.mjs'
+import { withVerifiedRepositoryMergeBackup, repositoryMergeBackupRestorePreview } from './world-store-branch-merge-backup.mjs'
 
 export const MERGE_STORE_APP_ID = 0x534d4737
 export const MERGE_STORE_SQLITE_VERSION = 1
+export const MERGE_RESTORED_STORE_SQLITE_VERSION = 2
 const MAX_BYTES = 128 * 1024 * 1024, MAX_ROWS = 128
 const hosts = new WeakMap()
 const fail = code => { throw new RepositoryError(code) }
@@ -31,6 +35,7 @@ const SQL = Object.freeze({
   store_events: 'CREATE TABLE store_events (operation_id TEXT PRIMARY KEY, repository_revision INTEGER NOT NULL UNIQUE, payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT',
   local_receipts: 'CREATE TABLE local_receipts (operation_id TEXT PRIMARY KEY, request_digest TEXT NOT NULL, payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT',
 })
+const RESTORE_SQL = 'CREATE TABLE store_initialization_receipt (singleton INTEGER PRIMARY KEY CHECK(singleton=1), payload TEXT NOT NULL, digest TEXT NOT NULL) STRICT'
 function translated(error) {
   if (error?.code?.startsWith('E_')) return error
   return new RepositoryError([5, 6, 261].includes(error?.errcode) ? 'E_REPO_BUSY' : 'E_MERGE_STORE_IO')
@@ -100,7 +105,12 @@ export function createRepositoryMergeStoreHost(input) {
 }
 function exclusive(file, text) {
   const fd = openSync(file, 'wx', 0o600)
-  try { writeFileSync(fd, text); fsyncSync(fd) } finally { closeSync(fd) }
+  try {
+    writeFileSync(fd, text); fsyncSync(fd)
+    const stat = fstatSync(fd, { bigint: true })
+    if (!stat.isFile() || stat.nlink !== 1n || stat.size !== BigInt(Buffer.byteLength(text))) fail('E_MERGE_STORE_BINDING')
+    return { dev: String(stat.dev), ino: String(stat.ino) }
+  } finally { closeSync(fd) }
 }
 function readJson(file) {
   const stat = regular(file)
@@ -119,10 +129,12 @@ function schema(db) {
   const app = db.prepare('PRAGMA application_id').get().application_id, version = db.prepare('PRAGMA user_version').get().user_version
   const rows = db.prepare("SELECT name,type,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").all()
   if (app === 0 && version === 0 && rows.length === 0) fail('E_MERGE_STORE_INCOMPLETE')
-  if (app !== MERGE_STORE_APP_ID || version !== MERGE_STORE_SQLITE_VERSION) fail('E_MERGE_STORE_VERSION')
-  if (rows.length !== Object.keys(SQL).length || rows.some(row => row.type !== 'table' || SQL[row.name] !== row.sql)) fail('E_MERGE_STORE_SCHEMA')
+  if (app !== MERGE_STORE_APP_ID || ![MERGE_STORE_SQLITE_VERSION, MERGE_RESTORED_STORE_SQLITE_VERSION].includes(version)) fail('E_MERGE_STORE_VERSION')
+  const expected = version === MERGE_RESTORED_STORE_SQLITE_VERSION ? { ...SQL, store_initialization_receipt: RESTORE_SQL } : SQL
+  if (rows.length !== Object.keys(expected).length || rows.some(row => row.type !== 'table' || expected[row.name] !== row.sql)) fail('E_MERGE_STORE_SCHEMA')
   if (db.prepare('PRAGMA journal_mode').get().journal_mode !== 'delete') fail('E_MERGE_STORE_JOURNAL')
   if (db.prepare('PRAGMA quick_check').get().quick_check !== 'ok') fail('E_MERGE_STORE_CORRUPT')
+  return version
 }
 function parse(row) {
   if (!row || typeof row.payload !== 'string' || Buffer.byteLength(row.payload) > MAX_BYTES) fail('E_MERGE_STORE_CORRUPT')
@@ -159,11 +171,12 @@ function material(saved) {
   return result
 }
 function readAll(db, marker, policy, markerIdentity) {
-  schema(db)
+  const version = schema(db)
   if (db.prepare('SELECT count(*) AS count FROM store_metadata').get().count !== 1 || db.prepare('SELECT count(*) AS count FROM store_current').get().count !== 1) fail('E_MERGE_STORE_CORRUPT')
   const meta = parse(db.prepare('SELECT * FROM store_metadata WHERE singleton=1').get())
-  shape(meta, ['format', 'formatVersion', 'baseArchive', 'markerDigest', 'markerIdentity', 'policyDigest', 'creationId'])
-  if (meta.format !== 'starmap.repository-merge-store-metadata' || meta.formatVersion !== 1
+  const metaKeys = ['format', 'formatVersion', 'baseArchive', 'markerDigest', 'markerIdentity', 'policyDigest', 'creationId']
+  shape(meta, version === 2 ? [...metaKeys, 'restorePreview'] : metaKeys)
+  if (meta.format !== 'starmap.repository-merge-store-metadata' || meta.formatVersion !== version
     || meta.markerDigest !== digest(marker) || meta.policyDigest !== digest(policy)
     || !equal(meta.baseArchive.descriptor, marker.descriptor) || meta.creationId !== marker.creationId) fail('E_MERGE_STORE_CORRUPT')
   if (markerIdentity && !equal(meta.markerIdentity, markerIdentity)) fail('E_MERGE_STORE_BINDING')
@@ -174,7 +187,17 @@ function readAll(db, marker, policy, markerIdentity) {
     if (row.operation_id !== event.storeRequest.operationId || row.repository_revision !== event.receipt.repositoryRevision) fail('E_MERGE_STORE_CORRUPT')
     return event
   })
-  const initial = createRepositoryMergeSavedArchive(meta.baseArchive, policy)
+  let initialization
+  if (version === 2) {
+    if (db.prepare('SELECT count(*) AS count FROM store_initialization_receipt').get().count !== 1) fail('E_MERGE_STORE_CORRUPT')
+    initialization = parse(db.prepare('SELECT * FROM store_initialization_receipt WHERE singleton=1').get())
+    const expected = expectedRepositoryMergeRestoreReceipt(meta.baseArchive, policy)
+    if (!equal(initialization, expected) || initialization.operationId !== meta.creationId) fail('E_MERGE_STORE_CORRUPT')
+    validateRestorePreview(meta.restorePreview, meta.baseArchive.sourceArchive, policy, initialization.packageDigest)
+    if (initialization.packageEvidenceDigest !== meta.restorePreview.packageEvidenceDigest) fail('E_MERGE_STORE_CORRUPT')
+  }
+  const initial = version === 2 ? createRepositoryMergeRestoredSavedArchive(meta.baseArchive, initialization, policy)
+    : createRepositoryMergeSavedArchive(meta.baseArchive, policy)
   let derived = initial
   for (const event of events) derived = appendRepositoryMergeSavedEvent(derived, event.storeRequest, event.receipt, policy)
   const saved = readRepositoryMergeSavedArchive(derived, policy), expected = material(saved)
@@ -184,6 +207,10 @@ function readAll(db, marker, policy, markerIdentity) {
     return [row.operation_id, receipt]
   }))
   for (const event of saved.events) if (!equal(receipts.get(event.storeRequest.operationId), event.receipt)) fail('E_MERGE_STORE_CORRUPT')
+  if (initialization) {
+    if (receipts.has(initialization.operationId)) fail('E_MERGE_STORE_CORRUPT')
+    receipts.set(initialization.operationId, initialization)
+  }
   const actualNodes = rows(db, 'archive_nodes', 'node_id').map(row => {
     const node = parse(row); if (row.node_id !== node.nodeId) fail('E_MERGE_STORE_CORRUPT'); return node
   })
@@ -193,7 +220,7 @@ function readAll(db, marker, policy, markerIdentity) {
   })
   if (!equal(actualNodes, expectedNodes) || !equal(actualSources, expected.sources)
     || !equal(parse(db.prepare('SELECT * FROM store_current WHERE singleton=1').get()), expected.state)) fail('E_MERGE_STORE_CORRUPT')
-  return { meta, saved, receipts }
+  return { meta, saved, receipts, initialization }
 }
 function writeMaterial(db, saved, onSources = () => {}) {
   const value = material(saved)
@@ -290,10 +317,10 @@ export function createRepositoryMergeStore(source, target, preview, operationId,
     try {
       mkdirSync(root, { mode: 0o700 }); createdRootIdentity = fileIdentity(root)
       phase(options, 'directory-created'); verifyTarget()
-      exclusive(targetFile, ''); createdFileIdentity = fileIdentity(targetFile)
+      createdFileIdentity = exclusive(targetFile, '')
       marker = { format: 'starmap.repository-merge-store-location', formatVersion: 1, descriptor, creationId: operationId,
         rootIdentity: createdRootIdentity, fileIdentity: createdFileIdentity }
-      exclusive(markerFile, JSON.stringify(marker)); createdMarkerIdentity = fileIdentity(markerFile)
+      createdMarkerIdentity = exclusive(markerFile, JSON.stringify(marker))
       meta = { format: 'starmap.repository-merge-store-metadata', formatVersion: 1, baseArchive, markerDigest: digest(marker),
         markerIdentity: createdMarkerIdentity, policyDigest: digest(policy), creationId: operationId }
       phase(options, 'files-created'); verifyTarget()
@@ -311,6 +338,109 @@ export function createRepositoryMergeStore(source, target, preview, operationId,
       throw translated(error)
     } finally { db?.close() }
   })
+}
+function validateRestorePreview(value, saved, policy, packageDigest) {
+  shape(value, ['format', 'formatVersion', 'packageDigest', 'packageEvidenceDigest', 'savedDigest', 'sourceArchiveDigest',
+    'forkPreview', 'policyDigest', 'executable', 'persisted', 'commands', 'previewDigest'])
+  if (typeof value.packageEvidenceDigest !== 'string' || !/^[a-f0-9]{64}$/.test(value.packageEvidenceDigest)) fail('E_MERGE_STORE_RESTORE_PREVIEW')
+  const raw = { format: 'starmap.repository-merge-backup-restore-preview', formatVersion: 1,
+    packageDigest, packageEvidenceDigest: value.packageEvidenceDigest, savedDigest: saved.savedDigest,
+    sourceArchiveDigest: digest(saved), forkPreview: previewRepositorySavedBranchFork(saved, policy),
+    policyDigest: digest(policy), executable: false, persisted: false, commands: [] }
+  if (!equal(value, { ...raw, previewDigest: digest(raw) })) fail('E_MERGE_STORE_RESTORE_PREVIEW')
+}
+/** Actual synthetic initialization from a pinned verified package. The backup
+ * context never acquires the separate target host's write authority. */
+export function restoreRepositoryMergeStoreFromBackup(backup, target, preview, operationId, options = {}) {
+  checkRepositoryMergeArchiveInputs([preview, operationId, options.policy ?? {}])
+  opaqueId(operationId, 'operationId')
+  const context = host(options), root = rootPath(target, context, false), policy = freezeCopy(options.policy ?? {})
+  let exists = false
+  try { lstatSync(root); exists = true } catch (error) { if (error.code !== 'ENOENT') throw translated(error) }
+  if (exists) {
+    const prior = openRepositoryMergeStore(root, { ...options, readOnly: true })
+    try {
+      const saved = prior.snapshot()
+      if (saved.formatVersion !== 2 || !equal(saved.baseArchive.descriptor.binding, binding(root, context))) fail('E_MERGE_STORE_BINDING')
+      if (!equal(preview, prior.restorePreview()) || saved.baseArchive.operationReference.operationId !== operationId) fail('E_MERGE_STORE_EXISTS')
+      return prior.findOperation(operationId)
+    } finally { prior.close() }
+  }
+  const parents = []
+  let parent = context.sandboxRoot
+  for (const part of path.relative(context.sandboxRoot, path.dirname(root)).split(path.sep).filter(Boolean)) {
+    parent = path.join(parent, part); parents.push({ path: parent, identity: fileIdentity(parent) })
+  }
+  const verifyParents = () => {
+    rootPath(root, context, false)
+    for (const row of parents) if (!equal(fileIdentity(row.path), row.identity)) fail('E_MERGE_STORE_BINDING')
+    for (const directory of [context.sandboxRoot, ...parents.map(row => row.path)]) {
+      if (readdirSync(directory).some(name => ['world.sqlite', 'binding.json', 'saved.json', 'complete.json'].includes(name))) fail('E_MERGE_STORE_PATH')
+    }
+  }
+  verifyParents()
+  let attempted = false
+  try {
+    return withVerifiedRepositoryMergeBackup(backup, { host: options.backupHost, policy }, (pkg, verifyPackage, evidence) => {
+      const actualPreview = repositoryMergeBackupRestorePreview(pkg, evidence, policy)
+      if (!equal(preview, actualPreview)) fail('E_MERGE_STORE_STALE')
+      const actualBinding = binding(root, context)
+      authorize(context, { kind: 'restore', root, operationId, binding: actualBinding,
+        sourceArchiveDigest: digest(pkg.saved), packageDigest: actualPreview.packageDigest,
+        packageEvidenceDigest: evidence, previewDigest: preview.previewDigest, policyDigest: digest(policy) })
+      verifyPackage(); verifyParents()
+      const identity = { libraryId: pkg.saved.baseArchive.descriptor.identity.libraryId, branchId: randomUUID(), genesisId: randomUUID() }
+      const request = createRepositorySavedBranchForkRequest(actualPreview.forkPreview, pkg.saved, { operationId, identity,
+        binding: actualBinding, restoreContext: { kind: 'backup-restore', packageDigest: actualPreview.packageDigest, packageEvidenceDigest: evidence } }, policy)
+      const forkModel = replayRepositorySavedBranchFork(request, pkg.saved, policy)
+      const receipt = expectedRepositoryMergeRestoreReceipt(forkModel, policy)
+      const saved = createRepositoryMergeRestoredSavedArchive(forkModel, receipt, policy)
+      let db, rootIdentity, fileIdentityValue, markerIdentity, marker
+      const file = path.join(root, 'world.sqlite'), markerFile = path.join(root, 'binding.json')
+      const verify = () => {
+        verifyPackage(); verifyParents()
+        if (rootIdentity) {
+          rootPath(root, context)
+          if (!equal(rootIdentity, fileIdentity(root))) fail('E_MERGE_STORE_BINDING')
+        }
+        if (fileIdentityValue) {
+          regular(file, true)
+          if (!equal(fileIdentityValue, fileIdentity(file))) fail('E_MERGE_STORE_BINDING')
+        }
+        if (markerIdentity && (!equal(markerIdentity, fileIdentity(markerFile)) || !equal(readJson(markerFile), marker))) fail('E_MERGE_STORE_BINDING')
+        if (rootIdentity) checkFiles(root)
+      }
+      const checkpoint = name => { phase(options, name); verify() }
+      try {
+        mkdirSync(root, { mode: 0o700 }); rootIdentity = fileIdentity(root); checkpoint('restore-directory-created')
+        fileIdentityValue = exclusive(file, '')
+        marker = { format: 'starmap.repository-merge-store-location', formatVersion: 1,
+          descriptor: forkModel.descriptor, creationId: operationId, rootIdentity, fileIdentity: fileIdentityValue }
+        markerIdentity = exclusive(markerFile, JSON.stringify(marker))
+        checkpoint('restore-files-created')
+        const meta = { format: 'starmap.repository-merge-store-metadata', formatVersion: 2, baseArchive: forkModel,
+          markerDigest: digest(marker), markerIdentity, policyDigest: digest(policy), creationId: operationId, restorePreview: actualPreview }
+        verify(); db = new DatabaseSync(file, { allowExtension: false, timeout: 0 }); verify()
+        db.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; BEGIN IMMEDIATE')
+        for (const sql of [...Object.values(SQL), RESTORE_SQL]) db.exec(sql)
+        db.exec(`PRAGMA application_id=${MERGE_STORE_APP_ID}; PRAGMA user_version=${MERGE_RESTORED_STORE_SQLITE_VERSION}`)
+        db.prepare('INSERT INTO store_metadata VALUES (1,?,?,0)').run(JSON.stringify(meta), digest(meta))
+        checkpoint('restore-schema-written')
+        writeMaterial(db, saved, () => checkpoint('restore-sources-written')); checkpoint('restore-state-written')
+        db.prepare('INSERT INTO store_initialization_receipt VALUES (1,?,?)').run(JSON.stringify(receipt), digest(receipt))
+        checkpoint('restore-receipt-written'); readAll(db, marker, policy, markerIdentity)
+        checkpoint('before-restore-commit')
+        attempted = true; db.exec('COMMIT'); checkpoint('restored')
+        return freezeCopy(receipt)
+      } catch (error) {
+        try { if (db?.isTransaction) db.exec('ROLLBACK') } catch { /* Discover, never resend an unknown COMMIT. */ }
+        throw translated(error)
+      } finally { db?.close() }
+    })
+  } catch (error) {
+    if (attempted) fail('E_REPO_OUTCOME_UNKNOWN')
+    throw translated(error)
+  }
 }
 export function openRepositoryMergeStore(target, options = {}) {
   const context = host(options), root = rootPath(target, context), rootId = fileIdentity(root), file = path.join(root, 'world.sqlite')
@@ -390,6 +520,7 @@ export function openRepositoryMergeStore(target, options = {}) {
   return {
     state() { return read(value => value.saved.projection.state) },
     snapshot() { return read(value => value.saved) },
+    restorePreview() { return read(value => value.meta.restorePreview === undefined ? undefined : freezeCopy(value.meta.restorePreview)) },
     withSnapshot(callback) {
       if (typeof callback !== 'function') fail('E_MERGE_STORE_ASYNC')
       return read(value => {
@@ -460,7 +591,8 @@ export function discoverRepositoryMergeStore(target, options = {}) {
   try {
     store = openRepositoryMergeStore(root, { ...options, readOnly: true })
     const archive = store.snapshot()
-    return freezeCopy({ status: 'completed', identity: archive.baseArchive.descriptor.identity, creationId: archive.baseArchive.creation.operationId,
+    return freezeCopy({ status: 'completed', identity: archive.baseArchive.descriptor.identity,
+      creationId: archive.formatVersion === 2 ? archive.baseArchive.operationReference.operationId : archive.baseArchive.creation.operationId,
       savedDigest: archive.savedDigest, ...(options.operationId ? { operation: store.findOperation(options.operationId) ?? null } : {}) })
   } catch (error) {
     if (['E_MERGE_STORE_INCOMPLETE', 'ENOENT'].includes(error.code)) return freezeCopy({ status: 'incomplete' })

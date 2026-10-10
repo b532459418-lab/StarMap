@@ -6,8 +6,7 @@ import { freezeCopy, jsonKey, opaqueId, shape } from '../src/worldgraph/store/sc
 import { RepositoryError } from './world-store-repository.mjs'
 import { repositoryStateDigest as digest } from './world-store-repository-v2-contract.mjs'
 import { readBranchDescriptor } from './world-store-branch-contract.mjs'
-import { inspectRepositoryMergeArchiveInputs } from './world-store-branch-merge-archive-model.mjs'
-import { readRepositoryMergeSavedArchive } from './world-store-branch-merge-store-contract.mjs'
+import { readRepositoryMergeSavedArchive, withRepositoryMergeSavedValidation } from './world-store-branch-merge-store-contract.mjs'
 
 const FORMAT = 'starmap.repository-saved-branch-fork-model'
 const PREVIEW = 'starmap.repository-saved-branch-fork-preview'
@@ -20,18 +19,9 @@ const MODEL_KEYS = ['format', 'formatVersion', 'descriptor', 'sourceArchive', 'r
   'restoreContext', 'state', 'localOperations', ...Object.keys(flags()), 'modelDigest']
 const fail = code => { throw new RepositoryError(code) }
 const equal = (a, b) => jsonKey(a) === jsonKey(b)
-function context(values, limits) {
-  const usage = inspectRepositoryMergeArchiveInputs(values, limits)
-  return { limits: usage.limits, nodes: 0, bytes: 0 }
-}
-function measured(value, ctx) {
-  const usage = inspectRepositoryMergeArchiveInputs([value], ctx.limits)
-  ctx.nodes += usage.nodes; ctx.bytes += usage.bytes
-  if (ctx.nodes > ctx.limits.maxNodes || ctx.bytes > ctx.limits.maxBytes) fail('E_SAVED_FORK_DERIVED_BUDGET')
-  return value
-}
+const measured = (value, ctx) => ctx.measure(value, 'E_SAVED_FORK_DERIVED_BUDGET')
 function source(value, policy, ctx) {
-  return readRepositoryMergeSavedArchive(value, policy, ctx.limits)
+  return readRepositoryMergeSavedArchive(value, policy, ctx.limits, ctx)
 }
 function reference(saved) {
   const state = saved.projection.state
@@ -55,11 +45,15 @@ function identities(saved, ctx) {
       pending.push(value.baseArchive)
       for (const event of value.events) if (event.storeRequest.kind === 'merge') pending.push(event.storeRequest.sourceArchive)
       if (value.projection.format === 'starmap.repository-continuous-merge-model') {
-        for (const node of value.projection.nodes) if (node.kind === 'archive') pending.push(node.archive)
+        for (const node of value.projection.nodes) {
+          if (node.kind === 'archive') pending.push(node.archive)
+          if (node.kind === 'fork') known.set(jsonKey(node.request.target.identity), node.request.target.identity)
+        }
       }
     } else {
       const identity = value.descriptor?.identity ?? value.identity
       if (identity) known.set(jsonKey(identity), identity)
+      if (value.format === FORMAT) pending.push(value.sourceArchive)
       if (value.format === 'starmap.world-repository-branch' && value.formatVersion === 3) pending.push(value.sourceArchive)
     }
   }
@@ -78,9 +72,11 @@ function parameters(input, saved, ctx) {
   }
   const restoreContext = input.restoreContext ?? null
   if (restoreContext !== null) {
-    shape(restoreContext, ['kind', 'packageDigest'])
+    shape(restoreContext, ['kind', 'packageDigest', 'packageEvidenceDigest'], ['kind', 'packageDigest'])
     if (restoreContext.kind !== 'backup-restore' || typeof restoreContext.packageDigest !== 'string'
-      || !/^[a-f0-9]{64}$/.test(restoreContext.packageDigest)) fail('E_SAVED_FORK_CONTEXT')
+      || !/^[a-f0-9]{64}$/.test(restoreContext.packageDigest)
+      || Object.hasOwn(restoreContext, 'packageEvidenceDigest') && (typeof restoreContext.packageEvidenceDigest !== 'string'
+        || !/^[a-f0-9]{64}$/.test(restoreContext.packageEvidenceDigest))) fail('E_SAVED_FORK_CONTEXT')
   }
   return { operationId: input.operationId, identity: checked.identity, binding: checked.binding, restoreContext }
 }
@@ -112,23 +108,26 @@ function replay(request, saved, policy, ctx) {
   return freezeCopy(measured({ ...raw, modelDigest: digest(raw) }, ctx))
 }
 export function previewRepositorySavedBranchFork(sourceSaved, policy = {}, limits = {}) {
-  const ctx = context([sourceSaved, policy], limits)
-  return preview(source(sourceSaved, policy, ctx), policy, ctx)
+  return withRepositoryMergeSavedValidation([sourceSaved, policy], limits, undefined, ctx =>
+    preview(source(sourceSaved, policy, ctx), policy, ctx))
 }
 export function createRepositorySavedBranchForkRequest(inputPreview, sourceSaved, input, policy = {}, limits = {}) {
-  const ctx = context([inputPreview, sourceSaved, input, policy], limits), saved = source(sourceSaved, policy, ctx)
-  if (!equal(inputPreview, preview(saved, policy, ctx))) fail('E_SAVED_FORK_PREVIEW')
-  return createRequest(saved, parameters(input, saved, ctx), policy, ctx)
+  return withRepositoryMergeSavedValidation([inputPreview, sourceSaved, input, policy], limits, undefined, ctx => {
+    const saved = source(sourceSaved, policy, ctx)
+    if (!equal(inputPreview, preview(saved, policy, ctx))) fail('E_SAVED_FORK_PREVIEW')
+    return createRequest(saved, parameters(input, saved, ctx), policy, ctx)
+  })
 }
 export function replayRepositorySavedBranchFork(request, sourceSaved, policy = {}, limits = {}) {
-  const ctx = context([request, sourceSaved, policy], limits), saved = source(sourceSaved, policy, ctx)
-  return replay(request, saved, policy, ctx)
+  return withRepositoryMergeSavedValidation([request, sourceSaved, policy], limits, undefined, ctx =>
+    replay(request, source(sourceSaved, policy, ctx), policy, ctx))
 }
-export function readRepositorySavedBranchForkModel(value, policy = {}, limits = {}) {
-  const ctx = context([value, policy], limits)
-  shape(value, MODEL_KEYS)
-  if (value.format !== FORMAT || value.formatVersion !== 1) fail('E_SAVED_FORK_VERSION')
-  const saved = source(value.sourceArchive, policy, ctx), expected = replay(value.request, saved, policy, ctx)
-  if (!equal(value, expected)) fail('E_SAVED_FORK_CORRUPT')
-  return expected
+export function readRepositorySavedBranchForkModel(value, policy = {}, limits = {}, validationContext) {
+  return withRepositoryMergeSavedValidation([value, policy], limits, validationContext, ctx => {
+    shape(value, MODEL_KEYS)
+    if (value.format !== FORMAT || value.formatVersion !== 1) fail('E_SAVED_FORK_VERSION')
+    const saved = source(value.sourceArchive, policy, ctx), expected = replay(value.request, saved, policy, ctx)
+    if (!equal(value, expected)) fail('E_SAVED_FORK_CORRUPT')
+    return expected
+  })
 }

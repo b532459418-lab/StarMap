@@ -9,7 +9,8 @@ import { inspectRepositoryMergeArchiveInputs } from './world-store-branch-merge-
 import { createRepositoryMergeSavedArchive as createSaved, readRepositoryMergeSavedArchive as readSaved,
   createRepositoryMergeStoreOperationRequest as ordinaryRequest, createRepositoryMergeStoreRequest as mergeRequest,
   projectRepositoryMergeStoreRequest as project, appendRepositoryMergeSavedEvent as append,
-  previewRepositoryMergeStore as mergePreview } from './world-store-branch-merge-store-contract.mjs'
+  previewRepositoryMergeStore as mergePreview, expectedRepositoryMergeRestoreReceipt as expectedRestoreReceipt,
+  createRepositoryMergeRestoredSavedArchive as createRestoredSaved } from './world-store-branch-merge-store-contract.mjs'
 import { previewRepositorySavedBranchFork as preview, createRepositorySavedBranchForkRequest as request,
   replayRepositorySavedBranchFork as replay, readRepositorySavedBranchForkModel as read } from './world-store-saved-branch-fork-contract.mjs'
 
@@ -326,4 +327,78 @@ test('replay accounts for derived output expansion beyond input JSON node and by
   assert.ok(output.nodes > input.nodes); assert.ok(output.bytes > input.bytes)
   refuses(() => replay(requested, value, {}, { maxNodes: output.nodes + 100 }), 'E_SAVED_FORK_DERIVED_BUDGET')
   refuses(() => replay(requested, value, {}, { maxBytes: output.bytes + 1000 }), 'E_SAVED_FORK_DERIVED_BUDGET')
+})
+
+function restoredSource(value = saved(), name = 'first-restored') {
+  const input = parameters(value, { operationId: 'restore-' + name,
+    identity: { libraryId: value.baseArchive.descriptor.identity.libraryId, branchId: name, genesisId: name + '-genesis' },
+    restoreContext: { kind: 'backup-restore', packageDigest: 'c'.repeat(64) } })
+  const model = prepare(value, input).model
+  return createRestoredSaved(model, expectedRestoreReceipt(model))
+}
+
+test('prior native Saved and PR65 pure fork golden bytes remain unchanged', () => {
+  const value = saved(), model = prepare(value).model
+  assert.equal(value.savedDigest, 'a1c23eb2388c037eeeb8133964bd9896eb9c161d6662417dc2a0f9b91387b1c5')
+  assert.equal(digest(value), '17540887804062f96d360e40a939909e38ac95af1a3d141d7421997ebce918fb')
+  assert.equal(model.modelDigest, '468102c0c71caef33c40904f575372ac577523d1e7a9dd6905fb282d7ee908c3')
+  assert.equal(digest(model), 'ae89a1296fb94eeb851ee44846ed59a8df600cb68f19717d50f252953fe86db5')
+})
+
+test('complete restored Saved v2 can be a pure fork source with its initialization receipt retained', () => {
+  const source = restoredSource(edit(saved())), result = prepare(source)
+  assert.deepEqual(read(result.model), result.model); assert.deepEqual(result.model.sourceArchive, source)
+  assert.equal(result.requested.source.formatVersion, 2); assert.deepEqual(result.requested.source.identity, source.baseArchive.descriptor.identity)
+  assert.deepEqual(result.model.state, source.projection.state); assert.deepEqual(result.model.localOperations, [])
+  assert.equal(result.model.sourceArchive.initialization.receipt.kind, 'restore'); assert.equal(result.model.persisted, false)
+})
+
+test('restored identity, original source identity and underlying native ancestors are all reserved', () => {
+  const value = restoredSource(saved()), base = parameters(value)
+  for (const identity of [{ ...base.identity, branchId: 'first-restored' }, { ...base.identity, genesisId: 'first-restored-genesis' },
+    { ...base.identity, branchId: 'source' }, { ...base.identity, genesisId: 'source-genesis' },
+    { ...base.identity, branchId: 'root' }, { ...base.identity, genesisId: 'root-genesis' }])
+    refuses(() => prepare(value, { ...base, identity }), 'E_SAVED_FORK_COLLISION')
+})
+
+test('continuous fork nodes retain previously restored namespaces after edit and merge', () => {
+  const parent = root(), old = restoredSource(saved('source', parent)), next = edit(old, 'restore-edit')
+  const value = merged(saved('target', parent), next, 'import-restored')
+  const input = parameters(value)
+  for (const identity of [{ ...input.identity, branchId: 'first-restored' }, { ...input.identity, genesisId: 'first-restored-genesis' }])
+    refuses(() => prepare(value, { ...input, identity }), 'E_SAVED_FORK_COLLISION')
+  assert.deepEqual(prepare(value).model.sourceArchive.events[0].storeRequest.sourceArchive, next)
+})
+
+test('initialization receipt tampering cannot be promoted into a new fork even after Saved rehash', () => {
+  const value = restoredSource(), changed = structuredClone(value)
+  changed.initialization.receipt.forkModelDigest = 'f'.repeat(64)
+  refuses(() => preview(rehash(changed, 'savedDigest')), 'E_MERGE_STORE_RESTORE_RECEIPT')
+  refuses(() => read(prepare(value).model, {}, {}, { validated: true }), 'E_MERGE_STORE_VALIDATION_CONTEXT')
+})
+
+test('restored source preserves inherited local event namespace and same operation names do not confer new approval', () => {
+  const value = restoredSource(edit(saved(), 'same-name'))
+  const model = prepare(value, parameters(value, { operationId: 'same-name' })).model
+  assert.equal(model.operationReference.operationId, 'same-name'); assert.equal(model.sourceArchive.baseArchive.sourceArchive.events[0].receipt.operationId, 'same-name')
+  assert.notDeepEqual(model.operationReference.identity, model.sourceArchive.baseArchive.sourceArchive.events[0].receipt.identity)
+  assert.equal(model.foreignReceiptsBecomeLocal, false); assert.equal(model.newLocalApprovalIssued, false)
+})
+
+
+test('optional physical package evidence digest is bound as a declaration without granting IO verification', () => {
+  const value = saved(), input = parameters(value, { restoreContext: { kind: 'backup-restore', packageDigest: 'c'.repeat(64), packageEvidenceDigest: 'd'.repeat(64) } })
+  const first = prepare(value, input), receipt = expectedRestoreReceipt(first.model), restored = createRestoredSaved(first.model, receipt)
+  assert.equal(first.requested.restoreContext.packageEvidenceDigest, input.restoreContext.packageEvidenceDigest)
+  assert.equal(receipt.packageEvidenceDigest, input.restoreContext.packageEvidenceDigest); assert.deepEqual(readSaved(restored), restored)
+  assert.equal(first.model.backupPackageVerified, false); assert.equal(first.model.identityAllocated, false)
+  const changed = prepare(value, { ...input, restoreContext: { ...input.restoreContext, packageEvidenceDigest: 'e'.repeat(64) } })
+  assert.notEqual(changed.model.modelDigest, first.model.modelDigest); assert.notEqual(digest(changed.requested), digest(first.requested))
+  refuses(() => createRestoredSaved(first.model, { ...receipt, packageEvidenceDigest: 'e'.repeat(64) }), 'E_MERGE_STORE_RESTORE_RECEIPT')
+  const omitted = { ...receipt }; delete omitted.packageEvidenceDigest; refuses(() => createRestoredSaved(first.model, omitted))
+  for (const packageEvidenceDigest of [null, false, 'bad', 'D'.repeat(64)])
+    refuses(() => prepare(value, { ...input, restoreContext: { ...input.restoreContext, packageEvidenceDigest } }), 'E_SAVED_FORK_CONTEXT')
+  const legacy = prepare(value, parameters(value, { restoreContext: { kind: 'backup-restore', packageDigest: 'c'.repeat(64) } }))
+  assert.equal(Object.hasOwn(expectedRestoreReceipt(legacy.model), 'packageEvidenceDigest'), false)
+  refuses(() => createRestoredSaved(legacy.model, { ...expectedRestoreReceipt(legacy.model), packageEvidenceDigest: 'd'.repeat(64) }))
 })
