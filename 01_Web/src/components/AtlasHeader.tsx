@@ -1,5 +1,6 @@
 import { LanguageSelector } from './LanguageSelector'
 import { useUiLocale } from '../i18n/useUiLocale'
+import { repositoryPreviewActive } from '../data/appData'
 
 export type AtlasPage = 'map' | 'journey' | 'collection' | 'about'
 
@@ -34,6 +35,11 @@ export function AtlasHeader({ activePage, onPageChange, scrolled, scrollbarWidth
       <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-white sm:text-base">
         {t('subtitle')}
       </p>
+      {repositoryPreviewActive && (
+        <p role="status" data-repository-readonly-preview className="mx-auto mt-2 text-sm leading-6 text-slate-950">
+          {t('repositoryReadonlyPreview')}
+        </p>
+      )}
       <div className="atlas-header-controls">
         <nav
           className="atlas-tabs mx-auto mt-4 inline-flex items-center gap-1 rounded-full border border-white/70 bg-white/50 p-1 text-sm font-medium text-slate-500 shadow-sm backdrop-blur-xl"

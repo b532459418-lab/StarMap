@@ -29,6 +29,7 @@ export const resources = {
     common: {
       language: '界面语言', subtitle: '记录你走过的地方，让每段旅程成为可以重温的故事。',
       navigation: '主导航', map: '地图', journey: '旅程', collection: '收藏',
+      repositoryReadonlyPreview: '合成库只读预览，编辑未启用。',
       visitRecords_other: '{{count}} 条旅行记录', wantToGo: '想去',
     },
     collection: {
@@ -66,6 +67,7 @@ export const resources = {
     common: {
       language: 'Interface language', subtitle: 'Map the places you have visited and turn every journey into a story you can revisit.',
       navigation: 'Primary navigation', map: 'Map', journey: 'Journey', collection: 'Collection',
+      repositoryReadonlyPreview: 'Read-only synthetic repository preview. Editing is disabled.',
       visitRecords_one: '{{count}} visit record', visitRecords_other: '{{count}} visit records', wantToGo: 'Want to go',
     },
     collection: {
