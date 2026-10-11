@@ -12,8 +12,11 @@ their machine. That shapes what a security issue looks like here.
 - Anything that lets the tracked sample data or the built site leak a
   credential, a private path, or personal media.
 - Anything that lets a page other than the loopback development server call
-  the local editor endpoints (`/__travelatlas/editor/*`), or lets those
-  endpoints write outside the private layer.
+  the local editor endpoints (`/__travelatlas/editor/*`), or read private
+  data from the personal development server (the private-data module,
+  `/media/user/*`, `/@fs/`), or lets those endpoints write outside the
+  private layer. Other local pages (another dev server, a local tool) count
+  as "other pages" here.
 - Path traversal, unsafe file handling, or code execution in the media import
   scripts (`scripts/import-media.mjs`) or the editor plugin.
 - A dependency with a known vulnerability that is reachable from StarMap.

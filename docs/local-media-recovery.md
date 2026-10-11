@@ -18,7 +18,7 @@ Tasks live in `operations/media-import/v1/` with a schema, a UUID library instan
 
 ## Development API
 
-Prefix: `/__travelatlas/editor/media/jobs`. Every endpoint requires the personal, non-forced-sample profile, a loopback socket, `x-travelatlas-local-editor: 1`, and an allowed HTTP localhost origin when Origin is supplied. Requests from a `?data=sample` page are refused. Public mode registers no private endpoints. Responses are not cached and exclude canonical root bindings, absolute paths, staging locations and lease tokens.
+Prefix: `/__travelatlas/editor/media/jobs`. Every endpoint requires the personal, non-forced-sample profile, a loopback socket, `x-travelatlas-local-editor: 1`, and an allowed HTTP localhost origin when Origin is supplied. Requests from a `?data=sample` page are refused. Ahead of these checks, the personal profile refuses every cross-site or same-site browser request (by `Sec-Fetch-Site`) that is not a page navigation, and Vite's CORS is off. Public mode registers no private endpoints. Responses are not cached and exclude canonical root bindings, absolute paths, staging locations and lease tokens.
 
 | Endpoint | Contract |
 | --- | --- |
