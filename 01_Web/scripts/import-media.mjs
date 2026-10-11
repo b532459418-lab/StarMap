@@ -17,6 +17,8 @@ import { assertMediaJobsClear } from './media-job-store.mjs'
 
 const privatePaths = getPrivatePaths()
 const apply = process.argv.includes('--apply')
+// 第 1 批 D7：`npm run media:check -- --verify` 对已生成的原图核对内容哈希，只报告不一致。
+const verify = process.argv.includes('--verify')
 
 try {
   if (isLegacyUnmigrated(legacyDataStateOf(privatePaths))) {
@@ -25,7 +27,7 @@ try {
   } else {
     process.exitCode = await withLibraryOperation(privatePaths, async () => {
       if (apply) await assertMediaJobsClear(privatePaths)
-      return runV2MediaImport({ privatePaths, apply })
+      return runV2MediaImport({ privatePaths, apply, verify })
     }, { leaseToken: process.env.STARMAP_LIBRARY_LEASE })
   }
 } catch (error) {

@@ -242,3 +242,17 @@ test('RD-07 generator timestamps do not invalidate scope; metadata and ID change
   await json(paths.v2FilePaths.places, { ...places, places: places.places.map((item) => item.id === IDS.first ? { ...item, names: { en: 'Changed City' } } : item) })
   assert.notEqual((await createMediaImportPlan({ privatePaths: paths })).digest, plan.digest)
 }))
+
+test('D7 an interrupted importer temporary file neither blocks the plan nor survives application; other extra files still block', async () => fixture(async ({ paths }) => {
+  const initial = await createMediaImportPlan({ privatePaths: paths })
+  const entry = initial.scan.unique[0]
+  await mkdir(entry.outputDirectory, { recursive: true })
+  await writeFile(path.join(entry.outputDirectory, `.original.jpg.${process.pid + 1}.0f8fad5b-d9cb-469f-a165-70867728950e.tmp`), 'partial')
+  const plan = await createMediaImportPlan({ privatePaths: paths })
+  assert.deepEqual(plan.blockers, [])
+  await applyMediaImportPlan({ privatePaths: paths, plan })
+  assert.deepEqual((await readdir(entry.outputDirectory)).sort(), ['original.jpg', 'preview.webp', 'thumb.webp'])
+  await writeFile(path.join(entry.outputDirectory, 'unexpected.tmp'), 'not an importer temporary file')
+  const blocked = await createMediaImportPlan({ privatePaths: paths })
+  assert.ok(blocked.blockers.some((blocker) => blocker.code === 'E_MEDIA_PLAN_OUTPUT'))
+}))

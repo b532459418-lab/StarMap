@@ -4,7 +4,7 @@ import { createReadStream } from 'node:fs'
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
-import { scanV2MediaImport, applyV2MediaImportScan } from './v2-media-import.mjs'
+import { scanV2MediaImport, applyV2MediaImportScan, publishTemporaryOf } from './v2-media-import.mjs'
 import { catalogIntegrityProblems, mediaCatalogFileOf, mediaSourceIndexFileOf, sourcesByIdOf } from '../src/data/v2media/importPlan.ts'
 
 const PLAN_TIME = new Date('2026-01-01T00:00:00.000Z')
@@ -180,7 +180,9 @@ export async function createMediaImportPlan({ privatePaths, unsafeTestDerivative
       }
       const allowed = new Set(expected.map(({ target }) => path.basename(target)))
       const directory = await exists(entry.outputDirectory)
-      if (directory) for (const name of await readdir(entry.outputDirectory)) if (!allowed.has(name)) blockers.push({ code: 'E_MEDIA_PLAN_OUTPUT', sourcePath: relative(privatePaths.userMediaRoot, path.join(entry.outputDirectory, name)) })
+      // An interrupted importer leaves only its own temporary files (D7); the next import removes them before writing.
+      const tolerated = (name) => allowed.has(name) || allowed.has(publishTemporaryOf(name)?.finalName)
+      if (directory) for (const name of await readdir(entry.outputDirectory)) if (!tolerated(name)) blockers.push({ code: 'E_MEDIA_PLAN_OUTPUT', sourcePath: relative(privatePaths.userMediaRoot, path.join(entry.outputDirectory, name)) })
       for (const { target, digest } of expected) {
         outputs.push({ id: entry.id, path: `media/user/${relative(privatePaths.userMediaRoot, target)}`, sha256: digest })
         if (await exists(target) && await fileHash(target) !== digest) blockers.push({ code: 'E_MEDIA_PLAN_OUTPUT', sourcePath: relative(privatePaths.userMediaRoot, target) })

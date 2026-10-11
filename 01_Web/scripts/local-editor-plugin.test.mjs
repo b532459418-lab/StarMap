@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import fsPromises, { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -336,11 +337,20 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.deepEqual(fresh.reloads, [], 'Explicit cache invalidation does not trigger another page reload')
     })
 
-    await t.test('Partial write failure also invalidates the module before its error response', async () => {
+    await t.test('Partial write failure also invalidates the module before its error response', async (st) => {
       const partialRoot = path.join(root, 'partial-write')
-      const v2Root = path.join(partialRoot, 'data', 'v2')
       // Only the final editor-state atomic write fails; places/travel have already been saved.
-      await mkdir(path.join(v2Root, `editor-state.local.json.${process.pid}.tmp`), { recursive: true })
+      // Temporary names carry a random suffix (D8), so the failure is injected at the exclusive create.
+      const originalOpen = fsPromises.open
+      st.mock.method(fsPromises, 'open', async (...args) => {
+        if (/editor-state\.local\.json\.\d+\.[0-9a-f-]{36}\.tmp$/.test(String(args[0]))) throw Object.assign(new Error('injected'), { code: 'EACCES' })
+        return originalOpen(...args)
+      })
+      syncBuiltinESMExports()
+      st.after(() => {
+        st.mock.restoreAll()
+        syncBuiltinESMExports()
+      })
       const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: partialRoot })
       const id = plugin.resolveId('virtual:starmap-private-data')
       const privateModule = { id, transformResult: { code: await plugin.load(id) } }
