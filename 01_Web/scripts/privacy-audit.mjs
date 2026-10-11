@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { isPrivateTrackedPath } from './privacy-paths.mjs'
 import { auditV2SampleDirectory, V2_SAMPLE_FILE_NAMES } from './v2-sample.mjs'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -10,21 +11,7 @@ const publicFiles = process.argv.includes('--manifest-stdin')
   ? readFileSync(0, 'utf8').split('\0').filter(Boolean)
   : []
 
-const isPrivateTrackedPath = (filePath) => {
-  const normalized = filePath.replaceAll('\\', '/')
-  if (normalized.startsWith('02_Assets/PrivateData/')) return true
-  if (normalized.startsWith('01_Web/public/media/user/')) return true
-  if (normalized.startsWith('01_Web/src/data/generated/')) return true
-  if (normalized.includes('.local.')) return true
-  if (normalized === '01_Web/src/data/travel_map_export.json') return true
-  if (normalized.startsWith('02_Assets/MediaInbox/')) {
-    return normalized !== '02_Assets/MediaInbox/README.md'
-      && !normalized.startsWith('02_Assets/MediaInbox/_country-template/')
-  }
-  if (/^01_Web\/\.env(?:\.|$)/.test(normalized)) return normalized !== '01_Web/.env.example'
-  return false
-}
-
+// The path rules live in ./privacy-paths.mjs (unit-tested there).
 const existingViolations = publicFiles.filter((filePath) =>
   isPrivateTrackedPath(filePath) && existsSync(path.join(projectRoot, filePath)),
 )

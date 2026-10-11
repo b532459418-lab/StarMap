@@ -64,6 +64,8 @@ type CesiumAtlasGlobeProps = {
   imagerySaturation: number
   mapSource: MapSourceId
   showCity3DTiles?: boolean
+  /** Google 3D tiles could not be created; the owner of the City 3D state turns it off so the globe returns. */
+  onCity3DUnavailable?: () => void
   showLabelsOverlay?: boolean
   selectedCountryId?: CountryId
   selectedCityId?: CityId
@@ -596,6 +598,7 @@ export function CesiumAtlasGlobe({
   imagerySaturation,
   mapSource,
   showCity3DTiles = false,
+  onCity3DUnavailable,
   showLabelsOverlay = true,
   selectedCountryId,
   selectedCityId,
@@ -1773,7 +1776,7 @@ export function CesiumAtlasGlobe({
             show={showMapContent && showLabelsOverlay}
           />
         ) : null}
-        <GooglePhotorealisticTiles show={showCity3DTiles && showMapContent} />
+        <GooglePhotorealisticTiles show={showCity3DTiles && showMapContent} onUnavailable={onCity3DUnavailable} />
         <Scene backgroundColor={Color.fromCssColorString(isNight ? '#010409' : '#dbeafe')} />
         <CesiumGlobe
           baseColor={Color.fromCssColorString(isNight ? '#07111f' : '#cbd5e1')}

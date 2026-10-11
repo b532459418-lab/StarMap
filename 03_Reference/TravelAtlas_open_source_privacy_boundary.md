@@ -65,7 +65,14 @@ GitHub 不包含个人照片和旅行数据。若个人网站本身部署到公�
 - 从本机完成包含私有数据的构建后直接部署构建产物，不通过公开 GitHub 构建。
 - 把个人媒体放在独立对象存储中，公开仓库只保留应用代码。
 
-本地开发服务中的 `/__travelatlas/editor/*` 由 Vite 的 `serve` 阶段临时注册，只接受本机同源请求。正式构建不携带这个服务端能力；隐藏编辑按钮本身不作为安全措施，真正的边界是公开部署中没有写入接口。
+本地开发服务中的 `/__travelatlas/editor/*` 与 `/media/user/*` 由 Vite 的 `serve` 阶段临时注册，只在个人配置下存在。浏览器里任何 `localhost`、`127.0.0.1` 页面的请求都来自本机，所以「来自本机」本身不足以区分本应用与本机的其他页面（别的开发服务器、本地工具、其中混入的依赖）。个人配置的开发服务因此按下面的规则处理请求：
+
+- 关闭 Vite 的 CORS（`server.cors: false`）：不向任何其他来源返回 `Access-Control-Allow-Origin`。
+- 跨站请求守卫：注册在 Vite 自己的中间件之前，私人数据虚拟模块、`/@fs/`、`/media/user/*` 与编辑接口都在它之后。浏览器标为 `Sec-Fetch-Site: cross-site` 或 `same-site`（例如另一个端口上的 `localhost` 页面）的请求，只要不是打开页面本身（`Sec-Fetch-Mode: navigate`），一律返回 403。别处的链接仍能打开页面，但不能读取、嵌入或导入其中的任何资源。
+- 只读接口（`GET /__travelatlas/editor/state`、`/__travelatlas/editor/catalog/*`）与 `/media/user/*`：要求本机 socket；带 Origin 时必须与本服务同源（同协议、同主机、同端口）；`Sec-Fetch-Site` 必须缺省、为 `same-origin` 或 `none`。媒体响应带 `Cross-Origin-Resource-Policy: same-origin` 与 `X-Content-Type-Options: nosniff`。
+- 写入接口与媒体任务接口：要求本机 socket；带 Origin 时必须与本服务同源；并且带请求头 `x-travelatlas-local-editor: 1`。自定义请求头会触发跨源预检，而个人配置不放行任何跨源预检。
+
+不带 `Sec-Fetch-*` 头的本机工具（curl、脚本、测试）不受守卫影响，仍按各接口自己的检查处理。正式构建不携带这个服务端能力；隐藏编辑按钮本身不作为安全措施，真正的边界是公开部署中没有写入接口。
 
 ## 干净公开仓库允许清单
 

@@ -11,6 +11,16 @@ export const getInitialCity3DEnabled = (): boolean => {
   }
 }
 
+/**
+ * The initial City 3D state. Without a Google key neither the tiles nor the toggle render, so a stored 'on' must not
+ * count: localStorage on 127.0.0.1:5173 is shared by the public, personal and preview profiles, and the globe hides
+ * itself while City 3D is on. The stored preference is only read when a key is configured.
+ */
+export const resolveInitialCity3DEnabled = (
+  googleConfigured: boolean,
+  readStoredPreference: () => boolean = getInitialCity3DEnabled,
+): boolean => googleConfigured && readStoredPreference()
+
 export const rememberCity3DEnabled = (enabled: boolean) => {
   if (typeof window === 'undefined') return
 
