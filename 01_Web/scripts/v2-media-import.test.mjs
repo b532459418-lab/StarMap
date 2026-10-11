@@ -14,7 +14,8 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import fsPromises, { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -403,6 +404,123 @@ test('V2 导入：投递箱为空时写出空目录；注册表不合法时报�
 })
 
 // ---------------------------------------------------------------------------
+// 生成文件的原子发布与 --verify（第 1 批 D7）
+// ---------------------------------------------------------------------------
+
+/** 把 node:fs/promises 的某个函数换成替身（syncBuiltinESMExports 让导入器的具名导入也看到它）；用例结束时还原。 */
+const replaceFs = (t, name, replacement) => {
+  const original = fsPromises[name]
+  t.mock.method(fsPromises, name, (...args) => replacement(original, ...args))
+  syncBuiltinESMExports()
+  t.after(() => {
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  })
+}
+
+const generatedNamesOf = async (paths) => {
+  if (!existsSync(paths.userMediaRoot)) return []
+  return (await readdir(paths.userMediaRoot, { recursive: true })).map((name) => name.split(path.sep).join('/')).sort()
+}
+
+test('D7：发布中断（模拟进程崩溃）只留下其他进程的临时文件，最终路径不存在；重新运行清理遗留并正常完成', async () => {
+  await withV2Root(async ({ paths }) => {
+    await makeImage(path.join(paths.inboxRoot, 'Iceland', 'Reykjavik', 'photos', 'harbour.jpg'), { color: RED })
+    await writeJson(path.join(paths.inboxRoot, 'Iceland', 'Reykjavik', 'place.json'), { placeId: ID.reykjavik })
+    const source = path.join(paths.inboxRoot, 'Iceland', 'Reykjavik', 'photos', 'harbour.jpg')
+    const hash = sha256File(source).slice(0, 16)
+    const directory = path.join(paths.userMediaRoot, hash)
+    // 崩溃的导入进程只写了一半的原图临时文件；最终路径从未出现。
+    const staleName = `.original.jpg.${process.pid + 1}.0f8fad5b-d9cb-469f-a165-70867728950e.tmp`
+    await mkdir(directory, { recursive: true })
+    await writeFile(path.join(directory, staleName), readFileSync(source).subarray(0, 100))
+    // 名字相近、但不是导入器临时文件的文件不删。
+    await writeFile(path.join(directory, 'notes.tmp'), 'not ours')
+    assert.equal(existsSync(path.join(directory, 'original.jpg')), false)
+
+    const result = await importDirect(paths)
+    assert.equal(result.code, 0, result.output)
+    assert.equal(sha256File(path.join(directory, 'original.jpg')), sha256File(source), '原图是完整的副本')
+    assert.deepEqual((await readdir(directory)).sort(), ['notes.tmp', 'original.jpg', 'preview.webp', 'thumb.webp'])
+  })
+})
+
+test('D7：本进程发布失败时删除临时文件，最终路径不存在；故障消失后重新运行正常完成', async (t) => {
+  await withV2Root(async ({ paths }) => {
+    await writeInbox(paths)
+    let failures = 0
+    replaceFs(t, 'link', async () => {
+      failures += 1
+      throw Object.assign(new Error('injected link failure'), { code: 'EIO' })
+    })
+    replaceFs(t, 'rename', async (original, from, to) => {
+      if (String(from).endsWith('.tmp') && path.basename(String(from)).startsWith('.')) throw Object.assign(new Error('injected publish failure'), { code: 'EIO' })
+      return original(from, to)
+    })
+    await assert.rejects(importDirect(paths), /injected publish failure/)
+    assert.equal(failures, 1, '第一张原图发布失败就停下')
+    const names = await generatedNamesOf(paths)
+    assert.ok(names.every((name) => !name.endsWith('.tmp')), `不留临时文件：${names.join(', ')}`)
+    assert.ok(names.every((name) => !/\/(?:original\.jpg|thumb\.webp|preview\.webp)$/.test(name)), `没有发布任何最终文件：${names.join(', ')}`)
+    assert.equal(existsSync(paths.v2FilePaths.media), false, '目录没有写')
+
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+    const retry = await importDirect(paths)
+    assert.equal(retry.code, 0, retry.output)
+    const catalog = await readJsonFile(paths.v2FilePaths.media)
+    for (const item of catalog.items) {
+      const hash = /^media-([0-9a-f]{16})$/.exec(item.id)[1]
+      for (const file of ['original.jpg', 'thumb.webp', 'preview.webp']) assert.ok(existsSync(path.join(paths.userMediaRoot, hash, file)), `${hash}/${file}`)
+    }
+    assert.ok((await generatedNamesOf(paths)).every((name) => !name.endsWith('.tmp')))
+  })
+})
+
+test('D7：文件系统不支持硬链接时，在租约下确认最终路径不存在后 rename 发布；已存在的最终文件不被覆盖', async (t) => {
+  await withV2Root(async ({ paths }) => {
+    await writeInbox(paths)
+    replaceFs(t, 'link', async () => { throw Object.assign(new Error('no hard links here'), { code: 'EPERM' }) })
+    const first = await importDirect(paths)
+    assert.equal(first.code, 0, first.output)
+    const catalog = await readJsonFile(paths.v2FilePaths.media)
+    const hash = /^media-([0-9a-f]{16})$/.exec(itemByFile(catalog, 'harbour.jpg').id)[1]
+    const thumb = path.join(paths.userMediaRoot, hash, 'thumb.webp')
+    const thumbBytes = readFileSync(thumb)
+    assert.ok((await generatedNamesOf(paths)).every((name) => !name.endsWith('.tmp')))
+    const second = await importDirect(paths)
+    assert.equal(second.code, 0, second.output)
+    assert.deepEqual(readFileSync(thumb), thumbBytes)
+  })
+})
+
+test('D7：media:check --verify 只报告与目录名哈希不一致的原图，不修复；默认预检不做全量哈希', async () => {
+  await withV2Root(async ({ root, paths }) => {
+    await writeInbox(paths)
+    assert.equal((await importDirect(paths)).code, 0)
+    const clean = runImportCli(root, ['--verify'])
+    assert.equal(clean.status, 0, clean.stderr)
+    assert.match(clean.stdout, /校验：核对了 4 张已生成原图的内容哈希。/)
+
+    const catalog = await readJsonFile(paths.v2FilePaths.media)
+    const hash = /^media-([0-9a-f]{16})$/.exec(itemByFile(catalog, 'beach.jpg').id)[1]
+    const original = path.join(paths.userMediaRoot, hash, 'original.jpg')
+    const tampered = readFileSync(original).subarray(0, 200)
+    await writeFile(original, tampered)
+
+    const plain = runImportCli(root)
+    assert.equal(plain.status, 0, '默认预检不核对原图内容')
+    assert.doesNotMatch(plain.stdout, /校验：/)
+
+    const verified = runImportCli(root, ['--verify'])
+    assert.equal(verified.status, 1, verified.stdout)
+    assert.match(verified.stderr, new RegExp(`生成的原图 media/user/${hash}/original\\.jpg 与目录名的内容哈希不一致`))
+    assert.equal((verified.stderr.match(/内容哈希不一致/g) ?? []).length, 1, '只报告被篡改的那一张')
+    assert.deepEqual(readFileSync(original), tampered, '只报告，不修复')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 旧格式数据（RFC-LOC-1 PR5a 决定 I）：旧导入器已删除；没迁移时拒绝，迁移之后的残留照常
 // ---------------------------------------------------------------------------
 
@@ -410,7 +528,7 @@ test('入口只剩几行：import-media.mjs 不再含旧导入器，也不再按
   const source = readFileSync(path.join(webRoot, 'scripts', 'import-media.mjs'), 'utf8')
   assert.ok(source.split(/\r?\n/).length < 40, '入口文件应当只有几行')
   assert.doesNotMatch(source, /resolveDataMode|data-mode\.mjs|createLocationIndex|travel-map\.sample\.json|localTravelMapPath/)
-  assert.match(source, /return runV2MediaImport\(\{ privatePaths, apply \}\)/)
+  assert.match(source, /return runV2MediaImport\(\{ privatePaths, apply, verify \}\)/)
 })
 
 test('未迁移：私人目录只有旧数据、data/v2/ 没有 V2 文件 → media:check 与 media:import 都拒绝，退出码 2，说明怎么迁移；不写任何文件', async () => {

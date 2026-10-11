@@ -6,5 +6,5 @@ export function useMediaJobs() {
   const state = useSyncExternalStore(mediaJobs.subscribe, mediaJobs.getSnapshot, mediaJobs.getSnapshot)
   return {...state, currentPreview: state.preview, refresh: mediaJobs.refresh, uploadBatch: mediaJobs.uploadBatch,
     receiveMissing: mediaJobs.receiveMissing, preview: mediaJobs.preview, importJob: mediaJobs.importJob,
-    pause: mediaJobs.pause, close: mediaJobs.close}
+    pause: mediaJobs.pause, close: mediaJobs.close, abandon: mediaJobs.abandon}
 }

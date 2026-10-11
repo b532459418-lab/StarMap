@@ -14,15 +14,22 @@
  * - **写盘**：data/v2/user-media.local.json（PR3a 的 V3 格式）与 data/v2/media-source-index.local.json，都用
  *   atomicJsonWrite。写之前，新目录放进五个 V2 文件必须通过完整性检查（每个条目的 placeId 都是注册表里的城市……），
  *   否则一个文件都不写。
+ * - **生成文件的发布（第 1 批 D7）**：原图先复制、衍生图先由 sharp 写到同目录的临时文件
+ *   `.<最终文件名>.<pid>.<uuid>.tmp`，fsync 后不覆盖地发布（`link` 到最终路径再删临时文件；文件系统不支持硬链接时，
+ *   在库操作租约下先确认最终路径不存在再 rename）。最终路径已存在视为已经发布过。中断只会留下临时文件，不会留下
+ *   截断的最终文件；下次导入在写入前删掉这些输出目录里由其他进程留下的临时文件（导入总在库操作租约下运行，
+ *   所以其他进程的临时文件只可能是中断的遗留；本进程自己的临时文件由失败路径删除）。
+ * - **校验（`media:check --verify`）**：对已存在的原图（目录里的条目与这次计划的条目）重算内容哈希，与目录名（哈希前缀）
+ *   核对，只报告不一致（记为需要处理的问题），不自动修复。默认流程不做全量哈希。
  *
  * 可测试的部分（索引、解析、内容寻址、条目、封面）是纯函数，在 src/data/v2media/importPlan.ts。
  * 报告的格式与旧导入器相同：本地编辑器（local-editor-plugin.mjs 的 runImporter）按「需要处理」「缺少日期或分辨率」
  * 等字样判断预检是否通过。扫描的其余规则（文件夹别名、支持的格式、文件大小提醒、全景比例、sidecar 的读法）照抄旧导入器。
  */
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
-import { copyFile, mkdir, readdir, readFile, stat } from 'node:fs/promises'
+import { copyFile, link, lstat, mkdir, open, readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 
@@ -104,6 +111,85 @@ const sha256 = (target) => new Promise((resolve, reject) => {
   stream.on('end', () => resolve(hash.digest('hex')))
 })
 
+// ---- 生成文件：临时文件 + 不覆盖地发布（D7）----
+
+const PUBLISH_TEMPORARY = /^\.(.+)\.([1-9]\d{0,9})\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/
+
+/** 导入器发布用的临时文件名 → `{ finalName, pid }`；不是这种名字为 undefined。计划（media-import-plan.mjs）也用它容忍遗留。 */
+export const publishTemporaryOf = (name) => {
+  const match = PUBLISH_TEMPORARY.exec(name)
+  return match ? { finalName: match[1], pid: Number(match[2]) } : undefined
+}
+
+const temporaryPathFor = (finalPath) => path.join(path.dirname(finalPath), `.${path.basename(finalPath)}.${process.pid}.${randomUUID()}.tmp`)
+
+const syncFile = async (target) => {
+  const handle = await open(target, 'r+')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+}
+
+/** 不覆盖地发布：返回 true 为本次发布，false 为最终路径已存在（视为已经发布过，删掉临时文件）。 */
+const publishWithoutOverwrite = async (temporary, finalPath) => {
+  try {
+    await link(temporary, finalPath)
+  } catch (error) {
+    if (error?.code === 'EEXIST') {
+      await unlink(temporary)
+      return false
+    }
+    // 不支持硬链接的文件系统（FAT/exFAT、部分网络盘）：导入持有库操作租约，没有别的写入方，先查再 rename 等价于不覆盖。
+    if (await pathExists(finalPath)) {
+      await unlink(temporary)
+      return false
+    }
+    await rename(temporary, finalPath)
+    return true
+  }
+  await unlink(temporary)
+  return true
+}
+
+/** `produce(temporary)` 写出完整内容 → fsync → 发布。任何一步失败都删除临时文件再抛出。 */
+const writeThenPublish = async (finalPath, produce) => {
+  const temporary = temporaryPathFor(finalPath)
+  try {
+    await produce(temporary)
+    await syncFile(temporary)
+    return await publishWithoutOverwrite(temporary, finalPath)
+  } catch (error) {
+    await unlink(temporary).catch(() => {})
+    throw error
+  }
+}
+
+/**
+ * 删除输出目录里其他进程遗留的发布临时文件。只删：名字完全符合 `.<名字>.<pid>.<uuid>.tmp`、是普通文件、pid 不是本进程。
+ * 调用方持有库操作租约，同一时刻只有一个导入在写，所以这些文件只可能是中断的遗留。
+ */
+const removeStaleTemporaries = async (directory) => {
+  let names
+  try {
+    names = await readdir(directory)
+  } catch (error) {
+    if (error?.code === 'ENOENT') return
+    throw error
+  }
+  for (const name of names) {
+    const temporary = publishTemporaryOf(name)
+    if (!temporary || temporary.pid === process.pid) continue
+    const target = path.join(directory, name)
+    const info = await lstat(target).catch(() => undefined)
+    if (!info?.isFile()) continue
+    await unlink(target).catch((error) => {
+      if (error?.code !== 'ENOENT') throw error
+    })
+  }
+}
+
 /** 读不出的 V2 数据文件：只报文件与类别（JSON.parse 的消息会带出原文片段）。 */
 const describeReadFailure = (error) => (error instanceof SyntaxError ? '不是有效的 JSON' : error?.code ?? error?.name ?? '未知错误')
 
@@ -126,8 +212,11 @@ const readV2DataFiles = async (privatePaths) => {
  * 运行 V2 导入。`apply` 为 false 时只预检（不写任何文件）。返回退出码：0 完成（可能有提醒），1 有需要处理的问题或读写失败。
  * `now` 与两个输出函数可注入（测试用）。
  */
-export async function runV2MediaImport({ privatePaths, apply = false, now = () => new Date(), log = console.log, logError = console.error, capturePlan = false }) {
+export async function runV2MediaImport({ privatePaths, apply = false, verify = false, excludeSourcePaths = [], now = () => new Date(), log = console.log, logError = console.error, capturePlan = false }) {
   const inboxRoot = privatePaths.inboxRoot
+  // 彻底删除的预检（第 1 批 D5）按「删除之后」的投递箱扫描：要删的源文件不参与。只用于只读扫描。
+  const sourceKey = (target) => (process.platform === 'win32' ? path.resolve(target).toLowerCase() : path.resolve(target))
+  const excluded = new Set(excludeSourcePaths.map(sourceKey))
   const outputRoot = privatePaths.userMediaRoot
   const errors = []
   const warnings = []
@@ -205,6 +294,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
   }
 
   const planFile = async ({ filePath, kind, city, metadata = {} }) => {
+    if (excluded.has(sourceKey(filePath))) return
     const extension = validateExtension(filePath, kind)
     if (!extension) return
 
@@ -370,6 +460,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
   }
   const items = markCovers(unique.map((entry) => entry.item))
   if (capturePlan) return captured(files, unique, items)
+  if (verify) await verifyGeneratedOriginals({ files, unique, outputRoot, errors, log })
   printReport(items)
 
   if (errors.length > 0) {
@@ -392,6 +483,29 @@ export async function runV2MediaImport({ privatePaths, apply = false, now = () =
   return 0
 }
 
+/**
+ * `--verify`：已存在的原图（当前目录里的条目，加这次计划的条目）重算 sha256，前 16 位必须等于所在目录名。
+ * 不一致记为需要处理的问题（退出码 1），不删除、不重写任何文件。
+ */
+async function verifyGeneratedOriginals({ files, unique, outputRoot, errors, log }) {
+  const originals = new Map()
+  for (const item of Array.isArray(files.media?.items) ? files.media.items : []) {
+    const match = typeof item?.src === 'string' && /^\/media\/user\/([a-f0-9]{16})\/(original\.[a-z0-9]+)$/.exec(item.src)
+    if (match) originals.set(path.join(outputRoot, match[1], match[2]), match[1])
+  }
+  for (const entry of unique) originals.set(entry.outputPath, path.basename(entry.outputDirectory))
+  let checked = 0
+  for (const [target, expected] of originals) {
+    if (!(await pathExists(target))) continue
+    checked += 1
+    const actual = (await sha256(target)).slice(0, 16)
+    if (actual !== expected) {
+      errors.push(`生成的原图 media/user/${expected}/${path.basename(target)} 与目录名的内容哈希不一致（实际为 ${actual}），可能被截断或改动。确认后删除这个生成目录，再运行 npm run media:import 重新生成。`)
+    }
+  }
+  log(`校验：核对了 ${checked} 张已生成原图的内容哈希。`)
+}
+
 /** The CLI and durable task planner share exactly one Inbox scanner. Never writes. */
 export const scanV2MediaImport = (options) => runV2MediaImport({ ...options, apply: false, capturePlan: true })
 
@@ -404,18 +518,17 @@ export async function applyV2MediaImportScan({ privatePaths, scan, now = () => n
   const catalog = mediaCatalogFileOf(items, generatedAt)
   for (const entry of unique) {
     await mkdir(entry.outputDirectory, { recursive: true })
-    try {
-      await copyFile(entry.sourcePath, entry.outputPath, constants.COPYFILE_EXCL)
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error
+    await removeStaleTemporaries(entry.outputDirectory)
+    if (!(await pathExists(entry.outputPath))) {
+      await writeThenPublish(entry.outputPath, (temporary) => copyFile(entry.sourcePath, temporary, constants.COPYFILE_EXCL))
     }
     for (const derivative of entry.derivatives) {
       if (await pathExists(derivative.outputPath)) continue
-      await sharp(entry.sourcePath)
+      await writeThenPublish(derivative.outputPath, (temporary) => sharp(entry.sourcePath)
         .rotate()
         .resize({ width: derivative.maxEdge, height: derivative.maxEdge, fit: 'inside', withoutEnlargement: true })
         .webp({ quality: derivative.quality, effort: 4 })
-        .toFile(derivative.outputPath)
+        .toFile(temporary))
     }
   }
   await onStage('generated')

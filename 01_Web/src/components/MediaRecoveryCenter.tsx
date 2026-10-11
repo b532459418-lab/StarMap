@@ -5,7 +5,7 @@ import { cityById, countryById, countryIdOfCity } from '../data/travelAtlas'
 import { allImportedMediaItems } from '../data/mediaCatalog'
 import { worldGraphSnapshot } from '../data/worldGraph'
 import { reloadAfterLocalSave } from '../data/localEditorApi'
-import type { MediaJob, MediaJobPreview } from '../data/mediaJobs.ts'
+import { isFinishedMediaJob, type MediaJob, type MediaJobPreview } from '../data/mediaJobs.ts'
 import { MEDIA_RECOVERY_OPEN_EVENT, requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { formatEditorError, LocalEditorError } from '../i18n/editorErrors.ts'
 import { domainErrorResources } from '../i18n/domainErrorResources.ts'
@@ -18,7 +18,7 @@ const mediaById = new Map(allImportedMediaItems.map((item) => [item.id, item]))
 export function MediaRecoveryEntry({ countryId, cityId }: { countryId?: string; cityId?: string }) {
   const { t } = useTranslation('mediaRecovery')
   const state = useMediaJobs()
-  const active = state.jobs.filter((job) => job.phase !== 'closed')
+  const active = state.jobs.filter((job) => job.phase !== 'closed' && job.phase !== 'abandoned')
   const relevant = active.find((job) => job.countryId === countryId && job.cityId === cityId)
   if (!active.length && !state.error && !state.status) return null
   return <button type="button" className="atlas-local-editor-restore" onClick={() => requestMediaRecovery(relevant?.jobId)}>
@@ -131,7 +131,7 @@ function MediaJobCard({ job, state, selected, onOpenTarget, run }: {
   const [confirmedFiles, setConfirmedFiles] = useState(false)
   const statusText: Record<MediaJob['status'], string> = {
     not_received: t('status_not_received'), pending: t('status_pending'), needs_review: t('status_needs_review'),
-    completed: t('status_completed'), closed: t('status_closed'),
+    completed: t('status_completed'), closed: t('status_closed'), abandoned: t('status_abandoned'),
   }
   const kindText: Record<MediaJob['kind'], string> = {
     photo: t('kind_photo'), aerialPhoto: t('kind_aerialPhoto'), panorama360: t('kind_panorama360'),
@@ -194,6 +194,10 @@ function MediaJobCard({ job, state, selected, onOpenTarget, run }: {
         <button type="button" disabled={blocked || !job.canPreview} onClick={() => void run(() => state.preview(job.jobId))}>{t('preview')}</button>
         {!job.paused ? <button type="button" disabled={blocked} onClick={() => void run(() => state.pause(job.jobId))}>{t('pause')}</button> : null}
       </> : null}
+      {job.canAbandon && !isFinishedMediaJob(job) ? <button type="button" data-testid="media-job-abandon" disabled={blocked} onClick={() => {
+        if (!window.confirm(t('abandonConfirm'))) return
+        void run(() => state.abandon(job.jobId))
+      }}>{t('abandonTask')}</button> : null}
     </div>
     {canReceive ? <section className="atlas-media-recovery-reselect">
       <p>{t('reselection')}</p>
@@ -230,7 +234,7 @@ export function MediaRecoveryCenter({ onOpenTarget }: { onOpenTarget?: (countryI
   const [localError, setLocalError] = useState<unknown>()
   const dialog = useRef<HTMLDivElement>(null)
   const returnFocus = useRef<HTMLElement | null>(null)
-  const jobs = state.jobs.filter((job) => job.phase !== 'closed')
+  const jobs = state.jobs.filter((job) => job.phase !== 'closed' && job.phase !== 'abandoned')
   const error = state.error ?? localError
   const diagnostic = error instanceof LocalEditorError && error.code && Object.hasOwn(domainErrorResources.en, error.code)
     ? formatEditorError(new LocalEditorError({ code: error.code, params: error.params }), t)

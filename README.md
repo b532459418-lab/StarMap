@@ -97,7 +97,7 @@ VITE_TIANDITU_TOKEN=
 
 Development mode includes local editing controls. Use them to add or reorder countries and cities, hide or restore items, choose photo covers, and import city or drone media. Production builds do not include these write controls.
 
-Known editing and location-search failures follow the interface language. An unreadable ordinary edit requires a reload and verification before retrying. Photo and drone uploads create a durable local task before receiving bytes. Open Media tasks after a refresh or a new browser session to read the server facts. Review the whole Inbox, including other cities, and explicitly confirm its scope before importing. Unsent files require explicit reselection and confirmation; uncertain writes are never replayed. Pause keeps originals and allows ordinary editing, while another media batch and media deletion wait. A verified completed task displays history and can be closed without deleting its files.
+Known editing and location-search failures follow the interface language. An unreadable ordinary edit requires a reload and verification before retrying. Photo and drone uploads create a durable local task before receiving bytes. Open Media tasks after a refresh or a new browser session to read the server facts. Review the whole Inbox, including other cities, and explicitly confirm its scope before importing. Unsent files require explicit reselection and confirmation; uncertain writes are never replayed. Pause keeps originals and allows ordinary editing, while another media batch and media deletion wait. A verified completed task displays history and can be closed without deleting its files. A task that cannot finish can be abandoned after a confirmation: received files stay in the Inbox, generated outputs are not rolled back, and you can upload or import again.
 
 City creation uses Cesium ion geocoding first when the personal token is configured with the `geocode` public scope. If ion is unavailable, has no result, or exceeds nine seconds, StarMap falls back to an explicitly triggered, country-filtered OpenStreetMap lookup. The interface never spins indefinitely: users can retry with the local/English city name or switch to manual latitude and longitude entry.
 
@@ -110,9 +110,11 @@ npm run media:check
 npm run media:import
 ```
 
-The importer never rewrites Inbox originals. Personal source media, generated derivatives, local travel records, editor state, and `.env.local` stay in the external private layer and never enter the source repository.
+The importer never rewrites Inbox originals. It publishes generated files only after they are completely written, and `npm run media:check -- --verify` re-checks existing originals against their content hashes. Personal source media, generated derivatives, local travel records, editor state, and `.env.local` stay in the external private layer and never enter the source repository.
 
 Media recovery is connected to the photo and drone panels and discovers durable tasks on startup. Task reads and import previews write no library files. Completed operations retain historical results without restoring later hide/order/delete decisions. CLI preflight changes only coordination records; backup excludes tasks, locks and staging. See [recovery contracts and limits](docs/local-media-recovery.md).
+
+The library's coordination records are bound to the private root's path. If you move or rename the private root, or its drive letter changes, every write stops with `E_LIBRARY_ROOT_MOVED` instead of reporting a busy library. Stop the personal preview, then run `npm run library:rebind` in `01_Web/`: it prints the old and new bindings and changes nothing. If this is the same library, run `npm run library:rebind -- --confirm` to rebind it to the current path. The command refuses while an operation lock exists.
 
 ## Places you want to go
 

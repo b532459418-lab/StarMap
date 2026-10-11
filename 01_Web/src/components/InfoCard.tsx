@@ -7,6 +7,7 @@ import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-re
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource } from '../data/mediaCatalog'
 import { addLocalTravelRecord, deleteHiddenLocalMedia, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState } from '../data/localEditorApi'
+import { cityDraftUpdater, photoDraftUpdater, withoutIds } from '../data/editorStateDelta'
 import type { CitySearchOption } from '../data/localEditorApi'
 import { cityById, countryById, countryIdOfCity, getCitiesForCountry } from '../data/travelAtlas'
 import type { CityId, Country, CountryId, SelectionMode, TravelMapRecord } from '../types/travel'
@@ -18,6 +19,7 @@ import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { CityWantToGoAction } from './CityWantToGoAction'
 import { useFlipLayout } from './useFlipLayout'
 import { useMediaJobs } from './useMediaJobs'
+import { isFinishedMediaJob } from '../data/mediaJobs'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 import type { DateEvidence } from '../worldgraph/timeFilter'
 import { formatRecordDate, formatRecordDateSummary } from '../data/derive/recordDateLabel'
@@ -107,7 +109,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     return () => { photoImportTargetRef.current = undefined }
   }, [photoImportTarget])
   const photoImportLocked = mediaSession.loading || mediaSession.busy || Boolean(mediaSession.error || mediaSession.status)
-    || mediaSession.jobs.some(job => job.phase !== 'completed' && job.phase !== 'closed')
+    || mediaSession.jobs.some(job => !isFinishedMediaJob(job))
   const editorActionBusy = editorBusy || coordination.blocked
   const [draggedCityId, setDraggedCityId] = useState<CityId>()
   const [draggedPhotoId, setDraggedPhotoId] = useState<string>()
@@ -115,6 +117,9 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   const [draftHiddenCityIds, setDraftHiddenCityIds] = useState<CityId[]>(travelAtlasEditorState.hiddenCityIds)
   const [draftPhotoIds, setDraftPhotoIds] = useState<string[]>(cityPhotos.map((item) => item.id))
   const [draftHiddenPhotoIds, setDraftHiddenPhotoIds] = useState<string[]>(travelAtlasEditorState.hiddenMediaIds)
+  // The drafts start from (and reset to) the page-load snapshot; saves apply only the difference from it (D1).
+  const [baselineHiddenCityIds] = useState<readonly CityId[]>(() => travelAtlasEditorState.hiddenCityIds)
+  const [baselineHiddenPhotoIds] = useState<readonly string[]>(() => travelAtlasEditorState.hiddenMediaIds)
   const [draftCoverPhotoId, setDraftCoverPhotoId] = useState<string | undefined>(cityCoverPhoto?.id)
   const [selectedCityOption, setSelectedCityOption] = useState<CitySearchOption>()
   const [isManualCityEntry, setIsManualCityEntry] = useState(false)
@@ -151,10 +156,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:savingCities' })
     try {
-      await updateLocalEditorState((current) => ({
-        ...current,
-        cityOrderByCountry: { ...current.cityOrderByCountry, [country.id]: draftCityIds },
-        hiddenCityIds: draftHiddenCityIds,
+      await updateLocalEditorState(cityDraftUpdater({
+        countryId: country.id, draftCityIds, baselineHiddenCityIds, draftHiddenCityIds,
       }))
       reloadAfterLocalSave()
     } catch (error) {
@@ -168,13 +171,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:savingPhotos' })
     try {
-      await updateLocalEditorState((current) => ({
-        ...current,
-        mediaOrderByCity: { ...current.mediaOrderByCity, [city.id]: draftPhotoIds },
-        hiddenMediaIds: draftHiddenPhotoIds,
-        coverMediaByCity: draftCoverPhotoId
-          ? { ...current.coverMediaByCity, [city.id]: draftCoverPhotoId }
-          : current.coverMediaByCity,
+      await updateLocalEditorState(photoDraftUpdater({
+        cityId: city.id, draftPhotoIds, baselineHiddenPhotoIds, draftHiddenPhotoIds, draftCoverPhotoId,
       }))
       reloadAfterLocalSave()
     } catch (error) {
@@ -607,7 +605,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                   setEditorBusy(true)
                   void updateLocalEditorState((current) => ({
                     ...current,
-                    hiddenCityIds: current.hiddenCityIds.filter((id) => countryIdOfCity(id) !== country?.id),
+                    // Only the cities listed here; a city hidden elsewhere after this page loaded stays hidden (D1).
+                    hiddenCityIds: withoutIds(current.hiddenCityIds, hiddenCityIdsForCountry),
                   })).then(reloadAfterLocalSave).catch((error: unknown) => {
                     setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
                     setEditorBusy(false)

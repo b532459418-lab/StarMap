@@ -486,3 +486,79 @@ test('RD-07 unknown or malformed source-index evidence requires review and stays
     assert.deepEqual(await tree(env.paths.root), before)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 第 1 批 D2：放弃路由
+// ---------------------------------------------------------------------------
+
+const abandon = (env, job, input = { libraryId: job.libraryId, revision: job.revision }) => write(env, mediaJobRoute('POST', `${base}/${job.jobId}/abandon`), { input })
+
+test('D2 abandon route is recognized like close and only for POST on a task id', () => {
+  const id = randomUUID()
+  assert.deepEqual(mediaJobRoute('POST', `${base}/${id}/abandon`), { action: 'abandon', jobId: id })
+  assert.equal(mediaJobRoute('GET', `${base}/${id}/abandon`), undefined)
+  assert.equal(mediaJobRoute('POST', `${base}/not-a-uuid/abandon`), undefined)
+})
+
+test('D2 a task stuck in needs_review can be abandoned; evidence stays and a new task can start', async () => {
+  await withRoot(async (env) => {
+    const bytes = await jpeg()
+    const job = await newJob(env, bytes)
+    const request = Readable.from((async function * () { yield bytes.subarray(0, 20); throw new Error('Synthetic transport interruption') })())
+    request.headers = { 'content-length': String(bytes.length) }
+    assert.ok((await receive(env, job, bytes, { request })).status >= 400)
+    const stuck = (await get(env, job.jobId)).body.job
+    assert.equal(stuck.files[0].status, 'needs_review')
+    assert.equal(stuck.canAbandon, true, 'the recovery center may offer abandon')
+    const blocked = await create(env, bytes)
+    assert.equal(blocked.body.code, 'E_MEDIA_JOB_PENDING')
+
+    const before = await tree(env.paths.root, { omitCoordination: true })
+    const result = await abandon(env, stuck)
+    assert.equal(result.status, 200, JSON.stringify(result))
+    assert.equal(result.body.job.phase, 'abandoned')
+    assert.equal(result.body.job.status, 'abandoned')
+    assert.equal(result.body.job.canAbandon, false)
+    const after = await tree(env.paths.root, { omitCoordination: true })
+    const record = `operations/media-import/v1/jobs/${job.jobId}.json`
+    assert.deepEqual(Object.keys(after).sort(), Object.keys(before).sort(), 'no file is created or removed')
+    for (const name of Object.keys(before)) if (name !== record) assert.equal(after[name], before[name], name)
+    assert.notEqual(after[record], before[record])
+
+    const replay = await abandon(env, stuck)
+    assert.equal(replay.status, 200)
+    assert.equal(replay.body.replayed, true)
+    const read = (await get(env)).body
+    assert.equal(read.jobs.find((item) => item.jobId === job.jobId).status, 'abandoned')
+    const next = await create(env, bytes)
+    assert.equal(next.status, 201, JSON.stringify(next))
+  })
+})
+
+test('D2 abandon checks library identity, revision, body shape and lease; a paused task can be abandoned and receives nothing afterwards', async () => {
+  await withRoot(async (env) => {
+    const job = await newJob(env, await jpeg())
+    const recordBefore = await readFile(jobPath(env, job.jobId))
+    for (const [input, code] of [
+      [{ libraryId: randomUUID(), revision: job.revision }, 'E_MEDIA_JOB_CONFLICT'],
+      [{ libraryId: job.libraryId, revision: job.revision + 1 }, 'E_MEDIA_JOB_CONFLICT'],
+      [{ libraryId: job.libraryId, revision: job.revision, extra: true }, 'E_MEDIA_JOB_INVALID'],
+    ]) {
+      const result = await abandon(env, job, input)
+      assert.equal(result.body.ok, false)
+      assert.equal(result.body.code, code, JSON.stringify(input))
+    }
+    assert.deepEqual(await readFile(jobPath(env, job.jobId)), recordBefore)
+    const leaseless = await handleMediaJobWrite({ privatePaths: env.paths, deps: env.deps, route: mediaJobRoute('POST', `${base}/${job.jobId}/abandon`), input: { libraryId: job.libraryId, revision: job.revision } })
+    assert.equal(leaseless.body.code, 'E_LIBRARY_BUSY', 'like close, abandon requires the caller to hold the library lease')
+    assert.deepEqual(await readFile(jobPath(env, job.jobId)), recordBefore)
+
+    const pausedResult = await write(env, mediaJobRoute('POST', `${base}/${job.jobId}/pause`), { input: { libraryId: job.libraryId, revision: job.revision } })
+    assert.equal(pausedResult.status, 200, JSON.stringify(pausedResult))
+    const paused = (await get(env, job.jobId)).body.job
+    assert.equal(paused.canAbandon, true)
+    assert.equal((await abandon(env, paused)).body.job.phase, 'abandoned')
+    const receiveAfter = await receive(env, paused, await jpeg(), { revision: paused.revision + 1 })
+    assert.equal(receiveAfter.body.code, 'E_MEDIA_JOB_REVIEW', 'nothing is received into an abandoned task')
+  })
+})
