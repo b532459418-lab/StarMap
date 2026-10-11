@@ -39,7 +39,8 @@ import { buildBrowseTimeProjection, includedBrowseRecordKeys, countMappedTravelR
 import { coordinateForRecord } from './data/derive/travelAtlas'
 import { wantToGoCardRecordOf, type WantToGoCardRecord } from './data/derive/wantToGo'
 import { City3DToggle } from './extensions/City3DToggle'
-import { getInitialCity3DEnabled, rememberCity3DEnabled } from './extensions/city3dPreference'
+import { rememberCity3DEnabled, resolveInitialCity3DEnabled } from './extensions/city3dPreference'
+import { googleConfigured } from './extensions/googleImagery'
 import { LabelsToggle } from './extensions/LabelsToggle'
 import { getInitialMapLabelsEnabled, rememberMapLabelsEnabled } from './extensions/labelsPreference'
 import { getInitialMapSource, mapSourceHasLabelOverlay, rememberMapSource } from './extensions/mapSources'
@@ -178,7 +179,13 @@ function App() {
   const [pageBeforeUpdate, setPageBeforeUpdate] = useState<Exclude<AtlasPage, 'about'>>(restoredPageBeforeUpdate)
   const [imageryTuningByTheme, setImageryTuningByTheme] = useState(imageryTuningDefaults)
   const [mapSource, setMapSource] = useState<MapSourceId>(getInitialMapSource)
-  const [city3DEnabled, setCity3DEnabled] = useState(getInitialCity3DEnabled)
+  const [city3DEnabled, setCity3DEnabled] = useState(() => resolveInitialCity3DEnabled(googleConfigured))
+  // The globe hides itself while City 3D is on, so what it receives is gated by the Google key too.
+  const city3DActive = googleConfigured && city3DEnabled
+  const disableCity3D = () => {
+    setCity3DEnabled(false)
+    rememberCity3DEnabled(false)
+  }
   const [mapLabelsEnabled, setMapLabelsEnabled] = useState(getInitialMapLabelsEnabled)
   const [layerVisibility, setLayerVisibility] = useState(getInitialLayerVisibility)
   const [restoredTimeFilters] = useState(readLayerTimeFilters)
@@ -719,7 +726,8 @@ function App() {
               imageryContrast={imageryTuning.contrast}
               imagerySaturation={imageryTuning.saturation}
               mapSource={mapSource}
-              showCity3DTiles={city3DEnabled}
+              showCity3DTiles={city3DActive}
+              onCity3DUnavailable={disableCity3D}
               showLabelsOverlay={mapLabelsEnabled}
               selectedCountryId={selectedCountryId}
               selectedCityId={selectedCityId}

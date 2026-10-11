@@ -3,6 +3,8 @@ import { googleConfigured } from './googleImagery'
 
 type GooglePhotorealisticTilesProps = {
   show: boolean
+  /** The tileset could not be created (invalid key, billing, origin not allowed): the caller turns City 3D off. */
+  onUnavailable?: () => void
 }
 
 /**
@@ -18,7 +20,7 @@ type GooglePhotorealisticTilesProps = {
 const CACHE_BYTES = 1536 * 1024 * 1024
 const MAXIMUM_CACHE_OVERFLOW_BYTES = 1024 * 1024 * 1024
 
-export function GooglePhotorealisticTiles({ show }: GooglePhotorealisticTilesProps) {
+export function GooglePhotorealisticTiles({ show, onUnavailable }: GooglePhotorealisticTilesProps) {
   if (!googleConfigured || !show) return null
 
   return (
@@ -30,6 +32,8 @@ export function GooglePhotorealisticTiles({ show }: GooglePhotorealisticTilesPro
       enableCollision
       onError={() => {
         console.warn('[starmap] Google Photorealistic 3D Tiles failed to load.')
+        // The globe is hidden while City 3D is on; without tiles it must come back.
+        onUnavailable?.()
       }}
     />
   )
