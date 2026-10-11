@@ -166,7 +166,7 @@ export const previewMediaJob = async (jobId: string, input: MediaJobVersion & {s
   if (body.job.canImport !== (result.blockers.length === 0)) throw responseInvalid()
   return result
 }
-const mutateMediaJob = (action: 'import' | 'pause' | 'close', jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => withLocalEditorWrite(async () => {
+const mutateMediaJob = (action: 'import' | 'pause' | 'close' | 'abandon', jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => withLocalEditorWrite(async () => {
   const response = await fetch(`${mediaJobsPath}/${encodeURIComponent(jobId)}/${action}`, {method: 'POST', headers: editorHeaders, body: JSON.stringify(input)})
   const job = await jobResponse(response, jobId)
   if (job.libraryId !== input.libraryId || job.revision < input.revision) throw responseInvalid()
@@ -175,6 +175,8 @@ const mutateMediaJob = (action: 'import' | 'pause' | 'close', jobId: string, inp
 export const importMediaJob = (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string}, permit: MediaImportPermit) => mutateMediaJob('import', jobId, input, permit)
 export const pauseMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('pause', jobId, input, permit)
 export const closeMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('close', jobId, input, permit)
+/** Batch 1 D2: end an open/paused task without touching any file; the next import realigns with the Inbox. */
+export const abandonMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('abandon', jobId, input, permit)
 
 export const deleteHiddenLocalMedia = (cityId: string, ids: string[]) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/media/delete', {

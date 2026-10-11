@@ -1,7 +1,7 @@
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 import { fileSha256 } from './fileSha256.ts'
 import { localEditorCoordination, type LocalEditorCoordination, type MediaImportPermit } from './localEditorCoordination.ts'
-import { readMediaJobs, createMediaJob, receiveMediaJobFile, previewMediaJob, importMediaJob, pauseMediaJob, closeMediaJob, type LocalMediaUpload } from './localEditorApi.ts'
+import { readMediaJobs, createMediaJob, receiveMediaJobFile, previewMediaJob, importMediaJob, pauseMediaJob, closeMediaJob, abandonMediaJob, type LocalMediaUpload } from './localEditorApi.ts'
 
 export type MediaJobFile = {
   fileId: string; fileName: string; bytes: number
@@ -10,10 +10,10 @@ export type MediaJobFile = {
 }
 export type MediaJob = {
   jobId: string; libraryId: string; revision: number
-  phase: 'open' | 'paused' | 'completed' | 'closed'
+  phase: 'open' | 'paused' | 'completed' | 'closed' | 'abandoned'
   countryId: string; cityId: string; kind: LocalMediaUpload['kind']; createdAt: string; updatedAt: string
-  files: MediaJobFile[]; status: 'not_received' | 'pending' | 'needs_review' | 'completed' | 'closed'
-  paused: boolean; canImport: boolean; canUpload: boolean; canPreview?: boolean; canClose?: boolean; importStage?: string
+  files: MediaJobFile[]; status: 'not_received' | 'pending' | 'needs_review' | 'completed' | 'closed' | 'abandoned'
+  paused: boolean; canImport: boolean; canUpload: boolean; canPreview?: boolean; canClose?: boolean; canAbandon?: boolean; importStage?: string
   completion?: {operationId: string; planDigest: string; completedAt: string; mediaIds: string[]; restoredMediaIds: string[]}
   warnings?: {kind: 'changed_resource'; path: string}[]
 }
@@ -38,6 +38,7 @@ export type MediaJobsApi = {
   import: (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string}, permit: MediaImportPermit) => Promise<MediaJob>
   pause: (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => Promise<MediaJob>
   close: (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => Promise<MediaJob>
+  abandon: (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => Promise<MediaJob>
 }
 
 const record = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -54,15 +55,18 @@ const freezePreview = (preview: MediaJobPreview): MediaJobPreview => {
   freeze(preview)
   return preview
 }
+/** Completed, closed and abandoned tasks no longer block other media writes. */
+export const isFinishedMediaJob = (job: Pick<MediaJob, 'phase'>) => job.phase === 'completed' || job.phase === 'closed' || job.phase === 'abandoned'
 export function assertMediaJob(value: unknown): asserts value is MediaJob {
   if (!record(value) || !uuid(value.jobId) || !uuid(value.libraryId) || !uuid(value.countryId) || !uuid(value.cityId)
     || !Number.isSafeInteger(value.revision) || Number(value.revision) < 0
-    || !['open', 'paused', 'completed', 'closed'].includes(String(value.phase))
+    || !['open', 'paused', 'completed', 'closed', 'abandoned'].includes(String(value.phase))
     || !['photo', 'aerialPhoto', 'panorama360'].includes(String(value.kind))
-    || !['not_received', 'pending', 'needs_review', 'completed', 'closed'].includes(String(value.status))
+    || !['not_received', 'pending', 'needs_review', 'completed', 'closed', 'abandoned'].includes(String(value.status))
     || typeof value.createdAt !== 'string' || typeof value.updatedAt !== 'string'
     || typeof value.paused !== 'boolean' || typeof value.canImport !== 'boolean' || typeof value.canUpload !== 'boolean'
     || (value.canPreview !== undefined && typeof value.canPreview !== 'boolean') || (value.canClose !== undefined && typeof value.canClose !== 'boolean')
+    || (value.canAbandon !== undefined && typeof value.canAbandon !== 'boolean')
     || (value.importStage !== undefined && typeof value.importStage !== 'string')
     || !Array.isArray(value.files) || value.files.length === 0 || value.files.length > 100) throw invalid()
   const ids = new Set<string>(), names = new Set<string>()
@@ -81,6 +85,10 @@ export function assertMediaJob(value: unknown): asserts value is MediaJob {
       || !strings(completion.mediaIds) || !strings(completion.restoredMediaIds) || value.canImport || value.canUpload
       || value.status !== value.phase || value.paused || value.files.some(file => file.canReceive || (file.status === 'completed' ? file.phase !== 'received' : file.status !== 'not_received' || file.phase !== 'intended'))) throw invalid()
   } else if (value.completion !== undefined || ['completed', 'closed'].includes(String(value.status))) throw invalid()
+  // An abandoned task is inert history; an abandon action is only offered on open/paused tasks.
+  if ((value.phase === 'abandoned') !== (value.status === 'abandoned')
+    || (value.phase === 'abandoned' && (value.canImport || value.canUpload || value.canPreview || value.canClose || value.canAbandon || value.files.some(file => file.canReceive)))
+    || (value.canAbandon && value.phase !== 'open' && value.phase !== 'paused')) throw invalid()
   if (value.paused !== (value.phase === 'paused') || (value.canImport && (value.status !== 'pending' || !value.canPreview))
     || (value.canPreview && value.status !== 'pending') || (value.canUpload && value.status !== 'not_received')
     || (value.canClose && value.phase !== 'completed') || (value.status === 'needs_review' && value.files.some(file => file.canReceive))) throw invalid()
@@ -96,7 +104,7 @@ export function assertMediaJobsRead(value: unknown): asserts value is MediaJobsR
     if (value.libraryId !== job.libraryId || ids.has(job.jobId)) throw invalid()
     ids.add(job.jobId)
   }
-  if (value.jobs.filter(job => job.phase !== 'completed' && job.phase !== 'closed').length > 1) throw invalid()
+  if (value.jobs.filter(job => !isFinishedMediaJob(job)).length > 1) throw invalid()
 }
 export function assertMediaJobPreview(value: unknown): asserts value is MediaJobPreview {
   if (!record(value) || !uuid(value.jobId) || !Number.isSafeInteger(value.revision) || Number(value.revision) < 0 || !strings(value.selectedFileIds)
@@ -116,9 +124,10 @@ const defaultApi: MediaJobsApi = {
   read: () => readMediaJobs(), create: (intent, permit) => createMediaJob(intent, permit),
   receive: (...args) => receiveMediaJobFile(...args), preview: (...args) => previewMediaJob(...args),
   import: (...args) => importMediaJob(...args), pause: (...args) => pauseMediaJob(...args), close: (...args) => closeMediaJob(...args),
+  abandon: (...args) => abandonMediaJob(...args),
 }
 const version = (job: MediaJob): MediaJobVersion => ({libraryId: job.libraryId, revision: job.revision})
-const unfinished = (job: MediaJob) => job.phase !== 'completed' && job.phase !== 'closed'
+const unfinished = (job: MediaJob) => !isFinishedMediaJob(job)
 const selected = (job: MediaJob) => job.files.filter(file => file.phase === 'received' && file.status === 'pending').map(file => file.fileId).sort()
 const checkContinuation = (before: MediaJob, after: MediaJob) => {
   assertMediaJob(after)
@@ -278,6 +287,16 @@ export function createMediaJobs({api = defaultApi, coordination = localEditorCoo
       const result = await api.close(jobId, version(job), permit)
       checkContinuation(job, result)
       if (result.phase !== 'closed') throw invalid()
+      putJob(result)
+    }),
+    /** Only rewrites the task record; the caller has already confirmed with the user. */
+    abandon: async (jobId: string) => run(jobId, async permit => {
+      await refresh()
+      const job = getJob(jobId)
+      if (!job.canAbandon && job.phase !== 'abandoned') throw fault('E_MEDIA_JOB_REVIEW')
+      const result = await api.abandon(jobId, version(job), permit)
+      checkContinuation(job, result)
+      if (result.phase !== 'abandoned') throw invalid()
       putJob(result)
     }),
   })

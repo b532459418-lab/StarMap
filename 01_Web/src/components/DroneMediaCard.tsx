@@ -9,7 +9,7 @@ import { allImportedMediaItems } from '../data/mediaCatalog'
 import { deleteHiddenLocalMedia, reloadAfterLocalSave, updateLocalEditorState } from '../data/localEditorApi'
 import { readDroneFileMetadata } from '../data/droneMetadata'
 import { cityById } from '../data/travelAtlas'
-import { mediaJobs } from '../data/mediaJobs'
+import { isFinishedMediaJob, mediaJobs } from '../data/mediaJobs'
 import type { DroneMediaItem } from '../data/droneMedia'
 import { getDroneMediaForCity } from '../data/droneMedia'
 import type { CityId } from '../types/travel'
@@ -99,7 +99,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   const coordination = useLocalEditorCoordination()
   const sessionLocked = coordination.blocked
   const mediaLocked = session.loading || session.busy || Boolean(session.error || session.status)
-    || session.jobs.some(job => job.phase !== 'completed' && job.phase !== 'closed')
+    || session.jobs.some(job => !isFinishedMediaJob(job))
   const items = useMemo(() => getDroneMediaForCity(cityId), [cityId])
   const metadataRunRef = useRef(0)
   const mountedRef = useRef(true)
@@ -274,7 +274,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
 
     if (!mountedRef.current || metadataRunRef.current !== runId || !importTarget
       || mediaJobs.getSnapshot().busy
-      || mediaJobs.getSnapshot().jobs.some(job => job.phase !== 'completed' && job.phase !== 'closed')) return
+      || mediaJobs.getSnapshot().jobs.some(job => !isFinishedMediaJob(job))) return
     setFileDrafts(resolved)
     const missingDates = resolved.filter((draft) => !draft.date).length
     setNotice(missingDates

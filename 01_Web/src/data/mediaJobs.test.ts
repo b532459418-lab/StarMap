@@ -18,6 +18,8 @@ const planOf = (job: MediaJob = pending()): MediaJobPreview => ({jobId: job.jobI
 }}})
 const completed = (): MediaJob => ({...pending(), phase: 'completed', status: 'completed', canPreview: false, canClose: true, revision: 10,
   files: pending().files.map(item => ({...item, status: 'completed'})), completion: {operationId: id(9), planDigest: sha, completedAt: '2026-10-04T00:00:00Z', mediaIds: ['media-a'], restoredMediaIds: ['media-a']}, warnings: []})
+const abandonedOf = (job: MediaJob): MediaJob => ({...job, phase: 'abandoned', status: 'abandoned', paused: false, canImport: false, canUpload: false, canPreview: false, canAbandon: false, revision: job.revision + 1,
+  files: job.files.map(item => ({...item, canReceive: false, status: item.phase === 'intended' ? 'not_received' : 'needs_review'}))})
 const fixture = () => {
   let jobs: MediaJob[] = []
   const calls: string[] = []
@@ -29,6 +31,7 @@ const fixture = () => {
     import: async () => {calls.push('import'); jobs = [completed()]; return structuredClone(jobs[0])},
     pause: async () => {calls.push('pause'); jobs[0] = {...jobs[0], phase: 'paused', paused: true, revision: jobs[0].revision + 1}; return structuredClone(jobs[0])},
     close: async () => {calls.push('close'); jobs[0] = {...jobs[0], phase: 'closed', status: 'closed', canClose: false, revision: jobs[0].revision + 1}; return structuredClone(jobs[0])},
+    abandon: async () => {calls.push('abandon'); jobs[0] = abandonedOf(jobs[0]); return structuredClone(jobs[0])},
   }
   const coordination = createLocalEditorCoordination()
   const store = createMediaJobs({api, coordination, hashFile: async () => sha, operationId: () => id(9)})
@@ -209,4 +212,31 @@ test('malformed JSON and HTTP success with no job never become accepted task suc
     globalThis.fetch = async () => new Response(JSON.stringify({ok: true, job: {...pending(), jobId: id(99), canImport: true}, plan: {...plan.plan, selectedFileIds: plan.selectedFileIds, blockers: []}}), {status: 200})
     await assert.rejects(previewMediaJob(id(1), {libraryId: id(2), revision: 3, selectedFileIds: [id(5)]}), code('E_EDITOR_RESPONSE_INVALID'))
   } finally {globalThis.fetch = original}
+})
+
+test('D2 abandon: offered only on open or paused tasks, and an abandoned task no longer blocks a new batch', async () => {
+  const f = fixture()
+  const review: MediaJob = {...jobOf(), status: 'needs_review', canUpload: false, canAbandon: true,
+    files: [{...jobOf().files[0], phase: 'needs_review', status: 'needs_review', canReceive: false}]}
+  f.setJobs([review])
+  await assert.rejects(f.store.uploadBatch([{countryId: id(3), cityId: id(4), kind: 'photo', file: file('next.jpg')}]), code('E_MEDIA_JOB_PENDING'))
+  await f.store.abandon(id(1))
+  assert.deepEqual(f.calls.filter(call => call !== 'read'), ['abandon'])
+  assert.equal(f.store.getSnapshot().jobs[0].phase, 'abandoned')
+  assert.equal(f.coordination.getSnapshot().target, undefined, 'the media permit is released')
+  await f.store.uploadBatch([{countryId: id(3), cityId: id(4), kind: 'photo', file: file('next.jpg')}])
+  assert.ok(f.calls.includes('create'))
+})
+
+test('D2 abandon is refused without the server hint, and abandoned responses must be inert', async () => {
+  const f = fixture()
+  f.setJobs([{...jobOf(), canAbandon: false}])
+  await assert.rejects(f.store.abandon(id(1)), code('E_MEDIA_JOB_REVIEW'))
+  assert.equal(f.calls.includes('abandon'), false)
+  const abandoned = abandonedOf(jobOf())
+  assertMediaJob(abandoned)
+  assert.throws(() => assertMediaJob({...abandoned, canUpload: true}), code('E_EDITOR_RESPONSE_INVALID'))
+  assert.throws(() => assertMediaJob({...abandoned, status: 'not_received'}), code('E_EDITOR_RESPONSE_INVALID'))
+  assert.throws(() => assertMediaJob({...completed(), canAbandon: true}), code('E_EDITOR_RESPONSE_INVALID'))
+  assertMediaJobsRead({libraryId: id(2), jobs: [abandoned, {...jobOf(), jobId: id(30)}]})
 })

@@ -18,6 +18,7 @@ import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { CityWantToGoAction } from './CityWantToGoAction'
 import { useFlipLayout } from './useFlipLayout'
 import { useMediaJobs } from './useMediaJobs'
+import { isFinishedMediaJob } from '../data/mediaJobs'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 import type { DateEvidence } from '../worldgraph/timeFilter'
 import { formatRecordDate, formatRecordDateSummary } from '../data/derive/recordDateLabel'
@@ -107,7 +108,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     return () => { photoImportTargetRef.current = undefined }
   }, [photoImportTarget])
   const photoImportLocked = mediaSession.loading || mediaSession.busy || Boolean(mediaSession.error || mediaSession.status)
-    || mediaSession.jobs.some(job => job.phase !== 'completed' && job.phase !== 'closed')
+    || mediaSession.jobs.some(job => !isFinishedMediaJob(job))
   const editorActionBusy = editorBusy || coordination.blocked
   const [draggedCityId, setDraggedCityId] = useState<CityId>()
   const [draggedPhotoId, setDraggedPhotoId] = useState<string>()

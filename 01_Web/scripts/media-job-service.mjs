@@ -1,4 +1,12 @@
-/** RD-07 durable reception, full-Inbox confirmation and sealed import history. */
+/** RD-07 durable reception, full-Inbox confirmation and sealed import history.
+ *
+ * Abandon (batch 1 D2): `POST <prefix>/<id>/abandon` with `{ libraryId, revision }`, authorized and leased exactly like
+ * `close`. Only `open`/`paused` tasks can be abandoned; an import stage left in the record is allowed, because the
+ * request itself holds the library lease, so that stage belongs to an interrupted process. Abandoning rewrites only
+ * the task record (phase `abandoned`): received Inbox files, staging bytes, generated outputs and V2 data all stay
+ * as they are. The next import (a new task's import or `npm run media:import`) treats the Inbox as the source of
+ * truth and realigns the catalog, source index and generated files with it.
+ */
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
@@ -27,10 +35,10 @@ const digestFile = async (file) => {
 export function mediaJobRoute(method, pathname) {
   if (pathname === prefix && method === 'GET') return { action: 'list' }
   if (pathname === prefix && method === 'POST') return { action: 'create' }
-  const match = new RegExp(`^${prefix}/(${uuid})(?:/(pause|preview|import|close|files/(${uuid})))?$`, 'i').exec(pathname)
+  const match = new RegExp(`^${prefix}/(${uuid})(?:/(pause|preview|import|close|abandon|files/(${uuid})))?$`, 'i').exec(pathname)
   if (!match) return undefined
   if (!match[2] && method === 'GET') return { action: 'get', jobId: match[1] }
-  if (['pause','preview','import','close'].includes(match[2]) && method === 'POST') return { action: match[2], jobId: match[1] }
+  if (['pause','preview','import','close','abandon'].includes(match[2]) && method === 'POST') return { action: match[2], jobId: match[1] }
   if (match[3] && method === 'POST') return { action: 'receive', jobId: match[1], fileId: match[3] }
 }
 const responseError = (error) => {
@@ -120,11 +128,28 @@ async function pinsAndMetadataMatch(paths, job, file) {
   }
   return true
 }
+/** An abandoned task is inert history: no file is inspected and every action is off. */
+function abandonedSummary(job) {
+  const result = summary(job)
+  result.status = 'abandoned'
+  if (job.import) result.importStage = job.import.phase
+  result.files.forEach(file => { file.status = file.phase === 'intended' ? 'not_received' : 'needs_review'; file.canReceive = false })
+  result.paused = false
+  result.canPreview = false
+  result.canImport = false
+  result.canUpload = false
+  result.canAbandon = false
+  return result
+}
+
 async function reconcile(paths, job, resourceChecks) {
   // A structurally sealed record is historical proof of that operation. Later edits do not
   // rewind it into an import retry, even when the original target or resources were deleted.
   if (['completed', 'closed'].includes(job.phase)) return history(paths, job, resourceChecks)
+  if (job.phase === 'abandoned') return abandonedSummary(job)
   const result = summary(job)
+  // Reads only reach here while the library lease is idle, so even an unsealed import stage may be abandoned.
+  result.canAbandon = ['open', 'paused'].includes(job.phase)
   if (job.import) {
     result.status = 'needs_review'
     result.importStage = job.import.phase
@@ -385,6 +410,15 @@ export async function handleMediaJobWrite({ privatePaths, route, input, request,
         job = await store.close(job.jobId,revision)
         return {status:200,body:{ok:true,job:await history(privatePaths,job)}}
       }
+      if (route.action === 'abandon') {
+        if (!exactInput(input,['libraryId','revision'])) fail('E_MEDIA_JOB_INVALID')
+        if (job.phase === 'abandoned') {
+          if (revision > job.revision) fail('E_MEDIA_JOB_CONFLICT')
+          return {status:200,body:{ok:true,replayed:true,job:abandonedSummary(job)}}
+        }
+        job = await store.abandon(job.jobId,revision)
+        return {status:200,body:{ok:true,job:abandonedSummary(job)}}
+      }
       if (route.action === 'pause') {
         if (!exactInput(input,['libraryId','revision'])) fail('E_MEDIA_JOB_INVALID')
         if (job.import || !['open','paused'].includes(job.phase)) fail('E_MEDIA_JOB_REVIEW')
@@ -392,7 +426,7 @@ export async function handleMediaJobWrite({ privatePaths, route, input, request,
         return {status:200,body:{ok:true,job:await reconcile(privatePaths,job)}}
       }
       if (route.action !== 'receive') fail('E_UNKNOWN_ENDPOINT')
-      if (job.import) fail('E_MEDIA_JOB_REVIEW')
+      if (job.import || !['open','paused'].includes(job.phase)) fail('E_MEDIA_JOB_REVIEW')
       const file = job.files.find(file=>file.fileId === route.fileId)
       if (!file || !uuidPattern.test(params.operationId) || !hashPattern.test(params.sha256 ?? '')) fail('E_MEDIA_JOB_INVALID')
       if (Object.keys(params).some(key=>!['libraryId','revision','operationId','sha256'].includes(key))) fail('E_MEDIA_JOB_INVALID')

@@ -1,6 +1,9 @@
 /** Persistent RD-07 task intents. Mutations MUST run under the shared library operation lease.
  * Construction and reads never create directories or repair damaged records. Completion requires
  * a sealed receipt; the service verifies the represented files before writing that receipt.
+ * `abandoned` (batch 1 D2) is a terminal phase reachable only from `open`/`paused`: it changes the task
+ * phase and nothing else (files, import stage and every library file stay as evidence), and like
+ * `completed`/`closed` it no longer blocks other media writes. Records written before it existed stay valid.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises'
@@ -57,6 +60,9 @@ const validFile = (file, kind) => exact(file, ['fileId', 'fileName', 'bytes', 'p
   && (!['staged', 'received'].includes(file.phase) || (UUID.test(file.operationId) && relativePath(file.sourcePath) && SHA.test(file.sha256)
     && file.expectedSha256 === file.sha256 && file.receivedBytes === file.bytes && validImage(file.image)))
 const IMPORT_PHASES = ['started', 'generated', 'pins', 'catalog', 'index', 'editor', 'sealed']
+/** Task phases that no longer block other media writes. */
+const FINISHED_PHASES = ['completed', 'closed', 'abandoned']
+const ABANDONABLE_PHASES = ['open', 'paused']
 const canonical = (value) => JSON.stringify(value, (_key, entry) => object(entry)
   ? Object.fromEntries(Object.keys(entry).sort().map((key) => [key, entry[key]])) : entry)
 
@@ -97,7 +103,7 @@ const validImport = (job) => {
 }
 const validJob = (job) => exact(job, ['schemaVersion', 'libraryId', 'jobId', 'revision', 'phase', 'countryId', 'cityId', 'kind', 'createdAt', 'updatedAt', 'files', 'import'])
   && job.schemaVersion === 1 && UUID.test(job.libraryId) && UUID.test(job.jobId)
-  && Number.isSafeInteger(job.revision) && job.revision >= 0 && ['open', 'paused', 'completed', 'closed'].includes(job.phase)
+  && Number.isSafeInteger(job.revision) && job.revision >= 0 && ['open', 'paused', 'completed', 'closed', 'abandoned'].includes(job.phase)
   && UUID.test(job.countryId) && UUID.test(job.cityId) && job.countryId !== job.cityId
   && ['photo', 'aerialPhoto', 'panorama360'].includes(job.kind)
   && stamp(job.createdAt) && stamp(job.updatedAt) && job.updatedAt >= job.createdAt
@@ -216,7 +222,7 @@ export function createMediaJobStore(privatePaths) {
   }
   async function assertClear() {
     const state = await snapshot()
-    if (state.jobs.some((job) => !['completed', 'closed'].includes(job.phase))) fail('E_MEDIA_JOB_PENDING')
+    if (state.jobs.some((job) => !FINISHED_PHASES.includes(job.phase))) fail('E_MEDIA_JOB_PENDING')
   }
   async function create(input) {
     if (!exact(input, ['countryId', 'cityId', 'kind', 'files']) || !UUID.test(input.countryId) || !UUID.test(input.cityId)
@@ -228,7 +234,7 @@ export function createMediaJobStore(privatePaths) {
       || new Set(input.files.map((file) => file.fileName.toLocaleLowerCase('en-US'))).size !== input.files.length) fail('E_MEDIA_JOB_INVALID', 'Invalid file intent')
     const state = await snapshot()
     if (!state.info) fail('E_MEDIA_JOB_REVIEW', 'Library root missing')
-    if (state.jobs.some((job) => !['completed', 'closed'].includes(job.phase))) fail('E_MEDIA_JOB_PENDING')
+    if (state.jobs.some((job) => !FINISHED_PHASES.includes(job.phase))) fail('E_MEDIA_JOB_PENDING')
     const now = new Date().toISOString()
     let library = state.library
     await checked(state.info.root, controls, { create: true })
@@ -252,6 +258,8 @@ export function createMediaJobStore(privatePaths) {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || typeof mutator !== 'function') fail('E_MEDIA_JOB_INVALID', 'Invalid task update')
     const job = await read(jobId)
     if (job.revision !== expectedRevision) fail('E_MEDIA_JOB_CONFLICT')
+    // An abandoned task is history: no transition leaves it.
+    if (job.phase === 'abandoned') fail('E_MEDIA_JOB_INVALID', 'Task abandoned')
     const next = await mutator(structuredClone(job))
     const immutable = ['schemaVersion', 'libraryId', 'jobId', 'revision', 'countryId', 'cityId', 'kind', 'createdAt']
     const transitions = {
@@ -270,8 +278,11 @@ export function createMediaJobStore(privatePaths) {
       return next.import.phase === 'needs_review' || next.import.phase === job.import.phase
         || IMPORT_PHASES.indexOf(next.import.phase) === IMPORT_PHASES.indexOf(job.import.phase) + 1
     }
+    // Abandoning keeps files and the import record byte-identical; only open/paused tasks may be abandoned.
+    const abandonValid = () => ABANDONABLE_PHASES.includes(job.phase)
+      && canonical(next.files) === canonical(job.files) && canonical(next.import) === canonical(job.import)
     if (!validJob(next) || immutable.some((key) => next[key] !== job[key])
-      || !importMutationValid()
+      || !(next.phase === 'abandoned' ? abandonValid() : importMutationValid())
       || next.files.length !== job.files.length || next.files.some((file, index) => ['fileId', 'fileName', 'bytes', 'metadataHash'].some((key) => file[key] !== job.files[index][key])
         || JSON.stringify(file.metadata) !== JSON.stringify(job.files[index].metadata)
         || !transitions[job.files[index].phase].includes(file.phase)
@@ -299,6 +310,13 @@ export function createMediaJobStore(privatePaths) {
       if (job.phase === 'closed') return structuredClone(job)
       if (job.phase !== 'completed') fail('E_MEDIA_JOB_INVALID', 'Completion receipt required')
       return update(jobId, revision, (value) => ({ ...value, phase: 'closed' }))
+    },
+    /** Idempotent. Callers hold the library lease, so an unsealed import stage seen here was interrupted. */
+    abandon: async (jobId, revision) => {
+      const job = await read(jobId)
+      if (job.phase === 'abandoned') return structuredClone(job)
+      if (!ABANDONABLE_PHASES.includes(job.phase)) fail('E_MEDIA_JOB_INVALID', 'Only open or paused tasks can be abandoned')
+      return update(jobId, revision, (value) => ({ ...value, phase: 'abandoned' }))
     },
   }
 }
