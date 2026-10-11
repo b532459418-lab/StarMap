@@ -5,6 +5,8 @@ import { V2WriteError } from '../src/data/v2write/errors.ts'
 
 const defaultExecFileAsync = promisify(execFile)
 const blockingPattern = /需要处理|缺少日期或分辨率|缺少日期、分辨率或有效坐标|无法读取|找不到国家|找不到城市/
+/** The editor importer's preflight blocks on these words; delete preflight (v2-media-store.mjs) applies the same rule. */
+export const IMPORT_BLOCKING_PATTERN = blockingPattern
 
 const executionFailure = (error, stage) => {
   const reason = error instanceof Error ? error.message : String(error ?? '未知错误')

@@ -12,8 +12,10 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import fsPromises, { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -463,4 +465,122 @@ test('V2 导入普通错误即使带 details 或阻断文案仍是 FAILED，保�
       params: { reason: error.message }, details: error.details,
     })
   }
+})
+
+// ---------------------------------------------------------------------------
+// 第 1 批 D5：删除前预检；导入器成功之后才清理 editor-state
+// ---------------------------------------------------------------------------
+
+/** 私人根下每个文件的内容哈希（含 data/v2、投递箱与生成文件）。 */
+const hashTree = async (root) => {
+  const result = {}
+  for (const name of await listTree(root)) result[name] = createHash('sha256').update(await readFile(path.join(root, ...name.split('/')))).digest('hex')
+  return result
+}
+
+/** 上传并导入一张照片，再把它隐藏。返回它的媒体 id 与源文件路径。 */
+const hiddenPhoto = async (env, fileName, color) => {
+  const { paths, deps, ctx } = env
+  const uploaded = await upload(env, { countryId: ID.iceland, cityId: ID.reykjavik, fileName }, await jpeg(color))
+  assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body))
+  const imported = await handleV2Import({ privatePaths: paths, input: { sourcePaths: [uploaded.body.sourcePath] }, ctx, deps })
+  assert.equal(imported.status, 200, JSON.stringify(imported.body))
+  const id = imported.body.restoredMediaIds[0]
+  await editState(env, (draft) => { draft.hiddenMediaIds = [...new Set([...draft.hiddenMediaIds, id])] })
+  return { id, source: path.join(paths.inboxRoot, ...uploaded.body.sourcePath.split('/')) }
+}
+
+test('D5 删除前预检：投递箱里有无关的阻断问题 → E_MEDIA_DELETE_BLOCKED，带诊断，磁盘上什么都不变', async () => {
+  await withV2Root(async (env) => {
+    const { root, paths, deps, ctx } = env
+    const { id } = await hiddenPhoto(env, 'hidden.jpg', { r: 90, g: 10, b: 10 })
+    // 无关的问题：一个解析不到的城市文件夹。
+    await mkdir(path.join(paths.inboxRoot, 'Iceland', 'Nowhere Town', 'photos'), { recursive: true })
+    await writeFile(path.join(paths.inboxRoot, 'Iceland', 'Nowhere Town', 'photos', 'stray.jpg'), await jpeg({ r: 1, g: 2, b: 3 }))
+    const before = await hashTree(root)
+    const result = await handleV2MediaDelete({ privatePaths: paths, input: { cityId: ID.reykjavik, ids: [id] }, ctx, deps })
+    assert.equal(result.status, 400)
+    assert.equal(result.body.code, 'E_MEDIA_DELETE_BLOCKED')
+    assert.match(result.body.error, /没有删除任何文件/)
+    assert.match(result.body.details, /Nowhere Town/)
+    assert.deepEqual(await hashTree(root), before, '源文件、sidecar、生成文件与五个 V2 文件都不变')
+  })
+})
+
+test('D5 删除前预检按删除之后的投递箱判断：要删的那张图本身坏了也能删', async () => {
+  await withV2Root(async (env) => {
+    const { paths, deps, ctx } = env
+    const { id, source } = await hiddenPhoto(env, 'broken-later.jpg', { r: 10, g: 90, b: 10 })
+    // On Windows libvips' cache keeps the validated upload open; drop it before corrupting the file.
+    sharp.cache(false)
+    try {
+      await writeFile(source, 'no longer an image')
+    } finally {
+      sharp.cache(true)
+    }
+    const result = await handleV2MediaDelete({ privatePaths: paths, input: { cityId: ID.reykjavik, ids: [id] }, ctx, deps })
+    assert.equal(result.status, 200, JSON.stringify(result.body))
+    assert.equal(existsSync(source), false)
+    assert.equal((await readCatalog(paths)).items.some((item) => item.id === id), false)
+    assert.deepEqual((await readV2EditorState({ privatePaths: paths })).body.state.hiddenMediaIds, [])
+  })
+})
+
+test('D5 删除之后导入器失败：E_PARTIAL_WRITE 如实说明，条目仍保持隐藏、不会以坏图出现；修复后重新导入即可', async () => {
+  await withV2Root(async (env) => {
+    const { paths, ctx } = env
+    const { id, source } = await hiddenPhoto(env, 'hidden.jpg', { r: 10, g: 10, b: 90 })
+    const failing = { ...env.deps, runImporter: async () => {
+      const failure = new V2WriteError('E_MEDIA_IMPORT_FAILED', { reason: 'synthetic importer failure', stage: 'apply' })
+      failure.details = 'synthetic importer output'
+      throw failure
+    } }
+    const result = await handleV2MediaDelete({ privatePaths: paths, input: { cityId: ID.reykjavik, ids: [id] }, ctx, deps: failing })
+    assert.equal(result.status, 400)
+    assert.equal(result.body.code, 'E_PARTIAL_WRITE')
+    assert.match(result.body.params.message, /影像文件已删除/)
+    assert.match(result.body.params.message, /媒体目录还没有刷新/)
+    assert.match(result.body.params.message, /仍保持隐藏/)
+    assert.match(result.body.params.message, /重新导入/)
+    assert.equal(result.body.details, 'synthetic importer output')
+    assert.equal(existsSync(source), false, '文件已经删除')
+    assert.ok((await readCatalog(paths)).items.some((item) => item.id === id), '目录还没刷新')
+    assert.ok((await readV2EditorState({ privatePaths: paths })).body.state.hiddenMediaIds.includes(id), '条目仍在隐藏列表里')
+
+    // 修复之后重新导入：目录不再列出它；隐藏列表里留下的 id 无害。
+    const reimported = await handleV2Import({ privatePaths: paths, input: {}, ctx, deps: env.deps })
+    assert.equal(reimported.status, 200, JSON.stringify(reimported.body))
+    assert.equal((await readCatalog(paths)).items.some((item) => item.id === id), false)
+    await assertIntact(paths, '重新导入之后')
+  })
+})
+
+test('D5 导入器成功、editor-state 写入失败：E_PARTIAL_WRITE；残留的已删 id 不触发完整性检查，后续保存照常', async (t) => {
+  await withV2Root(async (env) => {
+    const { paths, deps, ctx } = env
+    const { id } = await hiddenPhoto(env, 'hidden.jpg', { r: 120, g: 120, b: 10 })
+    const originalOpen = fsPromises.open
+    t.mock.method(fsPromises, 'open', async (...args) => {
+      if (/editor-state\.local\.json\.\d+\.[0-9a-f-]{36}\.tmp$/.test(String(args[0]))) throw Object.assign(new Error('injected editor-state failure'), { code: 'EIO' })
+      return originalOpen(...args)
+    })
+    syncBuiltinESMExports()
+    let result
+    try {
+      result = await handleV2MediaDelete({ privatePaths: paths, input: { cityId: ID.reykjavik, ids: [id] }, ctx, deps })
+    } finally {
+      t.mock.restoreAll()
+      syncBuiltinESMExports()
+    }
+    assert.equal(result.status, 400)
+    assert.equal(result.body.code, 'E_PARTIAL_WRITE')
+    assert.equal(result.body.params.failed, 'editorState')
+    assert.match(result.body.params.message, /媒体目录已刷新，但编辑状态没有更新/)
+    assert.equal((await readCatalog(paths)).items.some((item) => item.id === id), false, '目录已刷新')
+    assert.ok((await readV2EditorState({ privatePaths: paths })).body.state.hiddenMediaIds.includes(id), '已删的 id 残留在隐藏列表里')
+    await assertIntact(paths, '残留已删 id 之后')
+    // 后续保存不被阻塞。
+    await editState(env, (draft) => { draft.hiddenCityIds = [] })
+    await assertIntact(paths, '后续保存之后')
+  })
 })

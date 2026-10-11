@@ -14,8 +14,12 @@
  *   不写文件 → 接收文件 → 给新用上的文件夹写 place.json → 无人机 sidecar。
  * - 导入：运行导入器（先预检、后应用，同旧）→ 按 V2 源文件索引恢复新导入条目的隐藏状态并追加进排序表（editor-state 走
  *   PR3b-2 的事务与完整性检查）。
- * - 删除：只能删该城市里已隐藏的照片或无人机影像 → 先算好 editor-state 的清理（事务，含完整性检查）→ 删源文件、sidecar 条目、
- *   内容寻址的生成目录（media/user/<哈希>/）→ 写 editor-state → 重新运行导入器。
+ * - 删除：只能删该城市里已隐藏的照片或无人机影像 → 先算好 editor-state 的清理（事务，含完整性检查）→ 对整个投递箱做只读预检
+ *   （按删除之后的样子：要删的源文件不参与；规则同编辑器导入器的预检），有阻断就返回 E_MEDIA_DELETE_BLOCKED、什么都不删 →
+ *   删源文件、sidecar 条目、内容寻址的生成目录（media/user/<哈希>/）→ 重新运行导入器 → 导入器成功之后才把这些 id 移出
+ *   editor-state（第 1 批 D5）。导入器失败时目录还列着这些条目，但它们仍在隐藏列表里，不会以坏图出现；返回 E_PARTIAL_WRITE
+ *   并如实说明。导入器成功、editor-state 写入失败时，隐藏列表里残留的已删 id 不影响后续写入：V2 完整性检查只核对地点引用，
+ *   不核对 editor-state 里的媒体 id 是否在目录中。
  *
  * 响应：成功时与旧模式相同的形状；失败为 `{ ok: false, error, code, params?, details? }`（PR3b-2 的形态）。
  */
@@ -24,7 +28,9 @@ import { rm, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 import { atomicJsonWrite, readJson } from './json-file.mjs'
+import { IMPORT_BLOCKING_PATTERN } from './local-editor-importer.mjs'
 import { applyV2Writes, readV2Files, v2ErrorBody } from './v2-editor-store.mjs'
+import { scanV2MediaImport } from './v2-media-import.mjs'
 import {
   deletableMediaOf,
   droneUploadMetadataOf,
@@ -195,6 +201,30 @@ export async function handleV2Import({ privatePaths, input, ctx, deps }) {
 // POST /media/delete
 // ---------------------------------------------------------------------------
 
+/**
+ * 删除前的只读预检（D5）：整个投递箱按删除之后的样子扫描（`sourcePaths` 不参与），阻断规则同编辑器导入器的预检
+ * （需要处理的问题，以及「缺少日期或分辨率」一类的未解决信息）。有阻断 → E_MEDIA_DELETE_BLOCKED，诊断放在 details。
+ */
+const assertDeletePreflight = async (privatePaths, sourcePaths) => {
+  const scan = await scanV2MediaImport({ privatePaths, excludeSourcePaths: sourcePaths })
+  const problems = [...scan.errors, ...scan.warnings.filter((warning) => IMPORT_BLOCKING_PATTERN.test(warning))]
+  if (problems.length === 0) return
+  const failure = new V2WriteError('E_MEDIA_DELETE_BLOCKED', { count: problems.length })
+  failure.details = problems.map((problem) => `- ${problem}`).join('\n')
+  throw failure
+}
+
+const IMPORT_AFTER_DELETE_FAILED = '影像文件已删除，但媒体目录还没有刷新（{reason}）。这些条目仍保持隐藏，不会以坏图出现；修复导入问题后重新导入即可。'
+const EDITOR_AFTER_DELETE_FAILED = '影像文件已删除、媒体目录已刷新，但编辑状态没有更新（{reason}）。残留在隐藏列表里的已删 id 不影响后续保存；请刷新页面后检查排序、隐藏与封面。'
+
+/** 文件已经删除之后的失败：如实报告为部分写入（E_PARTIAL_WRITE），带上导入器的诊断。 */
+const partialAfterDelete = (template, error, failed) => {
+  const reason = reasonOf(error)
+  const body = v2ErrorBody('E_PARTIAL_WRITE', { written: [], failed, reason, message: template.replace('{reason}', reason.replace(/[。.]$/, '')) })
+  const details = typeof error?.details === 'string' ? error.details : undefined
+  return { status: 400, body: details ? { ...body, details } : body }
+}
+
 /** `input` 是请求体（`{ cityId, ids }`）。成功：200 `{ ok, deletedIds, deletedSourceFiles, output }`（同旧）。 */
 export async function handleV2MediaDelete({ privatePaths, input, ctx, deps }) {
   try {
@@ -217,7 +247,9 @@ export async function handleV2MediaDelete({ privatePaths, input, ctx, deps }) {
       return target
     })
     // 先算好 editor-state 的清理（含完整性检查）；通不过就什么都不删。
-    const outcome = removeMediaFromEditorState(files, ids, ctx)
+    removeMediaFromEditorState(files, ids, ctx)
+    // 再对整个投递箱做只读预检；有阻断就什么都不删（D5）。
+    await assertDeletePreflight(privatePaths, sourcePaths)
 
     let deletedSourceFiles = 0
     for (const sourcePath of new Set(sourcePaths)) {
@@ -231,11 +263,22 @@ export async function handleV2MediaDelete({ privatePaths, input, ctx, deps }) {
     await deps.removeSidecarEntries(sourcePaths)
     for (const directory of generatedDirectories) await rm(directory, { recursive: true, force: true })
 
-    const onFailure = '影像文件已删除，但编辑状态没有更新（{reason}）。请刷新页面后检查排序、隐藏与封面。'
-    const failure = await applyV2Writes({ privatePaths, writes: outcome.writes.map((write) => ({ ...write, onFailure })), firstStepPartial: true })
+    // 先刷新目录：导入器失败时，目录里还列着的这些条目仍在隐藏列表里，不会以坏图出现。
+    let output
+    try {
+      output = await runImporterOrFail(deps)
+    } catch (error) {
+      return partialAfterDelete(IMPORT_AFTER_DELETE_FAILED, error, 'media')
+    }
+    // 目录已不含这些条目，再把它们移出 editor-state（按导入之后的文件重新计算）。
+    let outcome
+    try {
+      outcome = removeMediaFromEditorState(await readV2Files(privatePaths), ids, ctx)
+    } catch (error) {
+      return partialAfterDelete(EDITOR_AFTER_DELETE_FAILED, error, 'editorState')
+    }
+    const failure = await applyV2Writes({ privatePaths, writes: outcome.writes.map((write) => ({ ...write, onFailure: EDITOR_AFTER_DELETE_FAILED })), firstStepPartial: true })
     if (failure) return failure
-
-    const output = await runImporterOrFail(deps)
     return { status: 200, body: { ok: true, deletedIds: ids, deletedSourceFiles, output } }
   } catch (error) {
     return failureResponse(error, 'E_UNEXPECTED')

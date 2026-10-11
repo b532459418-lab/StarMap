@@ -119,6 +119,8 @@ export const V2_WRITE_MESSAGES = {
   E_MEDIA_SOURCE_OUTSIDE_INBOX: () => '媒体源文件路径超出投递箱范围，已停止删除。',
   E_MEDIA_PATH_INVALID: () => '影像生成路径格式无效，已停止删除。',
   E_MEDIA_GENERATED_OUTSIDE: () => '生成文件路径超出用户媒体目录，已停止删除。',
+  /** 新（第 1 批 D5）：彻底删除之前的投递箱预检有阻断，什么都没有删。 */
+  E_MEDIA_DELETE_BLOCKED: () => '投递箱预检发现需要处理的问题，没有删除任何文件。请先处理诊断详情里列出的问题，再彻底删除。',
 
   // ---- 新：V2 才有的情形 ----
   E_PLACE_AMBIGUOUS: () => '地点注册表里有不止一个地点与之匹配，无法确定是哪一个，未写入。请先合并重复的地点。',

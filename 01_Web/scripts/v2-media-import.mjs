@@ -212,8 +212,11 @@ const readV2DataFiles = async (privatePaths) => {
  * 运行 V2 导入。`apply` 为 false 时只预检（不写任何文件）。返回退出码：0 完成（可能有提醒），1 有需要处理的问题或读写失败。
  * `now` 与两个输出函数可注入（测试用）。
  */
-export async function runV2MediaImport({ privatePaths, apply = false, verify = false, now = () => new Date(), log = console.log, logError = console.error, capturePlan = false }) {
+export async function runV2MediaImport({ privatePaths, apply = false, verify = false, excludeSourcePaths = [], now = () => new Date(), log = console.log, logError = console.error, capturePlan = false }) {
   const inboxRoot = privatePaths.inboxRoot
+  // 彻底删除的预检（第 1 批 D5）按「删除之后」的投递箱扫描：要删的源文件不参与。只用于只读扫描。
+  const sourceKey = (target) => (process.platform === 'win32' ? path.resolve(target).toLowerCase() : path.resolve(target))
+  const excluded = new Set(excludeSourcePaths.map(sourceKey))
   const outputRoot = privatePaths.userMediaRoot
   const errors = []
   const warnings = []
@@ -291,6 +294,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, verify = f
   }
 
   const planFile = async ({ filePath, kind, city, metadata = {} }) => {
+    if (excluded.has(sourceKey(filePath))) return
     const extension = validateExtension(filePath, kind)
     if (!extension) return
 
