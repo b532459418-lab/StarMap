@@ -618,7 +618,7 @@ export function travelAtlasLocalEditor(options = {}) {
           }
           return sendJson(response, result.status, result.body)
         } catch (error) {
-          return sendJson(response, error?.code === 'E_LIBRARY_BUSY' ? 409 : 400, normalizeLocalEditorError(error))
+          return sendJson(response, ['E_LIBRARY_BUSY', 'E_LIBRARY_ROOT_MOVED'].includes(error?.code) ? 409 : 400, normalizeLocalEditorError(error))
         }
       })
     },

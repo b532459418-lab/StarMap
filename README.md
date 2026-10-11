@@ -114,6 +114,8 @@ The importer never rewrites Inbox originals. Personal source media, generated de
 
 Media recovery is connected to the photo and drone panels and discovers durable tasks on startup. Task reads and import previews write no library files. Completed operations retain historical results without restoring later hide/order/delete decisions. CLI preflight changes only coordination records; backup excludes tasks, locks and staging. See [recovery contracts and limits](docs/local-media-recovery.md).
 
+The library's coordination records are bound to the private root's path. If you move or rename the private root, or its drive letter changes, every write stops with `E_LIBRARY_ROOT_MOVED` instead of reporting a busy library. Stop the personal preview, then run `npm run library:rebind` in `01_Web/`: it prints the old and new bindings and changes nothing. If this is the same library, run `npm run library:rebind -- --confirm` to rebind it to the current path. The command refuses while an operation lock exists.
+
 ## Places you want to go
 
 The Want to Go layer marks places you have not been to yet. The map layers button in the bottom dock (地图图层, a separate button from the imagery-source menu) opens the layer panel, where the Travel and Want to Go layers can be shown or hidden independently. The browser remembers the choice across sessions.

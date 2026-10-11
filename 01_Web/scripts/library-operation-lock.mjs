@@ -7,11 +7,15 @@ const version = 1
 const ownerPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/
 const hashPattern = /^[a-f0-9]{64}$/
 const busy = () => new V2WriteError('E_LIBRARY_BUSY')
+const rootMoved = () => new V2WriteError('E_LIBRARY_ROOT_MOVED')
 const missing = (error) => error?.code === 'ENOENT'
 const binding = (root) => createHash('sha256').update(process.platform === 'win32' ? root.toLowerCase() : root).digest('hex')
 const valid = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
   && value.schemaVersion === version && typeof value.owner === 'string' && ownerPattern.test(value.owner)
   && typeof value.rootBinding === 'string' && hashPattern.test(value.rootBinding)
+
+/** The generation file is bound to the canonical private-root path; a moved/renamed root no longer matches it. */
+export const libraryRootBinding = binding
 
 async function locations(privatePaths, create) {
   const requestedRoot = path.resolve(privatePaths.root)
@@ -32,31 +36,50 @@ async function locations(privatePaths, create) {
   return { rootBinding: binding(root), lockPath: path.join(operations, 'library-operation.lock'), statePath: path.join(operations, 'library-operation-state.json') }
 }
 
-async function readGeneration(statePath, rootBinding) {
+/** Valid generation records only; returns null when absent. A record bound to another root path is E_LIBRARY_ROOT_MOVED. */
+export async function readGenerationRecord(statePath) {
   try {
     const metadata = await lstat(statePath)
     if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 4096) throw busy()
     const state = JSON.parse(await readFile(statePath, 'utf8'))
-    if (state?.schemaVersion !== version || state.rootBinding !== rootBinding || typeof state.generation !== 'string' || !ownerPattern.test(state.generation)) throw busy()
-    return state.generation
+    if (state?.schemaVersion !== version || typeof state.rootBinding !== 'string' || !hashPattern.test(state.rootBinding)
+      || typeof state.generation !== 'string' || !ownerPattern.test(state.generation)) throw busy()
+    return state
   } catch (error) {
     if (missing(error)) return null
     throw busy()
   }
 }
 
-async function advanceGeneration(statePath, rootBinding) {
-  await readGeneration(statePath, rootBinding)
+async function readGeneration(statePath, rootBinding) {
+  const state = await readGenerationRecord(statePath)
+  if (state === null) return null
+  if (state.rootBinding !== rootBinding) throw rootMoved()
+  return state.generation
+}
+
+/** Atomic generation write: exclusive random temporary file, fsync, rename. Shared with `npm run library:rebind`. */
+export async function writeGenerationRecord(statePath, rootBinding, generation = randomUUID()) {
   const temporary = `${statePath}.${randomUUID()}.tmp`
   const handle = await open(temporary, 'wx', 0o600)
   try {
-    await handle.writeFile(JSON.stringify({ schemaVersion: version, rootBinding, generation: randomUUID() }))
+    await handle.writeFile(JSON.stringify({ schemaVersion: version, rootBinding, generation }))
     await handle.sync()
-  } finally { await handle.close() }
+  } catch (error) {
+    await handle.close().catch(() => {})
+    await unlink(temporary).catch(() => {})
+    throw error
+  }
+  await handle.close()
   try { await rename(temporary, statePath) } catch (error) {
     await unlink(temporary).catch(() => {})
     throw error
   }
+}
+
+async function advanceGeneration(statePath, rootBinding) {
+  await readGeneration(statePath, rootBinding)
+  await writeGenerationRecord(statePath, rootBinding)
 }
 
 async function readLock(lockPath) {
@@ -84,7 +107,9 @@ export async function inspectLibraryOperation(privatePaths) {
     try { record = await readLock(lockPath) } catch (error) {
       if (missing(error)) {
         try { return { state: 'idle', generation: await readGeneration(statePath, rootBinding) } }
-        catch { return { state: 'needs_review', reason: 'generation_invalid' } }
+        catch (generationError) {
+          return { state: 'needs_review', reason: generationError?.code === 'E_LIBRARY_ROOT_MOVED' ? 'root_moved' : 'generation_invalid' }
+        }
       }
       return { state: 'needs_review', reason: 'lock_invalid' }
     }
@@ -94,6 +119,108 @@ export async function inspectLibraryOperation(privatePaths) {
   } catch (error) {
     return missing(error) ? { state: 'idle', generation: null } : { state: 'needs_review', reason: 'lock_unreadable' }
   }
+}
+
+const MEDIA_TASK_IDENTITY = ['operations', 'media-import', 'v1', 'library.json']
+
+/** The media task identity (media-job-store.mjs) carries the same canonical root binding. Absent → null. */
+async function readMediaTaskIdentity(root) {
+  const target = path.join(root, ...MEDIA_TASK_IDENTITY)
+  let metadata
+  try { metadata = await lstat(target) } catch (error) { if (missing(error)) return null; throw error }
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1 || metadata.size > 4096) return { target, invalid: true }
+  try {
+    const value = JSON.parse(await readFile(target, 'utf8'))
+    const keys = ['schemaVersion', 'libraryId', 'rootBinding', 'createdAt']
+    const valid = value !== null && typeof value === 'object' && !Array.isArray(value)
+      && Object.keys(value).every((key) => keys.includes(key)) && value.schemaVersion === 1
+      && typeof value.rootBinding === 'string' && hashPattern.test(value.rootBinding)
+    return valid ? { target, value } : { target, invalid: true }
+  } catch { return { target, invalid: true } }
+}
+
+async function atomicReplace(target, encoded) {
+  const temporary = path.join(path.dirname(target), `${randomUUID()}.tmp`)
+  const handle = await open(temporary, 'wx', 0o600)
+  try {
+    await handle.writeFile(encoded, 'utf8')
+    await handle.sync()
+  } catch (error) {
+    await handle.close().catch(() => {})
+    await unlink(temporary).catch(() => {})
+    throw error
+  }
+  await handle.close()
+  try { await rename(temporary, target) } catch (error) {
+    await unlink(temporary).catch(() => {})
+    throw error
+  }
+}
+
+/**
+ * `npm run library:rebind`: after the private root was moved/renamed (E_LIBRARY_ROOT_MOVED), rebind the generation
+ * record (and the media task identity, which carries the same binding) to the current root. Prints the old and new
+ * bindings; writes only with `confirm`. Refuses while any lock exists, and holds its own lock while writing.
+ * Returns an exit code: 0 done / nothing to do / dry run, 1 refused.
+ */
+export async function rebindLibraryRoot(privatePaths, { confirm = false, log = console.log, logError = console.error } = {}) {
+  let resolved
+  try { resolved = await realpath(path.resolve(privatePaths.root)) } catch (error) {
+    if (!missing(error)) throw error
+    logError('[library:rebind] 私人根不存在，没有可以重新绑定的库。')
+    return 1
+  }
+  const { lockPath, statePath, rootBinding } = await locations(privatePaths, false)
+  if (await lstat(lockPath).then(() => true, (error) => { if (missing(error)) return false; throw error })) {
+    logError('[library:rebind] 库操作锁存在（operations/library-operation.lock），拒绝执行。先确认没有正在进行或中断的操作，再处理这个锁。')
+    return 1
+  }
+  let generation
+  try { generation = await readGenerationRecord(statePath) } catch {
+    logError('[library:rebind] 库操作记录（operations/library-operation-state.json）损坏或无法读取，拒绝执行。请核对或从备份恢复这个文件。')
+    return 1
+  }
+  const identity = await readMediaTaskIdentity(resolved)
+  if (identity?.invalid) {
+    logError('[library:rebind] 媒体待办身份（operations/media-import/v1/library.json）损坏或不是普通文件，拒绝执行。')
+    return 1
+  }
+  const changes = []
+  if (generation && generation.rootBinding !== rootBinding) changes.push({ label: '库操作记录（operations/library-operation-state.json）', from: generation.rootBinding })
+  if (identity?.value && identity.value.rootBinding !== rootBinding) changes.push({ label: '媒体待办身份（operations/media-import/v1/library.json）', from: identity.value.rootBinding })
+  log(`StarMap library:rebind\n私人根：${resolved}`)
+  if (changes.length === 0) {
+    log('绑定与当前私人根一致，不需要重新绑定。')
+    return 0
+  }
+  for (const change of changes) log(`${change.label}\n  旧 binding：${change.from}\n  新 binding：${rootBinding}`)
+  if (!confirm) {
+    log('\n未加 --confirm，没有修改任何文件。确认这就是原来的私人库（只是被移动、改名或换了盘符）后运行：npm run library:rebind -- --confirm')
+    return 0
+  }
+  const owner = { schemaVersion: version, owner: randomUUID(), rootBinding }
+  let handle
+  try { handle = await open(lockPath, 'wx', 0o600) } catch (error) {
+    if (error?.code === 'EEXIST') {
+      logError('[library:rebind] 库操作锁刚刚出现，拒绝执行。')
+      return 1
+    }
+    throw error
+  }
+  try {
+    await handle.writeFile(JSON.stringify(owner))
+    await handle.sync()
+  } finally { await handle.close() }
+  try {
+    if (generation && generation.rootBinding !== rootBinding) await writeGenerationRecord(statePath, rootBinding)
+    if (identity?.value && identity.value.rootBinding !== rootBinding) {
+      await atomicReplace(identity.target, `${JSON.stringify({ ...identity.value, rootBinding }, null, 2)}\n`)
+    }
+  } finally {
+    await unlink(lockPath)
+  }
+  log('\n已重新绑定到当前私人根。')
+  return 0
 }
 
 /** Explicit trusted parent leases allow child importers to join, never to release the lock. */
@@ -110,28 +237,46 @@ export async function withLibraryOperation(privatePaths, callback, { leaseToken 
 
   const { lockPath, statePath, rootBinding } = await locations(privatePaths, true)
   const record = { schemaVersion: version, owner: randomUUID(), rootBinding }
-  const token = Buffer.from(JSON.stringify(record)).toString('base64url')
+  const encoded = JSON.stringify(record)
+  const token = Buffer.from(encoded).toString('base64url')
   let handle
   try { handle = await open(lockPath, 'wx', 0o600) } catch (error) {
     if (error?.code === 'EEXIST') throw busy()
     throw error
   }
+  // Once the callback has started, files may have changed under this lease: only a successful second
+  // generation advance releases it. Before that, nothing has been written beyond this lock file.
+  let callbackStarted = false
   try {
-    await handle.writeFile(JSON.stringify(record))
+    await handle.writeFile(encoded)
     await handle.sync()
     await handle.close()
     handle = undefined
     await advanceGeneration(statePath, rootBinding)
+    callbackStarted = true
     return await callback(token)
   } finally {
-    if (handle) await handle.close()
+    if (handle) await handle.close().catch(() => {})
     // A failed/partial receipt remains for review. Never unlink someone else's receipt.
     try {
-      const actual = await readLock(lockPath)
-      if (actual.owner === record.owner && actual.rootBinding === record.rootBinding) {
-        await advanceGeneration(statePath, rootBinding)
+      if (callbackStarted) {
+        const actual = await readLock(lockPath)
+        if (actual.owner === record.owner && actual.rootBinding === record.rootBinding) {
+          await advanceGeneration(statePath, rootBinding)
+          await unlink(lockPath)
+        }
+      } else if (await ownUnstartedLock(lockPath, encoded)) {
+        // Failed between acquisition and the callback (moved root, damaged generation, failed lock write):
+        // remove only this call's own lock, without touching the generation file.
         await unlink(lockPath)
       }
     } catch { /* Conservative: preserve unknown lock content. */ }
   }
+}
+
+/** This call created the lock with `wx`; its bytes are our complete record or a prefix left by a failed write. */
+async function ownUnstartedLock(lockPath, encoded) {
+  const metadata = await lstat(lockPath)
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > encoded.length) return false
+  return encoded.startsWith(await readFile(lockPath, 'utf8'))
 }

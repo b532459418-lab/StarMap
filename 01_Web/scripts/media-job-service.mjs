@@ -38,7 +38,7 @@ const responseError = (error) => {
     ['E_MEDIA_JOB_CONFLICT','E_MEDIA_JOB_REVIEW'].includes(error?.code) ? error.code : 'E_MEDIA_JOB_REVIEW')
   const { details: _details, ...body } = errorBody(known)
   void _details
-  return { status: known.code === 'E_MEDIA_JOB_NOT_FOUND' ? 404 : ['E_LIBRARY_BUSY', 'E_MEDIA_JOB_CONFLICT', 'E_MEDIA_JOB_PENDING', 'E_MEDIA_JOB_REVIEW'].includes(known.code) ? 409 : 400, body }
+  return { status: known.code === 'E_MEDIA_JOB_NOT_FOUND' ? 404 : ['E_LIBRARY_BUSY', 'E_LIBRARY_ROOT_MOVED', 'E_MEDIA_JOB_CONFLICT', 'E_MEDIA_JOB_PENDING', 'E_MEDIA_JOB_REVIEW'].includes(known.code) ? 409 : 400, body }
 }
 const summary = (job) => ({
   jobId: job.jobId, libraryId: job.libraryId, revision: job.revision, phase: job.phase,
