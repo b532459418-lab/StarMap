@@ -7,6 +7,7 @@ import { Drone, GripVertical, Maximize2, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems } from '../data/mediaCatalog'
 import { deleteHiddenLocalMedia, reloadAfterLocalSave, updateLocalEditorState } from '../data/localEditorApi'
+import { droneDraftUpdater } from '../data/editorStateDelta'
 import { readDroneFileMetadata } from '../data/droneMetadata'
 import { cityById } from '../data/travelAtlas'
 import { isFinishedMediaJob, mediaJobs } from '../data/mediaJobs'
@@ -110,6 +111,8 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   const [draggedItemId, setDraggedItemId] = useState<string>()
   const [draftItemIds, setDraftItemIds] = useState(items.map((item) => item.id))
   const [draftHiddenIds, setDraftHiddenIds] = useState(travelAtlasEditorState.hiddenDroneMediaIds)
+  // The draft starts from (and resets to) the page-load snapshot; saves apply only the difference from it (D1).
+  const [baselineHiddenIds] = useState<readonly string[]>(() => travelAtlasEditorState.hiddenDroneMediaIds)
   const [uploadForm, setUploadForm] = useState({
     kind: 'panorama360' as 'panorama360' | 'aerialPhoto',
   })
@@ -149,10 +152,8 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
     setBusy(true)
     setNotice({ key: 'droneEditor:saving' })
     try {
-      await updateLocalEditorState((current) => ({
-        ...current,
-        droneOrderByCity: { ...current.droneOrderByCity, [city.id]: draftItemIds },
-        hiddenDroneMediaIds: draftHiddenIds,
+      await updateLocalEditorState(droneDraftUpdater({
+        cityId: city.id, draftItemIds, baselineHiddenIds, draftHiddenIds,
       }))
       reloadAfterLocalSave()
     } catch (error) {

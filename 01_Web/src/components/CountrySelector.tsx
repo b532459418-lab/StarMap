@@ -8,6 +8,7 @@ import { withoutListedCountries } from '../data/countrySearchFilter'
 import { hasDroneMedia } from '../data/droneMedia'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { addLocalCountry, deleteHiddenLocalCountries, reloadAfterLocalSave, searchLocalCountries, updateLocalEditorState } from '../data/localEditorApi'
+import { countryDraftUpdater, withoutIds } from '../data/editorStateDelta'
 import type { CountrySearchOption } from '../data/localEditorApi'
 import { countries, getCitiesForCountry, shouldHideCityFromNavigation } from '../data/travelAtlas'
 import type { CityId, CountryId } from '../types/travel'
@@ -85,6 +86,9 @@ export function CountrySelector({
   const [isEditingCountries, setIsEditingCountries] = useState(false)
   const [draftCountryIds, setDraftCountryIds] = useState<CountryId[]>(defaultCountryIds)
   const [draftHiddenCountryIds, setDraftHiddenCountryIds] = useState<CountryId[]>(travelAtlasEditorState.hiddenCountryIds)
+  // The drafts start from (and reset to) the page-load snapshot; saves apply only the difference from it (D1).
+  const [baselineCountryOrder] = useState<readonly CountryId[]>(() => travelAtlasEditorState.countryOrder)
+  const [baselineHiddenCountryIds] = useState<readonly CountryId[]>(() => travelAtlasEditorState.hiddenCountryIds)
   const [draggedCountryId, setDraggedCountryId] = useState<CountryId>()
   const [showAddCountry, setShowAddCountry] = useState(false)
   const [editorNotice, setEditorNotice] = useLocalizedNotice()
@@ -117,10 +121,8 @@ export function CountrySelector({
     setIsSaving(true)
     setEditorNotice({ key: 'editor:saving' })
     try {
-      await updateLocalEditorState((current) => ({
-        ...current,
-        countryOrder: draftCountryIds,
-        hiddenCountryIds: draftHiddenCountryIds,
+      await updateLocalEditorState(countryDraftUpdater({
+        draftCountryIds, baselineCountryOrder, baselineHiddenCountryIds, draftHiddenCountryIds,
       }))
       reloadAfterLocalSave()
     } catch (error) {
@@ -133,7 +135,8 @@ export function CountrySelector({
     if (draftHiddenCountryIds.length === 0) return
     setIsSaving(true)
     try {
-      await updateLocalEditorState((current) => ({ ...current, hiddenCountryIds: [] }))
+      // Only the countries listed here; a country hidden elsewhere after this page loaded stays hidden (D1).
+      await updateLocalEditorState((current) => ({ ...current, hiddenCountryIds: withoutIds(current.hiddenCountryIds, draftHiddenCountryIds) }))
       reloadAfterLocalSave()
     } catch (error) {
       setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
