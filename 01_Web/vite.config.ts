@@ -70,6 +70,9 @@ export default defineConfig(async ({ mode, command }): Promise<UserConfig> => {
       cesium(),
     ],
     server: {
+      // The personal profile serves private data, so no other origin gets a CORS grant (Vite 8 otherwise allows any
+      // localhost, 127.0.0.1 or [::1] origin). The local editor's cross-site guard covers what CORS cannot.
+      ...(profile === 'personal' ? { cors: false } : {}),
       watch: {
         ignored: [
           '**/public/media/user/**',

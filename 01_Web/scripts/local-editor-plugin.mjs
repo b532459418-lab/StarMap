@@ -18,6 +18,7 @@ import { createV2WriteContext, readV2EditorState, runV2Write, v2EditorRoute, v2E
 import { handleV2Import, handleV2MediaDelete, handleV2Upload, v2MediaRoute } from './v2-media-store.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
+import { allowedOrigins, authorizeRead, crossSiteRequestGuard, isLoopbackRequest } from './local-editor-request-guard.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
 import { createLocalEditorImporter } from './local-editor-importer.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
@@ -363,7 +364,10 @@ const normalizeInboxRelativePath = (value) => {
 }
 
 const serveUserMedia = async (request, response, pathname) => {
-  if (!isLoopbackRequest(request)) {
+  // Private media is for this app's own pages only: other origins may neither embed nor sniff it.
+  response.setHeader('cross-origin-resource-policy', 'same-origin')
+  response.setHeader('x-content-type-options', 'nosniff')
+  if (!authorizeRead(request)) {
     response.statusCode = 403
     response.end('Forbidden')
     return
@@ -440,25 +444,7 @@ const removeSidecarEntries = async (sourcePaths) => {
   }
 }
 
-const allowedOrigins = (request) => {
-  const origin = request.headers.origin
-  if (!origin) return true
-  try {
-    const parsed = new URL(origin)
-    return (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost')
-      && parsed.protocol === 'http:'
-      && typeof request.headers.host === 'string'
-      && parsed.origin === new URL(`http://${request.headers.host}`).origin
-  } catch {
-    return false
-  }
-}
-
-const isLoopbackRequest = (request) => {
-  const address = request.socket.remoteAddress ?? ''
-  return address === '::1' || address === '127.0.0.1' || address.startsWith('::ffff:127.')
-}
-
+// Reads use authorizeRead (./local-editor-request-guard.mjs); writes additionally need the editor header.
 const authorizeWrite = (request) => (
   isLoopbackRequest(request)
   && request.headers[editorHeader] === '1'
@@ -524,7 +510,12 @@ export function travelAtlasLocalEditor(options = {}) {
       return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values, legacyUnmigrated }))
     },
     configureServer(server) {
-      if (profile !== 'personal' || options.forceSample === true) return
+      if (profile !== 'personal') return
+      // Registered here, directly, so it runs before every Vite middleware: the private-data virtual module, /@fs/,
+      // /media/user/* and the editor endpoints are all behind it. Forced sample still serves the private-data module,
+      // so it keeps the guard too. Vite's own CORS is off in this profile (vite.config.ts).
+      server.middlewares.use(crossSiteRequestGuard)
+      if (options.forceSample === true) return
       let editorMutationDepth = 0
       let ignoreWatcherUntil = 0
       server.watcher.add(dataRoot)
@@ -570,14 +561,14 @@ export function travelAtlasLocalEditor(options = {}) {
             return sendJson(response,result.status,result.body)
           }
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
-            if (!isLoopbackRequest(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
+            if (!authorizeRead(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
             // RFC-LOC-1 PR3b-2：读 data/v2/ 的 editor-state，转成 V1 形状返回。
             const result = await readV2EditorState({ privatePaths })
             return sendJson(response, result.status, result.body)
           }
 
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/catalog/countries') {
-            if (!isLoopbackRequest(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
+            if (!authorizeRead(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
             return sendJson(response, 200, {
               ok: true,
               results: searchCountryCatalog(url.searchParams.get('q') ?? ''),
@@ -585,7 +576,7 @@ export function travelAtlasLocalEditor(options = {}) {
           }
 
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/catalog/cities') {
-            if (!isLoopbackRequest(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
+            if (!authorizeRead(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
             const results = await searchCityCatalog(
               url.searchParams.get('q') ?? '',
               url.searchParams.get('countryCode') ?? '',

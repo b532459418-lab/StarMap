@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { crossSiteRequestGuard } from './local-editor-request-guard.mjs'
 
 const editorPrefix = '/__travelatlas/editor/'
 const authorizedHeaders = {
@@ -105,16 +106,18 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.deepEqual(captured.watched, [])
       assert.equal(captured.watcherCallbacks.size, 0)
     })
-    await t.test('Forced sample profile registers no private task endpoints or watcher', () => {
+    await t.test('Forced sample profile registers only the cross-site guard: no private task endpoints or watcher', () => {
       const captured = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: root, forceSample: true }))
-      assert.deepEqual(captured.handlers, [])
+      assert.deepEqual(captured.handlers, [crossSiteRequestGuard])
       assert.deepEqual(captured.watched, [])
     })
 
     const captured = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: root }))
-    assert.equal(captured.handlers.length, 1)
+    // The guard is registered first, so it also runs ahead of Vite's own middlewares.
+    assert.equal(captured.handlers.length, 2)
+    assert.equal(captured.handlers[0], crossSiteRequestGuard)
     assert.deepEqual(captured.watched, [path.join(root, 'data')])
-    const handler = captured.handlers[0]
+    const handler = captured.handlers[1]
     await t.test('Task discovery requires loopback, editor header, allowed origin and non-sample page', async () => {
       for (const overrides of [
         {address:'203.0.113.10'}, {headers:{}},
@@ -169,6 +172,30 @@ test('Local editor middleware preserves authorization, error codes and private f
         })
         assertError(result, 403, 'E_EDITOR_READ_FORBIDDEN')
         assert.equal(result.bodyReads, 0)
+      }
+    })
+
+    await t.test('Read endpoints also refuse another origin and cross-site or same-site browser reads', async () => {
+      for (const route of ['state', 'catalog/countries', 'catalog/cities']) {
+        for (const headers of [
+          { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:9999' },
+          { host: '127.0.0.1:5173', origin: 'http://localhost:5999', 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors' },
+          { host: '127.0.0.1:5173', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors' },
+          { host: '127.0.0.1:5173', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate' },
+        ]) {
+          const result = await requestTo(handler, { url: editorPrefix + route, method: 'GET', headers, content: Buffer.from('{') })
+          assertError(result, 403, 'E_EDITOR_READ_FORBIDDEN')
+          assert.equal(result.bodyReads, 0)
+        }
+      }
+      for (const headers of [
+        { host: '127.0.0.1:5173', 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' },
+        { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173', 'sec-fetch-site': 'same-origin' },
+        { host: '127.0.0.1:5173', 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate' },
+      ]) {
+        const result = await requestTo(handler, { url: editorPrefix + 'state', method: 'GET', headers })
+        assert.equal(result.status, 200, JSON.stringify(headers))
+        assert.equal(result.body.ok, true)
       }
     })
 
@@ -267,7 +294,7 @@ test('Local editor middleware preserves authorization, error codes and private f
       const id = plugin.resolveId('virtual:starmap-private-data')
       const privateModule = { id, transformResult: null }
       const fresh = captureMiddleware(plugin, privateModule)
-      const writeHandler = fresh.handlers[0]
+      const writeHandler = fresh.handlers[1]
       const cachedFiles = async () => {
         privateModule.transformResult ??= { code: await plugin.load(id) }
         return (await import(`data:text/javascript,${encodeURIComponent(privateModule.transformResult.code)}`)).privateV2Files
@@ -319,7 +346,7 @@ test('Local editor middleware preserves authorization, error codes and private f
       const privateModule = { id, transformResult: { code: await plugin.load(id) } }
       const partial = captureMiddleware(plugin, privateModule)
       let invalidAtResponseEnd = false
-      const result = await requestTo(partial.handlers[0], {
+      const result = await requestTo(partial.handlers[1], {
         url: editorPrefix + 'records',
         content: Buffer.from(JSON.stringify({
           country: '日本', country_en: 'Japan', country_code: 'JP', city: '东京', city_en: 'Tokyo',
@@ -348,7 +375,7 @@ test('Local editor middleware preserves authorization, error codes and private f
       await mkdir(dataRoot, { recursive: true })
       await writeFile(path.join(dataRoot, 'places.local.json'), '{')
       let invalidAtResponseEnd = false
-      const result = await requestTo(failing.handlers[0], {
+      const result = await requestTo(failing.handlers[1], {
         url: editorPrefix + 'countries',
         content: Buffer.from(JSON.stringify({ countryCode: 'JP', visitedDate: '2026-05-01' })),
         onEnd: () => { invalidAtResponseEnd = privateModule.transformResult === null },
@@ -363,7 +390,7 @@ test('Local editor middleware preserves authorization, error codes and private f
       const convertRoot = path.join(root, 'convert-first-country')
       const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: convertRoot })
       const fresh = captureMiddleware(plugin)
-      const handler = fresh.handlers[0]
+      const handler = fresh.handlers[1]
       const added = await requestTo(handler, {
         url: editorPrefix + 'wanttogo',
         content: Buffer.from(JSON.stringify({
@@ -393,6 +420,42 @@ test('Local editor middleware preserves authorization, error codes and private f
         start_date: '2026-10-03', end_date: '2026-10-04',
       }])
       assert.deepEqual(fresh.reloads, [])
+    })
+
+    await t.test('Private media is served only to same-origin reads, with CORP and nosniff on every response', async () => {
+      const mediaRoot = path.join(root, 'media-serving')
+      const fresh = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: mediaRoot }))
+      const handler = fresh.handlers[1]
+      await mkdir(path.join(mediaRoot, 'media', 'user', 'abc123'), { recursive: true })
+      await writeFile(path.join(mediaRoot, 'media', 'user', 'abc123', 'thumb.webp'), Buffer.from('not really webp'))
+      const serve = async (headers, method = 'HEAD', address = '127.0.0.1') => {
+        const responseHeaders = new Map()
+        const response = { statusCode: 200, headersSent: false, text: '', setHeader: (key, value) => responseHeaders.set(key, value), end(body = '') { this.text += body } }
+        let nextCalls = 0
+        await handler({ url: '/media/user/abc123/thumb.webp', method, headers: { host: '127.0.0.1:5173', ...headers }, socket: { remoteAddress: address } }, response, () => { nextCalls += 1 })
+        assert.equal(nextCalls, 0)
+        assert.equal(responseHeaders.get('cross-origin-resource-policy'), 'same-origin')
+        assert.equal(responseHeaders.get('x-content-type-options'), 'nosniff')
+        assert.equal(responseHeaders.has('access-control-allow-origin'), false)
+        return { status: response.statusCode, headers: responseHeaders, text: response.text }
+      }
+      for (const headers of [{}, { 'sec-fetch-site': 'same-origin', 'sec-fetch-dest': 'image' }, { origin: 'http://127.0.0.1:5173' }]) {
+        const result = await serve(headers)
+        assert.equal(result.status, 200, JSON.stringify(headers))
+        assert.equal(result.headers.get('content-type'), 'image/webp')
+        assert.equal(result.headers.get('cache-control'), 'no-store')
+      }
+      for (const [headers, address] of [
+        [{ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' }],
+        [{ 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' }],
+        [{ origin: 'http://localhost:5999' }],
+        [{}, '203.0.113.10'],
+      ]) {
+        const result = await serve(headers, 'GET', address)
+        assert.equal(result.status, 403, JSON.stringify(headers))
+        assert.equal(result.text, 'Forbidden')
+        assert.equal(result.headers.has('content-type'), false)
+      }
     })
   } finally {
     process.env = originalEnvironment
