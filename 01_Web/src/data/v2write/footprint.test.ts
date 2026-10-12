@@ -85,12 +85,13 @@ test('新增足迹：新城市——先写地点、再写足迹；记录只引�
   assert.equal(next.places.places.length, files.places.places.length + 1)
 })
 
-test('新增足迹：行程标题与已去过的记录完全相同 → 沿用那条的 journeyId；按地点 id 引用时记录坐标就是地点坐标', () => {
+test('新增足迹：行程标题与已去过的行程完全相同、又没有选择 → E_JOURNEY_CHOICE_REQUIRED（不写）；按地点 id 引用时记录坐标就是地点坐标', () => {
+  // 改写（第 2C 批）：旧用例断言「标题相同就沿用那条的 journeyId」。新规则：标题相同时由用户选择加入哪个行程或新建，不自动并入。
   const files = migratedFiles()
-  const outcome = addTravelRecord(files, hofnInput({ trip_title: ' 2025 North Atlantic Demo ' }), testContext())
-  const record = lastRecord(applyWrites(files, outcome.writes))
-  assert.equal(record.journeyId, '2025-north-atlantic-demo')
-  assert.equal(record.trip_title, '2025 North Atlantic Demo')
+  assertV2Error(() => addTravelRecord(files, hofnInput({ trip_title: ' 2025 North Atlantic Demo ' }), testContext()), 'E_JOURNEY_CHOICE_REQUIRED', undefined, (error) => {
+    assert.equal(error.params?.tripTitle, '2025 North Atlantic Demo', '比较的是 trim 后的标题')
+    assert.deepEqual((error.params?.candidates as { journeyId: string }[]).map(({ journeyId }) => journeyId), ['2025-north-atlantic-demo'])
+  })
 
   // 改写（第 2A 批）：旧用例按名字解析到努克、记录保留与城市不同的输入坐标（「身份是努克，坐标是别处」）。
   // 新规则：按名字不再复用；用户选定努克（地点 id）时，记录坐标就是地点坐标，输入的坐标不覆盖，城市坐标不改。
@@ -323,6 +324,112 @@ test('新增足迹 · 三种输入只能选一种：placeId 与名称字段或 c
   // createNew: false 与省略相同：按名字，没有候选就新建。
   assert.equal(applyWrites(files, addTravelRecord(files, hofnInput({ createNew: false }), testContext()).writes).places.places.length, files.places.places.length + 1)
   assert.deepEqual(files, before)
+})
+
+// ---------------------------------------------------------------------------
+// 同名行程（第 2C 批）：标题与已有行程相同时由用户选择加入哪个行程或新建
+// ---------------------------------------------------------------------------
+
+const DEMO_TITLE = '2025 North Atlantic Demo'
+const DEMO_JOURNEY = '2025-north-atlantic-demo'
+
+type JourneyCandidateParam = { journeyId: string; title: string; startDate?: string; endDate?: string; cities: { placeId: string; names: Record<string, string> }[]; cityCount: number }
+const journeyCandidatesOf = (error: { params?: Record<string, unknown> }) => error.params?.candidates as JourneyCandidateParam[]
+
+/** 派生出的路线里，一端是这个城市的那些（journeyId 与另一端）。 */
+const routesTouching = (files: V2Files, cityId: string) => deriveAppDataFromCanonical(readV2(files), { now: WRITE_NOW.toISOString() }).travelAtlas.routes
+  .filter((route) => route.fromCityId === cityId || route.toCityId === cityId)
+  .map((route) => ({ journeyId: route.journeyId, fromCityId: route.fromCityId, toCityId: route.toCityId }))
+
+test('新增足迹 · 行程选择：标题撞上已有行程又没有选择 → 候选（日期范围、城市），不写；带 journeyId → 加入那个行程；带 newJourney → 新建，不与旧行程连成路线', () => {
+  const files = migratedFiles()
+  const before = structuredClone(files)
+  assertV2Error(() => addTravelRecord(files, hofnInput({ trip_title: DEMO_TITLE }), testContext()), 'E_JOURNEY_CHOICE_REQUIRED', '已有同名的行程，请选择加入已有行程，或新建一个行程。本次尚未保存。', (error) => {
+    const [candidate, ...rest] = journeyCandidatesOf(error)
+    assert.equal(rest.length, 0)
+    assert.deepEqual({ ...candidate, cities: candidate.cities.map((city) => city.names.en) }, {
+      journeyId: DEMO_JOURNEY,
+      title: DEMO_TITLE,
+      startDate: '2025-06-01',
+      endDate: '2025-06-09',
+      cities: ['Reykjavik', 'Vik', 'Akureyri', 'Torshavn', 'Gjogv'],
+      cityCount: 6,
+    })
+  })
+  assert.deepEqual(files, before, '不写')
+
+  const joined = applyWrites(files, addTravelRecord(files, hofnInput({ trip_title: DEMO_TITLE, journeyId: ` ${DEMO_JOURNEY} ` }), testContext()).writes)
+  assertIntact(joined)
+  const hofnJoined = placeNamed(joined, 'Hofn').id
+  assert.equal(lastRecord(joined).journeyId, DEMO_JOURNEY)
+  assert.deepEqual(routesTouching(joined, hofnJoined), [{ journeyId: DEMO_JOURNEY, fromCityId: placeNamed(joined, 'Klaksvik').id, toCityId: hofnJoined }])
+
+  const separate = applyWrites(files, addTravelRecord(files, hofnInput({ trip_title: DEMO_TITLE, newJourney: true }), testContext()).writes)
+  assertIntact(separate)
+  const record = lastRecord(separate)
+  assert.match(record.journeyId ?? '', /^journey-[0-9a-f-]{36}$/)
+  assert.equal(record.trip_title, DEMO_TITLE, '标题照样保存，只是行程不同')
+  assert.deepEqual(routesTouching(separate, placeNamed(separate, 'Hofn').id), [], '新行程只有一座城市，不与旧行程相连')
+})
+
+test('新增足迹 · 行程选择：journeyId 不属于同标题的已有行程、或选择的写法不对 → E_UNKNOWN_JOURNEY（不写）；标题没撞上时照旧新建', () => {
+  const files = migratedFiles()
+  const before = structuredClone(files)
+  for (const overrides of [
+    { trip_title: DEMO_TITLE, journeyId: 'journey-missing' },
+    { trip_title: '2026 Iceland', journeyId: DEMO_JOURNEY },
+    { journeyId: DEMO_JOURNEY },
+    { trip_title: DEMO_TITLE, journeyId: 3 },
+    { trip_title: DEMO_TITLE, journeyId: ' ' },
+    { trip_title: DEMO_TITLE, journeyId: null },
+    { trip_title: DEMO_TITLE, newJourney: 'yes' },
+    { trip_title: DEMO_TITLE, newJourney: null },
+    { trip_title: DEMO_TITLE, journeyId: DEMO_JOURNEY, newJourney: true },
+  ]) assertV2Error(() => addTravelRecord(files, hofnInput(overrides), testContext()), 'E_UNKNOWN_JOURNEY', '要加入的行程不是同名的已有行程，未保存。请重新选择。')
+  assert.deepEqual(files, before)
+
+  // 标题没撞上：与今天相同，新建行程；newJourney: false 与省略相同，newJourney: true 也可以。
+  for (const overrides of [{ trip_title: '2026 Iceland' }, { trip_title: '2026 Iceland', newJourney: false }, { trip_title: '2026 Iceland', newJourney: true }, {}]) {
+    const next = applyWrites(files, addTravelRecord(files, hofnInput(overrides), testContext()).writes)
+    assertIntact(next)
+    assert.match(lastRecord(next).journeyId ?? '', /^journey-[0-9a-f-]{36}$/)
+  }
+})
+
+test('新增足迹 · 行程选择：默认标题「国家 · 城市」撞上已有行程时同样要选择；与地点选择同时出现时先返回地点选择，一次只返回一种', () => {
+  // 同一国家有两个都叫「苏州」的独立地点（第 2A 批明确新建）：第二个的默认标题「中国 · 苏州」撞上第一个的行程。
+  const ctx = testContext()
+  const base = migratedFiles()
+  const files = applyWrites(base, addTravelRecord(base, suzhouInput('苏州', SUZHOU_JS), ctx).writes)
+  const first = lastRecord(files)
+  assert.equal(first.trip_title, '中国 · 苏州')
+  const before = structuredClone(files)
+  const elsewhere = { lat: 33.1, lng: 118.2 }
+
+  // 1. 按名字提交：先是地点选择（即使带了不存在的 journeyId，行程要等地点确定后才判断）。
+  for (const overrides of [{}, { journeyId: 'journey-missing' }, { newJourney: true }]) {
+    assertV2Error(() => addTravelRecord(files, suzhouInput('苏州', elsewhere, overrides), ctx), 'E_PLACE_CHOICE_REQUIRED')
+  }
+  // 2. 明确新建地点之后：默认标题撞上 → 行程选择，附候选。
+  assertV2Error(() => addTravelRecord(files, suzhouInput('苏州', elsewhere, { createNew: true }), ctx), 'E_JOURNEY_CHOICE_REQUIRED', undefined, (error) => {
+    assert.equal(error.params?.tripTitle, '中国 · 苏州')
+    assert.deepEqual(journeyCandidatesOf(error).map(({ journeyId, cityCount }) => ({ journeyId, cityCount })), [{ journeyId: first.journeyId, cityCount: 1 }])
+  })
+  assert.deepEqual(files, before, '两次都不写')
+  // 3. 两种选择都明确之后才写：新地点、新行程。
+  const next = applyWrites(files, addTravelRecord(files, suzhouInput('苏州', elsewhere, { createNew: true, newJourney: true }), ctx).writes)
+  assertIntact(next)
+  const record = lastRecord(next)
+  assert.notEqual(record.placeId, first.placeId)
+  assert.notEqual(record.journeyId, first.journeyId)
+  assert.equal(record.trip_title, '中国 · 苏州')
+  // 按地点 id 选定已有地点时同样适用（这里选的是只被想去引用的城市，默认标题撞上已有行程）。
+  const withWish = applyWrites(files, addWantToGo(files, { place: { kind: 'city', nameZh: '苏州', nameEn: 'Soochow', countryCode: 'CN', ...elsewhere }, createNew: true }, ctx).writes)
+  const wished = withWish.places.places.find((place) => place.names.en === 'Soochow')!
+  assertV2Error(() => addTravelRecord(withWish, { placeId: wished.id, start_date: '2026-06-01' }, ctx), 'E_JOURNEY_CHOICE_REQUIRED')
+  const joined = applyWrites(withWish, addTravelRecord(withWish, { placeId: wished.id, start_date: '2026-06-01', journeyId: first.journeyId }, ctx).writes)
+  assertIntact(joined)
+  assert.equal(lastRecord(joined).journeyId, first.journeyId)
 })
 
 test('新增足迹 · 全新 V2 目录：按目录新建国家，新建城市，重排；三个文件都写，合法；没有任何样例数据', () => {

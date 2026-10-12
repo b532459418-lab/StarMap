@@ -2,8 +2,10 @@
  * 想去 / planned → 足迹的 V2 写入（`POST /wanttogo/convert`，RFC-LOC-1 PR3b-2 规格 §2.3、§2.6）。
  *
  * `src/data/v2write/` 是 App 层，【不是】 StarMap Core。请求体二选一，与旧模式相同：
- * - `{ source: 'want-to-go', id, startDate, endDate?, tripTitle?, keepWantToGo? }`
- * - `{ source: 'planned', recordId, startDate, endDate? }`
+ * - `{ source: 'want-to-go', id, startDate, endDate?, tripTitle?, keepWantToGo?, journeyId?, newJourney? }`
+ * - `{ source: 'planned', recordId, startDate, endDate?, journeyId?, newJourney? }`
+ * `journeyId` / `newJourney` 是第 2C 批的行程选择（./journeyChoice.ts）：标题与已有行程相同、又没有选择时
+ * 返回 `E_JOURNEY_CHOICE_REQUIRED`（409，附候选行程），不写。
  * 校验与拒绝文案沿用旧的 convert-to-travel.mjs（RFC-LOC-1 PR5a 删除，见 PR5；今天以本文件为准）与插件；
  * 返回值形状同旧（`countryId` / `cityId` 为地点 id）。
  *
@@ -17,7 +19,6 @@ import { fail } from './errors.ts'
 import {
   bodyOf,
   isCountryInFootprint,
-  journeyIdFor,
   optionalText,
   reorderCountries,
   requireText,
@@ -25,6 +26,7 @@ import {
   zhNameOf,
 } from './common.ts'
 import { REORDER_FAILURE } from './footprint.ts'
+import { journeyChoiceOf, journeyIdFor } from './journeyChoice.ts'
 import { runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 
 export interface ConvertToTravelResult {
@@ -42,8 +44,9 @@ type WriteList = { file: V2FileKey; onFailure?: string }[]
 /**
  * 想去条目 → 足迹。地点就是 `item.placeId`。能不能转由 ../canonical/convertRules.ts 判断（审查 C2：界面用同一份规则），
  * 依次是：条目存在、地点是城市、城市有坐标、条目没被隐藏、没有任何记录（含 planned）引用该城市；拒绝码沿用旧文案。
- * 规则通过之后才校验日期。
- * 新记录的规则同「新增足迹」（../v2write/footprint.ts），坐标就是城市的 location（因而省略）；
+ * 规则通过之后才校验日期，日期通过之后才确定行程（行程选择是最后一步，前面的拒绝都先报）。
+ * 新记录的规则同「新增足迹」（../v2write/footprint.ts），坐标就是城市的 location（因而省略）；行程标题（默认
+ * 「国家中文名 · 城市中文名」）撞上已有行程时，按请求里的 `journeyId` / `newJourney` 加入或新建，没有选择就请用户选择；
  * `keepWantToGo !== true` 时移除条目（地点仍被新记录引用，保留）。国家首次进入足迹时按 ISO 目录保存洲信息，
  * 并重排 `countryOrder`；已有国家信息不覆盖，目录缺失时不猜测洲。
  * 写盘：足迹 → 想去（移除条目时）→ editor-state（排序变了时）。
@@ -51,6 +54,7 @@ type WriteList = { file: V2FileKey; onFailure?: string }[]
 const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<string, unknown>, ctx: V2WriteContext) => {
   const id = requireText(body.id, 'id')
   if (body.keepWantToGo !== undefined && typeof body.keepWantToGo !== 'boolean') fail('E_KEEP_WTG_NOT_BOOLEAN')
+  const journeyChoice = journeyChoiceOf(body)
 
   return runV2Transaction(files, ctx, (draft) => {
     const blocked = convertRules(convertRuleDataOfV2Files(draft.files)).wantToGoConvertBlockCode(id)
@@ -74,7 +78,7 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
       type: 'visit',
       status: 'visited',
       source: 'local-editor',
-      journeyId: journeyIdFor(draft.files, tripTitle, ctx),
+      journeyId: journeyIdFor(draft.files, tripTitle, ctx, journeyChoice),
     }
     draft.files.travel.records.push(record)
     const wantToGoRemoved = body.keepWantToGo !== true
@@ -97,13 +101,16 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
 
 /**
  * planned → 足迹：同一条记录 `status` 改 `visited`，写日期与 `year`（结束日期没填时删掉该键），其它字段原样；
- * 没有 `journeyId` 时补上（./common.ts 的 journeyIdFor），已有的保留。
+ * 没有 `journeyId` 时补上（./journeyChoice.ts 的 journeyIdFor，规则同想去转足迹：标题撞上已有行程时按请求里的
+ * `journeyId` / `newJourney` 加入或新建，没有选择就 `E_JOURNEY_CHOICE_REQUIRED`）；已有的保留，这时请求里不能再带选择
+ * （带了 → `E_UNKNOWN_JOURNEY`：不改已有记录的行程）。
  * 能不能转由 ../canonical/convertRules.ts 判断（与界面同一份规则）：记录存在且是 planned（`E_PLANNED_NOT_FOUND`），
  * 有坐标——自身的 lat / lng，省略时取城市的 location；都没有 → `E_PLANNED_NO_COORDINATES`（沿用旧文案）。
  * 国家首次进入足迹时重排 `countryOrder`。写盘：足迹 → editor-state（排序变了时）。
  */
 const convertPlannedTravelRecord = (files: V2FilesOrEmpty | undefined, body: Record<string, unknown>, ctx: V2WriteContext) => {
   const recordId = requireText(body.recordId, 'recordId')
+  const journeyChoice = journeyChoiceOf(body)
 
   return runV2Transaction(files, ctx, (draft) => {
     const blocked = convertRules(convertRuleDataOfV2Files(draft.files)).plannedConvertBlockCode(recordId)
@@ -124,7 +131,8 @@ const convertPlannedTravelRecord = (files: V2FilesOrEmpty | undefined, body: Rec
       year: Number(dates.start.slice(0, 4)),
     }
     if (!dates.end) delete next.end_date
-    if (typeof next.journeyId !== 'string' || next.journeyId === '') next.journeyId = journeyIdFor(draft.files, next.trip_title, ctx)
+    if (typeof next.journeyId !== 'string' || next.journeyId === '') next.journeyId = journeyIdFor(draft.files, next.trip_title, ctx, journeyChoice)
+    else if (journeyChoice.kind !== 'ask') fail('E_UNKNOWN_JOURNEY')
     records[index] = next
     const reordered = !wasInFootprint && reorderCountries(draft.files)
 

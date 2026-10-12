@@ -10,11 +10,13 @@ import { useTranslation } from 'react-i18next'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { X } from 'lucide-react'
-import { convertLocalWantToGoToTravel, reloadAfterLocalSave } from '../data/localEditorApi'
+import { convertLocalWantToGoToTravel, journeyChoiceCandidatesOf, reloadAfterLocalSave } from '../data/localEditorApi'
+import { journeyChoiceInput, journeyChoiceKey, journeyChoiceStateOf, type JourneyChoiceState } from '../data/journeyChoice.ts'
 import type { LocalConvertToTravelInput, LocalConvertToTravelResult } from '../data/localEditorApi'
 import { travelAtlasCountryCodes } from '../data/travelAtlas'
 import { plannedRecordById, wantToGoItemById } from '../data/wantToGo'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
+import { JourneyChoiceList } from './JourneyChoiceList'
 
 /**
  * 要转换的条目：想去条目，或来自旅行记录的 planned 条目（FR-WTG-7）。
@@ -42,6 +44,10 @@ type ConvertToTravelDialogProps = {
  * 日期一律由用户填写，不预填今天。关闭时整个内容卸载，下次打开是一张干净的表单；
  * 成功后整页刷新，失败把服务端的 error 留在对话框里，不关闭（与 WantToGoAddDialog 相同）。
  * 部分写入或请求结果未知时，提交按钮换成「刷新页面」，避免再次提交可能已经写入的转换。
+ *
+ * 行程标题与已有行程相同时（第 2C 批），服务端返回 409 `E_JOURNEY_CHOICE_REQUIRED`：对话框里内联列出候选行程与「新建行程」，
+ * 不预选；选定后同一个按钮再次提交，带上 `journeyId` 或 `newJourney: true`。修改标题会清空候选。planned 条目用记录自己的标题，
+ * 规则相同。
  */
 export function ConvertToTravelDialog({ target, onClose, onConverted }: ConvertToTravelDialogProps) {
   return target ? (
@@ -74,6 +80,8 @@ function ConvertToTravelDialogContent({
   const [notice, setNotice] = useLocalizedNotice()
   const [needsReload, setNeedsReload] = useState(false)
   const [showWriteResultWarning, setShowWriteResultWarning] = useState(false)
+  // 第 2C 批：服务端返回的同名候选行程与用户的选择（属于提交时的行程标题）。
+  const [journeyChoice, setJourneyChoice] = useState<JourneyChoiceState>()
 
   const item = target.source === 'want-to-go' ? wantToGoItemById.get(target.recordId) : undefined
   const planned = target.source === 'planned' ? plannedRecordById.get(target.recordId) : undefined
@@ -117,10 +125,18 @@ function ConvertToTravelDialogContent({
       : t('editor:convertRemove')
     : t('editor:convertPlanned')
   const fieldsDisabled = busy || needsReload
-  const canSubmit = !fieldsDisabled && Boolean(startDate)
+  // 候选属于提交时的标题：标题变了，原来的候选就作废（输入时也会直接清空）。planned 条目的标题来自记录本身。
+  const currentJourneyKey = journeyChoiceKey([target.source, target.recordId, item ? tripTitle.trim() : planned?.trip_title ?? ''])
+  const activeJourneyChoice = journeyChoice?.key === currentJourneyKey ? journeyChoice : undefined
+  const journeyChoicePending = Boolean(activeJourneyChoice && !activeJourneyChoice.selected)
+  const canSubmit = !fieldsDisabled && Boolean(startDate) && !journeyChoicePending
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (journeyChoicePending) {
+      setNotice({ key: 'editor:journeyChoiceRequired' })
+      return
+    }
     if (!canSubmit) return
     if (endDate && endDate < startDate) {
       setNotice({ key: 'editor:invalidDates' })
@@ -136,9 +152,10 @@ function ConvertToTravelDialogContent({
         endDate: endDate || undefined,
         tripTitle: tripTitle.trim() || undefined,
         keepWantToGo,
+        ...journeyChoiceInput(activeJourneyChoice?.selected),
       }
     } else if (planned) {
-      input = { source: 'planned', recordId: planned.id, startDate, endDate: endDate || undefined }
+      input = { source: 'planned', recordId: planned.id, startDate, endDate: endDate || undefined, ...journeyChoiceInput(activeJourneyChoice?.selected) }
     } else {
       return
     }
@@ -150,6 +167,9 @@ function ConvertToTravelDialogContent({
       onConverted(result)
       reloadAfterLocalSave()
     } catch (error) {
+      // 409 E_JOURNEY_CHOICE_REQUIRED：在对话框里列出候选行程，同一按钮再次提交（第 2C 批）。
+      const candidates = journeyChoiceCandidatesOf(error)
+      if (candidates) setJourneyChoice(journeyChoiceStateOf(currentJourneyKey, candidates))
       // 例如城市已在足迹里时服务端返回「这个城市已经在足迹里了……」，不写任何文件（规格 §2 第 3 条）。
       setNotice(editorErrorNotice(error, 'editor:convertFailed'))
       // 部分写入或响应结果无法确认时，先刷新核对，避免重复写入。
@@ -233,7 +253,11 @@ function ConvertToTravelDialogContent({
                   disabled={fieldsDisabled}
                   value={tripTitle}
                   placeholder={[countryName, displayName].filter(Boolean).join(' · ')}
-                  onChange={(event) => setTripTitle(event.target.value)}
+                  onChange={(event) => {
+                    setTripTitle(event.target.value)
+                    // 改了标题，原来的候选行程不再适用（第 2C 批）。
+                    setJourneyChoice(undefined)
+                  }}
                 />
               </label>
               <label className="atlas-convert-keep">
@@ -246,6 +270,18 @@ function ConvertToTravelDialogContent({
                 <span>{t('editor:keepWantToGo')}</span>
               </label>
             </>
+          ) : null}
+
+          {activeJourneyChoice ? (
+            <JourneyChoiceList
+              candidates={activeJourneyChoice.candidates}
+              selected={activeJourneyChoice.selected}
+              disabled={fieldsDisabled}
+              onSelect={(selected) => {
+                setJourneyChoice({ ...activeJourneyChoice, selected })
+                setNotice('')
+              }}
+            />
           ) : null}
 
           {notice ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{notice}</p> : null}

@@ -103,6 +103,8 @@ City creation uses Cesium ion geocoding first when the personal token is configu
 
 A name alone never decides which place a new city is. When you add a city, or a Want to Go city, and the country already has a place with the same Chinese or English name, nothing is saved yet: the form lists those places with their names and approximate distance, plus **Create a separate place**. A place with the same names within 50 km is selected for you; otherwise you choose. Confirm with the same button.
 
+A trip title never decides on its own which trip a visit belongs to. When you mark a Want to Go place or a planned trip as visited, or add a city, and its trip title (the one you typed, or the default "Country · City") is already used by an existing trip, nothing is saved yet: the dialog lists those trips with their dates and cities, plus **Create a new trip**. Nothing is selected for you; choose one and confirm with the same button. StarMap never groups visits into one trip by their dates.
+
 When drone files are selected, StarMap immediately reads available EXIF/XMP metadata and displays it per file. Values found in the file are locked as file-derived facts. Only missing values become editable; a missing date must be supplied, while coordinates and altitude can be left blank.
 
 For bulk media, follow the tracked `02_Assets/MediaInbox/` template but place real source files under the external private layer's `MediaInbox/`, then run:

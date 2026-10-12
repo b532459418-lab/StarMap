@@ -132,15 +132,18 @@ test('想去 → 足迹：地点就是 item.placeId；新记录带 journeyId；�
   assert.deepEqual([read.lat, read.lng], [nuuk.location!.lat, nuuk.location!.lng])
 })
 
-test('想去 → 足迹：勾选「保留在想去」——条目保留，不写想去；行程标题与已去过的记录相同时沿用 journeyId', () => {
+test('想去 → 足迹：勾选「保留在想去」——条目保留，不写想去；行程标题与已去过的行程相同、又没有选择 → E_JOURNEY_CHOICE_REQUIRED（不写）', () => {
   const files = migratedFiles()
-  const outcome = convertToTravel(files, fromWantToGo(NUUK_ITEM, { keepWantToGo: true, tripTitle: '2025 North Atlantic Demo' }), testContext())
+  const outcome = convertToTravel(files, fromWantToGo(NUUK_ITEM, { keepWantToGo: true, tripTitle: '2026 Greenland' }), testContext())
   assert.deepEqual(writeOrder(outcome.writes), ['travel', 'editorState'])
   const next = applyWrites(files, outcome.writes)
   assertIntact(next)
   assert.equal(outcome.result.wantToGoRemoved, false)
   assert.ok(next.wantToGo.items.some((item) => item.id === NUUK_ITEM))
-  assert.equal(recordById(next, outcome.result.travelRecordId).journeyId, '2025-north-atlantic-demo')
+  // 改写（第 2C 批）：旧用例断言「标题相同就沿用 journeyId」。新规则：标题相同时由用户选择，不自动并入。
+  assertV2Error(() => convertToTravel(files, fromWantToGo(NUUK_ITEM, { keepWantToGo: true, tripTitle: '2025 North Atlantic Demo' }), testContext()), 'E_JOURNEY_CHOICE_REQUIRED', undefined, (error) => {
+    assert.deepEqual((error.params?.candidates as { journeyId: string }[]).map(({ journeyId }) => journeyId), ['2025-north-atlantic-demo'])
+  })
 })
 
 test('想去 → 足迹：国家已在足迹中时不重排，只写足迹与想去', () => {
@@ -212,14 +215,16 @@ test('planned → 足迹：同一条记录改 visited、写日期与 year、补 
   assert.equal(next.travel.records.length, files.travel.records.length)
 })
 
-test('planned → 足迹：已有同名行程时沿用它的 journeyId；记录已有 journeyId 时保留', () => {
+test('planned → 足迹：记录没有 journeyId、标题又与已有行程相同 → E_JOURNEY_CHOICE_REQUIRED（不写）；记录已有 journeyId 时保留', () => {
+  // 改写（第 2C 批）：旧用例断言「已有同名行程时沿用它的 journeyId」。新规则与想去转足迹相同：标题相同时由用户选择。
   const files = migratedFiles()
   const planned = recordById(files, 'planned_bergen')
   const sameTitle = migratedFiles()
   recordById(sameTitle, 'sample_gjogv').trip_title = planned.trip_title
   recordById(sameTitle, 'sample_gjogv').journeyId = 'fjord-journey'
-  const reused = applyWrites(sameTitle, convertToTravel(sameTitle, { source: 'planned', recordId: 'planned_bergen', startDate: '2026-07-01' }, testContext()).writes)
-  assert.equal(recordById(reused, 'planned_bergen').journeyId, 'fjord-journey')
+  assertV2Error(() => convertToTravel(sameTitle, { source: 'planned', recordId: 'planned_bergen', startDate: '2026-07-01' }, testContext()), 'E_JOURNEY_CHOICE_REQUIRED', undefined, (error) => {
+    assert.deepEqual((error.params?.candidates as { journeyId: string }[]).map(({ journeyId }) => journeyId), ['fjord-journey'])
+  })
 
   recordById(files, 'planned_bergen').journeyId = 'kept-journey'
   const kept = applyWrites(files, convertToTravel(files, { source: 'planned', recordId: 'planned_bergen', startDate: '2026-07-01' }, testContext()).writes)
@@ -241,6 +246,100 @@ test('planned → 足迹：拒绝沿用旧文案（找不到、不是 planned、
     [undefined, { source: 'planned', recordId: 'planned_bergen', startDate: '2026-07-01' }, 'E_PLANNED_NOT_FOUND', '找不到这条旅行计划。'],
   ]
   for (const [input, body, code, message] of cases) assertV2Error(() => convertToTravel(input, body, testContext()), code as never, message)
+})
+
+// ---------------------------------------------------------------------------
+// 同名行程（第 2C 批）：标题与已有行程相同时由用户选择加入哪个行程或新建
+// ---------------------------------------------------------------------------
+
+const DEMO_TITLE = '2025 North Atlantic Demo'
+const DEMO_JOURNEY = '2025-north-atlantic-demo'
+
+type JourneyCandidateParam = { journeyId: string; title: string; startDate?: string; endDate?: string; cities: { placeId: string; names: Record<string, string> }[]; cityCount: number }
+const journeyCandidatesOf = (error: { params?: Record<string, unknown> }) => error.params?.candidates as JourneyCandidateParam[]
+
+/** 派生出的路线里，一端是这个城市的那些（journeyId 与另一端）。 */
+const routesTouching = (files: V2Files, cityId: string) => deriveAppDataFromCanonical(readV2(files), { now: testContext().now.toISOString() }).travelAtlas.routes
+  .filter((route) => route.fromCityId === cityId || route.toCityId === cityId)
+  .map((route) => ({ journeyId: route.journeyId, fromCityId: route.fromCityId, toCityId: route.toCityId }))
+
+test('想去 → 足迹 · 行程选择：标题撞上已有行程又没有选择 → 候选，不写；带 journeyId → 加入并与旧行程连成路线；带 newJourney → 新建，不相连', () => {
+  const files = migratedFiles()
+  const before = structuredClone(files)
+  const nuuk = placeNamed(files, 'Nuuk').id
+  assertV2Error(() => convertToTravel(files, fromWantToGo(NUUK_ITEM, { tripTitle: ` ${DEMO_TITLE} ` }), testContext()), 'E_JOURNEY_CHOICE_REQUIRED', '已有同名的行程，请选择加入已有行程，或新建一个行程。本次尚未保存。', (error) => {
+    assert.equal(error.params?.tripTitle, DEMO_TITLE)
+    const [candidate, ...rest] = journeyCandidatesOf(error)
+    assert.equal(rest.length, 0)
+    assert.deepEqual([candidate.journeyId, candidate.startDate, candidate.endDate, candidate.cityCount, candidate.cities.length], [DEMO_JOURNEY, '2025-06-01', '2025-06-09', 6, 5])
+  })
+  assert.deepEqual(files, before, '不写')
+
+  const joined = applyWrites(files, convertToTravel(files, fromWantToGo(NUUK_ITEM, { tripTitle: DEMO_TITLE, journeyId: DEMO_JOURNEY }), testContext()).writes)
+  assertIntact(joined)
+  const joinedRecord = joined.travel.records.find((record) => record.placeId === nuuk)!
+  assert.equal(joinedRecord.journeyId, DEMO_JOURNEY)
+  assert.deepEqual(routesTouching(joined, nuuk), [{ journeyId: DEMO_JOURNEY, fromCityId: placeNamed(joined, 'Klaksvik').id, toCityId: nuuk }])
+
+  const separate = applyWrites(files, convertToTravel(files, fromWantToGo(NUUK_ITEM, { tripTitle: DEMO_TITLE, newJourney: true }), testContext()).writes)
+  assertIntact(separate)
+  const separateRecord = separate.travel.records.find((record) => record.placeId === nuuk)!
+  assert.match(separateRecord.journeyId ?? '', /^journey-[0-9a-f-]{36}$/)
+  assert.equal(separateRecord.trip_title, DEMO_TITLE)
+  assert.deepEqual(routesTouching(separate, nuuk), [], '新行程不与同名的旧行程连成路线')
+})
+
+test('想去 → 足迹 · 行程选择：journeyId 不属于同标题的已有行程、或写法不对 → E_UNKNOWN_JOURNEY（不写）；默认标题撞上时同样要选择；标题没撞上照旧新建', () => {
+  const files = migratedFiles()
+  const before = structuredClone(files)
+  for (const extra of [
+    { tripTitle: DEMO_TITLE, journeyId: 'journey-missing' },
+    { tripTitle: '2026 Greenland', journeyId: DEMO_JOURNEY },
+    { journeyId: DEMO_JOURNEY },
+    { tripTitle: DEMO_TITLE, journeyId: 7 },
+    { tripTitle: DEMO_TITLE, newJourney: 'true' },
+    { tripTitle: DEMO_TITLE, journeyId: DEMO_JOURNEY, newJourney: true },
+  ]) assertV2Error(() => convertToTravel(files, fromWantToGo(NUUK_ITEM, extra), testContext()), 'E_UNKNOWN_JOURNEY', '要加入的行程不是同名的已有行程，未保存。请重新选择。')
+  assert.deepEqual(files, before)
+
+  // 默认标题「格陵兰 · 努克」：已有行程用了同一个标题时，同样要选择。
+  const sameDefault = migratedFiles()
+  Object.assign(recordById(sameDefault, 'alias_klaksvik'), { trip_title: '格陵兰 · 努克', journeyId: 'journey-old-nuuk' })
+  assertV2Error(() => convertToTravel(sameDefault, fromWantToGo(NUUK_ITEM), testContext()), 'E_JOURNEY_CHOICE_REQUIRED', undefined, (error) => {
+    assert.equal(error.params?.tripTitle, '格陵兰 · 努克')
+    assert.deepEqual(journeyCandidatesOf(error).map((candidate) => candidate.journeyId), ['journey-old-nuuk'])
+  })
+  const joined = applyWrites(sameDefault, convertToTravel(sameDefault, fromWantToGo(NUUK_ITEM, { journeyId: 'journey-old-nuuk' }), testContext()).writes)
+  assertIntact(joined)
+  assert.equal(joined.travel.records.at(-1)?.journeyId, 'journey-old-nuuk')
+
+  // 标题没撞上：与今天相同，新建行程。
+  const fresh = applyWrites(files, convertToTravel(files, fromWantToGo(NUUK_ITEM, { tripTitle: '2026 Greenland' }), testContext()).writes)
+  assert.match(fresh.travel.records.at(-1)?.journeyId ?? '', /^journey-[0-9a-f-]{36}$/)
+})
+
+test('planned → 足迹 · 行程选择：记录没有 journeyId 时同样按选择加入或新建；记录已有 journeyId 时保留，再带选择 → E_UNKNOWN_JOURNEY', () => {
+  const sameTitle = migratedFiles()
+  const planned = recordById(sameTitle, 'planned_bergen')
+  Object.assign(recordById(sameTitle, 'sample_gjogv'), { trip_title: planned.trip_title, journeyId: 'fjord-journey' })
+  const bergen = placeNamed(sameTitle, 'Bergen').id
+  const body = { source: 'planned', recordId: 'planned_bergen', startDate: '2026-07-01' }
+
+  const joined = applyWrites(sameTitle, convertToTravel(sameTitle, { ...body, journeyId: 'fjord-journey' }, testContext()).writes)
+  assertIntact(joined)
+  assert.equal(recordById(joined, 'planned_bergen').journeyId, 'fjord-journey')
+  assert.deepEqual(routesTouching(joined, bergen).map((route) => route.journeyId), ['fjord-journey'])
+
+  const separate = applyWrites(sameTitle, convertToTravel(sameTitle, { ...body, newJourney: true }, testContext()).writes)
+  assert.match(recordById(separate, 'planned_bergen').journeyId ?? '', /^journey-[0-9a-f-]{36}$/)
+  assert.deepEqual(routesTouching(separate, bergen), [])
+  assertV2Error(() => convertToTravel(sameTitle, { ...body, journeyId: DEMO_JOURNEY }, testContext()), 'E_UNKNOWN_JOURNEY')
+
+  const kept = migratedFiles()
+  recordById(kept, 'planned_bergen').journeyId = 'kept-journey'
+  for (const choice of [{ journeyId: 'kept-journey' }, { journeyId: DEMO_JOURNEY }, { newJourney: true }]) {
+    assertV2Error(() => convertToTravel(kept, { ...body, ...choice }, testContext()), 'E_UNKNOWN_JOURNEY')
+  }
 })
 
 test('转足迹 · 完整性：入口有悬空引用 → E_INTEGRITY（两种来源），不给出写入', () => {

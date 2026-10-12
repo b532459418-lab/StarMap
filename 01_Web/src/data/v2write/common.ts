@@ -1,6 +1,6 @@
 /**
  * V2 写入各端点共用的小件（RFC-LOC-1 PR3b-2 规格 §2.2、§2.3、§2.6；第 2A 批）：输入校验、地点（国家按 ISO
- * 先找后建；城市按名字只找候选、由用户选择）、足迹判断、国家排序与行程 id。
+ * 先找后建；城市按名字只找候选、由用户选择）、足迹判断与国家排序。行程 id 由用户选择，见 ./journeyChoice.ts（第 2C 批）。
  *
  * `src/data/v2write/` 是 App 层，【不是】 StarMap Core。输入校验的规则与文案照抄旧模式
  * （插件的 requireText / numberInRange，以及旧格式的写入模块 want-to-go-store.mjs、convert-to-travel.mjs——
@@ -14,7 +14,7 @@ import { EN, ZH, namesOf } from '../canonical/reconstruct.ts'
 import type { CanonicalPlace, PlaceId } from '../canonical/types.ts'
 import type { V2Files, V2TravelRecord } from '../canonical/v2Schema.ts'
 import { V2WriteError, fail } from './errors.ts'
-import type { V2Draft, V2WriteContext } from './transaction.ts'
+import type { V2Draft } from './transaction.ts'
 
 // ---------------------------------------------------------------------------
 // 输入校验（旧规则、旧文案）
@@ -275,21 +275,6 @@ export const reorderCountries = (files: V2Files): boolean => {
     || next.some((id, index) => id !== files.editorState.countryOrder[index])
   if (changed) files.editorState.countryOrder = next
   return changed
-}
-
-/**
- * 新变成「已去过」的记录的 `journeyId`（PR3b-2 规格 §2.6）：已有一条已去过的记录与它的 `trip_title`
- * 完全相同（且带 journeyId）→ 沿用那条的（取文件里的第一条）；否则 `journey-<UUIDv7>`。
- * Canonical 派生把没有 journeyId 的记录全部归入 'unknown-journey'，会把互不相干的城市连成路线，所以必须在创建时写入。
- */
-export const journeyIdFor = (files: V2Files, tripTitle: string | undefined, ctx: V2WriteContext): string => {
-  if (tripTitle) {
-    const sameTrip = files.travel.records.find((record) => (
-      isVisited(record) && record.trip_title === tripTitle && typeof record.journeyId === 'string' && record.journeyId !== ''
-    ))
-    if (sameTrip?.journeyId) return sameTrip.journeyId
-  }
-  return `journey-${ctx.newId()}`
 }
 
 /** 记录坐标与城市地点的规范坐标完全相同（这时 V2 文件省略记录的 lat / lng）。 */

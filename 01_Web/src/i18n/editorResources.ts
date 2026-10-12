@@ -115,6 +115,14 @@ export const editorResources = {
     "placeChoiceStrong": "名称一致、位置相近",
     "placeChoiceNew": "新建独立地点：{{name}}",
     "placeChoiceRequired": "请先选择要使用的地点，或新建一个独立地点。",
+    "journeyChoiceTitle": "选择行程",
+    "journeyChoiceExisting": "加入已有行程：{{title}}",
+    "journeyChoiceDetail": "（{{detail}}）",
+    "journeyChoiceDates": "{{from}} 至 {{to}}",
+    "journeyChoiceCitySeparator": "、",
+    "journeyChoiceCityTotal_other": "{{cities}}等 {{count}} 个城市",
+    "journeyChoiceNew": "新建行程",
+    "journeyChoiceRequired": "请先选择加入已有行程，或新建一个行程。",
     "attributionEnd": "。"
   },
   "en": {
@@ -240,6 +248,15 @@ export const editorResources = {
     "placeChoiceStrong": "Same name, nearby",
     "placeChoiceNew": "Create a separate place: {{name}}",
     "placeChoiceRequired": "Choose the place to use, or create a separate place.",
+    "journeyChoiceTitle": "Choose a trip",
+    "journeyChoiceExisting": "Add to existing trip: {{title}}",
+    "journeyChoiceDetail": " ({{detail}})",
+    "journeyChoiceDates": "{{from}} to {{to}}",
+    "journeyChoiceCitySeparator": ", ",
+    "journeyChoiceCityTotal_one": "{{cities}} ({{count}} city in all)",
+    "journeyChoiceCityTotal_other": "{{cities}} ({{count}} cities in all)",
+    "journeyChoiceNew": "Create a new trip",
+    "journeyChoiceRequired": "Choose an existing trip to add this visit to, or create a new trip.",
     "attributionEnd": "."
   }
 }

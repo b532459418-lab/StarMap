@@ -8,6 +8,14 @@ import { assertMediaJob, assertMediaJobsRead, assertMediaJobPreview, type MediaJ
 
 /** 第 2A 批：409 `E_PLACE_CHOICE_REQUIRED` 的候选列表交给界面（./placeChoice.ts）。 */
 export { placeChoiceCandidatesOf, type PlaceChoiceCandidate } from './placeChoice.ts'
+/** 第 2C 批：409 `E_JOURNEY_CHOICE_REQUIRED` 的候选行程交给界面（./journeyChoice.ts）。 */
+export { journeyChoiceCandidatesOf, type JourneyChoiceCandidate } from './journeyChoice.ts'
+
+/**
+ * 行程选择（第 2C 批）：新记录的行程标题与已有行程相同时，服务端返回 409 `E_JOURNEY_CHOICE_REQUIRED`（什么都不写）；
+ * 用户选定后再提交，加入已有行程带 `journeyId`，新建行程带 `newJourney: true`。
+ */
+export type JourneyChoiceFields = { journeyId?: string; newJourney?: true }
 
 const editorHeaders = {
   'content-type': 'application/json',
@@ -219,7 +227,7 @@ export type NamedTravelRecordInput = {
   lng: number
   trip_title?: string
   createNew?: true
-}
+} & JourneyChoiceFields
 
 /** 引用用户选定的已有城市（第 2A 批）：记录坐标就是地点坐标；`lat` / `lng` 只在地点没有坐标时补上。 */
 export type ExistingPlaceTravelRecordInput = {
@@ -229,7 +237,7 @@ export type ExistingPlaceTravelRecordInput = {
   lat?: number
   lng?: number
   trip_title?: string
-}
+} & JourneyChoiceFields
 
 export type LocalTravelRecordInput = NamedTravelRecordInput | ExistingPlaceTravelRecordInput
 
@@ -301,15 +309,15 @@ export const deleteHiddenLocalWantToGo = (ids: string[]) => withLocalEditorWrite
 // 日期一律由用户填写，这里原样转发，不补默认值。
 
 export type LocalConvertToTravelInput =
-  | {
+  | ({
       source: 'want-to-go'
       id: string
       startDate: string
       endDate?: string
       tripTitle?: string
       keepWantToGo?: boolean
-    }
-  | { source: 'planned'; recordId: string; startDate: string; endDate?: string }
+    } & JourneyChoiceFields)
+  | ({ source: 'planned'; recordId: string; startDate: string; endDate?: string } & JourneyChoiceFields)
 
 export type LocalConvertToTravelResult = {
   travelRecordId: string
