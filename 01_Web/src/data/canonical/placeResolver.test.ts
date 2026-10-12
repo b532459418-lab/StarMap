@@ -16,8 +16,10 @@ import assert from 'node:assert/strict'
 import { legacyIdCanonical, type LegacyIdCanonicalName } from './frozen.fixture.ts'
 import {
   asCountryCode,
+  STRONG_CANDIDATE_MAX_KM,
   cityMatchKeyOf,
   distanceKm,
+  findCityCandidates,
   resolveCity,
   resolveCountry,
 } from './placeResolver.ts'
@@ -122,6 +124,114 @@ test('distanceKm：同一点为 0；同一经线上纬度相差 1 度约 111 km'
   assert.equal(distanceKm(REYKJAVIK, REYKJAVIK), 0)
   const km = distanceKm({ lat: 64, lng: -21 }, { lat: 65, lng: -21 })
   assert.ok(km > 111 && km < 112, String(km))
+})
+
+// ---------------------------------------------------------------------------
+// findCityCandidates（第 2A 批）：名字和坐标只用来找候选
+// ---------------------------------------------------------------------------
+
+/** 江苏苏州与安徽宿州的坐标（公开地理事实），两地相距约 400 km，英文名都是 Suzhou。 */
+const SUZHOU_JS = { lat: 31.2989, lng: 120.5853 }
+const SUZHOU_AH = { lat: 33.6461, lng: 116.9641 }
+
+const CN_PLACES: CanonicalPlace[] = [
+  country('c-cn', 'CN', 'China', '中国'),
+  country('c-jp', 'JP', 'Japan', '日本'),
+  { ...city('t-suzhou-js', 'c-cn', { 'zh-Hans': '苏州', en: 'Suzhou' }), location: { ...SUZHOU_JS } },
+]
+
+const candidateIds = (candidates: ReturnType<typeof findCityCandidates>) => candidates.map((candidate) => candidate.placeId)
+
+test('findCityCandidates：同名远距离（苏州 / 宿州都叫 Suzhou）→ 是候选，但不是强候选；带上地点名称与距离', () => {
+  const [suzhou] = findCityCandidates(CN_PLACES, 'c-cn', { zh: '宿州', en: 'Suzhou' }, SUZHOU_AH)
+  assert.equal(suzhou.placeId, 't-suzhou-js')
+  assert.equal(suzhou.strong, false)
+  assert.deepEqual(suzhou.names, { 'zh-Hans': '苏州', en: 'Suzhou' })
+  assert.ok(suzhou.distanceKm !== undefined && suzhou.distanceKm > 350 && suzhou.distanceKm < 500, String(suzhou.distanceKm))
+  // 名字完全一致、坐标远：仍然只是候选。
+  assert.equal(findCityCandidates(CN_PLACES, 'c-cn', { zh: '苏州', en: 'Suzhou' }, SUZHOU_AH)[0].strong, false)
+})
+
+test('findCityCandidates：同名近距离、名字完全一致 → 强候选（不分大小写与标点）', () => {
+  const nearby = { lat: SUZHOU_JS.lat + 0.1, lng: SUZHOU_JS.lng }
+  assert.deepEqual(findCityCandidates(CN_PLACES, 'c-cn', { zh: '苏州', en: ' suzhou! ' }, nearby).map(({ placeId, strong }) => ({ placeId, strong })), [
+    { placeId: 't-suzhou-js', strong: true },
+  ])
+  assert.equal(findCityCandidates(CN_PLACES, 'c-cn', { zh: '苏州', en: 'Suzhou' }, SUZHOU_JS)[0].distanceKm, 0)
+})
+
+test('findCityCandidates：距离门限是具名常量（≤ 50 km 才是强候选）', () => {
+  assert.equal(STRONG_CANDIDATE_MAX_KM, 50)
+  const north = (degrees: number) => ({ lat: SUZHOU_JS.lat + degrees, lng: SUZHOU_JS.lng })
+  assert.equal(findCityCandidates(CN_PLACES, 'c-cn', { zh: '苏州', en: 'Suzhou' }, north(0.44))[0].strong, true, '约 49 km')
+  assert.equal(findCityCandidates(CN_PLACES, 'c-cn', { zh: '苏州', en: 'Suzhou' }, north(0.46))[0].strong, false, '约 51 km')
+})
+
+test('findCityCandidates：只有中文名相同、英文名不同 → 是候选，但不是强候选；只比双方都有的语言', () => {
+  const [byZh] = findCityCandidates(CN_PLACES, 'c-cn', { zh: '苏州', en: 'Soochow' }, SUZHOU_JS)
+  assert.equal(byZh.placeId, 't-suzhou-js')
+  assert.equal(byZh.strong, false)
+  // 输入只给了英文名：只比英文名，名字一致、坐标近 → 强候选。
+  assert.equal(findCityCandidates(CN_PLACES, 'c-cn', { en: 'Suzhou' }, SUZHOU_JS)[0].strong, true)
+  // 地点只有英文名：同样只比英文名。
+  const enOnly = [...CN_PLACES.slice(0, 2), { ...city('t-en-only', 'c-cn', { en: 'Suzhou' }), location: { ...SUZHOU_JS } }]
+  assert.equal(findCityCandidates(enOnly, 'c-cn', { zh: '宿州', en: 'Suzhou' }, SUZHOU_JS)[0].strong, true)
+  // 两种语言的名字都不同：不是候选。
+  assert.deepEqual(findCityCandidates(CN_PLACES, 'c-cn', { zh: '宿州', en: 'Suzhou City' }, SUZHOU_JS), [])
+})
+
+test('findCityCandidates：没有坐标（任一方）→ 是候选，但不是强候选，也没有距离', () => {
+  for (const candidates of [
+    findCityCandidates(CN_PLACES, 'c-cn', { zh: '苏州', en: 'Suzhou' }),
+    findCityCandidates([...CN_PLACES.slice(0, 2), city('t-suzhou-js', 'c-cn', { 'zh-Hans': '苏州', en: 'Suzhou' })], 'c-cn', { zh: '苏州', en: 'Suzhou' }, SUZHOU_JS),
+  ]) {
+    assert.deepEqual(candidates, [{ placeId: 't-suzhou-js', names: { 'zh-Hans': '苏州', en: 'Suzhou' }, strong: false }])
+  }
+})
+
+test('findCityCandidates：approximate 坐标（地点或输入）→ 不是强候选', () => {
+  const approximatePlace = [...CN_PLACES.slice(0, 2), { ...city('t-suzhou-js', 'c-cn', { 'zh-Hans': '苏州', en: 'Suzhou' }), location: { ...SUZHOU_JS, approximate: true as const } }]
+  const [fromPlace] = findCityCandidates(approximatePlace, 'c-cn', { zh: '苏州', en: 'Suzhou' }, SUZHOU_JS)
+  assert.equal(fromPlace.strong, false)
+  assert.equal(fromPlace.distanceKm, 0, '距离照样给出')
+  assert.equal(findCityCandidates(CN_PLACES, 'c-cn', { zh: '苏州', en: 'Suzhou' }, { ...SUZHOU_JS, approximate: true })[0].strong, false)
+})
+
+test('findCityCandidates：只在这个国家的城市里找；countryId 不是国家、输入的名字为空时没有候选', () => {
+  const places = [
+    ...CN_PLACES,
+    { ...city('t-suzhou-jp', 'c-jp', { 'zh-Hans': '苏州', en: 'Suzhou' }), location: { ...SUZHOU_JS } },
+    { id: 'c-suzhou-country', subtype: 'country' as const, names: { 'zh-Hans': '苏州', en: 'Suzhou' }, partOf: 'c-cn' },
+  ]
+  assert.deepEqual(candidateIds(findCityCandidates(places, 'c-cn', { zh: '苏州', en: 'Suzhou' }, SUZHOU_JS)), ['t-suzhou-js'])
+  assert.deepEqual(candidateIds(findCityCandidates(places, 'c-jp', { zh: '苏州', en: 'Suzhou' }, SUZHOU_JS)), ['t-suzhou-jp'])
+  assert.deepEqual(findCityCandidates(places, 't-suzhou-js', { en: 'Suzhou' }), [], 'countryId 必须是国家地点')
+  assert.deepEqual(findCityCandidates(places, 'missing', { en: 'Suzhou' }), [])
+  assert.deepEqual(findCityCandidates(places, 'c-cn', { zh: '', en: '---' }), [])
+  assert.deepEqual(findCityCandidates(places, 'c-cn', {}), [])
+  // 国家没有 ISO 也照样按 countryId 找（身份是 id，不是国家代码）。
+  const noIso = [country('c-none', undefined, 'Nowhere'), city('t-lonely', 'c-none', { 'zh-Hans': '某地', en: 'Somewhere' })]
+  assert.deepEqual(candidateIds(findCityCandidates(noIso, 'c-none', { en: 'somewhere' })), ['t-lonely'])
+})
+
+test('findCityCandidates：排序稳定——强候选在前，再按距离升序（没有距离的在后），再按地点 id；与注册表顺序无关', () => {
+  const near = (id: string, degrees: number, names: Record<string, string> = { 'zh-Hans': '苏州', en: 'Suzhou' }): CanonicalPlace =>
+    ({ ...city(id, 'c-cn', names), location: { lat: SUZHOU_JS.lat + degrees, lng: SUZHOU_JS.lng } })
+  const places: CanonicalPlace[] = [
+    CN_PLACES[0],
+    city('t-b-none', 'c-cn', { en: 'Suzhou' }),
+    near('t-far', 3),
+    near('t-strong-2', 0.2),
+    city('t-a-none', 'c-cn', { 'zh-Hans': '苏州' }),
+    near('t-zh-only', 0.01, { 'zh-Hans': '苏州', en: 'Soochow' }),
+    near('t-strong-1', 0.1),
+    near('t-strong-1b', 0.1),
+  ]
+  const expected = ['t-strong-1', 't-strong-1b', 't-strong-2', 't-zh-only', 't-far', 't-a-none', 't-b-none']
+  assert.deepEqual(candidateIds(findCityCandidates(places, 'c-cn', { zh: '苏州', en: 'Suzhou' }, SUZHOU_JS)), expected)
+  assert.deepEqual(candidateIds(findCityCandidates([...places].reverse(), 'c-cn', { zh: '苏州', en: 'Suzhou' }, SUZHOU_JS)), expected)
+  assert.deepEqual(findCityCandidates(places, 'c-cn', { zh: '苏州', en: 'Suzhou' }, SUZHOU_JS).map((candidate) => candidate.strong),
+    [true, true, true, false, false, false, false])
 })
 
 // ---------------------------------------------------------------------------

@@ -58,6 +58,74 @@ export const distanceKm = (from: { lat: number; lng: number }, to: { lat: number
 }
 
 // ---------------------------------------------------------------------------
+// 城市候选：按名字找「可能是同一个城市」的已有地点（第 2A 批，RFC ID-6「匹配提示 ≠ 身份」）
+// ---------------------------------------------------------------------------
+//
+// 名字和坐标只用来找候选，不决定身份：写入端按名字收到新增请求时，只要有候选就请用户选择（明确的地点 id，或明确新建）。
+// - 候选：同一国家（`partOf === countryId`）的城市地点，与输入在任一语言（zh-Hans、en）上的名字相同（按 slugify 归一化）。
+// - 强候选：双方都有的语言，名字都相同；双方都有坐标且都不是 approximate；距离不超过 STRONG_CANDIDATE_MAX_KM。
+//   界面默认选中第一个强候选；没有强候选时不预选。
+// - 排序：强候选在前，然后按距离升序（没有距离的在后），再按地点 id（码点顺序）。
+
+/** 强候选的距离上限（千米）。 */
+export const STRONG_CANDIDATE_MAX_KM = 50
+
+/** 一个城市候选：地点 id、地点的名称、与输入的距离（双方都有坐标时）、是否强候选。 */
+export interface CityCandidate {
+  placeId: PlaceId
+  names: Readonly<Record<string, string>>
+  distanceKm?: number
+  strong: boolean
+}
+
+const CANDIDATE_LANGUAGES = [ZH, EN] as const
+
+const nameSlugsOf = (names: Readonly<Record<string, string | undefined>>): Record<string, string> =>
+  Object.fromEntries(CANDIDATE_LANGUAGES.map((language) => [language, slugify(names[language] ?? '')]))
+
+const byCode = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
+
+/** 距离升序；没有距离的排在后面。 */
+const byDistance = (left: number | undefined, right: number | undefined): number => {
+  if (left === undefined || right === undefined) return Number(left === undefined) - Number(right === undefined)
+  return left - right
+}
+
+/**
+ * 在国家 `countryId` 的城市地点里找候选（纯函数）。`names` 只放用户实际给出的名字；`location` 是输入的坐标（可空）。
+ * `countryId` 不是国家地点、或输入的名字都为空时，没有候选。
+ */
+export const findCityCandidates = (
+  places: readonly CanonicalPlace[],
+  countryId: PlaceId,
+  names: { zh?: string; en?: string },
+  location?: { lat: number; lng: number; approximate?: true },
+): CityCandidate[] => {
+  if (!places.some((place) => place.id === countryId && place.subtype === 'country')) return []
+  const input = nameSlugsOf({ [ZH]: names.zh, [EN]: names.en })
+  if (CANDIDATE_LANGUAGES.every((language) => input[language] === '')) return []
+  const candidates: CityCandidate[] = []
+  for (const place of places) {
+    if (place.subtype !== 'city' || place.partOf !== countryId) continue
+    const own = nameSlugsOf(place.names)
+    const shared = CANDIDATE_LANGUAGES.filter((language) => input[language] !== '' && own[language] !== '')
+    if (!shared.some((language) => input[language] === own[language])) continue
+    const distance = location !== undefined && place.location !== undefined ? distanceKm(location, place.location) : undefined
+    const strong = shared.every((language) => input[language] === own[language])
+      && distance !== undefined
+      && location?.approximate !== true
+      && place.location?.approximate !== true
+      && distance <= STRONG_CANDIDATE_MAX_KM
+    candidates.push({ placeId: place.id, names: { ...place.names }, ...(distance !== undefined ? { distanceKm: distance } : {}), strong })
+  }
+  return candidates.sort((left, right) => (
+    Number(right.strong) - Number(left.strong)
+    || byDistance(left.distanceKm, right.distanceKm)
+    || byCode(left.placeId, right.placeId)
+  ))
+}
+
+// ---------------------------------------------------------------------------
 // 解析：先找后建的「找」
 // ---------------------------------------------------------------------------
 
