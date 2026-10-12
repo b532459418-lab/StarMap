@@ -72,6 +72,8 @@ GitHub 不包含个人照片和旅行数据。若个人网站本身部署到公�
 - 只读接口（`GET /__travelatlas/editor/state`、`/__travelatlas/editor/catalog/*`）与 `/media/user/*`：要求本机 socket；带 Origin 时必须与本服务同源（同协议、同主机、同端口）；`Sec-Fetch-Site` 必须缺省、为 `same-origin` 或 `none`。媒体响应带 `Cross-Origin-Resource-Policy: same-origin` 与 `X-Content-Type-Options: nosniff`。
 - 写入接口与媒体任务接口：要求本机 socket；带 Origin 时必须与本服务同源；并且带请求头 `x-travelatlas-local-editor: 1`。自定义请求头会触发跨源预检，而个人配置不放行任何跨源预检。
 
+`vite preview`（`npm run preview`）直接服务 `dist`，而 `dist` 可能是包含私人数据与原图的个人构建，所以预览服务不论哪种模式都关闭 CORS（`preview.cors: false`），并在自己的中间件之前注册同一个跨站请求守卫；同源访问照常可用。
+
 不带 `Sec-Fetch-*` 头的本机工具（curl、脚本、测试）不受守卫影响，仍按各接口自己的检查处理。正式构建不携带这个服务端能力；隐藏编辑按钮本身不作为安全措施，真正的边界是公开部署中没有写入接口。
 
 ## 干净公开仓库允许清单

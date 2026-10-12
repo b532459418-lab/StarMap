@@ -63,6 +63,15 @@ original → 原图或 360 Viewer 按需加载
 - 找不到或候选不止一个都报错并停止，例如「在 冰岛 中找不到城市：……。请先在 StarMap 中添加这个城市。」。导入器不猜，也不新建地点。
 - 按文件夹名或旧 `country.json` 匹配成功的文件夹，`npm run media:import` 会在整次导入没有错误时写入 `place.json`，此后地点改名也不影响归属；`npm run media:check` 只列出、不写。已有 `place.json` 的文件夹不动。
 - 本地编辑器上传时，文件进入 `MediaInbox/<国家>/<城市>/photos/` 或 `drone/`，文件夹名取英文名（没有英文名时取中文名），新文件夹会写入 `place.json`。同一国家里有同名城市时，后上传的城市使用 `<名称> (<地点 id 的最后 8 个字符>)` 文件夹。
+- **文件夹名与文件名的转义规则**：本地编辑器上传与媒体待办使用同一套规则（`01_Web/scripts/media-path-segment.mjs`），能转义的都转义，不拒绝：
+  1. 去掉首尾空白；
+  2. `< > : " / \ | ? *` 与控制字符（U+0000–U+001F、U+007F–U+009F）换成 `-`；
+  3. 结果为空、`.` 或 `..` 时拒绝上传；
+  4. 最多保留 120 个 UTF-16 码元，不拆开代理对；
+  5. Windows 设备名（CON、PRN、AUX、NUL、COM1–COM9、LPT1–LPT9、COM¹–COM³、LPT¹–LPT³、CONIN$、CONOUT$，不分大小写）单独出现或后面接 `.` 时，在设备名后加 `_`：`CON` → `CON_`，`nul.jpg` → `nul_.jpg`；
+  6. 以 `.` 或空格结尾时（Windows 会悄悄去掉它们）再加一个 `_`：`Washington D.C.` → `Washington D.C._`。
+
+  本来就合法的名字原样保留，已有文件夹不受影响。转义后的文件夹仍写入 `place.json`；按名字匹配时忽略 `_` 与 `-`，所以 `CON_` 也能对上名为 CON 的城市。
 - **媒体 id** 为 `media-` 加源文件 SHA-256 的前 16 位十六进制，生成文件放在 `media/user/<同样 16 位>/`，只由文件内容决定：地点改名、把文件挪到别的城市文件夹、改无人机类型，id 与路径都不变，排序、封面、隐藏随文件走。`media.json` 里显式写的 `id` 仍然优先。
 - 从旧格式迁移来的媒体，在迁移后第一次导入时会按内容得到新 id，按旧 id 记下的排序、隐藏与封面随之失效；迁移（提交 `4fd32a9` 的迁移工具）的 dry-run 报告会给出受影响的条目数。
 
@@ -86,7 +95,7 @@ original → 原图或 360 Viewer 按需加载
 4. 普通照片无需额外元数据。无人机素材必须先读取文件尺寸和可用 EXIF/XMP，并在必要时创建或更新城市级 `media.json`：`kind` 只能是 `panorama360`、`aerialPhoto` 或 `video`；日期缺失时必须询问，坐标与高度可以缺失但不得伪造。
 5. 自动导入支持 JPEG、PNG、WebP、AVIF、MP4 和 WebM。受支持的静态图片会在 Inbox 外自动校正方向，并生成 `640 px` WebP 缩略图、`2400 px` WebP 浏览预览和原图副本三级资源。标记为 `panorama360` 的静态图片必须接近 2:1 等距柱状全景比例；不符合时停止导入并提示改为 `aerialPhoto` 或更换正确全景图。HEIC、HEIF、TIFF、RAW 和 MOV 不由当前导入器自动转换；保持原文件不变，说明原因，并在任何单独转换工作前取得用户确认。
 6. 在 `01_Web/` 运行 `npm run media:check`。只要报告仍有“需要处理”，禁止执行正式导入。若提醒项表示媒体类型、日期、分辨率或其他必要数据仍不确定，即使命令退出码为零也必须先询问并停止，不能静默继续。坐标缺失本身不阻止导入。
-7. 预检通过后运行 `npm run media:import`。工具按内容哈希建立媒体目录，保留 `original`，并为静态图片生成 `thumb.webp` 与 `preview.webp`；它不移动、不覆盖、不删除投递箱原图，也不会清理历史生成文件。生成文件先写到同目录的临时文件 `.<文件名>.<pid>.<uuid>.tmp`，落盘后以不覆盖的方式发布；中断只会留下这些临时文件，下次导入会先删掉其他进程留下的临时文件。怀疑生成的原图被截断或改动时，运行 `npm run media:check -- --verify` 核对内容哈希；它只报告，不修复。
+7. 预检通过后运行 `npm run media:import`。工具按内容哈希建立媒体目录，保留 `original`，并为静态图片生成 `thumb.webp` 与 `preview.webp`；它不移动、不覆盖、不删除投递箱原图，也不会清理历史生成文件。生成文件先写到同目录的临时文件 `.<文件名>.<pid>.<uuid>.tmp`，落盘后以不覆盖的方式发布；中断只会留下这些临时文件，下次导入会先删掉其他进程留下的临时文件。怀疑生成的原图被截断或改动时，运行 `npm run media:check -- --verify` 核对内容哈希；它只报告，不修复。同一命令还核对已完成媒体待办的完成凭据所记录的源文件与生成文件，有变化时只给出提醒，不影响退出码。
 8. 使用 `npm run dev:personal` 重启预览并检查城市首图、City Cards/Photos、Drone Media、照片 Viewer 和 360 Viewer。确认列表界面只请求 `thumb`、照片 Viewer 请求 `preview`、360 Viewer 才请求全景 `original`。最后运行 `npm run privacy:check`、`npm run lint` 与 `npm run build:personal`，报告导入数量、未解决项目和验证结果。公开发布另行运行 `npm run release:check`。
 
 ## 自动生成与展示规则
