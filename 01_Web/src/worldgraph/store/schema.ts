@@ -43,11 +43,12 @@ export function validateWorldStore(value: unknown, policy: StorePolicy = {}): as
   }
 }
 
-export function validateCommands(value: unknown): asserts value is readonly StoreCommand[] {
+/** `tables` defaults to the G1 tables; the formal planner passes FORMAL_TABLES. */
+export function validateCommands(value: unknown, tables: readonly string[] = STORE_TABLES): asserts value is readonly StoreCommand[] {
   validateJson(value)
   if (!Array.isArray(value) || !value.length) reject('E_COMMAND','$')
   for (const c of value) {
-    if (!plain(c) || !STORE_TABLES.includes(c.table as StoreTable)) reject('E_COMMAND','$')
+    if (!plain(c) || !(tables as readonly unknown[]).includes(c.table)) reject('E_COMMAND','$')
     if (c.op==='create') { shape(c,['op','table','value']); if (!plain(c.value)) reject('E_SHAPE','command.value') }
     else if (c.op==='update') {
       shape(c,['op','table','id','expectedRevision','value']); opaqueId(c.id,'command.id'); revision(c.expectedRevision,'command.expectedRevision')
