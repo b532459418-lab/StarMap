@@ -4,6 +4,11 @@
  * `abandoned` (batch 1 D2) is a terminal phase reachable only from `open`/`paused`: it changes the task
  * phase and nothing else (files, import stage and every library file stay as evidence), and like
  * `completed`/`closed` it no longer blocks other media writes. Records written before it existed stay valid.
+ *
+ * Completion receipts (batch 2 D4) record only the task: its selected Inbox sources, the generated files of the media they
+ * became and the V2 files the import rewrote, each with size, SHA-256 and modification time, plus `libraryDigest` for the
+ * rest of the library. Receipts sealed before that listed the whole library and carry neither `libraryDigest` nor
+ * output times; they stay valid. Creating a task checks that its largest possible completed record fits the record limit.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises'
@@ -74,15 +79,20 @@ export function mediaJobReceiptSeal(job, importRecord, receipt) {
 }
 const ids = (value, { nonempty = false } = {}) => Array.isArray(value) && value.length <= 10000
   && (!nonempty || value.length > 0) && value.every(safeName) && new Set(value).size === value.length
+/** Task-scoped receipts (D4) record each output's modification time; whole-library receipts sealed before them do not. */
+const validOutput = (output, taskScoped) => exact(output, ['path', 'sha256', 'bytes', 'mtimeMs']) && relativePath(output.path)
+  && SHA.test(output.sha256) && Number.isSafeInteger(output.bytes) && output.bytes >= 0
+  && (taskScoped ? Number.isFinite(output.mtimeMs) && output.mtimeMs >= 0 : output.mtimeMs === undefined)
 const validReceipt = (job, record) => {
   const receipt = record.receipt
-  return exact(receipt, ['completedAt', 'mediaIds', 'restoredMediaIds', 'outputs', 'seal'])
+  const taskScoped = object(receipt) && receipt.libraryDigest !== undefined
+  return exact(receipt, ['completedAt', 'mediaIds', 'restoredMediaIds', 'outputs', 'libraryDigest', 'seal'])
+    && (!taskScoped || SHA.test(receipt.libraryDigest))
     && stamp(receipt.completedAt) && receipt.completedAt >= job.createdAt
     && ids(receipt.mediaIds, { nonempty: true }) && ids(receipt.restoredMediaIds)
     && receipt.restoredMediaIds.every((id) => receipt.mediaIds.includes(id))
     && Array.isArray(receipt.outputs) && receipt.outputs.length > 0 && receipt.outputs.length <= 10000
-    && receipt.outputs.every((output) => exact(output, ['path', 'sha256', 'bytes']) && relativePath(output.path)
-      && SHA.test(output.sha256) && Number.isSafeInteger(output.bytes) && output.bytes >= 0)
+    && receipt.outputs.every((output) => validOutput(output, taskScoped))
     && new Set(receipt.outputs.map((output) => output.path.toLocaleLowerCase('en-US'))).size === receipt.outputs.length
     && SHA.test(receipt.seal) && receipt.seal === mediaJobReceiptSeal(job, record, receipt)
 }
@@ -115,6 +125,40 @@ export function assertMediaJobRecord(job) {
   if (!validJob(job) || Buffer.byteLength(`${JSON.stringify(job, null, 2)}\n`, 'utf8') > RECORD_LIMIT) {
     fail('E_MEDIA_JOB_INVALID', 'Invalid or oversized task record')
   }
+}
+
+// Upper bounds for the creation-time receipt check. An upload's Inbox folders are display names escaped to at most 121
+// UTF-16 code units (./media-path-segment.mjs), counted here as three UTF-8 bytes each; a destination file name gains
+// at most a `-999` suffix. Each still image becomes an original and two WebP derivatives, and a task import rewrites
+// three V2 files.
+const LONGEST_FOLDER = '国'.repeat(121)
+const GENERATED_FILES = ['original.jpeg', 'thumb.webp', 'preview.webp']
+const REWRITTEN_DATA_FILES = ['data/v2/user-media.local.json', 'data/v2/media-source-index.local.json', 'data/v2/editor-state.local.json']
+
+/**
+ * The largest completed record `job` can become (D4): every file received and selected, each with the longest Inbox
+ * path an upload can give it, its generated files, the rewritten V2 files and maximal sizes, times and digests.
+ * A task-scoped receipt does not grow with the library, so when this fits the record limit, the real one does too.
+ */
+export function largestCompletedMediaJobRecord(job) {
+  const hex = (index) => index.toString(16).padStart(16, '0')
+  const files = job.files.map((file) => {
+    const extension = path.extname(file.fileName)
+    const sourcePath = [LONGEST_FOLDER, LONGEST_FOLDER, job.kind === 'photo' ? 'photos' : 'drone',
+      `${file.fileName.slice(0, file.fileName.length - extension.length)}-999${extension.toLowerCase()}`].join('/')
+    return { ...file, phase: 'received', operationId: job.jobId, sourcePath, expectedSha256: 'f'.repeat(64), sha256: 'f'.repeat(64),
+      receivedBytes: file.bytes, image: { width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER, format: 'jpeg', orientation: 8 } }
+  })
+  const output = (outputPath) => ({ path: outputPath, sha256: 'f'.repeat(64), bytes: Number.MAX_SAFE_INTEGER, mtimeMs: Number.MAX_VALUE })
+  const mediaIds = files.map((_file, index) => `media-${hex(index)}`)
+  const record = { ...job, revision: Number.MAX_SAFE_INTEGER, phase: 'completed', files,
+    import: { operationId: job.jobId, planDigest: 'f'.repeat(64), sourceRevision: job.revision, selectedFileIds: files.map((file) => file.fileId), phase: 'sealed' } }
+  const receipt = { completedAt: job.updatedAt, mediaIds, restoredMediaIds: mediaIds, outputs: [
+    ...REWRITTEN_DATA_FILES.map(output),
+    ...files.flatMap((file, index) => [`MediaInbox/${file.sourcePath}`, ...GENERATED_FILES.map((name) => `media/user/${hex(index)}/${name}`)].map(output)),
+  ], libraryDigest: 'f'.repeat(64) }
+  record.import.receipt = { ...receipt, seal: mediaJobReceiptSeal(record, record.import, receipt) }
+  return record
 }
 
 /** Every existing component is checked with lstat, so junctions/symlinks are refused. */
@@ -247,6 +291,8 @@ export function createMediaJobStore(privatePaths) {
       countryId: input.countryId, cityId: input.cityId, kind: input.kind, createdAt: now, updatedAt: now,
       files: input.files.map((file) => ({ fileId: randomUUID(), fileName: file.fileName, bytes: file.bytes, phase: 'intended',
         ...(file.metadata === undefined ? {} : { metadata: structuredClone(file.metadata) }), metadataHash: metadataHash(file.metadata) })) }
+    // D4: refuse, before anything is written, a task whose completion could not be recorded.
+    try { assertMediaJobRecord(largestCompletedMediaJobRecord(job)) } catch { fail('E_MEDIA_JOB_INVALID', 'Completion receipt would exceed the task record limit') }
     const destination = await checked(state.info.root, [...controls, 'jobs', `${job.jobId}.json`], { file: true })
     if (!destination.missing) fail('E_MEDIA_JOB_CONFLICT', 'Task id already exists')
     await atomic(destination.path, job)

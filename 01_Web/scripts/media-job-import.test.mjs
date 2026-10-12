@@ -2,9 +2,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
+import fs from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -14,6 +16,7 @@ import { atomicJsonWrite, readJson } from './json-file.mjs'
 import { safeSegment, reserveDestination } from './local-editor-upload.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import * as service from './media-job-service.mjs'
+import { assertMediaJobRecord, largestCompletedMediaJobRecord, mediaJobReceiptSeal } from './media-job-store.mjs'
 import { prepareV2Upload } from './v2-media-store.mjs'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 
@@ -386,6 +389,150 @@ test('RD-07 batch2 a new same-city same-content intent needs explicit import and
   const beforeReplay = await tree(env.paths.root, { omitCoordination: true })
   assert.equal((await freshReplay(env, second, secondImport.input)).status, 200)
   assert.deepEqual(await tree(env.paths.root, { omitCoordination: true }), beforeReplay)
+}))
+
+// ---------------------------------------------------------------------------
+// Batch 2 D4 / D6: task-scoped receipts and reads without content hashing
+// ---------------------------------------------------------------------------
+
+const DATA_FILES = ['data/v2/editor-state.local.json', 'data/v2/media-source-index.local.json', 'data/v2/user-media.local.json']
+const generatedPaths = (bytes) => ['original.jpg', 'preview.webp', 'thumb.webp'].map((name) => `media/user/${sha(bytes).slice(0, 16)}/${name}`)
+
+test('D4 the completion receipt lists only this task: its source, its generated files and the rewritten V2 files, plus a library digest', async () => withRoot(async env => {
+  const firstBytes = await jpeg(), first = await received(env, firstBytes)
+  const firstImport = await importReady(env, first)
+  const firstRecord = await readJson(jobPath(env, first)), firstReceipt = firstRecord.import.receipt
+  assert.deepEqual(firstReceipt.outputs.map((output) => output.path).sort(),
+    [...DATA_FILES, `MediaInbox/${firstRecord.files[0].sourcePath}`, ...generatedPaths(firstBytes)].sort())
+  assert.deepEqual(firstReceipt.mediaIds, [`media-${sha(firstBytes).slice(0, 16)}`])
+  assert.match(firstReceipt.libraryDigest, /^[a-f0-9]{64}$/)
+  for (const output of firstReceipt.outputs) {
+    const info = await stat(path.join(env.paths.root, ...output.path.split('/')))
+    assert.equal(output.mtimeMs, info.mtimeMs, output.path); assert.equal(output.bytes, info.size, output.path)
+  }
+  await write(env, 'close', firstImport.result.body.job, identity(firstImport.result.body.job))
+
+  // A second task in a library that now holds both images: its receipt has the same shape and does not list the first task.
+  const secondBytes = await jpeg({ r: 170, g: 35, b: 20 })
+  const second = await received(env, secondBytes, { files: [{ fileName: 'second.jpg', bytes: secondBytes.length }] })
+  await importReady(env, second)
+  const secondRecord = await readJson(jobPath(env, second)), secondReceipt = secondRecord.import.receipt
+  assert.equal((await readJson(env.paths.v2FilePaths.media)).items.length, 2)
+  assert.deepEqual(secondReceipt.outputs.map((output) => output.path).sort(),
+    [...DATA_FILES, `MediaInbox/${secondRecord.files[0].sourcePath}`, ...generatedPaths(secondBytes)].sort())
+  assert.deepEqual(secondReceipt.mediaIds, [`media-${sha(secondBytes).slice(0, 16)}`])
+  assert.notEqual(secondReceipt.libraryDigest, firstReceipt.libraryDigest)
+}))
+
+test('D4 the receipt scope does not grow with the library: a 2,000-item catalog gives the same receipt as a one-item one', () => {
+  const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: path.join(tmpdir(), 'starmap-d4-scope-never-created') })
+  const job = { files: [{ fileId: 'selected', sourcePath: 'Test Country/Test City/photos/scene.jpg' }, { fileId: 'other', sourcePath: 'Test Country/Test City/photos/later.jpg' }] }
+  const entryOf = (index, sourcePath = `Test Country/Test City/photos/bulk-${index}.jpg`) => ({ id: `media-${index.toString(16).padStart(16, '0')}`, sourcePath })
+  const outputsOf = (entry) => ['original.jpg', 'thumb.webp', 'preview.webp'].map((name) => ({ id: entry.id, path: `media/user/${entry.id.slice(6)}/${name}`, sha256: 'a'.repeat(64) }))
+  const planOf = (count) => {
+    const entries = [entryOf(0, job.files[0].sourcePath), ...Array.from({ length: count - 1 }, (_, index) => entryOf(index + 1))]
+    return { entries, summary: { outputs: entries.flatMap(outputsOf) } }
+  }
+  const rewrittenFiles = [paths.v2FilePaths.media, paths.v2MediaSourceIndexPath, paths.v2FilePaths.editorState]
+  const small = service.taskReceiptScope({ paths, job, selectedFileIds: ['selected'], plan: planOf(1), rewrittenFiles })
+  const large = service.taskReceiptScope({ paths, job, selectedFileIds: ['selected'], plan: planOf(2000), rewrittenFiles })
+  assert.equal(planOf(2000).summary.outputs.length, 6000)
+  assert.deepEqual(large, small)
+  assert.equal(small.targets.length, 7)
+  assert.deepEqual(small.mediaIds, ['media-0000000000000000'])
+  assert.equal(Buffer.byteLength(JSON.stringify(large)), Buffer.byteLength(JSON.stringify(small)))
+})
+
+test('D4 a task\'s largest possible completed record fits the record limit, even at the input limits', async () => withRoot(async env => {
+  const title = '题'.repeat(500)
+  const files = Array.from({ length: 100 }, (_, index) => ({ fileName: `${'名'.repeat(110)}${String(index).padStart(3, '0')}.jpeg`, bytes: 250 * 1024 * 1024,
+    metadata: { date: '2026-01-01', lat: 64.123456789, lng: -21.123456789, altitudeMeters: 123.456, relativeAltitudeMeters: 45.678, titleZh: title, titleEn: title } }))
+  const created = await write(env, 'create', null, { countryId: ID.country, cityId: ID.city, kind: 'aerialPhoto', files })
+  assert.equal(created.status, 201, JSON.stringify(created).slice(0, 300))
+  const job = await readJson(jobPath(env, created.body.job))
+  const largest = largestCompletedMediaJobRecord(job)
+  assertMediaJobRecord(largest)
+  assert.ok(Buffer.byteLength(`${JSON.stringify(largest, null, 2)}\n`) < 1024 * 1024)
+}))
+
+test('D4 receipts sealed before D4 (whole-library outputs, no times or library digest) stay valid and readable', async () => withRoot(async env => {
+  const bytes = await jpeg(), job = await received(env, bytes)
+  await importReady(env, job)
+  const record = await readJson(jobPath(env, job))
+  // Rewrite the receipt the way the earlier code sealed it: every V2 file, the index, every output and every source.
+  const oldPaths = [...Object.values(env.paths.v2FilePaths), env.paths.v2MediaSourceIndexPath,
+    ...generatedPaths(bytes).map((output) => path.join(env.paths.root, ...output.split('/'))), path.join(env.paths.inboxRoot, ...record.files[0].sourcePath.split('/'))]
+  const outputs = []
+  for (const target of [...new Set(oldPaths)].sort()) {
+    let info
+    try { info = await stat(target) } catch { continue }
+    outputs.push({ path: path.relative(env.paths.root, target).split(path.sep).join('/'), bytes: info.size, sha256: sha(await readFile(target)) })
+  }
+  const { libraryDigest: _digest, seal: _seal, ...rest } = record.import.receipt
+  void _digest; void _seal
+  const receipt = { ...rest, mediaIds: (await readJson(env.paths.v2FilePaths.media)).items.map((item) => item.id), outputs }
+  record.import.receipt = { ...receipt, seal: mediaJobReceiptSeal(record, record.import, receipt) }
+  await writeFile(jobPath(env, job), `${JSON.stringify(record, null, 2)}\n`)
+
+  const read = await get(env, job)
+  assert.equal(read.status, 200, JSON.stringify(read)); assert.equal(read.body.job.status, 'completed')
+  assert.deepEqual(read.body.job.warnings, [])
+  const closed = await write(env, 'close', read.body.job, identity(read.body.job))
+  assert.equal(closed.status, 200, JSON.stringify(closed)); assert.equal(closed.body.job.phase, 'closed')
+  // A later rewrite of a generated file is still noticed by size and time.
+  const thumb = path.join(env.paths.userMediaRoot, sha(bytes).slice(0, 16), 'thumb.webp')
+  await writeFile(thumb, 'synthetic replacement')
+  const changed = await get(env, job)
+  assert.deepEqual(changed.body.job.warnings, [{ kind: 'changed_resource', path: generatedPaths(bytes)[2] }])
+}))
+
+test('D6 reading the task list hashes nothing; only the explicit receipt check does, and it reports a changed file', async (t) => withRoot(async env => {
+  const bytes = await jpeg(), job = await received(env, bytes)
+  const { result } = await importReady(env, job)
+  await write(env, 'close', result.body.job, identity(result.body.job))
+  const digests = t.mock.method(service.mediaJobHashing, 'digestFile')
+  let streams = 0
+  const originalStream = fs.createReadStream
+  fs.createReadStream = (...args) => { streams += 1; return originalStream(...args) }
+  syncBuiltinESMExports()
+  try {
+    const list = await service.handleMediaJobRead({ privatePaths: env.paths, route: service.mediaJobRoute('GET', base) })
+    const one = await get(env, job)
+    assert.equal(list.status, 200, JSON.stringify(list)); assert.equal(list.body.jobs[0].status, 'closed')
+    assert.equal(one.body.job.status, 'closed'); assert.deepEqual(one.body.job.warnings, [])
+    assert.equal(digests.mock.callCount(), 0)
+    assert.equal(streams, 0)
+
+    const clean = await service.verifyMediaJobReceipts(env.paths)
+    assert.equal(clean.checked, 4); assert.deepEqual(clean.findings, [])
+    assert.equal(digests.mock.callCount(), 4)
+    const preview = path.join(env.paths.userMediaRoot, sha(bytes).slice(0, 16), 'preview.webp')
+    const original = await readFile(preview)
+    await writeFile(preview, Buffer.from(original).fill(0, 0, 4))
+    const tampered = await service.verifyMediaJobReceipts(env.paths)
+    assert.deepEqual(tampered.findings, [{ jobId: job.jobId, path: generatedPaths(bytes)[1], kind: 'changed' }])
+    const lines = []
+    await service.reportMediaJobReceipts(env.paths, (line) => lines.push(line))
+    assert.equal(lines.length, 2); assert.match(lines[1], /内容已改变/)
+  } finally {
+    fs.createReadStream = originalStream
+    syncBuiltinESMExports()
+  }
+}))
+
+test('D6 ordinary edits after completion (hiding, sorting, another task import) raise no changed_resource warning', async () => withRoot(async env => {
+  const bytes = await jpeg(), job = await received(env, bytes)
+  const { result } = await importReady(env, job)
+  await write(env, 'close', result.body.job, identity(result.body.job))
+  const id = `media-${sha(bytes).slice(0, 16)}`
+  const state = await readJson(env.paths.v2FilePaths.editorState)
+  state.hiddenMediaIds = [id]; state.mediaOrderByCity = { [ID.city]: [id] }
+  await atomicJsonWrite(env.paths.v2FilePaths.editorState, state)
+  const otherBytes = await jpeg({ r: 20, g: 160, b: 60 })
+  await importReady(env, await received(env, otherBytes, { files: [{ fileName: 'other.jpg', bytes: otherBytes.length }] }))
+  const read = await get(env, job)
+  assert.equal(read.body.job.status, 'closed', JSON.stringify(read))
+  assert.deepEqual(read.body.job.warnings, [])
 }))
 
 // ---------------------------------------------------------------------------
