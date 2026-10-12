@@ -26,6 +26,7 @@ import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, readV2Files, runV2Write } from './v2-editor-store.mjs'
 import { handleV2Import, handleV2MediaDelete, handleV2Upload } from './v2-media-store.mjs'
+import { scanV2MediaImport } from './v2-media-import.mjs'
 import { createLocalEditorImporter } from './local-editor-importer.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
@@ -382,6 +383,116 @@ test('同一国家的同名城市不共用收件箱文件夹：两个 Springfiel
     assert.equal(state.mediaOrderByCity[SAME_NAME.springfieldB].length, 2)
     assert.equal(state.mediaOrderByCity[SAME_NAME.springfieldLower].length, 1)
     await assertIntact(paths, '同名城市导入之后')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 第 2D 批：上传不认领手放的文件夹
+// ---------------------------------------------------------------------------
+
+/** 中国与苏州。注册表里只有这一个 Suzhou，所以手放的 Suzhou 文件夹按名字只匹配到它。 */
+const CHINA = { cn: newId(), suzhou: newId() }
+const chinaPlaces = () => {
+  const places = placesFile()
+  places.places.push(
+    { id: CHINA.cn, subtype: 'country', names: { 'zh-Hans': '中国', en: 'China' }, externalIds: { iso3166Alpha2: 'CN' }, location: { lat: 35, lng: 105 } },
+    { id: CHINA.suzhou, subtype: 'city', names: { 'zh-Hans': '苏州', en: 'Suzhou' }, partOf: CHINA.cn, location: { lat: 31.2989, lng: 120.5853 } },
+  )
+  return places
+}
+
+/** 一个目录下的全部条目：文件的大小、SHA-256 与修改时间；目录（含根）的修改时间——里面加过或删过东西，它就会变。 */
+const snapshot = async (root) => {
+  const records = { './': { mtimeMs: (await fsPromises.stat(root)).mtimeMs } }
+  const walk = async (directory) => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const full = path.join(directory, entry.name)
+      const relative = path.relative(root, full).split(path.sep).join('/')
+      const info = await fsPromises.stat(full)
+      if (entry.isDirectory()) {
+        records[`${relative}/`] = { mtimeMs: info.mtimeMs }
+        await walk(full)
+      } else {
+        records[relative] = { bytes: info.size, mtimeMs: info.mtimeMs, sha256: createHash('sha256').update(await readFile(full)).digest('hex') }
+      }
+    }
+  }
+  await walk(root)
+  return records
+}
+
+/** 用户手放的城市文件夹：两张照片，没有 place.json。 */
+const handMadeCity = async (cityRoot) => {
+  await mkdir(path.join(cityRoot, 'photos'), { recursive: true })
+  await writeFile(path.join(cityRoot, 'photos', 'old-street.jpg'), await jpeg({ r: 120, g: 90, b: 60 }))
+  await writeFile(path.join(cityRoot, 'photos', 'bridge.jpg'), await jpeg({ r: 60, g: 90, b: 120 }))
+}
+
+/** 导入扫描列出的待确认绑定：`[文件夹, 地点 id, 来源]`，按文件夹排序。 */
+const pendingBindings = async (paths) => {
+  const scan = await scanV2MediaImport({ privatePaths: paths })
+  assert.deepEqual(scan.errors, [])
+  return scan.pins
+    .map((pin) => [path.relative(paths.inboxRoot, pin.directory).split(path.sep).join('/'), pin.placeId, pin.source])
+    .sort(([a], [b]) => a.localeCompare(b))
+}
+
+test('第 2D 批：手放的 China/Suzhou（有照片，没有 place.json）不被认领——照片进新建的 Suzhou (<后缀>)，再传复用它；手放的文件夹逐字节不变；导入时它作为待确认的绑定出现', async () => {
+  await withV2Root(async (env) => {
+    const { paths } = env
+    await writeFile(paths.v2FilePaths.places, `${JSON.stringify(chinaPlaces(), null, 2)}\n`, 'utf8')
+    // 国家文件夹已经指向中国（例如以前给别的城市上传过）；城市文件夹 Suzhou 是用户手放的。
+    const countryRoot = path.join(paths.inboxRoot, 'China')
+    const handMade = path.join(countryRoot, 'Suzhou')
+    await handMadeCity(handMade)
+    const countryPin = `${JSON.stringify({ placeId: CHINA.cn })}\n`
+    await writeFile(path.join(countryRoot, 'place.json'), countryPin, 'utf8')
+    const before = await snapshot(handMade)
+
+    const first = await upload(env, { countryId: CHINA.cn, cityId: CHINA.suzhou, fileName: 'garden.jpg' }, await jpeg({ r: 30, g: 140, b: 90 }))
+    assert.equal(first.status, 201, JSON.stringify(first.body))
+    const folder = `Suzhou (${placeFolderSuffix(CHINA.suzhou)})`
+    assert.equal(first.body.sourcePath, `China/${folder}/photos/garden.jpg`)
+    assert.deepEqual(await readJson(path.join(countryRoot, folder, 'place.json')), { placeId: CHINA.suzhou })
+    // 已指向中国的国家文件夹照常复用，它的 place.json 一个字节都不变。
+    assert.equal(await readFile(path.join(countryRoot, 'place.json'), 'utf8'), countryPin)
+    // 手放的文件夹：没有 place.json，里面的文件一个字节都不变，也没有多出或少掉任何东西。
+    assert.equal(existsSync(path.join(handMade, 'place.json')), false)
+    assert.deepEqual(await snapshot(handMade), before)
+
+    // 再传一张：复用这次新建的文件夹（place.json 已指向苏州），手放的仍然不动。
+    const second = await upload(env, { countryId: CHINA.cn, cityId: CHINA.suzhou, fileName: 'canal.jpg' }, await jpeg({ r: 90, g: 30, b: 140 }))
+    assert.equal(second.status, 201, JSON.stringify(second.body))
+    assert.equal(second.body.sourcePath, `China/${folder}/photos/canal.jpg`)
+    assert.deepEqual(await snapshot(handMade), before)
+
+    // 之后导入：手放的文件夹按名字匹配到苏州，作为待确认的绑定出现（第 2A 批）；新建的文件夹有 place.json，不在其中。
+    assert.deepEqual(await pendingBindings(paths), [['China/Suzhou', CHINA.suzhou, 'name']])
+    assert.deepEqual(await snapshot(handMade), before, '扫描只读')
+  })
+})
+
+test('第 2D 批：手放的国家文件夹 China（没有 place.json）同样不认领——上传新建 China (<后缀>)/Suzhou；手放的 China 整棵逐字节不变；导入时 China 与 China/Suzhou 都是待确认的绑定', async () => {
+  await withV2Root(async (env) => {
+    const { paths } = env
+    await writeFile(paths.v2FilePaths.places, `${JSON.stringify(chinaPlaces(), null, 2)}\n`, 'utf8')
+    const handMade = path.join(paths.inboxRoot, 'China')
+    await handMadeCity(path.join(handMade, 'Suzhou'))
+    const before = await snapshot(handMade)
+
+    const result = await upload(env, { countryId: CHINA.cn, cityId: CHINA.suzhou, fileName: 'garden.jpg' }, await jpeg({ r: 30, g: 140, b: 90 }))
+    assert.equal(result.status, 201, JSON.stringify(result.body))
+    const countryFolder = `China (${placeFolderSuffix(CHINA.cn)})`
+    assert.equal(result.body.sourcePath, `${countryFolder}/Suzhou/photos/garden.jpg`)
+    assert.deepEqual(await readJson(path.join(paths.inboxRoot, countryFolder, 'place.json')), { placeId: CHINA.cn })
+    assert.deepEqual(await readJson(path.join(paths.inboxRoot, countryFolder, 'Suzhou', 'place.json')), { placeId: CHINA.suzhou })
+    assert.equal(existsSync(path.join(handMade, 'place.json')), false)
+    assert.equal(existsSync(path.join(handMade, 'Suzhou', 'place.json')), false)
+    assert.deepEqual(await snapshot(handMade), before)
+
+    // 两个国家文件夹最终都会指向中国：手放的那个经导入确认后才绑定（规格 §3，接受）。
+    assert.deepEqual(await pendingBindings(paths), [['China', CHINA.cn, 'name'], ['China/Suzhou', CHINA.suzhou, 'name']])
+    assert.deepEqual(await snapshot(handMade), before, '扫描只读')
   })
 })
 

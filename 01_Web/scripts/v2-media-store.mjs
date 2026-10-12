@@ -117,7 +117,9 @@ const directoryExists = async (target) => {
  */
 const chooseInboxFolder = async (parentDirectory, parentLabel, displayName, placeId, label, deps) => {
   const candidates = []
-  for (const name of inboxFolderCandidates(displayName, placeId).map((candidate) => deps.safeSegment(candidate, label))) {
+  // safeSegment 最多保留 120 个字符：显示名很长时，几个候选截断后可能同名，同一个文件夹只看一次。
+  const names = [...new Set(inboxFolderCandidates(displayName, placeId).map((candidate) => deps.safeSegment(candidate, label)))]
+  for (const name of names) {
     const directory = path.join(parentDirectory, name)
     const state = await directoryExists(directory)
       ? { exists: true, placeConfig: await readControlFile(path.join(directory, 'place.json')) }
