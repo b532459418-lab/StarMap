@@ -38,9 +38,10 @@ for (const [name, fixture] of [['public', publicBridgeFixture], ['synthetic', sy
     }
   })
 }
-test('raw IDs collide across travel/planned/wish without merging, repeated place visits stay separate', () => {
+test('raw IDs collide across travel/wish without merging, travel/planned/wish rows stay separate, repeated place visits stay separate', () => {
   const document = bridge(syntheticBridgeFixture())
-  const rows = [BRIDGE.travel, BRIDGE.planned, BRIDGE.wish].map(s => entry(document, s, 'collision'))
+  // travel and planned share travel-map, whose record IDs are unique since review D10; the raw ID still overlaps across files.
+  const rows = [entry(document, BRIDGE.travel, 'collision'), entry(document, BRIDGE.planned, 'planned-collision'), entry(document, BRIDGE.wish, 'collision')]
   assert.equal(new Set(rows.map(e => e.id)).size, 3)
   assert.equal(new Set(rows.map(e => e.entityId)).size, 1)
   assert.notEqual(entry(document, BRIDGE.travel, 'repeat').id, rows[0].id)
@@ -134,7 +135,10 @@ for (const namespace of [BRIDGE.travel, BRIDGE.wish, BRIDGE.media, BRIDGE.countr
   if (namespace === BRIDGE.media) files.media.items.push(structuredClone(files.media.items[0]))
   if (namespace === BRIDGE.country) files.editorState.addedCountries.push(structuredClone(files.editorState.addedCountries[0]))
   let allocations = 0
-  assert.throws(() => bridgeV2(files, { now: BRIDGE_NOW, allocateId: () => { allocations++; return sequentialUuids()() } }), /E_BRIDGE_SOURCE_COLLISION/)
+  // Since review D10 the V2 validator itself rejects duplicate record/item IDs within travel-map, want-to-go and user-media;
+  // duplicate addedCountries entries are still caught by the bridge's own source preflight.
+  const expected = namespace === BRIDGE.country ? /E_BRIDGE_SOURCE_COLLISION/ : /E_BRIDGE_V2_INVALID/
+  assert.throws(() => bridgeV2(files, { now: BRIDGE_NOW, allocateId: () => { allocations++; return sequentialUuids()() } }), expected)
   assert.equal(allocations, 0)
 })
 test('invalid V2 reference fails closed without public fallback or partial result', () => {

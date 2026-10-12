@@ -10,7 +10,8 @@
  * - 分类与导航隐藏 —— 按 Canonical 显示规则里的地点 id（`./classify.ts`）；
  * - 国旗 —— 地点的 ISO；国家中心、城市坐标 —— 地点的 location；
  * - UI 与 Core 读到的对象（记录、想去条目、媒体项、editor-state 的手动添加国家）由地点重建（`./reconstruct.ts`）；
- * - 其余展示用的计算（标题、摘要、「N 个城市」、路线是否跨国）照抄今天的代码，作用在重建后的记录上。
+ * - 其余展示用的计算（标题、摘要）照抄今天的代码，作用在重建后的记录上；「N 个城市」按城市地点 id 计数，
+ *   路线是否跨国比较两端城市所属国家的地点 id，行程内的先后按码点比较（审查 C3，见 ./journeyRoutes.ts）。
  * 能复用的 PR1 函数直接复用：`orderBySavedIds`、`formatDateRange`、`coordinateForRecord`、国旗与配色、
  * 媒体与无人机派生、Core 适配器与 `mergeWorldGraphSnapshots`（经 `deriveWorldGraph`；RFC-LOC-1 Core-A 起多了
  * 地点适配器：Core 的地点实体由注册表构造，见文件末尾的 `placeInputOf`）。
@@ -34,15 +35,13 @@ import {
   formatDateRange,
   unique,
 } from '../derive/travelAtlas.ts'
-import {
-  plannedConvertBlockReason,
-  type WantToGoDataSource,
-  type WantToGoItem,
-  type WantToGoTravelInput,
-} from '../derive/wantToGo.ts'
+import type { WantToGoDataSource, WantToGoItem, WantToGoTravelInput } from '../derive/wantToGo.ts'
 import { deriveWorldGraph, type WorldGraphDerived } from '../derive/worldGraph.ts'
+import { messageFor } from '../v2write/errors.ts'
 import type { City, CityId, Country, CountryId, JourneyDay, Route, TravelMapRecord } from '../../types/travel.ts'
 import { classifyByPlace, displaySets, hiddenFromHomeFor } from './classify.ts'
+import { convertRuleDataOfCanonical, convertRules, type ConvertRules } from './convertRules.ts'
+import { compareJourneyRecords, routeTypeBetween } from './journeyRoutes.ts'
 import {
   countryPlaceOf,
   indexPlaces,
@@ -171,7 +170,6 @@ const deriveTravelAtlasFromCanonical = (
     const centerLat = place?.location?.lat ?? null
     const centerLng = place?.location?.lng ?? null
     const cityIds = unique(countryPlaced.map(({ cityId }) => cityId))
-    const cityNames = unique(countryRecords.map((record) => record.city_en || record.city)).filter(Boolean)
     const tripTitles = unique(countryRecords.map((record) => record.trip_title).filter((title): title is string => Boolean(title)))
     const flagCode = isoOf(place)?.toLowerCase()
     const recordRegions = unique(countryRecords.map((record) => record.region).filter((region): region is string => Boolean(region)))
@@ -184,7 +182,8 @@ const deriveTravelAtlasFromCanonical = (
       centerLat,
       centerLng,
       visitedDateRange: formatDateRange(countryRecords),
-      summary: `${cityNames.length} visited cities collected from Archive export.`,
+      // 按城市地点 id 计数（审查 C3）：同名的两个城市各算一个。
+      summary: `${cityIds.length} visited cities collected from Archive export.`,
       memory: tripTitles.length > 0 ? tripTitles.slice(0, 3).join(' / ') : 'Travel memory imported from Archive export.',
       // 新增城市没有 region；保留该国家创建时已保存的大洲，不修改旅行记录。
       keywords: recordRegions.length > 0 ? recordRegions.slice(0, 3) : addedRegion ? [addedRegion] : [],
@@ -272,9 +271,7 @@ const deriveTravelAtlasFromCanonical = (
   )
 
   const routes: Route[] = Object.entries(placedByJourney).flatMap(([journeyId, journeyPlaced]) => {
-    const ordered = [...journeyPlaced].sort((a, b) =>
-      `${a.record.start_date}-${a.record.id}`.localeCompare(`${b.record.start_date}-${b.record.id}`),
-    )
+    const ordered = [...journeyPlaced].sort((a, b) => compareJourneyRecords(a.record, b.record))
 
     return ordered.slice(1).flatMap((entry, index) => {
       const previous = ordered[index]
@@ -287,9 +284,8 @@ const deriveTravelAtlasFromCanonical = (
         fromCityId,
         toCityId,
         journeyId,
-        // 照抄今天的判断：比较（由地点重建的）国家英文名。两个国家都没有英文名时仍视为同一国家——
-        // 与今天的行为一致，保证与 PR1 派生在统一写法后的数据上逐字节相同。
-        type: previous.record.country_en === entry.record.country_en ? 'main' : 'flight',
+        // 两端城市所属国家的地点 id 相同为国内（审查 C3）；原来比较国家英文名，两个国家都没有英文名时会被当成同一个国家。
+        type: routeTypeBetween(previous.countryId, entry.countryId),
       }]
     })
   })
@@ -345,10 +341,13 @@ const deriveTravelAtlasFromCanonical = (
 
 // ---- 想去（照抄 PR1 旧派生 deriveWantToGo 解析之后的部分；PR5b 删除了旧派生，解析在 V2 Reader 里）----
 
-const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
-
-const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceIndex, travel: WantToGoTravelInput) => {
-  const { cities, plannedRecords } = travel
+const deriveWantToGoFromCanonical = (
+  wantToGo: CanonicalWantToGo,
+  places: PlaceIndex,
+  travel: WantToGoTravelInput,
+  rules: ConvertRules,
+) => {
+  const { plannedRecords } = travel
 
   const wantToGoItems: WantToGoItem[] = wantToGo.items.map((item) => reconstructWantToGoItem(item, places))
 
@@ -371,22 +370,16 @@ const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceI
     if (!plannedRecordById.has(record.id)) plannedRecordById.set(record.id, record)
   }
 
-  // 「这个城市已经在足迹里了」按地点 id 判断（Core 方案 C5）：V2 下足迹城市的 id 就是地点 id。
-  // 想去条目的 placeId 取自 Canonical 条目（Core 的 WantToGoItem 不带它），同一 id 第一条胜出。
-  const footprintCityIds = new Set(cities.map((city) => city.id))
-  const placeIdByWantToGoId = new Map<string, PlaceId>()
-  for (const item of wantToGo.items) {
-    if (!placeIdByWantToGoId.has(item.id)) placeIdByWantToGoId.set(item.id, item.placeId)
+  // 「标记为去过」的前置条件（审查 C2）：与写入端点同一份规则（./convertRules.ts），在 Canonical 的全部足迹记录上判断，
+  // 按条目 / 记录 id 查（同一 id 第一条胜出）。返回端点拒绝时的同一句文案，Collection 与想去卡片显示时再按码译成当前语言。
+  const wantToGoConvertBlockReason = (item: WantToGoItem): string | undefined => {
+    const code = rules.wantToGoConvertBlockCode(item.id)
+    return code === undefined ? undefined : messageFor(code)
   }
 
-  const wantToGoConvertBlockReason = (item: WantToGoItem): string | undefined => {
-    if (item.place.kind !== 'city') return '整个国家的想去需要先具体到城市，暂不支持直接转为足迹。'
-    if (!isFiniteNumber(item.place.lat) || !isFiniteNumber(item.place.lng)) return '这个地点没有坐标，无法转为足迹。'
-    const placeId = placeIdByWantToGoId.get(item.id)
-    if (placeId !== undefined && footprintCityIds.has(placeId)) {
-      return '这个城市已经在足迹里了。如果只是想从想去列表移除，请使用隐藏或彻底删除。'
-    }
-    return undefined
+  const plannedConvertBlockReason = (record: TravelMapRecord): string | undefined => {
+    const code = rules.plannedConvertBlockCode(record.id)
+    return code === undefined ? undefined : messageFor(code)
   }
 
   return {
@@ -436,7 +429,7 @@ export function deriveAppDataFromCanonical(canonical: CanonicalData, options: Ca
   )
   const droneMedia = deriveDroneMedia(mediaCatalog.importedDroneMediaCatalogItems)
   const canonicalPlannedRecords = canonical.travel.records.filter((record) => record.status === 'planned')
-  const wantToGo = deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas)
+  const wantToGo = deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas, convertRules(convertRuleDataOfCanonical(canonical)))
   const worldGraph = deriveWorldGraph({
     places: canonical.places.map((place) => placeInputOf(place, places)),
     countries: travelAtlas.countries,

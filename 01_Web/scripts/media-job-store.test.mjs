@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { cp, link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { assertMediaJobRecord, assertMediaJobsClear, createMediaJobStore, mediaJobReceiptSeal } from './media-job-store.mjs'
+import { assertMediaJobRecord, assertMediaJobsClear, createMediaJobStore, largestCompletedMediaJobRecord, mediaJobReceiptSeal } from './media-job-store.mjs'
 
 const IDs = { countryId: '018bd504-c600-7000-8000-000000000001', cityId: '018bd504-c600-7000-8000-000000000002' }
 const input = () => ({ ...IDs, kind: 'photo', files: [{ fileName: 'neutral.jpg', bytes: 32 }] })
@@ -428,6 +428,36 @@ test('oversized UTF-8 sealed receipt is refused before temporary file creation p
   assert.deepEqual(await inventory(f.root), before)
   assert.deepEqual(await f.store.read(job.jobId), job)
   assert.equal((await readdir(path.dirname(jobPath(f, job)))).filter((name) => name.endsWith('.tmp')).length, 0)
+})
+
+test('D4: task-scoped receipts need a library digest and every output time; whole-library receipts may carry neither', async (t) => {
+  const f = await fixture(t)
+  const job = await beforeSeal(f, await startImport(f, await receivedJob(f)))
+  const before = await readFile(jobPath(f, job))
+  const output = { path: 'MediaInbox/Country/City/photos/neutral-0.jpg', sha256: '3'.repeat(64), bytes: 32, mtimeMs: 1760000000000.25 }
+  const scoped = { outputs: [output, { ...output, path: 'data/v2/user-media.local.json' }], libraryDigest: '5'.repeat(64) }
+  for (const extras of [{ ...scoped, libraryDigest: 'not-a-digest' }, { ...scoped, outputs: [output, { ...output, path: 'media/user/x/original.jpg', mtimeMs: undefined }] },
+    { ...scoped, outputs: [{ ...output, mtimeMs: -1 }] }, { ...scoped, outputs: [{ ...output, mtimeMs: Number.POSITIVE_INFINITY }] },
+    { outputs: [output] }]) {
+    await assert.rejects(finishImport(f, job, receiptFor(job, extras)), code('E_MEDIA_JOB_INVALID'))
+    assert.deepEqual(await readFile(jobPath(f, job)), before)
+  }
+  const completed = await finishImport(f, job, receiptFor(job, scoped))
+  assert.equal(completed.import.receipt.libraryDigest, '5'.repeat(64))
+  assert.deepEqual(await createMediaJobStore({ root: f.root }).read(job.jobId), completed)
+  assert.equal((await f.store.close(job.jobId, completed.revision)).phase, 'closed')
+})
+
+test('D4: creating a task checks its largest completed record; the worst valid task still fits the record limit', async (t) => {
+  const f = await fixture(t)
+  const files = Array.from({ length: 100 }, (_, index) => ({ fileName: `${'名'.repeat(110)}${String(index).padStart(3, '0')}.jpeg`, bytes: 250 * 1024 * 1024 }))
+  const job = await f.store.create({ ...input(), files })
+  const largest = largestCompletedMediaJobRecord(job)
+  assertMediaJobRecord(largest)
+  assert.equal(largest.import.receipt.outputs.length, 3 + 100 * 4)
+  assert.ok(largest.import.receipt.outputs.every((output) => output.path.split('/').every((segment) => segment.length <= 125)))
+  assert.ok(Buffer.byteLength(`${JSON.stringify(largest, null, 2)}
+`) < 1024 * 1024)
 })
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
+import { convertRuleDataOfV2Files, convertRules } from '../canonical/convertRules.ts'
 import type { PlaceId } from '../canonical/types.ts'
 import type { V2FileKey, V2TravelRecord } from '../canonical/v2Schema.ts'
 import { fail } from './errors.ts'
@@ -38,11 +39,10 @@ export const WTG_REMOVE_FAILURE = '足迹已创建，但想去条目没有移除
 
 type WriteList = { file: V2FileKey; onFailure?: string }[]
 
-const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
-
 /**
- * 想去条目 → 足迹。地点就是 `item.placeId`：必须是有坐标的城市、条目没被隐藏，否则沿用旧的三种拒绝文案；
- * 任何记录（含 planned）已引用该城市 → `E_CONVERT_CITY_IN_FOOTPRINT`（沿用旧文案）。
+ * 想去条目 → 足迹。地点就是 `item.placeId`。能不能转由 ../canonical/convertRules.ts 判断（审查 C2：界面用同一份规则），
+ * 依次是：条目存在、地点是城市、城市有坐标、条目没被隐藏、没有任何记录（含 planned）引用该城市；拒绝码沿用旧文案。
+ * 规则通过之后才校验日期。
  * 新记录的规则同「新增足迹」（../v2write/footprint.ts），坐标就是城市的 location（因而省略）；
  * `keepWantToGo !== true` 时移除条目（地点仍被新记录引用，保留）。国家首次进入足迹时按 ISO 目录保存洲信息，
  * 并重排 `countryOrder`；已有国家信息不覆盖，目录缺失时不猜测洲。
@@ -53,14 +53,13 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
   if (body.keepWantToGo !== undefined && typeof body.keepWantToGo !== 'boolean') fail('E_KEEP_WTG_NOT_BOOLEAN')
 
   return runV2Transaction(files, ctx, (draft) => {
-    const item = draft.files.wantToGo.items.find((candidate) => candidate.id === id)
-    if (!item) return fail('E_WTG_NOT_FOUND', { id })
-    const city = draft.placeById(item.placeId)
-    if (city?.subtype !== 'city') return fail('E_CONVERT_COUNTRY_KIND')
-    if (!city.location) return fail('E_CONVERT_NO_COORDINATES')
-    if (item.hidden === true) fail('E_CONVERT_HIDDEN')
+    const blocked = convertRules(convertRuleDataOfV2Files(draft.files)).wantToGoConvertBlockCode(id)
+    if (blocked === 'E_WTG_NOT_FOUND') return fail(blocked, { id })
+    const item = draft.files.wantToGo.items.find((candidate) => candidate.id === id)!
+    if (blocked === 'E_CONVERT_CITY_IN_FOOTPRINT') return fail(blocked, { cityId: item.placeId })
+    if (blocked !== undefined) return fail(blocked)
+    const city = draft.placeById(item.placeId)!
     const dates = visitDates(body.startDate, body.endDate, { start: 'startDate', end: 'endDate' })
-    if (draft.files.travel.records.some((record) => record.placeId === city.id)) fail('E_CONVERT_CITY_IN_FOOTPRINT', { cityId: city.id })
 
     const countryId = city.partOf as PlaceId
     const wasInFootprint = isCountryInFootprint(draft.files, countryId)
@@ -99,21 +98,20 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
 /**
  * planned → 足迹：同一条记录 `status` 改 `visited`，写日期与 `year`（结束日期没填时删掉该键），其它字段原样；
  * 没有 `journeyId` 时补上（./common.ts 的 journeyIdFor），已有的保留。
- * 记录的坐标：自身的 lat / lng，省略时取城市的 location；都没有 → `E_PLANNED_NO_COORDINATES`（沿用旧文案）。
+ * 能不能转由 ../canonical/convertRules.ts 判断（与界面同一份规则）：记录存在且是 planned（`E_PLANNED_NOT_FOUND`），
+ * 有坐标——自身的 lat / lng，省略时取城市的 location；都没有 → `E_PLANNED_NO_COORDINATES`（沿用旧文案）。
  * 国家首次进入足迹时重排 `countryOrder`。写盘：足迹 → editor-state（排序变了时）。
  */
 const convertPlannedTravelRecord = (files: V2FilesOrEmpty | undefined, body: Record<string, unknown>, ctx: V2WriteContext) => {
   const recordId = requireText(body.recordId, 'recordId')
 
   return runV2Transaction(files, ctx, (draft) => {
+    const blocked = convertRules(convertRuleDataOfV2Files(draft.files)).plannedConvertBlockCode(recordId)
+    if (blocked !== undefined) fail(blocked, { recordId })
     const records = draft.files.travel.records
     const index = records.findIndex((record) => record.id === recordId)
-    if (index < 0 || records[index].status !== 'planned') fail('E_PLANNED_NOT_FOUND', { recordId })
     const current = records[index]
     const city = draft.placeById(current.placeId)
-    const omitted = !Object.hasOwn(current, 'lat') && !Object.hasOwn(current, 'lng')
-    const hasCoordinates = omitted ? city?.location !== undefined : isFiniteNumber(current.lat) && isFiniteNumber(current.lng)
-    if (!hasCoordinates) fail('E_PLANNED_NO_COORDINATES', { recordId })
     const dates = visitDates(body.startDate, body.endDate, { start: 'startDate', end: 'endDate' })
 
     const countryId = city?.partOf as PlaceId

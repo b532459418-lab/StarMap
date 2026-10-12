@@ -6,6 +6,17 @@
  * the task record (phase `abandoned`): received Inbox files, staging bytes, generated outputs and V2 data all stay
  * as they are. The next import (a new task's import or `npm run media:import`) treats the Inbox as the source of
  * truth and realigns the catalog, source index and generated files with it.
+ *
+ * Completion receipts (batch 2 D4) cover the task, not the library: the selected Inbox sources, the generated files of
+ * the media they became and the V2 files this import rewrote (`taskReceiptScope`), each with size, SHA-256 and
+ * modification time; `libraryDigest` summarizes the whole catalog and source index instead of listing them, so a
+ * receipt no longer grows with the library.
+ *
+ * Reads never hash file contents (D6). The task list and `history()` compare each watched receipt file's size and
+ * modification time; receipts sealed before D4 carry no times, so there a file modified after completion counts as
+ * changed. Shared V2 data under `data/v2/` is evidence only: ordinary edits rewrite it, so it never raises
+ * `changed_resource`. Content hashes are compared only by the explicit check `verifyMediaJobReceipts`
+ * (`npm run media:check -- --verify`).
  */
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises'
@@ -27,11 +38,47 @@ const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const uuidPattern = new RegExp(`^${uuid}$`, 'i')
 const hashPattern = /^[a-f0-9]{64}$/
 const fail = (code) => { throw new V2WriteError(code) }
-const digestFile = async (file) => {
-  const hash = createHash('sha256')
-  for await (const chunk of createReadStream(file)) hash.update(chunk)
-  return hash.digest('hex')
+/** Every content hash this service computes goes through here (tests count the calls). */
+export const mediaJobHashing = {
+  async digestFile(file) {
+    const hash = createHash('sha256')
+    for await (const chunk of createReadStream(file)) hash.update(chunk)
+    return hash.digest('hex')
+  },
 }
+const digestFile = (file) => mediaJobHashing.digestFile(file)
+/** Shared library data: rewritten by ordinary edits after a task completes, so receipts keep it as evidence only. */
+const SHARED_DATA_PREFIX = 'data/v2/'
+const watchedOutputs = (receipt) => receipt.outputs.filter((output) => !output.path.startsWith(SHARED_DATA_PREFIX))
+const relativeToRoot = (paths, target) => path.relative(paths.root, target).split(path.sep).join('/')
+const stableJson = (value) => JSON.stringify(value, (_key, entry) => entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+  ? Object.fromEntries(Object.keys(entry).sort().map((key) => [key, entry[key]])) : entry)
+const withoutTimestamp = (value) => {
+  const { generatedAt: _generatedAt, generated_at: _generated, ...rest } = value ?? {}
+  void _generatedAt; void _generated
+  return rest
+}
+/** One digest for the library a receipt was sealed against: the media catalog and source index, without their timestamps. */
+const libraryDigestOf = (catalog, index) => createHash('sha256').update(stableJson({ catalog: withoutTimestamp(catalog), index: withoutTimestamp(index) })).digest('hex')
+
+/**
+ * What a completion receipt lists (D4): the task's selected Inbox sources, the generated files of the media they became
+ * (by media id, from the plan) and the V2 files this import rewrote. Independent of the rest of the library.
+ */
+export function taskReceiptScope({ paths, job, selectedFileIds, plan, rewrittenFiles }) {
+  const sources = job.files.filter((file) => selectedFileIds.includes(file.fileId)).map((file) => file.sourcePath)
+  const keys = new Set(sources.map((source) => source.toLocaleLowerCase('en-US')))
+  const mediaIds = [...new Set(plan.entries.filter((entry) => keys.has(entry.sourcePath.toLocaleLowerCase('en-US'))).map((entry) => entry.id))]
+  const owned = new Set(mediaIds)
+  const targets = [...new Set([
+    ...rewrittenFiles,
+    ...plan.summary.outputs.filter((output) => owned.has(output.id)).map((output) => path.join(paths.root, ...output.path.split('/'))),
+    ...sources.map((source) => path.join(paths.inboxRoot, ...source.split('/'))),
+  ])].sort()
+  return { mediaIds, targets }
+}
+const rewrittenFilesOf = (paths, writes) => [paths.v2FilePaths.media, paths.v2MediaSourceIndexPath,
+  ...(writes.some((write) => write.file === 'editorState') ? [paths.v2FilePaths.editorState] : [])]
 export function mediaJobRoute(method, pathname) {
   if (pathname === prefix && method === 'GET') return { action: 'list' }
   if (pathname === prefix && method === 'POST') return { action: 'create' }
@@ -75,18 +122,20 @@ async function history(paths, job, resourceChecks = new Map()) {
     restoredMediaIds: job.import.receipt.restoredMediaIds,
   }
   result.warnings = []
-  for (const output of job.import.receipt.outputs) {
+  // D6: size and modification time only; `verifyMediaJobReceipts` is the explicit content check.
+  const completedAt = Date.parse(job.import.receipt.completedAt)
+  for (const output of watchedOutputs(job.import.receipt)) {
     const target = path.join(paths.root, ...output.path.split('/'))
     if (!resourceChecks.has(target)) resourceChecks.set(target, (async () => {
       await assertUploadPath(paths.root, target)
       const info = await stat(target)
       if (!info.isFile()) throw new Error('changed')
-      return { bytes: info.size, sha256: await digestFile(target) }
+      return { bytes: info.size, mtimeMs: info.mtimeMs }
     })().catch(() => null))
-    try {
-      const found = await resourceChecks.get(target)
-      if (!found || found.bytes !== output.bytes || found.sha256 !== output.sha256) throw new Error('changed')
-    } catch { result.warnings.push({ kind: 'changed_resource', path: output.path }) }
+    const found = await resourceChecks.get(target)
+    const unchanged = found !== null && found.bytes === output.bytes
+      && (output.mtimeMs !== undefined ? found.mtimeMs === output.mtimeMs : Math.floor(found.mtimeMs) <= completedAt)
+    if (!unchanged) result.warnings.push({ kind: 'changed_resource', path: output.path })
   }
   result.files.forEach(file => {
     file.status = job.import.selectedFileIds.includes(file.fileId) ? 'completed' : 'not_received'
@@ -234,13 +283,11 @@ async function taskPlan(paths, job, input) {
     hypothetical.revision += 7
     hypothetical.import = {operationId:'018bd504-c600-7000-8000-000000000001',planDigest:plan.digest,
       sourceRevision:job.revision,selectedFileIds,phase:'sealed'}
-    const outputPaths = [...new Set([...Object.values(paths.v2FilePaths),paths.v2MediaSourceIndexPath,
-      ...plan.summary.outputs.map(output => path.join(paths.root,...output.path.split('/'))),
-      ...plan.entries.map(entry => path.join(paths.inboxRoot,...entry.sourcePath.split('/')))])]
-      .map(target => path.relative(paths.root,target).split(path.sep).join('/')).sort()
-    const receipt = {completedAt:new Date().toISOString(),mediaIds:plan.catalog.items.map(item => item.id),
-      restoredMediaIds:editorOutcome.result.restoredMediaIds,
-      outputs:outputPaths.map(value => ({path:value,sha256:'f'.repeat(64),bytes:Number.MAX_SAFE_INTEGER}))}
+    const scope = taskReceiptScope({paths,job,selectedFileIds,plan,rewrittenFiles:rewrittenFilesOf(paths,editorOutcome.writes)})
+    const restoredMediaIds = editorOutcome.result.restoredMediaIds
+    const receipt = {completedAt:new Date().toISOString(),mediaIds:[...new Set([...restoredMediaIds,...scope.mediaIds])],restoredMediaIds,
+      outputs:scope.targets.map(target => ({path:relativeToRoot(paths,target),sha256:'f'.repeat(64),bytes:Number.MAX_SAFE_INTEGER,mtimeMs:Number.MAX_VALUE})),
+      libraryDigest:'f'.repeat(64)}
     receipt.seal = mediaJobReceiptSeal(hypothetical,hypothetical.import,receipt)
     hypothetical.import.receipt = receipt
     try {assertMediaJobRecord(hypothetical)} catch {plan.blockers.push({code:'E_MEDIA_PLAN_RECEIPT_LIMIT'})}
@@ -327,25 +374,66 @@ async function importTask(paths,store,job,input,deps) {
       await assertUploadPath(paths.root,target)
       if (await digestFile(target) !== output.sha256) fail('E_MEDIA_JOB_REVIEW')
     }
-    const targets = [...Object.values(paths.v2FilePaths),paths.v2MediaSourceIndexPath,
-      ...plan.summary.outputs.map(output => path.join(paths.root,...output.path.split('/'))),
-      ...plan.entries.map(entry => path.join(paths.inboxRoot,...entry.sourcePath.split('/')))]
+    // D4: the receipt covers this task only; the rest of the library is one digest.
+    const scope = taskReceiptScope({paths,job,selectedFileIds,plan,rewrittenFiles:rewrittenFilesOf(paths,currentOutcome.writes)})
     const outputs = []
-    for (const target of [...new Set(targets)].sort()) {
+    for (const target of scope.targets) {
       await assertUploadPath(paths.root,target)
-      let info
-      try { info = await stat(target) } catch(error) { if (error.code === 'ENOENT' && ![paths.v2FilePaths.media,paths.v2FilePaths.editorState,paths.v2MediaSourceIndexPath].includes(target)) continue; throw error }
+      const info = await stat(target)
       if (!info.isFile()) fail('E_MEDIA_JOB_REVIEW')
-      outputs.push({path:path.relative(paths.root,target).split(path.sep).join('/'),bytes:info.size,sha256:await digestFile(target)})
+      outputs.push({path:relativeToRoot(paths,target),bytes:info.size,sha256:await digestFile(target),mtimeMs:info.mtimeMs})
     }
-    const receipt = {completedAt:new Date().toISOString(),mediaIds:applied.mediaIds,
-      restoredMediaIds:currentOutcome.result.restoredMediaIds,outputs}
+    const restoredMediaIds = currentOutcome.result.restoredMediaIds
+    const receipt = {completedAt:new Date().toISOString(),mediaIds:[...new Set([...restoredMediaIds,...scope.mediaIds])],
+      restoredMediaIds,outputs,libraryDigest:libraryDigestOf(applied.catalog,applied.index)}
     receipt.seal = mediaJobReceiptSeal(job,job.import,receipt)
     job = await store.update(job.jobId,job.revision,next => {next.import.phase='sealed'; next.import.receipt=receipt; next.phase='completed'; return next})
     return {status:200,body:{ok:true,job:await history(paths,job)}}
   } catch(error) {
     try {await store.update(job.jobId,job.revision,next => {next.import.phase='needs_review';return next})} catch { /* Retain the last known stage if even recording the failure is impossible. */ }
     throw error
+  }
+}
+
+/**
+ * Explicit content check of completion receipts (D6; `npm run media:check -- --verify`): hashes every file a completed or
+ * closed task's receipt watches (its Inbox sources and generated files; for receipts sealed before D4, every listed file
+ * outside `data/v2/`) and reports the missing or different ones. Writes nothing; each file is hashed once.
+ */
+export async function verifyMediaJobReceipts(privatePaths) {
+  const { jobs } = await createMediaJobStore(privatePaths).readSnapshot()
+  const digests = new Map()
+  const findings = []
+  let checked = 0
+  for (const job of jobs) {
+    if (!['completed', 'closed'].includes(job.phase)) continue
+    for (const output of watchedOutputs(job.import.receipt)) {
+      const target = path.join(privatePaths.root, ...output.path.split('/'))
+      if (!digests.has(target)) digests.set(target, (async () => {
+        await assertUploadPath(privatePaths.root, target)
+        const info = await stat(target)
+        if (!info.isFile()) return null
+        return { bytes: info.size, sha256: await digestFile(target) }
+      })().catch(() => null))
+      const found = await digests.get(target)
+      checked += 1
+      if (!found) findings.push({ jobId: job.jobId, path: output.path, kind: 'missing' })
+      else if (found.bytes !== output.bytes || found.sha256 !== output.sha256) findings.push({ jobId: job.jobId, path: output.path, kind: 'changed' })
+    }
+  }
+  return { checked, findings }
+}
+
+/** `npm run media:check -- --verify` (D6): prints the receipt check as reminders; it never changes the exit code. */
+export async function reportMediaJobReceipts(privatePaths, log = console.log) {
+  try {
+    const { checked, findings } = await verifyMediaJobReceipts(privatePaths)
+    log(`校验：核对了媒体任务完成凭据记录的 ${checked} 个文件。`)
+    for (const finding of findings) {
+      log(`提醒：媒体任务 ${finding.jobId} 完成后，${finding.path} ${finding.kind === 'missing' ? '已不存在或无法读取' : '内容已改变'}。已完成的导入不受影响；需要时重新上传或导入。`)
+    }
+  } catch (error) {
+    log(`提醒：无法核对媒体任务的完成凭据（${error?.code ?? error?.message ?? error}）。`)
   }
 }
 

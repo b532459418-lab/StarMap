@@ -23,6 +23,7 @@ import { isFinishedMediaJob } from '../data/mediaJobs'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 import type { DateEvidence } from '../worldgraph/timeFilter'
 import { formatRecordDate, formatRecordDateSummary } from '../data/derive/recordDateLabel'
+import { continentOfCountry } from '../data/continents'
 
 type InfoCardProps = {
   mode: SelectionMode
@@ -36,26 +37,7 @@ type InfoCardProps = {
   onOpenCityPhotos?: (request: CityPhotoGalleryRequest) => void
 }
 
-const continentRules: Array<{ continent: string; regions: string[] }> = [
-  { continent: 'North America', regions: ['north america', '北美', '中美', '加勒比'] },
-  { continent: 'South America', regions: ['south america', '南美'] },
-  { continent: 'Europe', regions: ['europe', '欧洲', '北欧', '东欧', '西欧', '南欧', '欧亚'] },
-  { continent: 'Asia', regions: ['asia', '亚洲', '东亚', '东南亚', '南亚', '中亚', '西亚', '中东', '印度洋'] },
-  { continent: 'Africa', regions: ['africa', '非洲', '北非', '东非', '西非', '南非'] },
-  { continent: 'Oceania', regions: ['oceania', '大洋洲', '澳洲'] },
-  { continent: 'Antarctica', regions: ['antarctica', '南极'] },
-]
-
-const getContinentName = (country?: Country) => {
-  const regionText = [
-    ...(country?.keywords ?? []),
-    ...(country?.records?.map((record) => record.region).filter(Boolean) ?? []),
-  ]
-    .join(' ')
-    .toLowerCase()
-
-  return continentRules.find(({ regions }) => regions.some((region) => regionText.includes(region)))?.continent ?? '—'
-}
+const getContinentName = (country?: Country) => continentOfCountry(country) ?? '—'
 
 export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTravelRecordIds, matchingCountryVisitDates, outsideTimeFilter = false, onClearTimeFilter, onSelectCity, onOpenCityPhotos }: InfoCardProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])

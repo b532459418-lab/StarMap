@@ -18,7 +18,9 @@
  *
  * 本模块只描述「一份合法的 V2 数据长什么样」：`validateV2Files` 逐文件检查结构，再做跨文件的引用检查
  * （地点 id 唯一且为 UUIDv7、`partOf` 指向国家、记录与媒体指向城市、想去与 editor-state 指向存在的地点、
- * `legacyKeys` 全文件唯一）。V2 Reader（`./v2Reader.ts`）假定输入已通过这里的校验。
+ * `legacyKeys` 全文件唯一）。足迹记录、想去条目、媒体条目的 id 各自在所在文件内唯一（审查 D10）：重复时
+ * 读取端取第一条，而按 id 删除会把同 id 的条目一起删掉，所以重复的数据不合法，写入事务的入口检查也就拒绝在它上面继续写。
+ * V2 Reader（`./v2Reader.ts`）假定输入已通过这里的校验。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
@@ -106,7 +108,8 @@ export interface V2Files {
 
 /**
  * 一处校验问题。`code` 除 `DUPLICATE_LEGACY_KEY`（迁移报告单列为 `E_DUPLICATE_LEGACY_KEY`）外都是 `INVALID`。
- * `path` 是 JSON 路径；`message` 只描述问题，不含字段的值（私人数据的名称与坐标不进日志）。
+ * `path` 是 JSON 路径；`message` 只描述问题，不含字段的值（私人数据的名称与坐标不进日志）。唯一的例外是重复的
+ * 记录 / 条目 id：消息带上 id 本身，便于定位（id 不是名称或坐标；写入层的悬空引用消息同样带 id）。
  */
 export interface V2SchemaProblem {
   code: 'INVALID' | 'DUPLICATE_LEGACY_KEY'
@@ -163,6 +166,16 @@ class ProblemList {
 /** 地点注册表的索引：跨文件检查用。 */
 interface PlaceIndex {
   subtypeOf: Map<string, 'country' | 'city'>
+}
+
+/**
+ * 记录 / 条目 id 在所在数组内唯一（审查 D10）。`seen` 记每个 id 第一次出现的位置；重复的报在后出现的位置上，
+ * 并指出第一次出现的位置。调用方已确认 `id` 是非空字符串。
+ */
+const checkUniqueId = (list: ProblemList, file: V2FileKey, arrayPath: string, seen: Map<string, number>, id: string, position: number) => {
+  const first = seen.get(id)
+  if (first === undefined) seen.set(id, position)
+  else list.add(file, `${arrayPath}[${position}].id`, `id ${JSON.stringify(id)} 与 ${arrayPath}[${first}] 重复（id 在文件内必须唯一）`)
 }
 
 const validateNames = (list: ProblemList, file: V2FileKey, path: string, names: unknown) => {
@@ -342,6 +355,7 @@ const validateTravel = (list: ProblemList, value: unknown, places: PlaceIndex) =
     list.add(file, '$.records', '必须是数组')
     return
   }
+  const recordIds = new Map<string, number>()
   value.records.forEach((record, position) => {
     const path = `$.records[${position}]`
     if (!isObject(record)) {
@@ -349,6 +363,7 @@ const validateTravel = (list: ProblemList, value: unknown, places: PlaceIndex) =
       return
     }
     if (!isNonEmptyString(record.id)) list.add(file, `${path}.id`, '必须是非空字符串')
+    else checkUniqueId(list, file, '$.records', recordIds, record.id, position)
     checkRef(list, file, `${path}.placeId`, record.placeId, places, 'city')
     for (const key of ['lat', 'lng']) {
       if (record[key] !== undefined && record[key] !== null && !isFiniteNumber(record[key])) {
@@ -374,6 +389,7 @@ const validateWantToGo = (list: ProblemList, value: unknown, places: PlaceIndex)
     list.add(file, '$.items', '必须是数组')
     return
   }
+  const itemIds = new Map<string, number>()
   value.items.forEach((item, position) => {
     const path = `$.items[${position}]`
     if (!isObject(item)) {
@@ -382,6 +398,7 @@ const validateWantToGo = (list: ProblemList, value: unknown, places: PlaceIndex)
     }
     list.unknownKeys(file, path, item, WANT_TO_GO_ITEM_KEYS)
     if (!isNonEmptyString(item.id)) list.add(file, `${path}.id`, '必须是非空字符串')
+    else checkUniqueId(list, file, '$.items', itemIds, item.id, position)
     checkRef(list, file, `${path}.placeId`, item.placeId, places)
     if (!(typeof item.addedAt === 'string' && DATE_PATTERN.test(item.addedAt))) list.add(file, `${path}.addedAt`, '必须是 YYYY-MM-DD')
     if (typeof item.hidden !== 'boolean') list.add(file, `${path}.hidden`, '必须是布尔值')
@@ -460,6 +477,7 @@ const validateMedia = (list: ProblemList, value: unknown, places: PlaceIndex) =>
     list.add(file, '$.items', '必须是数组')
     return
   }
+  const itemIds = new Map<string, number>()
   value.items.forEach((item, position) => {
     const path = `$.items[${position}]`
     if (!isObject(item)) {
@@ -467,6 +485,7 @@ const validateMedia = (list: ProblemList, value: unknown, places: PlaceIndex) =>
       return
     }
     if (!isNonEmptyString(item.id)) list.add(file, `${path}.id`, '必须是非空字符串')
+    else checkUniqueId(list, file, '$.items', itemIds, item.id, position)
     if (typeof item.kind !== 'string' || !MEDIA_KINDS.includes(item.kind)) {
       list.add(file, `${path}.kind`, '必须是 photo / panorama360 / aerialPhoto / video 之一')
     }

@@ -5,14 +5,9 @@
 import { classifyRecordDate } from '../../worldgraph/timeFilter.ts'
 import type { OriginalRouteCandidate, TimeQueryContext, TimeQueryRecord } from '../../worldgraph/timeQuery.ts'
 import { classifyByPlace, displaySets, hiddenFromHomeFor } from '../canonical/classify.ts'
+import { compareJourneyRecords, routeTypeBetween } from '../canonical/journeyRoutes.ts'
 import { countryPlaceOf, indexPlaces } from '../canonical/reconstruct.ts'
 import type { CanonicalData, CanonicalTravelRecord } from '../canonical/types.ts'
-
-/** This uses the legacy deterministic start_date/id ordering, not a claim that
- * incomplete or invalid dates establish a real-world itinerary chronology.
- */
-const originalOrder = (a: CanonicalTravelRecord, b: CanonicalTravelRecord) =>
-  `${a.start_date}-${a.id}`.localeCompare(`${b.start_date}-${b.id}`)
 
 export const deriveTimeQueryContext = (canonical: CanonicalData): TimeQueryContext => {
   const places = indexPlaces(canonical.places)
@@ -73,7 +68,9 @@ export const deriveTimeQueryContext = (canonical: CanonicalData): TimeQueryConte
 
   const originalRoutes: OriginalRouteCandidate[] = []
   for (const [journeyId, entries] of journeys) {
-    const ordered = [...entries].sort(originalOrder)
+    // The shared deterministic start_date/id order (code points, not the runtime locale), not a claim that
+    // incomplete or invalid dates establish a real-world itinerary chronology.
+    const ordered = [...entries].sort(compareJourneyRecords)
     for (let index = 1; index < ordered.length; index += 1) {
       const from = ordered[index - 1]
       const to = ordered[index]
@@ -85,8 +82,8 @@ export const deriveTimeQueryContext = (canonical: CanonicalData): TimeQueryConte
         id: JSON.stringify(['original-route', journeyId, from.id, to.id]),
         journeyId, fromRecordId: from.id, toRecordId: to.id,
         fromPlaceId: from.placeId, toPlaceId: to.placeId,
-        // Preserve the existing route-kind convention (country English names).
-        kind: (fromCountry?.names.en ?? '') === (toCountry?.names.en ?? '') ? 'main' : 'flight',
+        // Same country place id on both ends is domestic (review C3; English names used to decide).
+        kind: routeTypeBetween(fromCountry?.id, toCountry?.id),
       })
     }
   }

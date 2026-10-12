@@ -286,6 +286,11 @@ test('媒体：城市照片、封面、无人机、隐藏、悬空引用', () =>
  * 写出的文件相同。冻结时（PR5b 第一个提交）旧 id 空间的每一份都等于旧路径 B（`deriveAppData(normalizeLegacy(原始数据))`），
  * 公开样例（旧 id）同时等于 PR1 起公布的 @2 基线 8caf2cfb…。RFC-LOC-1 Core-A A1 只给基线做了加法；Core-A A2 改了 World Graph
  * （地点实体 id、按身份合并，见文件开头），下面的值是 A2 之后的。派生代码改变了任何一处结果，这里就会变红。
+ *
+ * 审查 C2（「标记为去过」与写入端点共用 ./convertRules.ts）改了含已隐藏想去条目的六个值：personal、personalDanglingMedia、
+ * combined（旧 id 空间）、personal（V2 id 空间）、PERSONAL_V2_LOCK、editor-store-v2。基线里唯一的差别是已隐藏的特罗姆瑟条目
+ * `wtg_2026-08-12_tromso` 的 `wantToGoConvertBlockReason` 从 null 变成「已隐藏的想去条目不能转为足迹。」——端点一直拒绝隐藏条目，
+ * 界面原来漏了这一条。其余夹具没有已隐藏的想去条目，也没有「城市被隐藏或只有 planned 记录」的想去条目，基线不变。
  */
 const baselineSha256 = (canonical: CanonicalData) =>
   sha256(stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW })))
@@ -298,8 +303,8 @@ const v2FilesSha256 = (v2Files: V2FileInputs, source: 'local' | 'sample' = 'loca
 
 const LEGACY_ID_LOCKS: Record<LegacyIdCanonicalName, string> = {
   sample: 'aa0b5531ec3a71b329c2c2772144f2d06e04b19aeb1febcecd065d54641f9f42',
-  personal: 'beb897637a255dc07310fe384ad98e5a409be34a539789ffcbd6337692ad771c',
-  personalDanglingMedia: '70e731b35ca7c58d601cf307299ed342f38fb678eba9776bb2e587ee977be45c',
+  personal: '6896435e27118a5235460c2d9efcef8258eb8016fbf55132f080e57d64595858',
+  personalDanglingMedia: '73c281eddaeb874ad91adf71cabeb8973a831d463df8e272ee3cd35ce8c571ee',
   nameInconsistency: '5dd3e81b0c2b4a1450261f2eb6346e8427eff46fb81503fdb7c260fcd8e1e372',
   countryOfCity: 'f912716d14c7f80b91182ed8919e6d5c3fd279f3861684dfefb04bd6f2a30aca',
   alias: '8c087bdde747cc69d46cbdb16b1aa478661787a8b00a34f58a038338fc09a3b9',
@@ -317,7 +322,7 @@ const LEGACY_ID_LOCKS: Record<LegacyIdCanonicalName, string> = {
   addedCountriesHomeHidden: 'f21a5738c6034835ecdcebc1091e3ee0eea994dc7c08b5da1e3e563710f3df3c',
   planned: 'dba8ea5025cd0ddb6f376b19f4b54d02ce552648933da2a6c03f8609539cb248',
   media: '7b3c59aa12106c9ecc76a59415f77f2f88ab0d7c7c53fbc74569d2562bc9bf4a',
-  combined: '3fc7154522f2b9c2d985cd9ed15be860aece41c7eb2e0b5374ca145027733d8a',
+  combined: '27ea0ae52bd795825d901b79f77ecc5db642be5d5cf10c340a619cab5753eaa4',
   duplicate: 'd5b29e36ecef6a6ba06a45761c9825884401e64ba025ff1003ee7a6b7f948916',
   caseAndDiacritic: '37ae6f3e77595e4484b716bb00eb64afb9e64a21d0e606a29c9f5085ccd2fbae',
 }
@@ -329,13 +334,13 @@ const LEGACY_ID_LOCKS: Record<LegacyIdCanonicalName, string> = {
  * 是另一个地点（没合并），不再算已在足迹，地图上也不再并进足迹城市；合并后它就是足迹城市本身。nameInconsistency 没有这种条目，
  * 两者仍相同。
  */
-const PERSONAL_V2_LOCK = 'bd04a994e6427bda31bc903f3de35990be5587cc36dae072912c6c70c6f35dd1'
+const PERSONAL_V2_LOCK = 'e9d57c16a879c7280349ce984d3e6846cee94a48e9e08c6015a75f6fd24adc6e'
 const SAMPLE_MIGRATED_LOCK = '5fc4301bcc50573eb36daab0ff79f42c0d5970a61fe2b5991490c81076152ba3'
 const NAME_INCONSISTENCY_V2_LOCK = 'ddb647faec3b15ffebf7230a26b33bbfd196cac75deb33d947b4a07f6256eeea'
 
 const V2_SPACE_LOCKS: Record<(typeof V2_SPACE_CANONICAL_NAMES)[number], string> = {
   sample: '52c65876b2f189195e5ff176d81480acb48e604745af1d61e4b2add6d58d3fe9',
-  personal: '9bbd86aad1028d543b935c255433759b6fbe69dfdb4ba48aef57f1472e9d121b',
+  personal: 'a13b9729a34a16f6cb39055eb5b02fcb88e5107c790864c85fced35e6082bb0d',
   nameInconsistency: NAME_INCONSISTENCY_V2_LOCK,
   recordCoordinates: '204d60ff84a4e91059d869d869195034c1b9b6c3103ec673a7adc51fc4a2ea34',
   countryOfCity: '4cbe64374266453e74578f546c443b0fee71649ad1bcff16fa91cb1307faaa4e',
@@ -352,7 +357,7 @@ const V2_FILES_LOCKS: [string, string][] = [
   ['../v2write/fixtures/migrated-files.json', PERSONAL_V2_LOCK],
   ['../../../scripts/fixtures/bak-files-v2.json', 'd6c598158e8e427b70d12543107664f678fce5b27a03a94059f34b5456858e36'],
   ['../../../scripts/fixtures/baseline-v2.json', 'ecaba5cc00770a5a85189f963bc17e04f85ded3d62dd259163f770e15217a7ea'],
-  ['../../../scripts/fixtures/editor-store-v2.json', 'f3bda7b228655ff934093fe8c368d30846665d98e6d75bb2fa8d96117d94b6b3'],
+  ['../../../scripts/fixtures/editor-store-v2.json', 'ea18048301cdab27de440776265de4f4aff0a83e13bcce2d6172d03d89195025'],
 ]
 
 /** 公开 V2 样例的派生基线（RFC-LOC-1 PR4 起公布；`node scripts/baseline.mjs --sample` 的输出）。 */

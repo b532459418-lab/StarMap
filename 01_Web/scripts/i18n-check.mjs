@@ -205,7 +205,7 @@ export function dynamicKeyContracts(files) {
     contract('AtlasHeader', 'item.id', local('AtlasHeader', 'navItems', 'id'), 'Navigation option ids'),
     contract('CollectionPage', 'option.id', [...local('CollectionPage', 'statusOptions', 'id'), ...local('CollectionPage', 'sortOptions', 'id')], 'Filter and sort option ids'),
     contract('JourneyViewToggle', '`journey:${option.id}`', local('JourneyViewToggle', 'options', 'id').map((id) => `journey:${id}`), 'Journey mode ids'),
-    contract('InfoCard', "`details:continent${continent.replaceAll(' ', '')}`", local('InfoCard', 'continentRules', 'continent').map((name) => `details:continent${name.replaceAll(' ', '')}`), 'Finite continent classification'),
+    contract('InfoCard', "`details:continent${continent.replaceAll(' ', '')}`", values('src/data/continents.ts', 'CONTINENTS').map((name) => `details:continent${name.replaceAll(' ', '')}`), 'Finite continent classification'),
     contract('MouseControlGuide', 'control.key', local('MouseControlGuide', 'controls', 'key'), 'Gesture instruction keys'),
     contract('MouseControlGuide', 'control.label', local('MouseControlGuide', 'controls', 'label'), 'Gesture action keys'),
     contract('PrivateDataNotice', 'key', local('PrivateDataNotice', 'lines'), 'Finite migration or empty-state lines'),
