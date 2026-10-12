@@ -34,15 +34,12 @@ import {
   formatDateRange,
   unique,
 } from '../derive/travelAtlas.ts'
-import {
-  plannedConvertBlockReason,
-  type WantToGoDataSource,
-  type WantToGoItem,
-  type WantToGoTravelInput,
-} from '../derive/wantToGo.ts'
+import type { WantToGoDataSource, WantToGoItem, WantToGoTravelInput } from '../derive/wantToGo.ts'
 import { deriveWorldGraph, type WorldGraphDerived } from '../derive/worldGraph.ts'
+import { messageFor } from '../v2write/errors.ts'
 import type { City, CityId, Country, CountryId, JourneyDay, Route, TravelMapRecord } from '../../types/travel.ts'
 import { classifyByPlace, displaySets, hiddenFromHomeFor } from './classify.ts'
+import { convertRuleDataOfCanonical, convertRules, type ConvertRules } from './convertRules.ts'
 import {
   countryPlaceOf,
   indexPlaces,
@@ -345,10 +342,13 @@ const deriveTravelAtlasFromCanonical = (
 
 // ---- 想去（照抄 PR1 旧派生 deriveWantToGo 解析之后的部分；PR5b 删除了旧派生，解析在 V2 Reader 里）----
 
-const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
-
-const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceIndex, travel: WantToGoTravelInput) => {
-  const { cities, plannedRecords } = travel
+const deriveWantToGoFromCanonical = (
+  wantToGo: CanonicalWantToGo,
+  places: PlaceIndex,
+  travel: WantToGoTravelInput,
+  rules: ConvertRules,
+) => {
+  const { plannedRecords } = travel
 
   const wantToGoItems: WantToGoItem[] = wantToGo.items.map((item) => reconstructWantToGoItem(item, places))
 
@@ -371,22 +371,16 @@ const deriveWantToGoFromCanonical = (wantToGo: CanonicalWantToGo, places: PlaceI
     if (!plannedRecordById.has(record.id)) plannedRecordById.set(record.id, record)
   }
 
-  // 「这个城市已经在足迹里了」按地点 id 判断（Core 方案 C5）：V2 下足迹城市的 id 就是地点 id。
-  // 想去条目的 placeId 取自 Canonical 条目（Core 的 WantToGoItem 不带它），同一 id 第一条胜出。
-  const footprintCityIds = new Set(cities.map((city) => city.id))
-  const placeIdByWantToGoId = new Map<string, PlaceId>()
-  for (const item of wantToGo.items) {
-    if (!placeIdByWantToGoId.has(item.id)) placeIdByWantToGoId.set(item.id, item.placeId)
+  // 「标记为去过」的前置条件（审查 C2）：与写入端点同一份规则（./convertRules.ts），在 Canonical 的全部足迹记录上判断，
+  // 按条目 / 记录 id 查（同一 id 第一条胜出）。返回端点拒绝时的同一句文案，Collection 与想去卡片显示时再按码译成当前语言。
+  const wantToGoConvertBlockReason = (item: WantToGoItem): string | undefined => {
+    const code = rules.wantToGoConvertBlockCode(item.id)
+    return code === undefined ? undefined : messageFor(code)
   }
 
-  const wantToGoConvertBlockReason = (item: WantToGoItem): string | undefined => {
-    if (item.place.kind !== 'city') return '整个国家的想去需要先具体到城市，暂不支持直接转为足迹。'
-    if (!isFiniteNumber(item.place.lat) || !isFiniteNumber(item.place.lng)) return '这个地点没有坐标，无法转为足迹。'
-    const placeId = placeIdByWantToGoId.get(item.id)
-    if (placeId !== undefined && footprintCityIds.has(placeId)) {
-      return '这个城市已经在足迹里了。如果只是想从想去列表移除，请使用隐藏或彻底删除。'
-    }
-    return undefined
+  const plannedConvertBlockReason = (record: TravelMapRecord): string | undefined => {
+    const code = rules.plannedConvertBlockCode(record.id)
+    return code === undefined ? undefined : messageFor(code)
   }
 
   return {
@@ -436,7 +430,7 @@ export function deriveAppDataFromCanonical(canonical: CanonicalData, options: Ca
   )
   const droneMedia = deriveDroneMedia(mediaCatalog.importedDroneMediaCatalogItems)
   const canonicalPlannedRecords = canonical.travel.records.filter((record) => record.status === 'planned')
-  const wantToGo = deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas)
+  const wantToGo = deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas, convertRules(convertRuleDataOfCanonical(canonical)))
   const worldGraph = deriveWorldGraph({
     places: canonical.places.map((place) => placeInputOf(place, places)),
     countries: travelAtlas.countries,
