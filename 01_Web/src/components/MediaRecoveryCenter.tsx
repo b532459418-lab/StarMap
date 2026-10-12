@@ -27,11 +27,13 @@ export function MediaRecoveryEntry({ countryId, cityId }: { countryId?: string; 
 }
 
 function ImportScope({ job, preview, disabled, onImport }: {
-  job: MediaJob; preview: MediaJobPreview; disabled: boolean; onImport: () => Promise<unknown>
+  job: MediaJob; preview: MediaJobPreview; disabled: boolean; onImport: (options: { acceptFolderBindings?: boolean }) => Promise<unknown>
 }) {
   const { t } = useTranslation('mediaRecovery')
   const { name } = usePlaceNames()
   const [confirmed, setConfirmed] = useState(false)
+  // Batch 2A: folders matched to a place only by name are confirmed here, in the same import step.
+  const [bindingsConfirmed, setBindingsConfirmed] = useState(false)
   const blockerDescriptions: Record<string, string> = {
     E_MEDIA_PLAN_READ: t('blockerRead'), E_MEDIA_PLAN_LINK: t('blockerLink'), E_MEDIA_PLAN_JSON: t('blockerJson'),
     E_MEDIA_PLAN_SCAN: t('blockerScan'), E_MEDIA_PLAN_UNCERTAIN: t('blockerUncertain'),
@@ -68,6 +70,10 @@ function ImportScope({ job, preview, disabled, onImport }: {
     Object.entries(byCity).map(([cityId, ids]) => ({ kind, cityId, ids })))
   const unsent = job.files.filter((file) => file.status === 'not_received').length
   const stale = job.revision !== preview.revision
+  const bindings = summary.pins
+  const bindingsPending = bindings.length > 0 && !bindingsConfirmed
+  const bindingPlace = (names: Record<string, string>, placeId: string) =>
+    [...new Set([names['zh-Hans'], names.en].filter(Boolean))].join(' / ') || t('placeRecord', { id: placeId })
   return <section className="atlas-media-recovery-preview" data-testid="media-import-preview" aria-label={t('planTitle')}>
     <h4>{t('planTitle')}</h4>
     {largeSources > 0 ? <p>{t('largeSourceHint', { count: largeSources })}</p> : null}
@@ -105,6 +111,20 @@ function ImportScope({ job, preview, disabled, onImport }: {
         </li>)}
       </ul>
     </details>
+    {bindings.length > 0 ? <section data-testid="media-scope-bindings" aria-label={t('planBindings', { count: bindings.length })}>
+      <h4>{t('planBindings', { count: bindings.length })}</h4>
+      <p>{t('planBindingsNotice')}</p>
+      <ul className="atlas-media-recovery-sources">
+        {bindings.map((binding) => <li key={binding.sourcePath} data-place-id={binding.placeId} data-folder={binding.folder}>
+          <span>{t('bindingRow', { folder: binding.folder, place: bindingPlace(binding.names, binding.placeId) })}</span>
+          <small>{t(binding.subtype === 'country' ? 'bindingCountry' : 'bindingCity')} · {t(binding.source === 'country.json' ? 'bindingByCountryJson' : 'bindingByName')}</small>
+        </li>)}
+      </ul>
+      <label className="atlas-media-recovery-checkbox">
+        <input type="checkbox" checked={bindingsConfirmed} disabled={disabled || stale || preview.blockers.length > 0} onChange={(event) => setBindingsConfirmed(event.target.checked)} />
+        <span>{t('bindingsConfirm')}</span>
+      </label>
+    </section> : null}
     {preview.blockers.length > 0 ? <div role="status">
       <p>{t('blockers')}</p>
       <ul>{preview.blockers.map((blocker, index) => <li key={`${blocker.code}/${index}`}>
@@ -116,7 +136,8 @@ function ImportScope({ job, preview, disabled, onImport }: {
       <input type="checkbox" checked={confirmed} disabled={disabled || stale || preview.blockers.length > 0} onChange={(event) => setConfirmed(event.target.checked)} />
       <span>{t('scopeConfirm')}</span>
     </label>
-    <button type="button" disabled={disabled || stale || !confirmed || preview.blockers.length > 0} onClick={() => void onImport()}>{t('import')}</button>
+    <button type="button" disabled={disabled || stale || !confirmed || bindingsPending || preview.blockers.length > 0}
+      onClick={() => void onImport(bindings.length > 0 ? { acceptFolderBindings: bindingsConfirmed } : {})}>{t('import')}</button>
   </section>
 }
 
@@ -220,7 +241,7 @@ function MediaJobCard({ job, state, selected, onOpenTarget, run }: {
         if (fileInput.current) fileInput.current.value = ''
       })}>{t('receive')}</button>
     </section> : null}
-    {preview ? <ImportScope key={`${preview.jobId}/${preview.revision}/${preview.plan.digest}`} job={job} preview={preview} disabled={blocked || !targetExists || uncertain || completed} onImport={() => run(() => state.importJob(job.jobId, preview))} /> : null}
+    {preview ? <ImportScope key={`${preview.jobId}/${preview.revision}/${preview.plan.digest}`} job={job} preview={preview} disabled={blocked || !targetExists || uncertain || completed} onImport={(options) => run(() => state.importJob(job.jobId, preview, options))} /> : null}
   </article>
 }
 

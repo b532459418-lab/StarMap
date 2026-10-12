@@ -6,7 +6,7 @@
  * 私人目录有没迁移的旧数据时（判定见 ./legacy-data.mjs）拒绝运行，退出码 2，不读、不写任何数据文件——否则 data/v2/
  * 被写出后，迁移工具的 --apply 会因为输出目录非空而拒绝运行。
  *
- * 退出码：0 完成（可能有提醒）；1 有需要处理的问题或读写失败；2 旧数据还没有迁移。
+ * 退出码：0 完成；1 有需要处理的问题或读写失败；2 旧数据没有迁移，或待确认的文件夹绑定没加 --accept-folder-bindings（2A）。
  */
 
 import { isLegacyUnmigrated, LEGACY_UNMIGRATED_IMPORT_MESSAGE, legacyDataStateOf } from './legacy-data.mjs'
@@ -29,7 +29,7 @@ try {
     process.exitCode = await withLibraryOperation(privatePaths, async () => {
       if (apply) await assertMediaJobsClear(privatePaths)
       if (verify) await (await import('./media-job-service.mjs')).reportMediaJobReceipts(privatePaths)
-      return runV2MediaImport({ privatePaths, apply, verify })
+      return runV2MediaImport({ privatePaths, apply, verify, acceptFolderBindings: process.argv.includes('--accept-folder-bindings') })
     }, { leaseToken: process.env.STARMAP_LIBRARY_LEASE })
   }
 } catch (error) {

@@ -46,6 +46,11 @@ export const mediaRecoveryResources = {
     blockerDate: '无人机媒体的日期不完整或无效。', blockerCatalog: '媒体目录与来源记录不一致。',
     blockerOutput: '现有媒体输出文件有变化或缺失。', blockerOwnership: '同一媒体被分配给不同地点或类型。',
     blockerChanged: '预览期间资料发生变化，请重新核对。',
+    planBindings: '待确认的文件夹绑定（{{count}} 个）',
+    planBindingsNotice: '下面这些投递箱文件夹没有 place.json，是按文件夹名（或旧 country.json）匹配到地点的。名字相同不一定是同一个地方：确认之后才会写入 place.json，并按这个地点导入其中的照片；不对时请取消，在该文件夹里放 place.json 指定地点。',
+    bindingRow: '文件夹 {{folder}} → {{place}}', bindingCity: '城市', bindingCountry: '国家',
+    bindingByName: '按文件夹名匹配', bindingByCountryJson: '按旧 country.json 匹配',
+    bindingsConfirm: '我确认以上文件夹绑定到对应的地点，写入 place.json。',
   },
   en: {
     title: 'Media tasks', open: 'Open media tasks', closePanel: 'Close panel', check: 'Check tasks', loading: 'Reading tasks…',
@@ -94,5 +99,10 @@ export const mediaRecoveryResources = {
     blockerDate: 'A drone media date is incomplete or invalid.', blockerCatalog: 'The media catalog and source records disagree.',
     blockerOutput: 'An existing media output is changed or missing.', blockerOwnership: 'The same media belongs to different places or types.',
     blockerChanged: 'Data changed during preview. Check it again.',
+    planBindings: 'Folder bindings to confirm ({{count}})',
+    planBindingsNotice: 'These Inbox folders have no place.json and were matched to a place by folder name (or a legacy country.json). The same name is not always the same place: place.json is written and their photos are imported to that place only after you confirm. If one is wrong, cancel and put a place.json in that folder.',
+    bindingRow: 'Folder {{folder}} → {{place}}', bindingCity: 'City', bindingCountry: 'Country',
+    bindingByName: 'Matched by folder name', bindingByCountryJson: 'Matched by legacy country.json',
+    bindingsConfirm: 'I confirm these folders belong to the places shown, and place.json will be written.',
   },
 }

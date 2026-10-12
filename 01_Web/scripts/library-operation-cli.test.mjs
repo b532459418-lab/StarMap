@@ -39,6 +39,9 @@ async function fixture(t) {
   const folder = path.join(paths.inboxRoot, 'Test Country', 'Test City', 'photos')
   await mkdir(folder, { recursive: true })
   const source = path.join(folder, 'synthetic.jpg')
+  // Batch 2A: the folders are bound by id (as the editor's uploads do), so the editor importer has no folder binding to confirm.
+  await writeFile(path.join(paths.inboxRoot, 'Test Country', 'place.json'), JSON.stringify({ placeId: countryId }))
+  await writeFile(path.join(paths.inboxRoot, 'Test Country', 'Test City', 'place.json'), JSON.stringify({ placeId: cityId }))
   await sharp({ create: { width: 64, height: 48, channels: 3, background: { r: 20, g: 140, b: 90 } } }).jpeg().toFile(source)
   return { paths, source }
 }

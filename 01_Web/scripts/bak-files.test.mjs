@@ -224,7 +224,8 @@ const importInto = async (root, { withBak, images }) => {
   await writeInbox(paths, images)
   if (withBak) await addInboxBaks(paths)
   const preflight = runScript('import-media.mjs', [], root)
-  const applied = runScript('import-media.mjs', ['--apply'], root)
+  // 第 2A 批：这里的投递箱按文件夹名匹配，要明确确认文件夹绑定（本用例测的是 .bak，不是绑定确认）。
+  const applied = runScript('import-media.mjs', ['--apply', '--accept-folder-bindings'], root)
   assert.equal(applied.status, 0, `${applied.stdout}\n${applied.stderr}`)
   return {
     preflight: preflight.stdout + preflight.stderr,

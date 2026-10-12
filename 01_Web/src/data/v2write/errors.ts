@@ -146,6 +146,8 @@ export const V2_WRITE_MESSAGES = {
   E_MEDIA_JOB_CONFLICT: () => '媒体待办的版本、库身份或操作意图已经改变。请重新核对，未执行本次写入。',
   E_MEDIA_JOB_REVIEW: () => '媒体待办的实际结果需要核对。记录与原文件保留，不会自动重传或导入。',
   E_MEDIA_JOB_NOT_FOUND: () => '找不到这个媒体待办。',
+  /** 新（第 2A 批）：导入预览里有按文件夹名匹配、还没确认的地点绑定，导入请求却没有确认它们。 */
+  E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED: () => '投递箱里有按文件夹名匹配到地点、尚未确认的文件夹绑定。请在导入预览里核对并确认这些绑定后再导入；本次没有写入任何文件。',
   E_UNKNOWN_ENDPOINT: () => '未知的本地编辑接口。',
   E_EDITOR_READ_FORBIDDEN: () => '仅允许本机编辑会话读取。',
   E_EDITOR_WRITE_FORBIDDEN: () => '仅允许本机编辑会话写入。',

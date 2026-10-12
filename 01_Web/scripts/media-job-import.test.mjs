@@ -562,3 +562,29 @@ test('D9 cities named "Washington D.C." and "CON" complete task uploads into esc
     await write(env, 'close', result.body.job, identity(result.body.job))
   }
 }))
+
+test('Batch 2A: a hand-made folder matched only by name is listed in the preview and imported only after its binding is confirmed', async () => withRoot(async env => {
+  const job = await received(env, await jpeg())
+  // Other City has no place.json: it resolves to a place by folder name only, which is a hint, not an identity.
+  const manual = path.join(env.paths.inboxRoot, 'Test Country', 'Other City', 'photos', 'manual.jpg')
+  await mkdir(path.dirname(manual), { recursive: true }); await writeFile(manual, await jpeg({ r: 200, g: 120, b: 30 }))
+  const result = await preview(env, job)
+  assert.equal(result.status, 200, JSON.stringify(result)); assert.deepEqual(result.body.plan.blockers, [])
+  assert.deepEqual(result.body.plan.summary.pins, [{
+    sourcePath: 'Test Country/Other City/place.json', placeId: ID.otherCity, folder: 'Test Country/Other City',
+    subtype: 'city', names: { 'zh-Hans': '另一城', en: 'Other City' }, source: 'name',
+  }])
+  const before = await tree(env.paths.root, { omitCoordination: true })
+  for (const extra of [{}, { acceptFolderBindings: false }]) {
+    const refused = await write(env, 'import', job, { ...importInput(job, result.body.plan), ...extra })
+    assert.equal(refused.status, 409, JSON.stringify(refused)); assert.equal(refused.body.code, 'E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED')
+    assert.deepEqual(await tree(env.paths.root, { omitCoordination: true }), before, 'no place.json, catalog, output or task record change')
+  }
+  const invalid = await write(env, 'import', job, { ...importInput(job, result.body.plan), acceptFolderBindings: 'yes' })
+  assert.equal(invalid.status, 400, JSON.stringify(invalid)); assert.equal(invalid.body.code, 'E_MEDIA_JOB_INVALID')
+  const imported = await write(env, 'import', job, { ...importInput(job, result.body.plan), acceptFolderBindings: true })
+  assert.equal(imported.status, 200, JSON.stringify(imported)); assert.equal(imported.body.job.status, 'completed')
+  assert.deepEqual(await readJson(path.join(env.paths.inboxRoot, 'Test Country', 'Other City', 'place.json')), { placeId: ID.otherCity })
+  const catalog = await readJson(env.paths.v2FilePaths.media)
+  assert.equal(catalog.items.find(item => item.originalFileName === 'manual.jpg')?.placeId, ID.otherCity)
+}))

@@ -22,9 +22,15 @@ export type MediaJobPreview = {
   plan: {digest: string; summary: {
     addedIds: string[]; updatedIds: string[]; removedIds: string[]
     sources: {id: string; sourcePath: string; sha256: string; bytes: number; kind: string; placeId: string}[]
-    pins: {sourcePath: string; placeId: string}[]; outputs: {id: string; path: string; sha256: string}[]
+    /** Batch 2A: folder bindings found by name (or a legacy country.json); importing them needs the user's confirmation. */
+    pins: MediaFolderBinding[]; outputs: {id: string; path: string; sha256: string}[]
     editorEffects: {restoredMediaIds: string[]; orders: Record<string, Record<string, string[]>>}
   }}
+}
+/** A pending Inbox folder binding: the folder, the place it resolved to, that place's names and how it was matched. */
+export type MediaFolderBinding = {
+  sourcePath: string; placeId: string; folder: string; subtype: 'city' | 'country'
+  names: Record<string, string>; source: 'name' | 'country.json'
 }
 export type MediaJobsRead = {libraryId: string | null; jobs: MediaJob[]; status?: 'processing' | 'needs_review'}
 export type MediaJobsSnapshot = MediaJobsRead & {loading: boolean; busy: boolean; error?: unknown; preview?: MediaJobPreview}
@@ -35,7 +41,7 @@ export type MediaJobsApi = {
   create: (intent: MediaJobIntent, permit: MediaImportPermit) => Promise<MediaJob>
   receive: (jobId: string, fileId: string, input: MediaJobVersion & {operationId: string; sha256: string}, file: File, permit: MediaImportPermit) => Promise<MediaJob>
   preview: (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]}) => Promise<MediaJobPreview>
-  import: (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string}, permit: MediaImportPermit) => Promise<MediaJob>
+  import: (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string; acceptFolderBindings?: boolean}, permit: MediaImportPermit) => Promise<MediaJob>
   pause: (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => Promise<MediaJob>
   close: (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => Promise<MediaJob>
   abandon: (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => Promise<MediaJob>
@@ -114,7 +120,9 @@ export function assertMediaJobPreview(value: unknown): asserts value is MediaJob
   const summary = value.plan.summary
   if (!strings(summary.addedIds) || !strings(summary.updatedIds) || !strings(summary.removedIds)
     || !Array.isArray(summary.sources) || summary.sources.some(item => !record(item) || typeof item.id !== 'string' || !relativePath(item.sourcePath) || !hash(item.sha256) || !Number.isSafeInteger(item.bytes) || Number(item.bytes) <= 0 || !['photo', 'aerialPhoto', 'panorama360', 'video'].includes(String(item.kind)) || !uuid(item.placeId))
-    || !Array.isArray(summary.pins) || summary.pins.some(item => !record(item) || !relativePath(item.sourcePath) || !uuid(item.placeId))
+    || !Array.isArray(summary.pins) || summary.pins.some(item => !record(item) || !relativePath(item.sourcePath) || !uuid(item.placeId)
+      || !relativePath(item.folder) || item.sourcePath !== `${item.folder}/place.json` || !['city', 'country'].includes(String(item.subtype))
+      || !['name', 'country.json'].includes(String(item.source)) || !record(item.names) || Object.values(item.names).some(name => typeof name !== 'string'))
     || !Array.isArray(summary.outputs) || summary.outputs.some(item => !record(item) || typeof item.id !== 'string' || !relativePath(item.path) || !hash(item.sha256))
     || !record(summary.editorEffects) || !strings(summary.editorEffects.restoredMediaIds) || !record(summary.editorEffects.orders)
     || Object.values(summary.editorEffects.orders).some(table => !record(table) || Object.values(table).some(ids => !strings(ids)))) throw invalid()
@@ -259,13 +267,16 @@ export function createMediaJobs({api = defaultApi, coordination = localEditorCoo
       publish({...state, preview: result})
       return result
     }),
-    importJob: async (jobId: string, preview: MediaJobPreview) => {
+    importJob: async (jobId: string, preview: MediaJobPreview, {acceptFolderBindings = false}: {acceptFolderBindings?: boolean} = {}) => {
       assertMediaJobPreview(preview)
       if (preview !== acknowledged || preview.jobId !== jobId || preview.blockers.length > 0) throw fault('E_MEDIA_JOB_CONFLICT')
+      // Batch 2A: folder bindings in the preview are imported only after the user confirmed them next to that list.
+      if (preview.plan.summary.pins.length > 0 && !acceptFolderBindings) throw fault('E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED')
       const job = getJob(jobId)
       if (job.revision !== preview.revision || job.status !== 'pending') throw fault('E_MEDIA_JOB_CONFLICT')
       await run(jobId, async permit => {
-        const result = await api.import(jobId, {...version(job), selectedFileIds: preview.selectedFileIds, operationId: operationId(), planDigest: preview.plan.digest}, permit)
+        const result = await api.import(jobId, {...version(job), selectedFileIds: preview.selectedFileIds, operationId: operationId(), planDigest: preview.plan.digest,
+          ...(preview.plan.summary.pins.length > 0 ? {acceptFolderBindings: true} : {})}, permit)
         checkContinuation(job, result)
         if (result.jobId !== jobId || result.phase !== 'completed') throw invalid()
         putJob(result)

@@ -18,6 +18,7 @@ import {
   contentHashOf,
   createMediaPlaceIndex,
   droneKindOf,
+  folderBindingLine,
   generatedDirectoryOfSrc,
   generatedFilesOf,
   markCovers,
@@ -356,7 +357,7 @@ test('逐文件覆盖的错误：placeId 不是城市、旧字段不成对、旧
   )
 })
 
-test('固定归属（RFC ID-6）：按文件夹名或旧 country.json 解析成功的文件夹要写 place.json，已靠 place.json 解析的与失败的不写', () => {
+test('固定归属（RFC ID-6）：按文件夹名或旧 country.json 解析成功的文件夹是待确认的绑定（第 2A 批：确认后才写 place.json），已靠 place.json 解析的与失败的不是', () => {
   const byName = resolveCountryFolder(index, { folderName: 'Iceland' })
   const byCountryJson = resolveCountryFolder(index, { folderName: 'x', countryConfig: { countryId: 'faroe-islands' } })
   const byPlaceJson = resolveCountryFolder(index, { folderName: 'x', placeConfig: placeConfigOf(ids.iceland) })
@@ -369,6 +370,16 @@ test('固定归属（RFC ID-6）：按文件夹名或旧 country.json 解析成�
   assert.deepEqual([byName, byCountryJson, byPlaceJson, cityByName, cityByPlaceJson].map(shouldPinFolder), [true, true, false, true, false])
   assert.equal(shouldPinFolder(resolveCountryFolder(index, { folderName: 'Atlantis' })), false)
   assert.equal(shouldPinFolder(resolveFileOverride(index, place(ids.reykjavik), { placeId: ids.vik }, 'x')), false, '逐文件覆盖不是文件夹，不固定')
+})
+
+test('第 2A 批：待确认的文件夹绑定（shouldPinFolder 为 true 的）列成「文件夹 → 中文名 / 英文名（城市或国家，怎么匹配到的，地点 id）」', () => {
+  assert.equal(folderBindingLine('Iceland/Reykjavik', { placeId: 'p-1', subtype: 'city', names: { 'zh-Hans': '雷克雅未克', en: 'Reykjavik' }, source: 'name' }),
+    'Iceland/Reykjavik → 雷克雅未克 / Reykjavik（城市，按文件夹名，p-1）')
+  assert.equal(folderBindingLine('Faroe', { placeId: 'p-2', subtype: 'country', names: { en: 'Faroe Islands' }, source: 'country.json' }),
+    'Faroe → Faroe Islands（国家，按旧 country.json，p-2）')
+  assert.equal(folderBindingLine('Iceland/维克', { placeId: 'p-3', subtype: 'city', names: { 'zh-Hans': '维克', en: '维克' }, source: 'name' }),
+    'Iceland/维克 → 维克（城市，按文件夹名，p-3）', '中英文名相同时只写一个')
+  assert.equal(folderBindingLine('x', { placeId: 'p-4', subtype: 'city', names: {}, source: 'name' }), 'x → p-4（城市，按文件夹名，p-4）')
 })
 
 test('legacyKeys 属于不止一个地点时（注册表本身不合法）按歧义报错，不任选一个', () => {

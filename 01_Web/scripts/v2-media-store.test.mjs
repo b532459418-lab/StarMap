@@ -507,6 +507,29 @@ test('D5 删除前预检：投递箱里有无关的阻断问题 → E_MEDIA_DELE
   })
 })
 
+test('第 2A 批：投递箱里有按文件夹名匹配、还没确认的绑定 → 删除前预检拦下（E_MEDIA_DELETE_BLOCKED，列出绑定）；/import 端点同样拦下（E_MEDIA_IMPORT_BLOCKED）；都不写', async () => {
+  await withV2Root(async (env) => {
+    const { root, paths, deps, ctx } = env
+    const { id } = await hiddenPhoto(env, 'hidden.jpg', { r: 90, g: 10, b: 10 })
+    // 手动放的城市文件夹：没有 place.json，按文件夹名「维克」只匹配到一个城市——仍然只是匹配提示，要确认。
+    await mkdir(path.join(paths.inboxRoot, 'Iceland', '维克', 'photos'), { recursive: true })
+    await writeFile(path.join(paths.inboxRoot, 'Iceland', '维克', 'photos', 'manual.jpg'), await jpeg({ r: 4, g: 5, b: 6 }))
+    const before = await hashTree(root)
+    const deleted = await handleV2MediaDelete({ privatePaths: paths, input: { cityId: ID.reykjavik, ids: [id] }, ctx, deps })
+    assert.equal(deleted.status, 400)
+    assert.equal(deleted.body.code, 'E_MEDIA_DELETE_BLOCKED')
+    assert.ok(deleted.body.details.includes(`待确认的文件夹绑定：Iceland/维克 → 维克（城市，按文件夹名，${ID.vik}）`), deleted.body.details)
+    assert.match(deleted.body.details, /--accept-folder-bindings/)
+    const imported = await handleV2Import({ privatePaths: paths, input: { sourcePaths: [] }, ctx, deps })
+    assert.equal(imported.status, 400)
+    assert.equal(imported.body.code, 'E_MEDIA_IMPORT_BLOCKED')
+    assert.match(imported.body.details, /待确认的文件夹绑定（1）/)
+    // 导入器子进程会记录库操作租约（operations/ 下的协调文件），那不是数据。
+    const data = (tree) => Object.fromEntries(Object.entries(tree).filter(([name]) => !name.startsWith('operations/')))
+    assert.deepEqual(data(await hashTree(root)), data(before), '没有写 place.json，也没有删除或导入任何文件')
+  })
+})
+
 test('D5 删除前预检按删除之后的投递箱判断：要删的那张图本身坏了也能删', async () => {
   await withV2Root(async (env) => {
     const { paths, deps, ctx } = env

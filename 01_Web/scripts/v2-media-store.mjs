@@ -30,7 +30,7 @@ import path from 'node:path'
 import { atomicJsonWrite, readJson } from './json-file.mjs'
 import { IMPORT_BLOCKING_PATTERN } from './local-editor-importer.mjs'
 import { applyV2Writes, readV2Files, v2ErrorBody } from './v2-editor-store.mjs'
-import { scanV2MediaImport } from './v2-media-import.mjs'
+import { FOLDER_BINDINGS_HEADING, scanV2MediaImport } from './v2-media-import.mjs'
 import {
   deletableMediaOf,
   droneUploadMetadataOf,
@@ -44,7 +44,7 @@ import {
   uploadKindOf,
   uploadTargetOf,
 } from '../src/data/v2media/editorWrites.ts'
-import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
+import { folderBindingLine, placeConfigOf } from '../src/data/v2media/importPlan.ts'
 import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
 
 /** V2 下的三个媒体端点 → 处理方式。与 v2-editor-store.mjs 的 V2_EDITOR_ROUTES 不相交，两者合起来是全部 11 个写入端点。 */
@@ -207,7 +207,9 @@ export async function handleV2Import({ privatePaths, input, ctx, deps }) {
  */
 const assertDeletePreflight = async (privatePaths, sourcePaths) => {
   const scan = await scanV2MediaImport({ privatePaths, excludeSourcePaths: sourcePaths })
-  const problems = [...scan.errors, ...scan.warnings.filter((warning) => IMPORT_BLOCKING_PATTERN.test(warning))]
+  // 第 2A 批：删除之后要重新运行导入器，而按名称匹配、还没确认的文件夹绑定会让导入器拒绝写入，所以同样先拦下。
+  const bindings = scan.pins.map((pin) => `${FOLDER_BINDINGS_HEADING}：${folderBindingLine(inboxRelative(privatePaths.inboxRoot, pin.directory), pin)}。请先运行 npm run media:import -- --accept-folder-bindings 确认，或在该文件夹里放 place.json 指定地点。`)
+  const problems = [...scan.errors, ...scan.warnings.filter((warning) => IMPORT_BLOCKING_PATTERN.test(warning)), ...bindings]
   if (problems.length === 0) return
   const failure = new V2WriteError('E_MEDIA_DELETE_BLOCKED', { count: problems.length })
   failure.details = problems.map((problem) => `- ${problem}`).join('\n')

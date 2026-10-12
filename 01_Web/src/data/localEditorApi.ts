@@ -175,7 +175,8 @@ const mutateMediaJob = (action: 'import' | 'pause' | 'close' | 'abandon', jobId:
   if (job.libraryId !== input.libraryId || job.revision < input.revision) throw responseInvalid()
   return job
 }, permit)
-export const importMediaJob = (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string}, permit: MediaImportPermit) => mutateMediaJob('import', jobId, input, permit)
+/** Batch 2A: `acceptFolderBindings` confirms the preview's folder bindings found by name; required when it lists any. */
+export const importMediaJob = (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string; acceptFolderBindings?: boolean}, permit: MediaImportPermit) => mutateMediaJob('import', jobId, input, permit)
 export const pauseMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('pause', jobId, input, permit)
 export const closeMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('close', jobId, input, permit)
 /** Batch 1 D2: end an open/paused task without touching any file; the next import realigns with the Inbox. */

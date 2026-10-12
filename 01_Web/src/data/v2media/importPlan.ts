@@ -17,8 +17,9 @@
  * - 城市文件夹：`place.json`（必须是城市，且属于所在国家文件夹解析出的国家）→ 文件夹名（在该国家的城市里与中英文名比对）。
  * - 逐文件覆盖（sidecar 条目）：`placeId`（城市），或旧的 `countryId` + `cityId`（经 `legacyKeys`）；两种都有且不一致是错误。
  * 排在前面的一种存在就以它为准；候选恰好一个才算找到，0 个或多个都报错。不猜，不新建地点。
- * 按文件夹名或旧 country.json 解析成功的文件夹，导入器在 --apply（且整次导入没有错误）时写入 place.json 固定下来
- * （RFC ID-6：匹配结果一旦确认就以 id 引用存下，不再每次按名字重新匹配；见 `shouldPinFolder`）。
+ * 按文件夹名或旧 country.json 第一次解析出的归属只是匹配提示（第 2A 批）：它是「待确认的文件夹绑定」，经用户确认之后，
+ * 导入器才在整次导入没有错误时写入 place.json 固定下来（RFC ID-6：匹配结果一旦确认就以 id 引用存下，不再每次按名字
+ * 重新匹配；见 `shouldPinFolder`）。确认之前既不写 place.json，也不按这个结果导入。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
@@ -263,10 +264,28 @@ export const resolveCityFolder = (index: MediaPlaceIndex, country: CanonicalPlac
 }
 
 /**
- * 要不要把这个文件夹的归属写成 place.json 固定下来（RFC ID-6）：按文件夹名或旧 country.json 解析成功的要；
- * 已经靠 place.json 解析的不动。只在 --apply 且整次导入没有错误时写（由调用方保证）。
+ * 这个文件夹的归属是不是「待确认的文件夹绑定」（第 2A 批，RFC ID-6「匹配提示 ≠ 身份」）：按文件夹名或旧 country.json
+ * 解析成功的是（只有一个候选时也一样）；已经靠 place.json 解析的不是，按 id 工作、不受影响。
+ * 待确认的绑定在确认之前不写 place.json，也不按它导入；确认之后（CLI 的 --accept-folder-bindings，或媒体任务的导入确认）
+ * 在整次导入没有错误时写入 place.json 固定下来（由调用方保证）。
  */
 export const shouldPinFolder = (lookup: PlaceLookup): boolean => lookup.ok && lookup.source !== undefined && lookup.source !== 'place.json'
+
+/** 待确认的文件夹绑定（导入器的扫描结果里叫 pin）：文件夹、绑定到的地点与它的名称，以及是怎么匹配到的。 */
+export interface FolderBindingFacts {
+  placeId: PlaceId
+  subtype: CanonicalPlace['subtype']
+  names: Readonly<Record<string, string>>
+  source: Exclude<FolderSource, 'place.json'>
+}
+
+/** 「文件夹 X → 地点 Y（中文名 / 英文名，城市或国家，怎么匹配到的，地点 id）」：预检与拒绝时列出的一行。 */
+export const folderBindingLine = (folder: string, binding: FolderBindingFacts): string => {
+  const names = [...new Set([binding.names[ZH], binding.names[EN]].filter(Boolean))].join(' / ') || binding.placeId
+  const kind = binding.subtype === 'country' ? '国家' : '城市'
+  const how = binding.source === 'country.json' ? '按旧 country.json' : '按文件夹名'
+  return `${folder} → ${names}（${kind}，${how}，${binding.placeId}）`
+}
 
 const trimmedText = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
 

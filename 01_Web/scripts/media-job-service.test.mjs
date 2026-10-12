@@ -383,7 +383,7 @@ test('RD-07 existing catalog/index output is uncertainty until an import complet
   await withRoot(async (env) => {
     const job = await receivedJob(env, await jpeg())
     // Simulate another writer completing the old importer before RD-07 batch-two receipts exist.
-    const exit = await withLibraryOperation(env.paths, () => runV2MediaImport({ privatePaths: env.paths, apply: true, log: () => {}, logError: () => {} }))
+    const exit = await withLibraryOperation(env.paths, () => runV2MediaImport({ privatePaths: env.paths, apply: true, acceptFolderBindings: true, log: () => {}, logError: () => {} }))
     assert.equal(exit, 0)
     const before = await tree(env.paths.root)
     const result = await get(env, job.jobId)
@@ -429,7 +429,7 @@ test('RD-07 same-content media owned by another city cannot imply this task comp
     const otherSource = path.join(env.paths.inboxRoot, 'Test Country', 'Other City', 'photos', 'existing.jpg')
     await mkdir(path.dirname(otherSource), { recursive: true })
     await writeFile(otherSource, bytes)
-    const exit = await withLibraryOperation(env.paths, () => runV2MediaImport({ privatePaths: env.paths, apply: true, log: () => {}, logError: () => {} }))
+    const exit = await withLibraryOperation(env.paths, () => runV2MediaImport({ privatePaths: env.paths, apply: true, acceptFolderBindings: true, log: () => {}, logError: () => {} }))
     assert.equal(exit, 0)
     const catalogBefore = await readFile(env.paths.v2FilePaths.media)
     const indexBefore = await readFile(env.paths.v2MediaSourceIndexPath)
