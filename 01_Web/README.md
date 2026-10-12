@@ -127,6 +127,8 @@ The private layer is considered only in the explicit personal profile. Public pr
 
 In the personal profile, Want to Go never falls back to the sample: sample items are not in the private file, so the editor could not hide them. When the private Want to Go file does not exist yet, the list is empty. The add entry and the Hide button are rendered only for private data, in addition to the existing development-only editor gate.
 
+Adding a city by name never reuses a registered place just because the name matches. `POST /__travelatlas/editor/records` and `POST /__travelatlas/editor/wanttogo` look for cities of the same country with the same Chinese or English name; when there is any, they answer `409 E_PLACE_CHOICE_REQUIRED` with the candidates (place id, names, location, distance, and whether it is a strong candidate: the same names, precise coordinates within 50 km) and write nothing. The city form and the Want to Go dialog list the candidates inline, preselect the first strong one (nothing otherwise) and resubmit with the chosen `placeId` or with `createNew: true`. A travel record that references a city by `placeId` uses that place's coordinates, and `E_CITY_EXISTS` still refuses a city that already has a record.
+
 City details also offer **Mark as Want to Go** for the current city. This shortcut posts its existing `placeId` through the same loopback editor and write coordinator; it never resolves the selected city again by its display name or changes its travel records. Existing entries, including hidden entries, disable the add button. Hidden entries can be restored in Collection. Public and forced-sample views render no shortcut. An ambiguous or unknown write outcome locks retry until the user reloads and verifies the list.
 
 ## Whole-library backup and recovery
@@ -186,7 +188,7 @@ The first command is read-only and reports unresolved countries, cities, formats
 
 Inbox source media must never be moved, renamed, overwritten, or deleted. Agents may create or update only the private control files `place.json`, `country.json`, and city-level `media.json`; `place.json` is normally written by StarMap itself. Supported still formats are optimized outside the Inbox by the importer, while unsupported formats still require a separate user-approved conversion step.
 
-The importer resolves each country and city folder against the place registry (`place.json`, then a legacy `country.json`, then the folder name), writes `place.json` into folders it matched by name, and derives every media id and generated path from the file content alone. The [Media Inbox README](../02_Assets/MediaInbox/README.md) describes the rules.
+The importer resolves each country and city folder against the place registry (`place.json`, then a legacy `country.json`, then the folder name) and derives every media id and generated path from the file content alone. A folder matched only by name (or by a legacy `country.json`) is a folder binding to confirm, even with a single match: `npm run media:check` lists it, `npm run media:import` refuses to write (exit code 2) until it is run as `npm run media:import -- --accept-folder-bindings`, and only then is `place.json` written into the folder. Media tasks show the same bindings in their import preview with a separate confirmation. The [Media Inbox README](../02_Assets/MediaInbox/README.md) describes the rules.
 
 See [`../03_Reference/TravelAtlas_media_import_protocol.md`](../03_Reference/TravelAtlas_media_import_protocol.md) for the complete user and Agent contract.
 
