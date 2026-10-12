@@ -276,3 +276,21 @@ test('删除想去：整批原子拒绝（沿用旧文案，列出不符合的 i
   broken.editorState.coverMediaByCity = { [GHOST_ID]: 'x' }
   assertV2Error(() => deleteHiddenWantToGo(broken, { ids: ['wtg_2026-08-12_tromso'] }, testContext()), 'E_INTEGRITY')
 })
+
+test('删除想去：文件里有重复 id（一条显示中、一条隐藏）时入口检查拒绝，不会连同显示中的条目一起删（审查 D10）', () => {
+  const files = migratedFiles()
+  const hidden = files.wantToGo.items.find((item) => item.id === 'wtg_2026-08-12_tromso')!
+  const visible = files.wantToGo.items.find((item) => item.id === 'wtg_2026-08-12_nuuk')!
+  assert.equal(hidden.hidden, true)
+  assert.equal(visible.hidden, false)
+  visible.id = hidden.id
+  assertV2Error(
+    () => deleteHiddenWantToGo(files, { ids: [hidden.id] }, testContext()),
+    'E_INTEGRITY',
+    undefined,
+    (error) => {
+      assert.equal(error.params?.stage, 'input')
+      assert.ok(String(error.params?.problems).includes('wantToGo $.items'), String(error.params?.problems))
+    },
+  )
+})

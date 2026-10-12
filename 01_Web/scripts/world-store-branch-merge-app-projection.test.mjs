@@ -135,7 +135,9 @@ test('opaque overlapping IDs, partial dates, malformed dates and source extensio
   const { canonical } = parity(syntheticSaved, syntheticFiles)
   assert.deepEqual(canonical.travel.records, readV2(syntheticFiles).travel.records)
   assert.deepEqual(canonical.wantToGo, readV2(syntheticFiles).wantToGo)
-  assert.equal(canonical.travel.records.filter(row => row.id === 'collision').length, 2)
+  // Record IDs are unique within travel-map since review D10; 'collision' still overlaps across travel-map and want-to-go.
+  assert.equal(canonical.travel.records.filter(row => row.id === 'collision').length, 1)
+  assert.equal(canonical.wantToGo.items.filter(row => row.id === 'collision').length, 1)
   assert.deepEqual(canonical.travel.records.find(row => row.id === 'repeat').custom, { flags: [false, 0, ''], recordId: 'opaque-preserved' })
 })
 test('zero/null/omitted coordinates and hidden management rows are preserved', () => {

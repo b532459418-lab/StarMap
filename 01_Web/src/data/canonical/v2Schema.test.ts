@@ -12,8 +12,16 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
-import { v2SpaceCanonical, type V2SpaceCanonicalName } from './frozen.fixture.ts'
+import {
+  MIGRATED_CANONICAL_NAMES,
+  V2_SPACE_CANONICAL_NAMES,
+  canonicalForInputsFixture,
+  migratedCanonical,
+  v2SpaceCanonical,
+  type V2SpaceCanonicalName,
+} from './frozen.fixture.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files, type V2FileKey, type V2SchemaProblem } from './v2Schema.ts'
 import { serializeV2 } from './v2Serializer.ts'
 
@@ -220,6 +228,62 @@ test('媒体：版本 3、kind、placeId 指向城市、不再有 cityId / title
 
   // 旧文件的其他顶层字段允许保留。
   assert.deepEqual(validateV2Files(validFiles('personal')), [])
+})
+
+test('id 唯一（审查 D10）：足迹记录、想去条目、媒体条目的 id 各自在文件内重复时，报在后出现的位置上，并指出 id 与第一次出现的位置', () => {
+  const cases: [V2FileKey, string, (files: LooseFiles) => Obj[]][] = [
+    ['travel', '$.records', records],
+    ['wantToGo', '$.items', (files) => itemsOf(files, 'wantToGo')],
+    ['media', '$.items', (files) => itemsOf(files, 'media')],
+  ]
+  for (const [file, arrayPath, listOf] of cases) {
+    const files = validFiles('personal')
+    const list = listOf(files)
+    assert.ok(list.length >= 3, `${file} 至少要有三条`)
+    const duplicatedId = list[0].id as string
+    list[2].id = duplicatedId
+    const problems = validateV2Files(files)
+    assert.deepEqual(problems.map((problem) => [problem.file, problem.path, problem.code]), [[file, `${arrayPath}[2].id`, 'INVALID']], file)
+    assert.ok(problems[0].message.includes(JSON.stringify(duplicatedId)), `${file}：消息指出重复的 id`)
+    assert.ok(problems[0].message.includes(`${arrayPath}[0]`), `${file}：消息指出第一次出现的位置`)
+
+    // 三条同 id：后两条各报一处，都指向第一次出现的位置。
+    list[1].id = duplicatedId
+    assert.deepEqual(problemsAt(validateV2Files(files)), [`${file} ${arrayPath}[1].id`, `${file} ${arrayPath}[2].id`])
+  }
+
+  // 不同文件之间同 id 不算重复（各自在文件内唯一）；地点 id 的重复仍由地点检查报告。
+  const crossFile = validFiles('personal')
+  itemsOf(crossFile, 'wantToGo')[0].id = records(crossFile)[0].id
+  itemsOf(crossFile, 'media')[0].id = records(crossFile)[0].id
+  assert.deepEqual(validateV2Files(crossFile), [])
+})
+
+test('id 唯一（审查 D10）：公开 V2 样例与全部冻结夹具仍然通过校验', () => {
+  const readJson = (relative: string): unknown => JSON.parse(readFileSync(new URL(relative, import.meta.url), 'utf8'))
+  const sampleNames = { places: 'places.json', travel: 'travel-map.json', wantToGo: 'want-to-go.json', editorState: 'editor-state.json', media: 'user-media.json' }
+  const sample = Object.fromEntries(Object.entries(sampleNames).map(([key, name]) => [key, readJson(`../v2-sample/${name}`)])) as Record<V2FileKey, unknown>
+  assert.deepEqual(validateV2Files(sample), [], 'src/data/v2-sample')
+
+  for (const relative of [
+    '../v2write/fixtures/migrated-files.json',
+    '../../../scripts/fixtures/bak-files-v2.json',
+    '../../../scripts/fixtures/baseline-v2.json',
+    '../../../scripts/fixtures/editor-store-v2.json',
+  ]) {
+    assert.deepEqual(validateV2Files(readJson(relative) as Record<V2FileKey, unknown>), [], relative)
+  }
+  assert.deepEqual(validateV2Files(canonicalForInputsFixture().files as unknown as Record<V2FileKey, unknown>), [], 'canonical-for-inputs.json')
+  for (const name of V2_SPACE_CANONICAL_NAMES) {
+    // countryOfCity 故意在 hiddenCityIds 里放了一个陈旧 id（见 derive.test.ts），本来就不是合法的 V2 文件；它唯一的问题仍是那一处。
+    const expected = name === 'countryOfCity' ? ['editorState $.hiddenCityIds[1]'] : []
+    assert.deepEqual(problemsAt(validateV2Files(validFiles(name))), expected, `v2SpaceCanonical(${name})`)
+  }
+  for (const name of MIGRATED_CANONICAL_NAMES) {
+    const { canonical, fileMeta } = migratedCanonical(name)
+    const files = serializeV2(canonical, { ...fileMeta, placesGeneratedAt: '2026-09-26T00:00:00.000Z' })
+    assert.deepEqual(validateV2Files(files as unknown as Record<V2FileKey, unknown>), [], `migratedCanonical(${name})`)
+  }
 })
 
 test('整份文件不是对象、缺数组：每个文件各报一处，不抛异常', () => {

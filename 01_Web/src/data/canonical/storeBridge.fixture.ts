@@ -16,7 +16,9 @@ export function syntheticBridgeFixture(): V2Files {
     { id: 'collision', placeId: a.id, start_date: '2025-01-01', lat: 0, lng: 0, status: 'visited', journeyId: 'synthetic-trip', notes: '', source: 'v2:planned' },
     { id: 'middle', placeId: b.id, start_date: '2025-01-02', lat: null, lng: null, hiddenFromHome: true, journeyId: 'synthetic-trip', notes: 'Neutral note' },
     { id: 'end', placeId: c.id, start_date: '2025-01-03', journeyId: 'synthetic-trip' },
-    { id: 'collision', placeId: a.id, start_date: '2027-06', status: 'planned', notes: 'Synthetic plan' },
+    // Visited and planned records share travel-map, so their IDs are unique within the file (review D10); the raw ID
+    // 'collision' still overlaps across files (travel-map and want-to-go).
+    { id: 'planned-collision', placeId: a.id, start_date: '2027-06', status: 'planned', notes: 'Synthetic plan' },
     { id: 'repeat', placeId: a.id, start_date: '2025', end_date: '2025-08', year: 2025, custom: { flags: [false, 0, ''], recordId: 'opaque-preserved' } } as V2Files['travel']['records'][number],
     { id: 'uncertain', placeId: c.id, start_date: '2025-02-31', end_date: '2024-01-01', year: 'unknown', notes: null, hiddenFromHome: 'unknown' } as unknown as V2Files['travel']['records'][number],
     { id: 'no-date', placeId: c.id } as V2Files['travel']['records'][number],
