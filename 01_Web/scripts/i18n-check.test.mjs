@@ -97,7 +97,7 @@ test('dynamic option contracts derive new registry and option keys from current 
     ['src/components/AtlasHeader.tsx', "const navItems=[{id:'map'},{id:'newPage'}]"],
     ['src/components/CollectionPage.tsx', "const statusOptions=[{id:'all'}]; const sortOptions=[{id:'recent'}]; runWrite(action,'newOperationFailed')"],
     ['src/components/JourneyViewToggle.tsx', "const options=[{id:'timeline'}]"],
-    ['src/components/InfoCard.tsx', "const continentRules=[{continent:'North America'}]"],
+    ['src/data/continents.ts', "const CONTINENTS=['North America','South America'] as const"],
     ['src/components/MouseControlGuide.tsx', "const controls=[{key:'drag',label:'orbit'}]"],
     ['src/components/PrivateDataNotice.tsx', "const lines=kind==='internal-state'?['legacy']:['empty']"],
     ['src/i18n/mediaViewerOptions.ts', "const panoramaLanguageKeys=['zoom','newThirdPartyControl'] as const"],
