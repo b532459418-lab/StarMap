@@ -132,13 +132,18 @@ export const droneUploadMetadataOf = (query: QueryLike, kind: Exclude<UploadKind
 export type InboxFolderState = { exists: false } | { exists: true; placeConfig: unknown }
 
 /**
- * 这个文件夹能不能给地点 `placeId` 用（§2.4）：
- * - `'claim'`：不存在，或存在但还没有 place.json——可以用，并要写入 place.json；
+ * 这个文件夹能不能给地点 `placeId` 用（§2.4；第 2D 批）：
+ * - `'claim'`：不存在——新建，并写入 place.json；
  * - `'mine'`：place.json 已经指向这个地点——直接用，不写；
+ * - `'skip'`：存在但没有 place.json（用户手放的文件夹）——上传不认领它，看下一个候选。它属于哪个地点，
+ *   由导入时的「按名字绑定需要确认」决定（第 2A 批），上传不替用户做这个决定；
  * - `'taken'`：place.json 指向别的地点，或内容不是 `{ placeId }`——不能用。
  */
-export const inboxFolderDecision = (placeId: PlaceId, state: InboxFolderState): 'claim' | 'mine' | 'taken' => {
-  if (!state.exists || state.placeConfig === undefined) return 'claim'
+export type InboxFolderDecision = 'claim' | 'mine' | 'skip' | 'taken'
+
+export const inboxFolderDecision = (placeId: PlaceId, state: InboxFolderState): InboxFolderDecision => {
+  if (!state.exists) return 'claim'
+  if (state.placeConfig === undefined) return 'skip'
   return placeIdOfConfig(state.placeConfig) === placeId ? 'mine' : 'taken'
 }
 
@@ -150,12 +155,19 @@ export const inboxFolderDecision = (placeId: PlaceId, state: InboxFolderState): 
  */
 export const placeFolderSuffix = (placeId: PlaceId): string => placeId.replaceAll('-', '').slice(-8)
 
+/** 收件箱文件夹名候选的个数：显示名、`<显示名> (<后缀>)`，以及 `<显示名> (<后缀>) 2` 到 `<显示名> (<后缀>) 9`。 */
+export const INBOX_FOLDER_CANDIDATE_COUNT = 10
+
 /**
- * 收件箱文件夹名的候选（未经 safeSegment）：先用显示名；它已被别的地点占用时（Windows 上包括只差大小写的同名文件夹）
- * 用 `<显示名> (<后缀>)`。
+ * 收件箱文件夹名的候选（未经 safeSegment），按先后顺序：先用显示名；它不能用时（被别的地点占用，Windows 上包括只差大小写的
+ * 同名文件夹；或是手放的文件夹）用 `<显示名> (<后缀>)`；这个也不能用时（第 2D 批），依次用 `<显示名> (<后缀>) 2`、`… 3`
+ * 直到 `… 9`。名字只由显示名与地点 id 决定，所以同一个地点每次得到同一串候选。
  */
-export const inboxFolderCandidates = (displayName: string, placeId: PlaceId): string[] =>
-  [displayName, `${displayName} (${placeFolderSuffix(placeId)})`]
+export const inboxFolderCandidates = (displayName: string, placeId: PlaceId): string[] => {
+  const suffixed = `${displayName} (${placeFolderSuffix(placeId)})`
+  const numbered = Array.from({ length: INBOX_FOLDER_CANDIDATE_COUNT - 2 }, (_, index) => `${suffixed} ${index + 2}`)
+  return [displayName, suffixed, ...numbered]
+}
 
 export interface InboxFolderCandidate {
   /** 文件夹名（已经过 safeSegment）。 */
@@ -166,14 +178,19 @@ export interface InboxFolderCandidate {
 }
 
 /**
- * 按顺序选第一个能给 `placeId` 用的候选文件夹；`claim` 为 true 时调用方要写入 place.json。
- * 候选都被别的地点占用 → `E_MEDIA_FOLDER_CONFLICT`，一个文件都不写。
+ * 为 `placeId` 选候选文件夹（第 2D 批）。上传只用两种文件夹：place.json 已经指向这个地点的，以及这次新建的。
+ * 1. 有 `'mine'` 的候选 → 用其中最靠前的一个，不写 place.json。即使它前面有不存在的候选也一样，
+ *    这样同一个地点的照片一直进同一个文件夹，不会因为别的文件夹被删掉或改名而另开一个；
+ * 2. 否则用最靠前的 `'claim'`（不存在的）候选，`claim` 为 true，调用方新建它并写入 place.json；
+ * 3. `'skip'`（手放的）与 `'taken'`（别的地点的）永远不用，也不写。
+ * 候选全都不能用 → `E_MEDIA_FOLDER_CONFLICT`，一个文件都不写。
  */
 export const pickInboxFolder = (placeId: PlaceId, candidates: readonly InboxFolderCandidate[]): { name: string; claim: boolean } => {
-  for (const candidate of candidates) {
-    const decision = inboxFolderDecision(placeId, candidate.state)
-    if (decision !== 'taken') return { name: candidate.name, claim: decision === 'claim' }
-  }
+  const decided = candidates.map((candidate) => ({ name: candidate.name, decision: inboxFolderDecision(placeId, candidate.state) }))
+  const mine = decided.find((entry) => entry.decision === 'mine')
+  if (mine) return { name: mine.name, claim: false }
+  const fresh = decided.find((entry) => entry.decision === 'claim')
+  if (fresh) return { name: fresh.name, claim: true }
   throw new V2WriteError('E_MEDIA_FOLDER_CONFLICT', { folders: [...new Set(candidates.map((candidate) => candidate.label))], expected: placeId })
 }
 

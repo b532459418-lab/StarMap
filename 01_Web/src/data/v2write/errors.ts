@@ -141,10 +141,13 @@ export const V2_WRITE_MESSAGES = {
   E_INTEGRITY: () => 'V2 数据没有通过完整性检查（例如引用了不存在的地点），未写入任何文件。',
   E_WRITE_FAILED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '写入 V2 数据文件失败。'),
   E_PARTIAL_WRITE: (params: V2ErrorParams) => (typeof params.message === 'string' ? params.message : '部分 V2 数据文件已写入，其余没有写入。'),
-  /** 新（PR3b-3）：上传时候选的收件箱文件夹（显示名，以及带地点 id 后缀的名字）都已有 place.json，却都指向别的地点。 */
+  /**
+   * 新（PR3b-3；第 2D 批改文案）：上传时候选的收件箱文件夹（显示名、带地点 id 后缀的名字、再加数字的名字）都已存在，
+   * 而且都不能用：没有 place.json 的手放文件夹（上传不认领），或 place.json 指向别的地点、内容无效。
+   */
   E_MEDIA_FOLDER_CONFLICT: (params: V2ErrorParams) => {
     const folders = Array.isArray(params.folders) ? params.folders.map(String).join('、') : ''
-    return `投递箱文件夹 ${folders} 的 place.json 都指向别的地点（或内容无效），未写入文件。请先确认这些文件夹属于哪个地点。`
+    return `投递箱文件夹 ${folders} 都不能使用：它们是没有 place.json 的手放文件夹，或 place.json 指向别的地点（或内容无效）。未写入文件。请先确认这些文件夹属于哪个地点。`
   },
   E_LIBRARY_BUSY: () => '这个私人库正在处理另一项操作，或保留了中断操作的锁。请先核对当前操作，不要重复写入。',
   /** 新（第 1 批 D3）：库操作记录绑定的是私人根的旧路径（私人根被移动、改名或换了盘符）。 */

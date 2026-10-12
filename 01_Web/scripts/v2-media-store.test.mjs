@@ -266,7 +266,7 @@ test('V2 媒体端点：上传（写 place.json）→ 导入（恢复与追加�
   })
 })
 
-test('V2 上传的拒绝：类型、地点、扩展名、无人机日期、真实上传校验、place.json 冲突——都不写文件', async () => {
+test('V2 上传的拒绝：类型、地点、扩展名、无人机日期、真实上传校验、候选文件夹全都不能用——都不写文件；两个候选被占用时新建带数字的文件夹', async () => {
   await withV2Root(async (env) => {
     const { paths } = env
     const red = await jpeg({ r: 200, g: 30, b: 30 })
@@ -297,17 +297,29 @@ test('V2 上传的拒绝：类型、地点、扩展名、无人机日期、真�
     const vik = await upload(env, { countryId: ID.iceland, cityId: ID.vik, fileName: 'beach.jpg' }, red)
     assert.equal(vik.body.sourcePath, 'Iceland/维克/photos/beach.jpg')
 
-    // 显示名的文件夹与带后缀的文件夹都已有 place.json 且指向别的地点：冲突，不写文件。
+    // 显示名的文件夹与带后缀的文件夹都已有 place.json 且指向别的地点；带数字的 2 到 9 都是手放的（没有 place.json）。
+    // 候选全都不能用：冲突，不写文件（第 2D 批之前，手放的文件夹会被认领）。
     const suffixed = `维克 (${placeFolderSuffix(ID.vik)})`
     await writeFile(path.join(paths.inboxRoot, 'Iceland', '维克', 'place.json'), `${JSON.stringify({ placeId: ID.reykjavik })}\n`, 'utf8')
     await mkdir(path.join(paths.inboxRoot, 'Iceland', suffixed), { recursive: true })
     await writeFile(path.join(paths.inboxRoot, 'Iceland', suffixed, 'place.json'), `${JSON.stringify({ placeId: ID.torshavn })}\n`, 'utf8')
+    const numbered = Array.from({ length: 8 }, (_, index) => `${suffixed} ${index + 2}`)
+    for (const folder of numbered) await mkdir(path.join(paths.inboxRoot, 'Iceland', folder, 'photos'), { recursive: true })
     const before = await listTree(paths.inboxRoot)
     const conflict = await upload(env, { countryId: ID.iceland, cityId: ID.vik, fileName: 'other.jpg' }, red)
     assert.equal(conflict.status, 400)
     assert.equal(conflict.body.code, 'E_MEDIA_FOLDER_CONFLICT')
-    assert.equal(conflict.body.error, `投递箱文件夹 Iceland/维克、Iceland/${suffixed} 的 place.json 都指向别的地点（或内容无效），未写入文件。请先确认这些文件夹属于哪个地点。`)
+    const folders = ['维克', suffixed, ...numbered].map((folder) => `Iceland/${folder}`).join('、')
+    assert.equal(conflict.body.error, `投递箱文件夹 ${folders} 都不能使用：它们是没有 place.json 的手放文件夹，或 place.json 指向别的地点（或内容无效）。未写入文件。请先确认这些文件夹属于哪个地点。`)
     assert.deepEqual(await listTree(paths.inboxRoot), before)
+    for (const folder of numbered) assert.equal(existsSync(path.join(paths.inboxRoot, 'Iceland', folder, 'place.json')), false, folder)
+
+    // 只有显示名与带后缀的两个被占用（旧规则在这里报冲突）：新建 `维克 (<后缀>) 2` 并写入 place.json，上传成功。
+    for (const folder of numbered) await rm(path.join(paths.inboxRoot, 'Iceland', folder), { recursive: true })
+    const second = await upload(env, { countryId: ID.iceland, cityId: ID.vik, fileName: 'other.jpg' }, red)
+    assert.equal(second.status, 201, JSON.stringify(second.body))
+    assert.equal(second.body.sourcePath, `Iceland/${suffixed} 2/photos/other.jpg`)
+    assert.deepEqual(await readJson(path.join(paths.inboxRoot, 'Iceland', `${suffixed} 2`, 'place.json')), { placeId: ID.vik })
   })
 })
 
