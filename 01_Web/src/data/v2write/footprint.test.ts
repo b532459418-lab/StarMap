@@ -16,8 +16,11 @@ import { deriveAppDataFromCanonical } from '../canonical/derive.ts'
 import { readV2 } from '../canonical/v2Reader.ts'
 import type { V2Files, V2TravelRecord } from '../canonical/v2Schema.ts'
 import { addCountry, addTravelRecord, deleteHiddenCountries } from './footprint.ts'
+import { addWantToGo } from './wantToGo.ts'
 import {
   GHOST_ID,
+  SUZHOU_AH,
+  SUZHOU_JS,
   WRITE_NOW,
   applyWrites,
   assertIntact,
@@ -82,31 +85,38 @@ test('新增足迹：新城市——先写地点、再写足迹；记录只引�
   assert.equal(next.places.places.length, files.places.places.length + 1)
 })
 
-test('新增足迹：行程标题与已去过的记录完全相同 → 沿用那条的 journeyId；坐标与城市不同时写进记录', () => {
+test('新增足迹：行程标题与已去过的记录完全相同 → 沿用那条的 journeyId；按地点 id 引用时记录坐标就是地点坐标', () => {
   const files = migratedFiles()
   const outcome = addTravelRecord(files, hofnInput({ trip_title: ' 2025 North Atlantic Demo ' }), testContext())
   const record = lastRecord(applyWrites(files, outcome.writes))
   assert.equal(record.journeyId, '2025-north-atlantic-demo')
   assert.equal(record.trip_title, '2025 North Atlantic Demo')
 
-  // 解析到已有城市（只被想去引用的努克），坐标与城市不同：记录保留自己的坐标，城市坐标不改。
+  // 改写（第 2A 批）：旧用例按名字解析到努克、记录保留与城市不同的输入坐标（「身份是努克，坐标是别处」）。
+  // 新规则：按名字不再复用；用户选定努克（地点 id）时，记录坐标就是地点坐标，输入的坐标不覆盖，城市坐标不改。
   const nuukFiles = migratedFiles()
   const nuuk = placeNamed(nuukFiles, 'Nuuk')
-  const moved = addTravelRecord(nuukFiles, { ...hofnInput(), country: '格陵兰', country_en: 'Greenland', country_code: 'GL', city: '努克', city_en: 'Nuuk', lat: 64.2, lng: -51.7 }, testContext())
+  const moved = addTravelRecord(nuukFiles, { placeId: nuuk.id, start_date: '2026-07-01', lat: 64.2, lng: -51.7 }, testContext())
   const after = applyWrites(nuukFiles, moved.writes)
+  assertIntact(after)
   assert.deepEqual(placeNamed(after, 'Nuuk').location, nuuk.location)
-  assert.equal(lastRecord(after).lat, 64.2)
-  assert.equal(lastRecord(after).lng, -51.7)
+  assert.equal(lastRecord(after).placeId, nuuk.id)
+  assert.equal(Object.hasOwn(lastRecord(after), 'lat'), false)
+  assert.equal(Object.hasOwn(lastRecord(after), 'lng'), false)
 })
 
-test('新增足迹复用「只被想去引用的城市」：不新建地点；国家首次进入足迹 → 重排 countryOrder（足迹 → editor-state）', () => {
+test('新增足迹按地点 id 引用「只被想去引用的城市」：不新建地点；国家首次进入足迹 → 重排 countryOrder（足迹 → editor-state）', () => {
+  // 改写（第 2A 批）：旧用例按名字（city_en: 'nuuk'）静默复用努克；现在按名字只得到「请选择」，用户选定后按地点 id 引用。
   const files = migratedFiles()
   const nuuk = placeNamed(files, 'Nuuk')
   const greenland = placeNamed(files, 'Greenland').id
-  const outcome = addTravelRecord(files, {
+  assertV2Error(() => addTravelRecord(files, {
     ...hofnInput(), country: '格陵兰', country_en: 'Greenland', country_code: 'GL', city: '努克', city_en: 'nuuk',
     start_date: '2026-08-01', end_date: undefined, lat: nuuk.location!.lat, lng: nuuk.location!.lng,
-  }, testContext())
+  }, testContext()), 'E_PLACE_CHOICE_REQUIRED', undefined, (error) => {
+    assert.deepEqual((error.params?.candidates as { placeId: string; strong: boolean }[]).map(({ placeId, strong }) => ({ placeId, strong })), [{ placeId: nuuk.id, strong: true }])
+  })
+  const outcome = addTravelRecord(files, { placeId: ` ${nuuk.id} `, start_date: '2026-08-01' }, testContext())
   assert.deepEqual(writeOrder(outcome.writes), ['travel', 'editorState'])
   assert.equal(outcome.writes[1].onFailure, '足迹已创建，但国家列表的排序没有更新（{reason}）。')
   const next = applyWrites(files, outcome.writes)
@@ -122,22 +132,33 @@ test('新增足迹复用「只被想去引用的城市」：不新建地点；�
   assert.deepEqual(outcome.result, { id: record.id, countryId: greenland, cityId: nuuk.id })
 })
 
-test('新增足迹：复用的城市没有坐标时，把输入的坐标补到地点上（先写地点）', () => {
+test('新增足迹按地点 id 引用：城市没有坐标时，把输入的坐标补到地点上（先写地点）；两者都没有 → E_REQUIRED', () => {
+  // 改写（第 2A 批）：旧用例按名字复用没有坐标的努克；现在是用户按地点 id 选定它。
   const files = migratedFiles()
   const nuuk = placeNamed(files, 'Nuuk')
   delete nuuk.location
-  const outcome = addTravelRecord(files, { ...hofnInput(), country_code: 'GL', city: '努克', city_en: 'Nuuk', lat: 64.18, lng: -51.69 }, testContext())
+  const outcome = addTravelRecord(files, { placeId: nuuk.id, start_date: '2026-07-01', lat: 64.18, lng: -51.69 }, testContext())
   assert.deepEqual(writeOrder(outcome.writes), ['places', 'travel', 'editorState'])
   const next = applyWrites(files, outcome.writes)
+  assertIntact(next)
   assert.deepEqual(placeNamed(next, 'Nuuk').location, { lat: 64.18, lng: -51.69 })
   assert.equal(Object.hasOwn(lastRecord(next), 'lat'), false, '坐标已与城市相同')
+  assertV2Error(() => addTravelRecord(files, { placeId: nuuk.id, start_date: '2026-07-01' }, testContext()), 'E_REQUIRED', '请填写纬度。')
 })
 
-test('新增足迹：任何记录（含 planned）已引用该城市 → E_CITY_EXISTS（沿用旧文案），不写', () => {
+test('新增足迹：按地点 id 引用、而任何记录（含 planned）已引用该城市 → E_CITY_EXISTS（沿用旧文案），不写', () => {
+  // 改写（第 2A 批）：旧用例按名字（REYKJAVIK、Bergen）解析到已有城市；按名字现在只会要求选择，E_CITY_EXISTS 只在明确的 placeId 上出现。
   const files = migratedFiles()
+  const before = structuredClone(files)
   const message = '这个城市已经存在；如需增加一次新的行程，请使用行程编辑，而不是重复添加城市。'
-  assertV2Error(() => addTravelRecord(files, hofnInput({ city: '雷克雅未克', city_en: 'REYKJAVIK' }), testContext()), 'E_CITY_EXISTS', message)
-  assertV2Error(() => addTravelRecord(files, hofnInput({ country_code: 'no', city: '卑尔根', city_en: 'Bergen' }), testContext()), 'E_CITY_EXISTS', message)
+  for (const name of ['Reykjavik', 'Bergen']) {
+    const cityId = placeNamed(files, name).id
+    assertV2Error(() => addTravelRecord(files, { placeId: cityId, start_date: '2026-07-01' }, testContext()), 'E_CITY_EXISTS', message, (error) => {
+      assert.deepEqual(error.params, { cityId })
+    })
+  }
+  assertV2Error(() => addTravelRecord(files, hofnInput({ city: '雷克雅未克', city_en: 'REYKJAVIK' }), testContext()), 'E_PLACE_CHOICE_REQUIRED')
+  assert.deepEqual(files, before)
 })
 
 test('新增足迹：输入校验与旧模式相同的文案；V2 下国家代码必填', () => {
@@ -165,18 +186,143 @@ test('新增足迹：输入校验与旧模式相同的文案；V2 下国家代�
   assertV2Error(() => addTravelRecord(files, null, testContext()), 'E_REQUIRED', '请填写国家中文名。')
 })
 
-test('新增足迹：候选地点不唯一 → E_PLACE_AMBIGUOUS（不猜），不写', () => {
+test('新增足迹：多个同名候选 → E_PLACE_CHOICE_REQUIRED 列出全部候选（不猜），不写；国家不唯一仍是 E_PLACE_AMBIGUOUS', () => {
+  // 改写（第 2A 批）：旧用例两个同名城市报 E_PLACE_AMBIGUOUS（文案还引导「先合并」）；现在列出候选请用户选择。
   const files = migratedFiles()
   const iceland = placeNamed(files, 'Iceland').id
   files.places.places.push({ id: '019b76da-a8f0-7000-8000-0000000000f0', subtype: 'city', names: { 'zh-Hans': '赫本港', en: 'hofn' }, partOf: iceland })
   files.places.places.push({ id: '019b76da-a8f1-7000-8000-0000000000f1', subtype: 'city', names: { en: 'Hofn!' }, partOf: iceland })
-  assertV2Error(() => addTravelRecord(files, hofnInput(), testContext()), 'E_PLACE_AMBIGUOUS', undefined, (error) => {
+  const before = structuredClone(files)
+  assertV2Error(() => addTravelRecord(files, hofnInput(), testContext()), 'E_PLACE_CHOICE_REQUIRED', '找到可能是同一个地方的已有地点，请选择要使用的地点，或新建一个独立地点。本次尚未保存。', (error) => {
     assert.equal(error.params?.subtype, 'city')
-    assert.deepEqual(error.params?.candidates, ['019b76da-a8f0-7000-8000-0000000000f0', '019b76da-a8f1-7000-8000-0000000000f1'])
+    assert.equal(error.params?.countryId, iceland)
+    assert.deepEqual(error.params?.candidates, [
+      { placeId: '019b76da-a8f0-7000-8000-0000000000f0', names: { 'zh-Hans': '赫本港', en: 'hofn' }, strong: false },
+      { placeId: '019b76da-a8f1-7000-8000-0000000000f1', names: { en: 'Hofn!' }, strong: false },
+    ])
   })
+  assert.deepEqual(files, before, '不写')
   const twoIcelands = migratedFiles()
   twoIcelands.places.places.push({ id: '019b76da-a8f2-7000-8000-0000000000f2', subtype: 'country', names: { en: 'Iceland 2' }, externalIds: { iso3166Alpha2: 'IS' } })
-  assertV2Error(() => addTravelRecord(twoIcelands, hofnInput(), testContext()), 'E_PLACE_AMBIGUOUS', undefined, (error) => assert.equal(error.params?.subtype, 'country'))
+  assertV2Error(() => addTravelRecord(twoIcelands, hofnInput(), testContext()), 'E_PLACE_AMBIGUOUS', '找到多个可能的地点，请选择要使用的地点，或新建一个独立地点。本次尚未保存。', (error) => assert.equal(error.params?.subtype, 'country'))
+})
+
+// ---------------------------------------------------------------------------
+// 同名不同城（第 2A 批）：苏州 / 宿州，英文名都是 Suzhou
+// ---------------------------------------------------------------------------
+
+const suzhouInput = (cityZh: string, at: { lat: number; lng: number }, overrides: Record<string, unknown> = {}) => ({
+  country: '中国', country_en: 'China', country_code: 'CN', city: cityZh, city_en: 'Suzhou', start_date: '2026-05-01', ...at, ...overrides,
+})
+
+type CandidateParam = { placeId: string; names: Record<string, string>; location?: { lat: number; lng: number }; distanceKm?: number; strong: boolean }
+const candidatesOf = (error: { params?: Record<string, unknown> }) => error.params?.candidates as CandidateParam[]
+
+test('同名不同城：已有苏州足迹，按名字提交宿州足迹 → E_PLACE_CHOICE_REQUIRED 与候选（不写）；createNew → 新建独立地点；苏州的 placeId → E_CITY_EXISTS', () => {
+  const ctx = testContext()
+  const base = migratedFiles()
+  const files = applyWrites(base, addTravelRecord(base, suzhouInput('苏州', SUZHOU_JS), ctx).writes)
+  const suzhou = placeNamed(files, 'Suzhou')
+  const china = placeNamed(files, 'China')
+  const before = structuredClone(files)
+
+  assertV2Error(() => addTravelRecord(files, suzhouInput('宿州', SUZHOU_AH, { start_date: '2026-05-03' }), ctx), 'E_PLACE_CHOICE_REQUIRED', undefined, (error) => {
+    assert.deepEqual(error.params?.subtype, 'city')
+    assert.deepEqual(error.params?.countryId, china.id)
+    const [candidate, ...rest] = candidatesOf(error)
+    assert.equal(rest.length, 0)
+    assert.equal(candidate.placeId, suzhou.id)
+    assert.deepEqual(candidate.names, { 'zh-Hans': '苏州', en: 'Suzhou' })
+    assert.deepEqual(candidate.location, SUZHOU_JS)
+    assert.equal(candidate.strong, false, '中文名不同、相距约 400 km')
+    assert.ok(candidate.distanceKm !== undefined && candidate.distanceKm > 350 && candidate.distanceKm < 500, String(candidate.distanceKm))
+  })
+  assert.deepEqual(files, before, '不写')
+
+  const created = addTravelRecord(files, suzhouInput('宿州', SUZHOU_AH, { start_date: '2026-05-03', createNew: true }), ctx)
+  assert.deepEqual(writeOrder(created.writes), ['places', 'travel'])
+  const next = applyWrites(files, created.writes)
+  assertIntact(next)
+  const suzhous = next.places.places.filter((place) => place.names.en === 'Suzhou')
+  assert.equal(suzhous.length, 2, '两个城市各自是一个地点')
+  const suxian = suzhous.find((place) => place.names['zh-Hans'] === '宿州')!
+  assert.deepEqual(suxian, { id: suxian.id, subtype: 'city', names: { 'zh-Hans': '宿州', en: 'Suzhou' }, partOf: china.id, location: SUZHOU_AH })
+  assert.equal(lastRecord(next).placeId, suxian.id)
+  assert.equal(Object.hasOwn(lastRecord(next), 'lat'), false)
+  assert.deepEqual(placeNamed(next, 'Suzhou'), suzhou, '苏州不变')
+
+  assertV2Error(() => addTravelRecord(files, { placeId: suzhou.id, start_date: '2026-05-03' }, ctx), 'E_CITY_EXISTS')
+  // 再按名字提交苏州（同名同坐标）：强候选，界面默认选中。
+  assertV2Error(() => addTravelRecord(files, suzhouInput('苏州', SUZHOU_JS), ctx), 'E_PLACE_CHOICE_REQUIRED', undefined, (error) => {
+    assert.deepEqual(candidatesOf(error).map(({ placeId, strong, distanceKm }) => ({ placeId, strong, distanceKm })), [{ placeId: suzhou.id, strong: true, distanceKm: 0 }])
+  })
+})
+
+test('同名不同城 · 反向场景：苏州只被想去引用，按名字提交宿州足迹 → E_PLACE_CHOICE_REQUIRED，不挂到苏州；用户选苏州的 placeId 才引用苏州（坐标取地点）', () => {
+  const ctx = testContext()
+  const base = migratedFiles()
+  const files = applyWrites(base, addWantToGo(base, { place: { kind: 'city', nameZh: '苏州', nameEn: 'Suzhou', countryCode: 'CN', ...SUZHOU_JS } }, ctx).writes)
+  const suzhou = placeNamed(files, 'Suzhou')
+  const before = structuredClone(files)
+  assertV2Error(() => addTravelRecord(files, suzhouInput('宿州', SUZHOU_AH), ctx), 'E_PLACE_CHOICE_REQUIRED', undefined, (error) => {
+    assert.deepEqual(candidatesOf(error).map((candidate) => candidate.placeId), [suzhou.id])
+  })
+  assert.deepEqual(files, before, '没有挂到苏州上，也没有写任何文件')
+
+  const chosen = addTravelRecord(files, { placeId: suzhou.id, start_date: '2026-05-01', lat: SUZHOU_AH.lat, lng: SUZHOU_AH.lng }, ctx)
+  assert.deepEqual(writeOrder(chosen.writes), ['travel', 'editorState'])
+  const next = applyWrites(files, chosen.writes)
+  assertIntact(next)
+  assert.equal(lastRecord(next).placeId, suzhou.id)
+  assert.equal(Object.hasOwn(lastRecord(next), 'lat'), false, '记录坐标就是苏州的坐标，不会出现「身份是苏州，坐标是宿州」')
+  assert.deepEqual(placeNamed(next, 'Suzhou').location, SUZHOU_JS)
+  assert.equal(lastRecord(next).trip_title, '中国 · 苏州')
+})
+
+test('同名不同城 · 顺序无关：先苏州后宿州，与先宿州后苏州，第二个都要选择，明确新建后的地点与引用关系相同', () => {
+  const run = (first: Record<string, unknown>, second: Record<string, unknown>) => {
+    const ctx = testContext()
+    const base = migratedFiles()
+    let files = applyWrites(base, addTravelRecord(base, first, ctx).writes)
+    assertV2Error(() => addTravelRecord(files, second, ctx), 'E_PLACE_CHOICE_REQUIRED')
+    files = applyWrites(files, addTravelRecord(files, { ...second, createNew: true }, ctx).writes)
+    assertIntact(files)
+    const china = placeNamed(files, 'China', 'country')
+    return files.places.places
+      .filter((place) => place.partOf === china.id)
+      .map((place) => ({ names: place.names, location: place.location, visits: files.travel.records.filter((record) => record.placeId === place.id).map((record) => record.start_date) }))
+      .sort((left, right) => left.names['zh-Hans'].localeCompare(right.names['zh-Hans'], 'en'))
+  }
+  const js = suzhouInput('苏州', SUZHOU_JS, { start_date: '2026-05-01' })
+  const ah = suzhouInput('宿州', SUZHOU_AH, { start_date: '2026-05-03' })
+  const forward = run(js, ah)
+  assert.equal(forward.length, 2)
+  assert.deepEqual(forward, run(ah, js))
+})
+
+test('新增足迹 · 三种输入只能选一种：placeId 与名称字段或 createNew 混用、引用的不是城市、createNew 不是布尔值 → E_UNKNOWN_PLACE_REF；坐标须成对', () => {
+  const files = migratedFiles()
+  const before = structuredClone(files)
+  const reykjavik = placeNamed(files, 'Reykjavik').id
+  const nuuk = placeNamed(files, 'Nuuk').id
+  const dates = { start_date: '2026-07-01' }
+  for (const input of [
+    { placeId: GHOST_ID, ...dates },
+    { placeId: placeNamed(files, 'Iceland').id, ...dates },
+    { placeId: '', ...dates },
+    { placeId: 3, ...dates },
+    { placeId: nuuk, city: '努克', ...dates },
+    { placeId: nuuk, country_code: 'GL', ...dates },
+    { placeId: nuuk, createNew: true, ...dates },
+    { placeId: nuuk, createNew: false, ...dates },
+    hofnInput({ createNew: 'yes' }),
+  ]) assertV2Error(() => addTravelRecord(files, input, testContext()), 'E_UNKNOWN_PLACE_REF', undefined, () => {})
+  assertV2Error(() => addTravelRecord(files, { placeId: nuuk, ...dates, lat: 64 }, testContext()), 'E_COORDINATES_PAIR')
+  assertV2Error(() => addTravelRecord(files, { placeId: nuuk, ...dates, lat: 64, lng: 181 }, testContext()), 'E_NUMBER_INVALID', '经度无效。')
+  assertV2Error(() => addTravelRecord(files, { placeId: reykjavik }, testContext()), 'E_REQUIRED', '请填写到访日期。')
+  // createNew: false 与省略相同：按名字，没有候选就新建。
+  assert.equal(applyWrites(files, addTravelRecord(files, hofnInput({ createNew: false }), testContext()).writes).places.places.length, files.places.places.length + 1)
+  assert.deepEqual(files, before)
 })
 
 test('新增足迹 · 全新 V2 目录：按目录新建国家，新建城市，重排；三个文件都写，合法；没有任何样例数据', () => {

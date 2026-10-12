@@ -19,11 +19,12 @@ import {
   COUNTRY_CODE_PATTERN,
   DATE_PATTERN,
   bodyOf,
-  ensureCityPlace,
+  createNewOf,
   ensureCountryPlace,
   fillMissingLocation,
   isObject,
   localDate,
+  newOrChosenCityPlace,
   numberInRange,
   requireText,
 } from './common.ts'
@@ -48,6 +49,8 @@ interface PlaceInput {
   kind: 'city' | 'country'
   nameZh: string
   nameEn: string
+  /** 用户实际给出的中文名（找候选只比实际给出的名字；`nameZh` 缺时用英文名补齐，只用于新建）。 */
+  givenZh?: string
   countryCode: string
   location?: { lat: number; lng: number }
 }
@@ -57,7 +60,8 @@ const normalizePlace = (value: unknown): PlaceInput => {
   const place = isObject(value) ? value : {}
   if (place.kind !== 'city' && place.kind !== 'country') fail('E_WTG_KIND_INVALID')
   const nameEn = requireText(place.nameEn, 'nameEn')
-  const nameZh = typeof place.nameZh === 'string' && place.nameZh.trim() ? place.nameZh.trim() : nameEn
+  const givenZh = typeof place.nameZh === 'string' && place.nameZh.trim() ? place.nameZh.trim() : undefined
+  const nameZh = givenZh ?? nameEn
   const countryCode = requireText(place.countryCode, 'countryCode').toUpperCase()
   if (!COUNTRY_CODE_PATTERN.test(countryCode)) fail('E_COUNTRY_CODE_INVALID')
   const hasLat = place.lat !== undefined && place.lat !== null && place.lat !== ''
@@ -67,6 +71,7 @@ const normalizePlace = (value: unknown): PlaceInput => {
     kind: place.kind as 'city' | 'country',
     nameZh,
     nameEn,
+    ...(givenZh !== undefined ? { givenZh } : {}),
     countryCode,
     ...(hasLat ? { location: { lat: numberInRange(place.lat, -90, 90, 'lat'), lng: numberInRange(place.lng, -180, 180, 'lng') } } : {}),
   }
@@ -77,11 +82,12 @@ const normalizePlace = (value: unknown): PlaceInput => {
 // ---------------------------------------------------------------------------
 
 /**
- * 新增想去：`{ place: { kind, nameZh?, nameEn, countryCode, lat?, lng? }, note?, addedAt? }`
- * 或 `{ placeId, note?, addedAt? }`。已有地点按 id 精确引用；两种输入不能混用。
- * - 国家按 `countryCode` 解析，没有就按目录新建；`kind: 'country'` 的条目就指向这个国家地点。
- * - `kind: 'city'`：城市按名称在该国家下解析——找到就复用（包括已在足迹里的城市，显示上自然合并），
- *   找不到就新建（坐标可空）。复用的地点没有坐标而输入带了时补上。地点名称以注册表为准。
+ * 新增想去：`{ place: { kind, nameZh?, nameEn, countryCode, lat?, lng? }, createNew?, note?, addedAt? }`
+ * 或 `{ placeId, note?, addedAt? }`。已有地点按 id 精确引用；两种输入不能混用，`placeId` 也不能带 `createNew`。
+ * - 国家按 `countryCode` 解析，没有就按目录新建；`kind: 'country'` 的条目就指向这个国家地点（`createNew` 对国家不起作用）。
+ * - `kind: 'city'`（第 2A 批，RFC ID-6「匹配提示 ≠ 身份」）：带 `createNew: true` 一定新建独立的城市地点；否则在该国家下
+ *   按名字找候选——没有候选就新建（坐标可空），有任何候选（包括已在足迹里的城市）→ `E_PLACE_CHOICE_REQUIRED`
+ *   （`params.candidates`），不写。用户选定后用 `{ placeId }` 引用。从不按名字静默复用。
  * - 已有想去条目（含隐藏的）引用同一地点 → `E_WTG_EXISTS`（「这个地方已在想去列表中。」）。
  * - 条目：UUIDv7 `id`、`placeId`、`note?`、`addedAt`（默认本地日期）、`hidden: false`、`source: 'local-editor'`。
  * 写盘：地点注册表（有改动时）→ 想去。
@@ -89,10 +95,11 @@ const normalizePlace = (value: unknown): PlaceInput => {
 export function addWantToGo(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<{ id: string; item: WantToGoItem }> {
   const body = bodyOf(input)
   const referencesPlace = Object.hasOwn(body, 'placeId')
-  if (referencesPlace && (typeof body.placeId !== 'string' || !body.placeId.trim() || Object.hasOwn(body, 'place'))) {
+  if (referencesPlace && (typeof body.placeId !== 'string' || !body.placeId.trim() || Object.hasOwn(body, 'place') || Object.hasOwn(body, 'createNew'))) {
     fail('E_UNKNOWN_PLACE_REF')
   }
   const place = referencesPlace ? undefined : normalizePlace(body.place)
+  const createNew = referencesPlace ? false : createNewOf(body)
   const note = normalizeNote(body.note)
   const addedAt = body.addedAt === undefined || body.addedAt === null || body.addedAt === ''
     ? localDate(ctx.now)
@@ -108,7 +115,12 @@ export function addWantToGo(files: V2FilesOrEmpty | undefined, input: unknown, c
       target = country.place
       placesChanged = country.changed
       if (place.kind === 'city') {
-        const city = ensureCityPlace(draft, country.place.id, { zh: place.nameZh, en: place.nameEn }, place.location)
+        const city = newOrChosenCityPlace(draft, country.place.id, {
+          names: { zh: place.nameZh, en: place.nameEn },
+          matchNames: { zh: place.givenZh, en: place.nameEn },
+          location: place.location,
+          createNew,
+        })
         target = city.place
         placesChanged ||= city.changed
       } else {

@@ -2,8 +2,9 @@
  * 足迹与国家的 V2 写入（RFC-LOC-1 PR3b-2 规格 §2.3）：新增足迹（`POST /records`）、新增国家
  * （`POST /countries`）、彻底删除已隐藏的国家（`POST /countries/delete`）。
  *
- * `src/data/v2write/` 是 App 层，【不是】 StarMap Core。全部按地点 id 读写 `data/v2/`；新增时用与迁移共用的解析
- * 函数先找后建（./common.ts）；不回落、不复制样例。写盘顺序见 ./transaction.ts。
+ * `src/data/v2write/` 是 App 层，【不是】 StarMap Core。全部按地点 id 读写 `data/v2/`；新增时国家按 ISO 先找后建，
+ * 城市引用用户选定的地点 id，或按名字找候选、有候选就请用户选择（./common.ts，第 2A 批）；不回落、不复制样例。
+ * 写盘顺序见 ./transaction.ts。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
@@ -15,17 +16,20 @@ import {
   COUNTRY_CODE_PATTERN,
   DATE_PATTERN,
   bodyOf,
-  ensureCityPlace,
+  createNewOf,
   ensureCountryPlace,
   isCountryInFootprint,
   journeyIdFor,
+  newOrChosenCityPlace,
   optionalText,
+  referencedCityPlace,
   reorderCountries,
   requireText,
   requiredNumberInRange,
   sameAsLocation,
   visitDates,
   zhNameOf,
+  type EnsuredPlace,
 } from './common.ts'
 import { removeUnreferencedPlaces, runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 
@@ -44,21 +48,31 @@ export interface AddTravelRecordResult {
   cityId: PlaceId
 }
 
-/**
- * 新增一条足迹（一个新城市）。
- * - 输入与旧模式相同（`country` / `country_en` / `city` / `city_en` / `start_date` / `end_date?` / `lat` / `lng` /
- *   `country_code` / `trip_title?`），校验与文案相同；V2 下 `country_code` 必填（`E_COUNTRY_CODE_REQUIRED`）。
- * - 国家按 `country_code` 解析（没有就按目录新建）；城市按 `city` / `city_en` 在该国家下解析：找到就复用
- *   （包括只被想去引用的城市），找不到就新建。国家与城市的名称以地点为准，输入的名称只用于解析与新建。
- * - 任何记录（含 planned）已引用该城市 → `E_CITY_EXISTS`（沿用旧文案）。
- * - 新记录：UUIDv7 `id`、`placeId`、日期、`year`、`trip_title`（默认「国家中文名 · 城市中文名」）、
- *   `type: 'visit'`、`status: 'visited'`、`source: 'local-editor'`、`journeyId`（./common.ts）。坐标与城市
- *   `location` 相同就省略，否则写入。
- * - 国家首次进入足迹时按最近到访日期重排 `countryOrder`。
- * 写盘：地点注册表（有新地点或补了坐标时）→ 足迹 → editor-state（排序变了时）。
- */
-export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<AddTravelRecordResult> {
-  const body = bodyOf(input)
+/** 按地点 id 引用时不能同时出现的字段（三种输入只能选一种）。 */
+const NAMED_CITY_FIELDS = ['country', 'country_en', 'city', 'city_en', 'country_code', 'createNew'] as const
+
+/** 按地点 id 引用时的坐标：可省略，给了就要成对且在范围内。 */
+const optionalCoordinates = (body: Record<string, unknown>): { lat: number; lng: number } | undefined => {
+  const given = (value: unknown) => value !== undefined && value !== null && !(typeof value === 'string' && !value.trim())
+  if (given(body.lat) !== given(body.lng)) fail('E_COORDINATES_PAIR')
+  if (!given(body.lat)) return undefined
+  return { lat: requiredNumberInRange(body.lat, -90, 90, 'lat'), lng: requiredNumberInRange(body.lng, -180, 180, 'lng') }
+}
+
+type VisitDates = { start: string; end?: string }
+
+type RecordTarget =
+  | { kind: 'named'; names: { zh: string; en: string }; countryCode: string; coordinates: { lat: number; lng: number }; createNew: boolean; dates: VisitDates }
+  | { kind: 'placeId'; placeId: PlaceId; coordinates?: { lat: number; lng: number }; dates: VisitDates }
+
+/** 按地点 id 引用：日期必填，坐标可省略。 */
+const referencedTargetOf = (body: Record<string, unknown>): RecordTarget => {
+  const dates = visitDates(body.start_date, body.end_date, { start: 'start_date', end: 'end_date' })
+  return { kind: 'placeId', placeId: String(body.placeId).trim(), coordinates: optionalCoordinates(body), dates }
+}
+
+/** 按名称：校验顺序与文案同旧模式。 */
+const namedTargetOf = (body: Record<string, unknown>): RecordTarget => {
   requireText(body.country, 'country')
   requireText(body.country_en, 'country_en')
   const cityZh = requireText(body.city, 'city')
@@ -69,13 +83,53 @@ export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknow
   const countryCode = typeof body.country_code === 'string' ? body.country_code.trim().toUpperCase() : ''
   if (!countryCode) fail('E_COUNTRY_CODE_REQUIRED')
   if (!COUNTRY_CODE_PATTERN.test(countryCode)) fail('E_COUNTRY_CODE_INVALID')
+  return { kind: 'named', names: { zh: cityZh, en: cityEn }, countryCode, coordinates: { lat, lng }, createNew: createNewOf(body), dates }
+}
+
+/**
+ * 新增一条足迹（一个新城市）。三种输入，只能选一种（第 2A 批，RFC ID-6「匹配提示 ≠ 身份」）：
+ * - `{ placeId, start_date, end_date?, trip_title?, lat?, lng? }`：引用用户选定的已有城市（必须是城市地点）；国家取它的
+ *   `partOf`。记录坐标就是地点坐标；地点没有坐标时才用输入的坐标补到地点上（两者都没有 → `E_REQUIRED`）。
+ *   与名称字段或 `createNew` 混用 → `E_UNKNOWN_PLACE_REF`。
+ * - 按名称（`country` / `country_en` / `city` / `city_en` / `start_date` / `end_date?` / `lat` / `lng` / `country_code` /
+ *   `trip_title?`，校验与文案同旧模式；V2 下 `country_code` 必填）并带 `createNew: true`：一定新建独立的城市地点，不做匹配。
+ * - 只按名称：国家按 `country_code` 解析（没有就按目录新建）；城市在该国家下找候选——没有候选就新建；有任何候选
+ *   （包括只被想去引用的城市）→ `E_PLACE_CHOICE_REQUIRED`（`params.candidates`），不写。从不按名字静默复用。
+ * - 任何记录（含 planned）已引用该城市 → `E_CITY_EXISTS`（沿用旧文案；只有按地点 id 引用时可能发生）。
+ * - 新记录：UUIDv7 `id`、`placeId`、日期、`year`、`trip_title`（默认「国家中文名 · 城市中文名」）、
+ *   `type: 'visit'`、`status: 'visited'`、`source: 'local-editor'`、`journeyId`（./common.ts）。坐标与城市
+ *   `location` 相同就省略，否则写入。
+ * - 国家首次进入足迹时按最近到访日期重排 `countryOrder`。
+ * 写盘：地点注册表（有新地点或补了坐标时）→ 足迹 → editor-state（排序变了时）。
+ */
+export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<AddTravelRecordResult> {
+  const body = bodyOf(input)
+  const referencesPlace = Object.hasOwn(body, 'placeId')
+  if (referencesPlace && (typeof body.placeId !== 'string' || !body.placeId.trim() || NAMED_CITY_FIELDS.some((field) => Object.hasOwn(body, field)))) {
+    fail('E_UNKNOWN_PLACE_REF')
+  }
+  const target = referencesPlace ? referencedTargetOf(body) : namedTargetOf(body)
   const tripTitleInput = optionalText(body.trip_title)
 
   return runV2Transaction(files, ctx, (draft) => {
-    const country = ensureCountryPlace(draft, countryCode)
+    let country: EnsuredPlace
+    let city: EnsuredPlace
+    let coordinates: { lat: number; lng: number } | undefined
+    if (target.kind === 'named') {
+      country = ensureCountryPlace(draft, target.countryCode)
+      coordinates = target.coordinates
+      city = newOrChosenCityPlace(draft, country.place.id, { names: target.names, location: coordinates, createNew: target.createNew })
+    } else {
+      const chosen = referencedCityPlace(draft, target.placeId, target.coordinates)
+      country = { place: chosen.country, changed: false }
+      city = chosen
+      // 记录坐标就是地点坐标（地点没有时，上面已用输入的坐标补上）。
+      coordinates = chosen.place.location
+    }
+    const dates = target.dates
     const wasInFootprint = isCountryInFootprint(draft.files, country.place.id)
-    const city = ensureCityPlace(draft, country.place.id, { zh: cityZh, en: cityEn }, { lat, lng })
     if (draft.files.travel.records.some((record) => record.placeId === city.place.id)) fail('E_CITY_EXISTS', { cityId: city.place.id })
+    const { lat, lng } = coordinates ?? fail('E_REQUIRED', { field: 'lat' })
 
     const tripTitle = tripTitleInput ?? `${zhNameOf(country.place)} · ${zhNameOf(city.place)}`
     const record: V2TravelRecord = {

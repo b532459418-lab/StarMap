@@ -56,21 +56,6 @@ export const countryPlaceOf = (places: PlaceIndex, place: CanonicalPlace | undef
   return place.partOf === undefined ? undefined : places.get(place.partOf)
 }
 
-/** 旧双语匹配输入的形状。Core 的 Entity.title 已改为 LocalizedText，不再用它显示。 */
-export type PlaceTitle = { zh: string; en?: string }
-
-/**
- * 旧双语规则的兼容辅助函数，仅保留给冻结的 placeResolver 测试（这些测试不改动）。
- * 生产匹配用独立的 matchNameOf，Core 显示用 LocalizedText / resolveName；两者都不再依赖这里。
- */
-export const placeTitle = (place: Pick<CanonicalPlace, 'names'>): PlaceTitle => {
-  const nameZh = place.names[ZH] ?? ''
-  const nameEn = (place.names[EN] ?? '') || nameZh
-  const title: PlaceTitle = { zh: nameZh || nameEn || '' }
-  if (nameEn) title.en = nameEn
-  return title
-}
-
 /** 记录上的国家字段：中文名、英文名（没有则为空字符串）、国家代码（ISO 的小写；没有 ISO 就不写）。 */
 export const legacyCountryFields = (country: CanonicalPlace | undefined) => {
   const iso = isoOf(country)

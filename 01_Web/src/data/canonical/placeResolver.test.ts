@@ -2,10 +2,9 @@
  * 地点解析（canonical/placeResolver.ts）的单元测试（RFC-LOC-1 PR3b-2 规格 §2.2、§3）。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
- * PR3a 的迁移规划测试曾改为经本模块取合并键与距离（迁移工具与它的测试在 PR5b 删除）；
- * 这里另测两个解析函数。最后一个测试沿用 PR3a 的对拍数据（旧 id 空间的 Canonical，PR5b 起冻结在 ./frozen.fixture.ts）：
- * RFC-LOC-1 Core-A 之前它断言 `resolveCity` 复用的足迹城市正是地图按名字（FR-MR-5）并进的那些；Core-A 起地图按地点 id 合并，
- * 那次对拍的结果作为期望值冻结在这里。
+ * 第 2A 批删除了按名字「恰好一个就复用」的 `resolveCity` 与城市匹配键：它们的用例按新规则（`findCityCandidates`：
+ * 名字只找候选，不决定身份）改写，旧断言与新断言的对照写在各用例的注释里。最后一个测试沿用 PR3a 的对拍数据
+ * （旧 id 空间的 Canonical，PR5b 起冻结在 ./frozen.fixture.ts），改为断言每个想去城市在足迹城市里的候选。
  */
 
 /// <reference types="node" />
@@ -17,13 +16,10 @@ import { legacyIdCanonical, type LegacyIdCanonicalName } from './frozen.fixture.
 import {
   asCountryCode,
   STRONG_CANDIDATE_MAX_KM,
-  cityMatchKeyOf,
   distanceKm,
   findCityCandidates,
-  resolveCity,
   resolveCountry,
 } from './placeResolver.ts'
-import { placeTitle } from './reconstruct.ts'
 import type { CanonicalData, CanonicalPlace } from './types.ts'
 
 /** 雷克雅未克的坐标（公开地理事实）。 */
@@ -71,53 +67,60 @@ test('resolveCountry：多于一个 → ambiguous，列出全部候选', () => {
 })
 
 // ---------------------------------------------------------------------------
-// resolveCity
+// 旧 resolveCity 的用例，按新规则改写（findCityCandidates）
 // ---------------------------------------------------------------------------
 
-test('resolveCity：恰好一个 → found；英文名不分大小写与标点，英文名缺时按中文名', () => {
-  const reykjavik = { status: 'found', place: PLACES[3] }
-  assert.deepEqual(resolveCity(PLACES, 'c-is', { zh: '雷克雅未克', en: 'Reykjavik' }), reykjavik)
-  assert.deepEqual(resolveCity(PLACES, 'c-is', { zh: '另一个写法', en: 'REYKJAVIK' }), reykjavik)
-  assert.deepEqual(resolveCity(PLACES, 'c-is', { en: ' reykjavik! ' }), reykjavik)
-  // 城市地点只有中文名；输入的英文名缺、或英文名写成同一个中文名，都按中文名取键。
-  assert.deepEqual(resolveCity(PLACES, 'c-is', { zh: '维克' }), { status: 'found', place: PLACES[4] })
-  assert.deepEqual(resolveCity(PLACES, 'c-is', { zh: '维克', en: '维克' }), { status: 'found', place: PLACES[4] })
+const idsOf = (candidates: { placeId: string }[]) => candidates.map((candidate) => candidate.placeId)
+
+test('改写自「resolveCity：恰好一个 → found」：同名只得到候选，不再直接复用；中文名不同、英文名相同是候选但不是强候选', () => {
+  // 旧：四种输入都 found 并直接复用雷克雅未克 / 维克。新：都只是候选，由用户选择。
+  for (const names of [{ zh: '雷克雅未克', en: 'Reykjavik' }, { zh: '另一个写法', en: 'REYKJAVIK' }, { en: ' reykjavik! ' }]) {
+    assert.deepEqual(idsOf(findCityCandidates(PLACES, 'c-is', names)), ['t-reykjavik'], JSON.stringify(names))
+  }
+  // 旧断言把「中文名不同、英文名相同」也当成同一个城市；新规则：是候选，但不是强候选（坐标再近也不是）。
+  const located = PLACES.map((place) => (place.id === 't-reykjavik' ? { ...place, location: { ...REYKJAVIK } } : place))
+  assert.equal(findCityCandidates(located, 'c-is', { zh: '另一个写法', en: 'REYKJAVIK' }, REYKJAVIK)[0].strong, false)
+  assert.equal(findCityCandidates(located, 'c-is', { zh: '雷克雅未克', en: 'Reykjavik' }, REYKJAVIK)[0].strong, true)
+  // 城市地点只有中文名：按中文名是候选（旧规则「英文名缺时按中文名」）。
+  assert.deepEqual(idsOf(findCityCandidates(PLACES, 'c-is', { zh: '维克' })), ['t-vik-zh'])
+  assert.deepEqual(idsOf(findCityCandidates(PLACES, 'c-is', { zh: '维克', en: '维克' })), ['t-vik-zh'])
 })
 
-test('resolveCity：没有 → none（别的国家的同名城市、变音符不同、国家没有 ISO、键为空）；不做模糊匹配', () => {
-  assert.deepEqual(resolveCity(PLACES, 'c-fo', { zh: '雷克雅未克', en: 'Reykjavik' }), { status: 'none' })
-  assert.deepEqual(resolveCity(PLACES, 'c-is', { zh: '维克', en: 'Vik' }), { status: 'none' }, '英文名在时按英文名，不回落到中文名')
-  assert.deepEqual(resolveCity(PLACES, 'c-fo', { en: 'Torshavn' }), { status: 'none' }, 'slugify 保留变音符')
-  assert.deepEqual(resolveCity(PLACES, 'c-none', { en: 'Somewhere' }), { status: 'none' }, '国家没有 ISO：没有合并键')
-  assert.deepEqual(resolveCity(PLACES, 'missing', { en: 'Reykjavik' }), { status: 'none' })
-  assert.deepEqual(resolveCity(PLACES, 't-reykjavik', { en: 'Reykjavik' }), { status: 'none' }, 'countryId 必须是国家地点')
-  assert.deepEqual(resolveCity(PLACES, 'c-is', { zh: '', en: '---' }), { status: 'none' })
-  assert.deepEqual(resolveCity(PLACES, 'c-is', { en: 'Reykjavík' }), { status: 'none' })
+test('改写自「resolveCity：没有 → none」：别的国家、变音符不同、countryId 不是国家、名字为空时仍没有候选；两处按新规则变成候选', () => {
+  assert.deepEqual(findCityCandidates(PLACES, 'c-fo', { zh: '雷克雅未克', en: 'Reykjavik' }), [], '别的国家的同名城市')
+  assert.deepEqual(findCityCandidates(PLACES, 'c-fo', { en: 'Torshavn' }), [], 'slugify 保留变音符')
+  assert.deepEqual(findCityCandidates(PLACES, 'c-is', { en: 'Reykjavík' }), [])
+  assert.deepEqual(findCityCandidates(PLACES, 'missing', { en: 'Reykjavik' }), [])
+  assert.deepEqual(findCityCandidates(PLACES, 't-reykjavik', { en: 'Reykjavik' }), [], 'countryId 必须是国家地点')
+  assert.deepEqual(findCityCandidates(PLACES, 'c-is', { zh: '', en: '---' }), [])
+  // 旧：英文名在时只按英文名，中文名相同也算「没有」（于是新建一个同名地点）。新：中文名相同就是候选。
+  assert.deepEqual(idsOf(findCityCandidates(PLACES, 'c-is', { zh: '维克', en: 'Vik' })), ['t-vik-zh'])
+  // 旧：国家没有 ISO 时没有匹配键，一律新建。新：国家的身份是地点 id，照样找候选。
+  assert.deepEqual(idsOf(findCityCandidates(PLACES, 'c-none', { en: 'Somewhere' })), ['t-lonely'])
 })
 
-test('resolveCity：多于一个 → ambiguous，列出全部候选（不按距离猜）', () => {
+test('改写自「resolveCity：多于一个 → ambiguous」：列出全部候选（不按距离猜），按规则排序', () => {
   const places = [
     ...PLACES,
     { ...city('t-reykjavik-2', 'c-is', { 'zh-Hans': '雷克雅未克市', en: 'reykjavik' }), location: { lat: REYKJAVIK.lat, lng: REYKJAVIK.lng } },
   ]
-  assert.deepEqual(resolveCity(places, 'c-is', { en: 'Reykjavik' }), { status: 'ambiguous', candidates: ['t-reykjavik', 't-reykjavik-2'] })
+  // 旧：{ status: 'ambiguous', candidates: ['t-reykjavik', 't-reykjavik-2'] }。新：同样两个候选，都不是强候选（输入没有坐标）。
+  const candidates = findCityCandidates(places, 'c-is', { en: 'Reykjavik' })
+  assert.deepEqual(idsOf(candidates), ['t-reykjavik', 't-reykjavik-2'])
+  assert.deepEqual(candidates.map((candidate) => candidate.strong), [false, false])
+  // 输入带坐标时，名字一致、坐标相同的强候选排在前面。
+  assert.deepEqual(idsOf(findCityCandidates(places, 'c-is', { en: 'Reykjavik' }, REYKJAVIK)), ['t-reykjavik-2', 't-reykjavik'])
 })
 
 // ---------------------------------------------------------------------------
-// 合并键与距离
+// 国家代码与距离
 // ---------------------------------------------------------------------------
 
-test('城市匹配键：国家代码两位字母才算；title 取英文名，缺时取中文名；slug 为空时没有键', () => {
+test('国家代码：两位字母才算，统一大写（改写自「城市匹配键」：匹配键与 placeTitle 已随 resolveCity 删除）', () => {
   assert.equal(asCountryCode(' is '), 'IS')
   assert.equal(asCountryCode('isl'), undefined)
   assert.equal(asCountryCode(''), undefined)
   assert.equal(asCountryCode(undefined), undefined)
-  assert.equal(cityMatchKeyOf('IS', placeTitle(PLACES[3])), 'IS:reykjavik')
-  assert.equal(cityMatchKeyOf('IS', placeTitle(PLACES[4])), 'IS:维克')
-  assert.equal(cityMatchKeyOf(undefined, placeTitle(PLACES[3])), undefined)
-  assert.equal(cityMatchKeyOf('IS', { zh: '', en: '' }), undefined)
-  // 只有中文名的地点：标题的英文名用中文名（与 Core 地点实体的标题相同）。
-  assert.deepEqual(placeTitle(PLACES[4]), { zh: '维克', en: '维克' })
 })
 
 test('distanceKm：同一点为 0；同一经线上纬度相差 1 度约 111 km', () => {
@@ -235,23 +238,22 @@ test('findCityCandidates：排序稳定——强候选在前，再按距离升�
 })
 
 // ---------------------------------------------------------------------------
-// 对拍数据：resolveCity 找到的足迹城市（冻结的期望值）
+// 对拍数据：想去城市在足迹城市里的候选（改写自「resolveCity 复用的足迹城市」）
 // ---------------------------------------------------------------------------
 
-/** 把每个想去城市按名称拿去足迹地点里解析（V2 写入「新增想去」的判断），找到的就是它会复用的足迹城市。 */
-const resolvedPairs = (canonical: CanonicalData) => {
+/** 把每个想去城市按名称与坐标拿去足迹地点里找候选（V2 写入「按名字新增想去」的判断）。强候选标 `(strong)`。 */
+const candidatePairs = (canonical: CanonicalData) => {
   const footprint = canonical.places.filter((place) => place.legacyKeys !== undefined)
   const placeById = new Map(canonical.places.map((place) => [place.id, place]))
   return canonical.wantToGo.items.flatMap((item) => {
     const place = placeById.get(item.placeId)
     if (place?.subtype !== 'city' || place.partOf === undefined) return []
-    const resolution = resolveCity(footprint, place.partOf, { zh: place.names['zh-Hans'], en: place.names.en })
-    assert.notEqual(resolution.status, 'ambiguous', item.id)
-    return resolution.status === 'found' ? [`${resolution.place.id} ← ${item.id}`] : []
+    return findCityCandidates(footprint, place.partOf, { zh: place.names['zh-Hans'], en: place.names.en }, place.location)
+      .map((candidate) => `${candidate.placeId} ← ${item.id}${candidate.strong ? ' (strong)' : ''}`)
   }).sort()
 }
 
-test('PR3a 的对拍数据：resolveCity 复用的足迹城市，等于 Core-A 之前地图按名字合并的结果（冻结的期望值）', () => {
+test('PR3a 的对拍数据：想去城市在足迹城市里的候选（旧期望值的每一对仍是候选，另有两对只按中文名相同的新候选）', () => {
   // 最后一份：足迹有雷克雅未克、维克（只有中文名）、胡萨维克（Húsavík）、托尔斯港（Tórshavn）；想去有
   // 小写的 reykjavik、英文名写成中文的维克、不带变音符的 Husavik、带变音符的 Tórshavn（FO 与 DK 各一条）。
   const fixtures: [string, LegacyIdCanonicalName][] = [
@@ -260,20 +262,22 @@ test('PR3a 的对拍数据：resolveCity 复用的足迹城市，等于 Core-A �
     ['疑似重复', 'duplicate'],
     ['大小写、变音符、只有中文名', 'caseAndDiacritic'],
   ]
-  // Core-A 之前 `queryVisiblePlaces` 在这四份数据上（足迹 + 想去都可见）并进足迹城市的想去条目，与下面逐一相同。
+  // 旧期望值（resolveCity 直接复用的足迹城市）：阿克雷里两份；疑似重复为空；最后一份是 tórshavn、reykjavik、维克三对。
+  // 新期望值：这些对全部是候选，而且名字一致、坐标相近，都是强候选（界面默认选中）。另外两对是新增的普通候选：
+  // 疑似重复里的「雷克雅未克 / Reykjavik City」与最后一份的「胡萨维克 / Husavik」，都是中文名相同、英文名不同——
+  // 旧规则只比英文名，会悄悄新建一个同名地点；新规则列为候选，不是强候选（不预选）。
   const expected: string[][] = [
-    // 公开样例：阿克雷里（足迹与想去同名同坐标）是唯一的一对。
-    ['iceland__akureyri ← wtg_2026-08-12_akureyri'],
-    ['iceland__akureyri ← wtg_2026-08-12_akureyri'],
-    [],
-    // 最后一份：大小写与「只有中文名」合并，变音符与别的国家不合并。
+    ['iceland__akureyri ← wtg_2026-08-12_akureyri (strong)'],
+    ['iceland__akureyri ← wtg_2026-08-12_akureyri (strong)'],
+    ['iceland__reykjavik ← w_reykjavik_city'],
     [
-      'faroe-islands__tórshavn ← w_torshavn_accent',
-      'iceland__reykjavik ← w_reykjavik_lower',
-      'iceland__维克 ← w_vik_zh',
+      'faroe-islands__tórshavn ← w_torshavn_accent (strong)',
+      'iceland__húsavík ← w_husavik_plain',
+      'iceland__reykjavik ← w_reykjavik_lower (strong)',
+      'iceland__维克 ← w_vik_zh (strong)',
     ],
   ]
   fixtures.forEach(([name, key], index) => {
-    assert.deepEqual(resolvedPairs(legacyIdCanonical(key)), expected[index], name)
+    assert.deepEqual(candidatePairs(legacyIdCanonical(key)), expected[index], name)
   })
 })

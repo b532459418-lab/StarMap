@@ -41,7 +41,13 @@ export const TEST_CATALOG: ReadonlyMap<string, CatalogCountry> = new Map([
   ['GL', catalogEntry('GL', '格陵兰', 'Greenland', 72, -40, 'Americas')],
   ['JP', catalogEntry('JP', '日本', 'Japan', 36, 138, 'Asia')],
   ['DK', catalogEntry('DK', '丹麦', 'Denmark', 56, 10, 'Europe')],
+  // 第 2A 批：同名不同城（江苏苏州 / 安徽宿州，英文名都是 Suzhou）的用例。
+  ['CN', catalogEntry('CN', '中国', 'China', 35, 105, 'Asia')],
 ])
+
+/** 江苏苏州与安徽宿州（公开地理事实）：英文名都是 Suzhou，相距约 400 km。 */
+export const SUZHOU_JS = { lat: 31.2989, lng: 120.5853 }
+export const SUZHOU_AH = { lat: 33.6461, lng: 116.9641 }
 
 export const testContext = (overrides: Partial<V2WriteContext> = {}): V2WriteContext => ({
   newId: sequentialUuids(WRITE_EPOCH_MS),

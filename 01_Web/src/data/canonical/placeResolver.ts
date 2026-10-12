@@ -1,45 +1,30 @@
 /**
- * 地点解析（RFC-LOC-1 ID-6；PR3 总体方案 §3.1 第 3 条，PR3b-2 规格 §2.2）：V2 写入用的
- * 「这是不是同一个地点」的判断（PR3a 到 PR5a 迁移规划也用它，迁移工具在 PR5b 删除）。
+ * 地点解析（RFC-LOC-1 ID-6；PR3 总体方案 §3.1 第 3 条，PR3b-2 规格 §2.2；第 2A 批）：V2 写入用的
+ * 「可能是同一个地点吗」的判断。
  *
- * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。调用方：
- * - `../v2write/`（V2 写入）：新增足迹、国家、想去时「先找后建」——找到就引用已有地点，找不到才用 UUIDv7 新建。
- *
- * 名称只用来回答「可能是同一个地点吗」（匹配提示），结论落在地点 id 上（RFC ID-6），不按名字推导任何身份。
- * 解析不做模糊匹配、不按距离猜：候选恰好一个才算找到，多于一个交给调用方报错（PR3b-2 规格 §2.2）。
+ * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。调用方是 `../v2write/`（V2 写入）：
+ * - 国家按 ISO 3166-1 alpha-2「先找后建」（`resolveCountry`）：恰好一个就引用，多于一个交给调用方报错；
+ * - 城市按名字只找候选（`findCityCandidates`）：名字和坐标是匹配提示，不是身份（RFC ID-6）。写入端有候选就请用户选择，
+ *   用户选定后按地点 id 引用，或明确新建；从不按名字静默复用。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
 import { slugify } from '../../worldgraph/slug.ts'
-import { EN, ZH, isoOf, type PlaceTitle } from './reconstruct.ts'
+import { EN, ZH, isoOf } from './reconstruct.ts'
 import type { CanonicalPlace, PlaceId } from './types.ts'
 
 // ---------------------------------------------------------------------------
-// 城市匹配键：「可能是同一个城市吗」
+// 国家代码
 // ---------------------------------------------------------------------------
 //
-// 键是 `<国家代码>:<slug(英文名 ?? 中文名)>`，两个输入：
-// - 国家代码：`asCountryCode`（两位字母才算，统一大写），取所属国家地点的 ISO；
-// - 名称：独立的匹配规则 `matchNameOf`（英文名缺时用中文名），不依赖显示名称或界面语言。
-// RFC-LOC-1 Core-A 之前地图的 FR-MR-5 也按这个键把想去城市并进足迹城市；Core-A 起地图按地点 id 合并，
-// 这个键只剩 V2 写入「先找后建」的匹配用途（RFC ID-6）：它只回答「可能是同一个」，结论落在地点 id 上。
+// 第 2A 批之前这里还有城市匹配键（`<国家代码>:<slug(英文名 ?? 中文名)>`）与按键「恰好一个就复用」的 `resolveCity`：
+// 英文名相同就算同一个城市，中文名与坐标都不参与（同名不同城会被并成一个地点）。它们已删除，城市改用下面的 `findCityCandidates`。
 
 /** 两位字母才算国家代码，统一大写；其它形状一律视为没有。 */
 export const asCountryCode = (value: unknown): string | undefined => {
   const code = typeof value === 'string' && value !== '' ? value.trim().toUpperCase() : undefined
   return code !== undefined && /^[A-Z]{2}$/.test(code) ? code : undefined
-}
-
-/** 匹配名称保留原有规则：英文名，缺时用简体中文名。不使用显示名称的语言回退。 */
-export const matchNameOf = (names: Readonly<Record<string, string>>): string =>
-  (names[EN] ?? '') || (names[ZH] ?? '')
-
-/** 城市匹配键。保留现有双语输入契约，名称选择独立于显示规则。 */
-export const cityMatchKeyOf = (countryCode: string | undefined, title: PlaceTitle): string | undefined => {
-  if (countryCode === undefined) return undefined
-  const slug = slugify(matchNameOf({ [ZH]: title.zh, [EN]: title.en ?? '' }))
-  return slug === '' ? undefined : `${countryCode}:${slug}`
 }
 
 // ---------------------------------------------------------------------------
@@ -148,22 +133,3 @@ export const resolveCountry = (places: readonly CanonicalPlace[], iso: string): 
   return resolutionOf(places.filter((place) => place.subtype === 'country' && isoOf(place) === code))
 }
 
-/**
- * 在国家 `countryId` 的城市地点里按城市匹配键找城市。输入的名称与城市地点都按 `matchNameOf` 取键
- * （英文名缺时用中文名）；国家代码取 `countryId` 这个国家地点的 ISO。国家不存在或没有 ISO、输入的键为空时视为找不到。
- */
-export const resolveCity = (
-  places: readonly CanonicalPlace[],
-  countryId: PlaceId,
-  names: { zh?: string; en?: string },
-): PlaceResolution => {
-  const country = places.find((place) => place.id === countryId && place.subtype === 'country')
-  const countryCode = asCountryCode(isoOf(country))
-  const key = cityMatchKeyOf(countryCode, { zh: names.zh ?? '', en: names.en })
-  if (key === undefined) return { status: 'none' }
-  return resolutionOf(places.filter((place) => (
-    place.subtype === 'city'
-    && place.partOf === countryId
-    && cityMatchKeyOf(countryCode, { zh: place.names[ZH] ?? '', en: place.names[EN] }) === key
-  )))
-}

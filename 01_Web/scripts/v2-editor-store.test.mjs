@@ -203,12 +203,21 @@ test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2
   assert.deepEqual(step.files.editorState.addedCountries, [norwayCountry], '挪威的洲与首次到访日期仍保留')
 
   // 拒绝：返回 { ok: false, error, code }，不写。
+  // 第 2A 批改写：按名字提交已有的雷克雅未克不再直接报 E_CITY_EXISTS，而是 409 请用户选择（附候选）；
+  // 用户选定这个地点（placeId）后，才是 400 E_CITY_EXISTS。
   const before = await readDiskV2(paths)
+  const reykjavikId = placeByEn(migrated, 'Reykjavik').id
   step = await run('POST /__travelatlas/editor/records', {
     country: '冰岛', country_en: 'Iceland', country_code: 'IS', city: '雷克雅未克', city_en: 'Reykjavik', start_date: '2026-01-01', lat: 64.1466, lng: -21.9426,
-  }, '重复城市')
+  }, '按名字提交已有城市')
+  assert.equal(step.status, 409)
+  assert.equal(step.body.code, 'E_PLACE_CHOICE_REQUIRED')
+  assert.equal(step.body.error, '找到可能是同一个地方的已有地点，请选择要使用的地点，或新建一个独立地点。本次尚未保存。')
+  assert.deepEqual(step.body.params.candidates.map(({ placeId, strong }) => ({ placeId, strong })), [{ placeId: reykjavikId, strong: true }])
+  assert.deepEqual(await readDiskV2(paths), before)
+  step = await run('POST /__travelatlas/editor/records', { placeId: reykjavikId, start_date: '2026-01-01' }, '重复城市')
   assert.equal(step.status, 400)
-  assert.deepEqual(step.body, { ok: false, error: '这个城市已经存在；如需增加一次新的行程，请使用行程编辑，而不是重复添加城市。', code: 'E_CITY_EXISTS', params: { cityId: placeByEn(migrated, 'Reykjavik').id } })
+  assert.deepEqual(step.body, { ok: false, error: '这个城市已经存在；如需增加一次新的行程，请使用行程编辑，而不是重复添加城市。', code: 'E_CITY_EXISTS', params: { cityId: reykjavikId } })
   assert.deepEqual(await readDiskV2(paths), before)
   step = await put((state) => ({ ...state, hiddenCityIds: ['iceland__vik'] }), '旧键')
   assert.equal(step.status, 400)
