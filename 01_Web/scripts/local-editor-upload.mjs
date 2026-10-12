@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import sharp from 'sharp'
 import { exists } from './json-file.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { toSafePathSegment } from './media-path-segment.mjs'
 
 export const MAX_UPLOAD_BYTES = 250 * 1024 * 1024
 
@@ -18,12 +19,11 @@ const nameFieldOf = (label) => ({
   城市名: 'media_city',
 })[label] ?? label
 
-export const safeSegment = (value, label = 'media_filename') => {
-  // eslint-disable-next-line no-control-regex -- Windows file names must reject ASCII control characters.
-  const cleaned = String(value ?? '').trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
-  if (!cleaned || cleaned === '.' || cleaned === '..') throw new V2WriteError('E_MEDIA_NAME_INVALID', { field: nameFieldOf(label) })
-  return cleaned.slice(0, 120)
-}
+/**
+ * Inbox folder and file names (review D9): the shared rule in ./media-path-segment.mjs escapes trailing dots and spaces,
+ * Windows device names and control characters, so every name produced here is one the media task store accepts.
+ */
+export const safeSegment = (value, label = 'media_filename') => toSafePathSegment(value, nameFieldOf(label))
 
 export const reserveDestination = async (directory, originalName) => {
   const parsed = path.parse(safeSegment(originalName, 'media_filename'))

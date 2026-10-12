@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { isSafePathSegment } from './media-path-segment.mjs'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHA = /^[0-9a-f]{64}$/
@@ -21,11 +22,8 @@ const fail = (code, reason) => { throw new V2WriteError(code, reason ? { reason 
 const exists = async (target) => {
   try { return await lstat(target) } catch (error) { if (error.code === 'ENOENT') return null; throw error }
 }
-const safeName = (name) => typeof name === 'string' && name.length > 0 && name.length <= 200
-  && [...name].every((character) => character.codePointAt(0) > 31 && (character.codePointAt(0) < 127 || character.codePointAt(0) > 159))
-  && !/[/\\:<>"|?*]/.test(name) && !/[. ]$/.test(name)
-  && !/^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(name)
-  && name !== '.' && name !== '..'
+/** Inbox and receipt path segments follow the one rule the upload uses to name folders (D9). */
+const safeName = isSafePathSegment
 const relativePath = (value) => typeof value === 'string' && value.length <= 1200 && value.split('/').every(safeName)
 const metadataHash = (metadata) => createHash('sha256').update(JSON.stringify(metadata ?? {})).digest('hex')
 const validDate = (value) => {

@@ -387,3 +387,31 @@ test('RD-07 batch2 a new same-city same-content intent needs explicit import and
   assert.equal((await freshReplay(env, second, secondImport.input)).status, 200)
   assert.deepEqual(await tree(env.paths.root, { omitCoordination: true }), beforeReplay)
 }))
+
+// ---------------------------------------------------------------------------
+// Batch 2 D9: one Inbox folder-name rule for uploads and tasks
+// ---------------------------------------------------------------------------
+
+/** Adds a city of Test Country to the place registry and returns its id. */
+async function addCity(env, en) {
+  const registry = await readJson(env.paths.v2FilePaths.places), id = newId()
+  registry.places.push({ id, subtype: 'city', names: { en }, partOf: ID.country, location: { lat: 64.5, lng: -20.5 } })
+  await writeFile(env.paths.v2FilePaths.places, `${JSON.stringify(registry, null, 2)}\n`)
+  return id
+}
+
+test('D9 cities named "Washington D.C." and "CON" complete task uploads into escaped Inbox folders and import', async () => withRoot(async env => {
+  for (const [en, folder, color] of [['Washington D.C.', 'Washington D.C._', { r: 90, g: 30, b: 200 }], ['CON', 'CON_', { r: 200, g: 200, b: 30 }]]) {
+    const cityId = await addCity(env, en), bytes = await jpeg(color)
+    const job = await received(env, bytes, { cityId, files: [{ fileName: 'scene.jpg', bytes: bytes.length }] })
+    assert.equal(job.files[0].phase, 'received', en)
+    assert.equal(job.status, 'pending', en)
+    const record = await readJson(jobPath(env, job))
+    assert.deepEqual(record.files[0].sourcePath.split('/'), ['Test Country', folder, 'photos', 'scene.jpg'], en)
+    assert.deepEqual(await readJson(path.join(env.paths.inboxRoot, 'Test Country', folder, 'place.json')), { placeId: cityId }, en)
+    const { result } = await importReady(env, job)
+    assert.equal(result.body.job.files[0].status, 'completed', en)
+    assert.ok((await readJson(env.paths.v2FilePaths.media)).items.some((item) => item.placeId === cityId), en)
+    await write(env, 'close', result.body.job, identity(result.body.job))
+  }
+}))
