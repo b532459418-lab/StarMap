@@ -240,3 +240,36 @@ test('D2 abandon is refused without the server hint, and abandoned responses mus
   assert.throws(() => assertMediaJob({...completed(), canAbandon: true}), code('E_EDITOR_RESPONSE_INVALID'))
   assertMediaJobsRead({libraryId: id(2), jobs: [abandoned, {...jobOf(), jobId: id(30)}]})
 })
+test('Batch 2A: a preview with folder bindings found by name imports only with the user confirmation, which is sent as acceptFolderBindings', async () => {
+  const f = fixture()
+  const inputs: unknown[] = []
+  const binding = {sourcePath: 'Country/Hand Made/place.json', placeId: id(6), folder: 'Country/Hand Made', subtype: 'city' as const, names: {'zh-Hans': '手放城', en: 'Hand Made'}, source: 'name' as const}
+  f.api.preview = async () => {const plan = planOf(pending()); plan.plan.summary.pins = [binding]; return plan}
+  const originalImport = f.api.import
+  f.api.import = async (jobId, input, permit) => {inputs.push(input); return originalImport(jobId, input, permit)}
+  f.setJobs([pending()])
+  await f.store.refresh()
+  const plan = await f.store.preview(id(1))
+  assert.deepEqual(plan.plan.summary.pins, [binding])
+  await assert.rejects(f.store.importJob(id(1), plan), code('E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED'))
+  await assert.rejects(f.store.importJob(id(1), plan, {acceptFolderBindings: false}), code('E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED'))
+  assert.equal(inputs.length, 0, 'nothing is sent before the confirmation')
+  await f.store.importJob(id(1), plan, {acceptFolderBindings: true})
+  assert.equal((inputs[0] as {acceptFolderBindings?: boolean}).acceptFolderBindings, true)
+  // Without bindings nothing extra is sent.
+  const g = fixture(); const plain: unknown[] = []
+  const gImport = g.api.import
+  g.api.import = async (jobId, input, permit) => {plain.push(input); return gImport(jobId, input, permit)}
+  g.setJobs([pending()]); await g.store.refresh()
+  await g.store.importJob(id(1), await g.store.preview(id(1)))
+  assert.equal(Object.hasOwn(plain[0] as object, 'acceptFolderBindings'), false)
+})
+test('Batch 2A: preview pins must carry folder, kind, names and match source', () => {
+  const base = planOf()
+  const pin = {sourcePath: 'Country/City/place.json', placeId: id(6), folder: 'Country/City', subtype: 'city', names: {en: 'City'}, source: 'name'}
+  const withPin = (value: Record<string, unknown>) => ({...base, plan: {...base.plan, summary: {...base.plan.summary, pins: [value]}}})
+  assert.doesNotThrow(() => assertMediaJobPreview(withPin(pin)))
+  for (const broken of [{...pin, folder: 'Other'}, {...pin, subtype: 'region'}, {...pin, source: 'guess'}, {...pin, names: 'City'}, {...pin, names: {en: 3}}, {sourcePath: pin.sourcePath, placeId: pin.placeId}]) {
+    assert.throws(() => assertMediaJobPreview(withPin(broken)), code('E_EDITOR_RESPONSE_INVALID'), JSON.stringify(broken))
+  }
+})

@@ -6,13 +6,15 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource } from '../data/mediaCatalog'
-import { addLocalTravelRecord, deleteHiddenLocalMedia, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState } from '../data/localEditorApi'
+import { addLocalTravelRecord, deleteHiddenLocalMedia, placeChoiceCandidatesOf, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState } from '../data/localEditorApi'
+import { placeChoiceKey, placeChoiceStateOf, type PlaceChoiceState } from '../data/placeChoice.ts'
 import { cityDraftUpdater, photoDraftUpdater, withoutIds } from '../data/editorStateDelta'
 import type { CitySearchOption } from '../data/localEditorApi'
 import { cityById, countryById, countryIdOfCity, getCitiesForCountry } from '../data/travelAtlas'
 import type { CityId, Country, CountryId, SelectionMode, TravelMapRecord } from '../types/travel'
 import type { CityPhotoGalleryRequest } from './CityPhotoGalleryModal'
 import { LocationSearchField } from './LocationSearchField'
+import { PlaceChoiceList } from './PlaceChoiceList'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
 import { MediaRecoveryEntry } from './MediaRecoveryCenter'
 import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
@@ -107,6 +109,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   const [isManualCityEntry, setIsManualCityEntry] = useState(false)
   const [manualCity, setManualCity] = useState({ nameZh: '', nameEn: '', lat: '', lng: '' })
   const [cityVisitDates, setCityVisitDates] = useState({ startDate: '', endDate: '' })
+  // 第 2A 批：服务端返回的同名地点候选与用户的选择（属于提交时的输入）。
+  const [placeChoice, setPlaceChoice] = useState<PlaceChoiceState>()
   const cityByDraftId = new Map(memoryCities.map((item) => [item.id, item]))
   const photoByDraftId = new Map(cityPhotos.map((item) => [item.id, item]))
   const displayedMemoryCities = cityEditing
@@ -163,6 +167,24 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     }
   }
 
+  // 这次要提交的城市：手动输入或检索结果。也用来判断同名地点的候选是否仍属于当前输入（第 2A 批）。
+  const cityOptionForSubmit = (): CitySearchOption | undefined => isManualCityEntry
+    ? {
+        id: `manual-${manualCity.nameEn || manualCity.nameZh}`,
+        nameZh: manualCity.nameZh.trim(),
+        nameEn: (manualCity.nameEn || manualCity.nameZh).trim(),
+        countryCode: country?.flagCode ?? '',
+        lat: Number(manualCity.lat),
+        lng: Number(manualCity.lng),
+        detail: '手动坐标',
+        provider: 'manual',
+      }
+    : selectedCityOption
+  const submittedCity = cityOptionForSubmit()
+  const cityChoiceKey = placeChoiceKey([country?.id, submittedCity?.nameZh, submittedCity?.nameEn, submittedCity?.lat, submittedCity?.lng])
+  // 输入变了，原来的候选就作废，重新走一遍流程。
+  const activePlaceChoice = placeChoice?.key === cityChoiceKey ? placeChoice : undefined
+
   const addCity = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!country || editorActionBusy) return
@@ -170,20 +192,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
       setEditorNotice({ key: 'editor:chooseCity' })
       return
     }
-    const manualLat = Number(manualCity.lat)
-    const manualLng = Number(manualCity.lng)
-    const cityOption: CitySearchOption | undefined = isManualCityEntry
-      ? {
-          id: `manual-${manualCity.nameEn || manualCity.nameZh}`,
-          nameZh: manualCity.nameZh.trim(),
-          nameEn: (manualCity.nameEn || manualCity.nameZh).trim(),
-          countryCode: country.flagCode ?? '',
-          lat: manualLat,
-          lng: manualLng,
-          detail: '手动坐标',
-          provider: 'manual',
-        }
-      : selectedCityOption
+    const cityOption = submittedCity
     if (
       !cityOption?.nameZh
       || !cityOption.nameEn
@@ -198,22 +207,36 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
       setEditorNotice({ key: 'editor:invalidCity' })
       return
     }
+    const choice = activePlaceChoice
+    if (choice && !choice.selected) {
+      setEditorNotice({ key: 'editor:placeChoiceRequired' })
+      return
+    }
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:creatingCity' })
+    const dates = { start_date: cityVisitDates.startDate, end_date: cityVisitDates.endDate || undefined }
     try {
-      await addLocalTravelRecord({
-        country: country.nameZh,
-        country_en: country.nameEn,
-        country_code: country.flagCode,
-        city: cityOption.nameZh,
-        city_en: cityOption.nameEn,
-        start_date: cityVisitDates.startDate,
-        end_date: cityVisitDates.endDate || undefined,
-        lat: cityOption.lat,
-        lng: cityOption.lng,
-      })
+      if (choice?.selected?.kind === 'existing') {
+        // 用户选定的已有地点：按 id 引用，不再按名字匹配。坐标只在地点没有坐标时补上。
+        await addLocalTravelRecord({ placeId: choice.selected.placeId, ...dates, lat: cityOption.lat, lng: cityOption.lng })
+      } else {
+        await addLocalTravelRecord({
+          country: country.nameZh,
+          country_en: country.nameEn,
+          country_code: country.flagCode,
+          city: cityOption.nameZh,
+          city_en: cityOption.nameEn,
+          ...dates,
+          lat: cityOption.lat,
+          lng: cityOption.lng,
+          ...(choice?.selected?.kind === 'new' ? { createNew: true as const } : {}),
+        })
+      }
       reloadAfterLocalSave()
     } catch (error) {
+      // 409 E_PLACE_CHOICE_REQUIRED：在表单里列出候选，同一按钮再次提交（第 2A 批）。
+      const candidates = placeChoiceCandidatesOf(error)
+      if (candidates) setPlaceChoice(placeChoiceStateOf(cityChoiceKey, candidates))
       setEditorNotice(editorErrorNotice(error, 'editor:createFailed'))
       setEditorBusy(false)
     }
@@ -480,6 +503,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                       setIsManualCityEntry(false)
                       setManualCity({ nameZh: '', nameEn: '', lat: '', lng: '' })
                       setCityVisitDates({ startDate: '', endDate: '' })
+                      setPlaceChoice(undefined)
                       setEditorNotice('')
                     }}
                     onReset={() => {
@@ -489,6 +513,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                       setShowAddCity(false)
                       setSelectedCityOption(undefined)
                       setCityVisitDates({ startDate: '', endDate: '' })
+                      setPlaceChoice(undefined)
                       setEditorNotice({ key: 'editor:undoCities' })
                     }}
                     onAdd={() => {
@@ -560,7 +585,19 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                     <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>{t('editor:attributionEnd')}
                   </p>
                 ) : null}
-                <button type="submit" disabled={editorActionBusy || (!isManualCityEntry && !selectedCityOption)}>{t('editor:confirmCity')}</button>
+                {activePlaceChoice ? (
+                  <PlaceChoiceList
+                    candidates={activePlaceChoice.candidates}
+                    selected={activePlaceChoice.selected}
+                    newPlaceName={submittedCity?.nameZh || submittedCity?.nameEn || ''}
+                    disabled={editorActionBusy}
+                    onSelect={(selected) => {
+                      setPlaceChoice({ ...activePlaceChoice, selected })
+                      setEditorNotice('')
+                    }}
+                  />
+                ) : null}
+                <button type="submit" disabled={editorActionBusy || (!isManualCityEntry && !selectedCityOption) || Boolean(activePlaceChoice && !activePlaceChoice.selected)}>{t('editor:confirmCity')}</button>
               </form>
             ) : null}
 

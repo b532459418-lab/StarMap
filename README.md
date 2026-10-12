@@ -101,6 +101,8 @@ Known editing and location-search failures follow the interface language. An unr
 
 City creation uses Cesium ion geocoding first when the personal token is configured with the `geocode` public scope. If ion is unavailable, has no result, or exceeds nine seconds, StarMap falls back to an explicitly triggered, country-filtered OpenStreetMap lookup. The interface never spins indefinitely: users can retry with the local/English city name or switch to manual latitude and longitude entry.
 
+A name alone never decides which place a new city is. When you add a city, or a Want to Go city, and the country already has a place with the same Chinese or English name, nothing is saved yet: the form lists those places with their names and approximate distance, plus **Create a separate place**. A place with the same names within 50 km is selected for you; otherwise you choose. Confirm with the same button.
+
 When drone files are selected, StarMap immediately reads available EXIF/XMP metadata and displays it per file. Values found in the file are locked as file-derived facts. Only missing values become editable; a missing date must be supplied, while coordinates and altitude can be left blank.
 
 For bulk media, follow the tracked `02_Assets/MediaInbox/` template but place real source files under the external private layer's `MediaInbox/`, then run:
@@ -109,6 +111,8 @@ For bulk media, follow the tracked `02_Assets/MediaInbox/` template but place re
 npm run media:check
 npm run media:import
 ```
+
+A folder you put into the Inbox yourself is matched to a place by its name only as a hint. The first such binding needs your confirmation, even when only one place matches: `npm run media:check` lists each `folder → place`, and `npm run media:import` writes nothing (exit code 2) until you run `npm run media:import -- --accept-folder-bindings`. Media tasks show these bindings in their import preview with their own checkbox. Folders that already have `place.json` are not affected.
 
 The importer never rewrites Inbox originals. It publishes generated files only after they are completely written, and `npm run media:check -- --verify` re-checks existing originals, and the files named by completed media-task receipts, against their content hashes. Personal source media, generated derivatives, local travel records, editor state, and `.env.local` stay in the external private layer and never enter the source repository.
 

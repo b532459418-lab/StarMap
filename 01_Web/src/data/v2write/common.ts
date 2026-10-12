@@ -1,6 +1,6 @@
 /**
- * V2 写入各端点共用的小件（RFC-LOC-1 PR3b-2 规格 §2.2、§2.3、§2.6）：输入校验、「先找后建」、足迹判断、
- * 国家排序与行程 id。
+ * V2 写入各端点共用的小件（RFC-LOC-1 PR3b-2 规格 §2.2、§2.3、§2.6；第 2A 批）：输入校验、地点（国家按 ISO
+ * 先找后建；城市按名字只找候选、由用户选择）、足迹判断、国家排序与行程 id。
  *
  * `src/data/v2write/` 是 App 层，【不是】 StarMap Core。输入校验的规则与文案照抄旧模式
  * （插件的 requireText / numberInRange，以及旧格式的写入模块 want-to-go-store.mjs、convert-to-travel.mjs——
@@ -9,7 +9,7 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import { resolveCity, resolveCountry } from '../canonical/placeResolver.ts'
+import { findCityCandidates, resolveCountry } from '../canonical/placeResolver.ts'
 import { EN, ZH, namesOf } from '../canonical/reconstruct.ts'
 import type { CanonicalPlace, PlaceId } from '../canonical/types.ts'
 import type { V2Files, V2TravelRecord } from '../canonical/v2Schema.ts'
@@ -80,7 +80,7 @@ export const localDate = (date: Date): string => {
 }
 
 // ---------------------------------------------------------------------------
-// 地点：先找后建（RFC ID-6，PR3b-2 规格 §2.2）
+// 地点：国家按 ISO 先找后建；城市按名字只找候选，身份靠用户明确选择的地点 id（RFC ID-6，第 2A 批）
 // ---------------------------------------------------------------------------
 
 /** 显示用的名称：中文名，没有则英文名。 */
@@ -118,30 +118,54 @@ export const ensureCountryPlace = (draft: V2Draft, iso: string): EnsuredPlace =>
   return { place, changed: true }
 }
 
+/** `E_PLACE_CHOICE_REQUIRED` 的一个候选（响应 `params.candidates` 的一项）：§3.1 的字段，再加地点的坐标，供界面显示。 */
+export interface PlaceChoiceCandidateParam {
+  placeId: PlaceId
+  names: Record<string, string>
+  location?: { lat: number; lng: number }
+  distanceKm?: number
+  strong: boolean
+}
+
 /**
- * 在国家 `countryId` 下按城市匹配键（../canonical/placeResolver.ts 的 `resolveCity`）找城市地点：找到就复用；多于一个报 `E_PLACE_AMBIGUOUS`；
- * 找不到就新建（`names` / `partOf` / `location` 取自输入；不写 `legacyKeys`）。
- * 复用的城市没有坐标、而输入带了坐标时，把输入的坐标补到地点上（否则新足迹城市在地图上没有标记）；
- * 已有坐标的不改。
+ * 按名字新增城市（第 2A 批，RFC ID-6「匹配提示 ≠ 身份」）：名字和坐标只用来找候选，不决定身份。
+ * - `createNew` 为 true：一定新建独立地点，不做匹配；
+ * - 否则在国家 `countryId` 下找候选（../canonical/placeResolver.ts 的 `findCityCandidates`）：有任何候选 →
+ *   `E_PLACE_CHOICE_REQUIRED`（`params.candidates` 是候选列表），不写；没有候选才新建。
+ * `matchNames` 只放用户实际给出的名字（用于找候选）；新建的地点用 `names`（`names` / `partOf` / `location` 取自输入；
+ * 不写 `legacyKeys`）。引用已有地点走 `referencedCityPlace`（明确的地点 id），这里从不按名字复用。
  */
-export const ensureCityPlace = (
+export const newOrChosenCityPlace = (
   draft: V2Draft,
   countryId: PlaceId,
-  names: { zh: string; en: string },
-  location: { lat: number; lng: number } | undefined,
+  input: {
+    names: { zh: string; en: string }
+    matchNames?: { zh?: string; en?: string }
+    location: { lat: number; lng: number } | undefined
+    createNew: boolean
+  },
 ): EnsuredPlace => {
   const places = draft.files.places.places
-  const resolution = resolveCity(places, countryId, names)
-  if (resolution.status === 'ambiguous') {
-    throw new V2WriteError('E_PLACE_AMBIGUOUS', { subtype: 'city', countryId, candidates: resolution.candidates })
-  }
-  if (resolution.status === 'found') {
-    const place = resolution.place
-    if (place.location === undefined && location !== undefined) {
-      place.location = { lat: location.lat, lng: location.lng }
-      return { place, changed: true }
+  const { names, location } = input
+  if (!input.createNew) {
+    const candidates = findCityCandidates(places, countryId, input.matchNames ?? names, location)
+    if (candidates.length > 0) {
+      const placeById = new Map(places.map((place) => [place.id, place]))
+      throw new V2WriteError('E_PLACE_CHOICE_REQUIRED', {
+        subtype: 'city',
+        countryId,
+        candidates: candidates.map((candidate): PlaceChoiceCandidateParam => {
+          const found = placeById.get(candidate.placeId)?.location
+          return {
+            placeId: candidate.placeId,
+            names: { ...candidate.names },
+            ...(found !== undefined ? { location: { lat: found.lat, lng: found.lng } } : {}),
+            ...(candidate.distanceKm !== undefined ? { distanceKm: candidate.distanceKm } : {}),
+            strong: candidate.strong,
+          }
+        }),
+      })
     }
-    return { place, changed: false }
   }
   const place: CanonicalPlace = {
     id: draft.ctx.newId(),
@@ -152,6 +176,31 @@ export const ensureCityPlace = (
   }
   places.push(place)
   return { place, changed: true }
+}
+
+/**
+ * 用户明确选择的已有城市（按地点 id 引用，不按名字重新匹配）：必须是城市地点，且所属国家地点存在；否则
+ * `E_UNKNOWN_PLACE_REF`。地点没有坐标、而输入带了坐标时补上（否则新足迹城市在地图上没有标记）；已有坐标的不改。
+ * 返回城市与它的国家。
+ */
+export const referencedCityPlace = (
+  draft: V2Draft,
+  placeId: PlaceId,
+  location: { lat: number; lng: number } | undefined,
+): EnsuredPlace & { country: CanonicalPlace } => {
+  const place = draft.placeById(placeId)
+  const country = place?.subtype === 'city' && place.partOf !== undefined ? draft.placeById(place.partOf) : undefined
+  if (!place || country?.subtype !== 'country') return fail('E_UNKNOWN_PLACE_REF', { placeId })
+  return { place, country, changed: fillMissingLocation(place, location) }
+}
+
+/**
+ * 请求里的 `createNew`：省略或 false 为不强制新建，true 为明确新建；其它值是错误的输入（`E_UNKNOWN_PLACE_REF`）。
+ */
+export const createNewOf = (body: Record<string, unknown>): boolean => {
+  if (body.createNew === undefined || body.createNew === false) return false
+  if (body.createNew === true) return true
+  return fail('E_UNKNOWN_PLACE_REF')
 }
 
 /** 国家地点没有坐标、而输入带了坐标时补上（想去国家）。 */

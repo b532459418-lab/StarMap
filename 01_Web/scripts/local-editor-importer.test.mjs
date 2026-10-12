@@ -32,7 +32,8 @@ test('importer preflight execution failure preserves diagnostics and never appli
 })
 
 test('zero-exit preflight with unresolved data blocks apply for every existing stop condition', async () => {
-  for (const warning of ['需要处理', '缺少日期或分辨率', '缺少日期、分辨率或有效坐标', '无法读取', '找不到国家', '找不到城市']) {
+  // 第 2A 批加入「待确认的文件夹绑定」：这个端点没有确认步骤，按名字匹配的文件夹绑定同样拦下。
+  for (const warning of ['需要处理', '缺少日期或分辨率', '缺少日期、分辨率或有效坐标', '无法读取', '找不到国家', '找不到城市', '待确认的文件夹绑定']) {
     let calls = 0
     const run = createLocalEditorImporter({ webRoot, privateRoot, execFileAsync: async () => {
       calls += 1

@@ -7,6 +7,13 @@
  * as they are. The next import (a new task's import or `npm run media:import`) treats the Inbox as the source of
  * truth and realigns the catalog, source index and generated files with it.
  *
+ * Folder bindings (batch 2A): the importer scans the whole Inbox, so a preview can include folders that the user put
+ * there by hand and that resolve to a place only by name (or a legacy country.json). The plan lists them in
+ * `summary.pins` (folder, place id, names, kind) and its digest covers them. The import request must then carry
+ * `acceptFolderBindings: true`, which the recovery center sends only after the user ticks the extra confirmation next
+ * to that list; otherwise the request is refused (409 `E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED`) before the task record
+ * changes, and nothing is written. Folders with a place.json, including every folder a task upload uses, never appear.
+ *
  * Completion receipts (batch 2 D4) cover the task, not the library: the selected Inbox sources, the generated files of
  * the media they became and the V2 files this import rewrote (`taskReceiptScope`), each with size, SHA-256 and
  * modification time; `libraryDigest` summarizes the whole catalog and source index instead of listing them, so a
@@ -93,7 +100,7 @@ const responseError = (error) => {
     ['E_MEDIA_JOB_CONFLICT','E_MEDIA_JOB_REVIEW'].includes(error?.code) ? error.code : 'E_MEDIA_JOB_REVIEW')
   const { details: _details, ...body } = errorBody(known)
   void _details
-  return { status: known.code === 'E_MEDIA_JOB_NOT_FOUND' ? 404 : ['E_LIBRARY_BUSY', 'E_LIBRARY_ROOT_MOVED', 'E_MEDIA_JOB_CONFLICT', 'E_MEDIA_JOB_PENDING', 'E_MEDIA_JOB_REVIEW'].includes(known.code) ? 409 : 400, body }
+  return { status: known.code === 'E_MEDIA_JOB_NOT_FOUND' ? 404 : ['E_LIBRARY_BUSY', 'E_LIBRARY_ROOT_MOVED', 'E_MEDIA_JOB_CONFLICT', 'E_MEDIA_JOB_PENDING', 'E_MEDIA_JOB_REVIEW', 'E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED'].includes(known.code) ? 409 : 400, body }
 }
 const summary = (job) => ({
   jobId: job.jobId, libraryId: job.libraryId, revision: job.revision, phase: job.phase,
@@ -259,7 +266,7 @@ async function reconcile(paths, job, resourceChecks) {
 }
 
 async function taskPlan(paths, job, input) {
-  if (!exactInput(input, ['libraryId','revision','selectedFileIds','operationId','planDigest'])) fail('E_MEDIA_JOB_INVALID')
+  if (!exactInput(input, ['libraryId','revision','selectedFileIds','operationId','planDigest','acceptFolderBindings'])) fail('E_MEDIA_JOB_INVALID')
   assertIntent(job,input)
   if (job.revision !== input.revision) fail('E_MEDIA_JOB_CONFLICT')
   if (job.import || !['open','paused'].includes(job.phase)) fail('E_MEDIA_JOB_REVIEW')
@@ -315,8 +322,9 @@ export async function handleMediaJobPreview({privatePaths,route,input}) {
 }
 
 async function importTask(paths,store,job,input,deps) {
-  if (!exactInput(input,['libraryId','revision','selectedFileIds','operationId','planDigest'])
-    || !uuidPattern.test(input?.operationId) || !hashPattern.test(input?.planDigest ?? '')) fail('E_MEDIA_JOB_INVALID')
+  if (!exactInput(input,['libraryId','revision','selectedFileIds','operationId','planDigest','acceptFolderBindings'])
+    || !uuidPattern.test(input?.operationId) || !hashPattern.test(input?.planDigest ?? '')
+    || (input.acceptFolderBindings !== undefined && typeof input.acceptFolderBindings !== 'boolean')) fail('E_MEDIA_JOB_INVALID')
   assertIntent(job,input)
   const selectedFileIds = selectionOf(job,input.selectedFileIds)
   if (job.import) {
@@ -328,6 +336,8 @@ async function importTask(paths,store,job,input,deps) {
   const {plan,editorOutcome} = await taskPlan(paths,job,input)
   if (plan.digest !== input.planDigest) fail('E_MEDIA_JOB_CONFLICT')
   if (plan.blockers.length) fail('E_MEDIA_IMPORT_BLOCKED')
+  // Batch 2A: folder bindings found by name are written and imported only after the user confirms them in the preview.
+  if (plan.summary.pins.length > 0 && input.acceptFolderBindings !== true) fail('E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED')
   job = await store.update(job.jobId,job.revision,next => {
     next.phase = 'open'
     next.import = {operationId:input.operationId,planDigest:plan.digest,sourceRevision:input.revision,selectedFileIds,phase:'started'}
@@ -338,7 +348,7 @@ async function importTask(paths,store,job,input,deps) {
     await deps?.onMediaJobImportStage?.(phase)
   }
   try {
-    const applied = await applyMediaImportPlan({privatePaths:paths,plan,onStage:stage})
+    const applied = await applyMediaImportPlan({privatePaths:paths,plan,onStage:stage,acceptFolderBindings:input.acceptFolderBindings === true})
     const files = await checkedFiles(paths)
     const index = await readJson(paths.v2MediaSourceIndexPath)
     if (!isDeepStrictEqual(files.media,applied.catalog) || !isDeepStrictEqual(index,applied.index)) fail('E_MEDIA_JOB_REVIEW')

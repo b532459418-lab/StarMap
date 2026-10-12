@@ -4,9 +4,11 @@ import { useTranslation } from 'react-i18next'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Search, X } from 'lucide-react'
-import { addLocalWantToGo, reloadAfterLocalSave, searchLocalCities, searchLocalCountries } from '../data/localEditorApi'
+import { addLocalWantToGo, placeChoiceCandidatesOf, reloadAfterLocalSave, searchLocalCities, searchLocalCountries } from '../data/localEditorApi'
+import { placeChoiceKey, placeChoiceStateOf, type PlaceChoiceState } from '../data/placeChoice.ts'
 import type { CitySearchOption, CountrySearchOption, LocalWantToGoInput } from '../data/localEditorApi'
 import { LocationSearchField } from './LocationSearchField'
+import { PlaceChoiceList } from './PlaceChoiceList'
 
 type WantToGoAddDialogProps = {
   open: boolean
@@ -42,6 +44,8 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
+  // 第 2A 批：服务端返回的同名地点候选与用户的选择（属于提交时的输入）。
+  const [placeChoice, setPlaceChoice] = useState<PlaceChoiceState>()
   const countryCode = countryOption?.countryCode
 
   // 与 InfoCard 的城市检索同一个端点；国家代码来自上面选中的国家。
@@ -79,10 +83,27 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
   const isCityReady = isManualCityEntry
     ? Boolean(manualCity.nameZh.trim() && manualCity.lat.trim() && manualCity.lng.trim())
     : Boolean(cityOption)
+  // 这次要提交的城市：手动输入或检索结果。也用来判断同名地点的候选是否仍属于当前输入（第 2A 批）。
+  const cityForSubmit = isManualCityEntry
+    ? {
+        nameZh: manualCity.nameZh.trim(),
+        nameEn: (manualCity.nameEn || manualCity.nameZh).trim(),
+        lat: Number(manualCity.lat),
+        lng: Number(manualCity.lng),
+      }
+    : cityOption
+  const cityChoiceKey = placeChoiceKey([countryOption?.countryCode, kind, cityForSubmit?.nameZh, cityForSubmit?.nameEn, cityForSubmit?.lat, cityForSubmit?.lng])
+  // 只有城市会有候选；输入变了，原来的候选就作废，重新走一遍流程。
+  const activePlaceChoice = kind === 'city' && placeChoice?.key === cityChoiceKey ? placeChoice : undefined
   const canSubmit = !busy && Boolean(countryOption) && (kind === 'country' || isCityReady)
+    && !(activePlaceChoice && !activePlaceChoice.selected)
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (activePlaceChoice && !activePlaceChoice.selected) {
+      setNotice({ key: 'editor:placeChoiceRequired' })
+      return
+    }
     if (!countryOption || !canSubmit) return
 
     let place: LocalWantToGoInput['place']
@@ -97,16 +118,7 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
       }
     } else {
       // 手动坐标的校验规则与 InfoCard 的手动城市一致。
-      const manualLat = Number(manualCity.lat)
-      const manualLng = Number(manualCity.lng)
-      const city = isManualCityEntry
-        ? {
-            nameZh: manualCity.nameZh.trim(),
-            nameEn: (manualCity.nameEn || manualCity.nameZh).trim(),
-            lat: manualLat,
-            lng: manualLng,
-          }
-        : cityOption
+      const city = cityForSubmit
       if (
         !city?.nameZh
         || !city.nameEn
@@ -133,10 +145,19 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
 
     setBusy(true)
     setNotice({ key: 'editor:adding' })
+    const choice = activePlaceChoice
     try {
-      await addLocalWantToGo({ place, note: note.trim() || undefined })
+      if (choice?.selected?.kind === 'existing') {
+        // 用户选定的已有地点：按 id 引用，不再按名字匹配。
+        await addLocalWantToGo({ placeId: choice.selected.placeId, note: note.trim() || undefined })
+      } else {
+        await addLocalWantToGo({ place, note: note.trim() || undefined, ...(choice?.selected?.kind === 'new' ? { createNew: true as const } : {}) })
+      }
       reloadAfterLocalSave()
     } catch (error) {
+      // 409 E_PLACE_CHOICE_REQUIRED：在对话框里列出候选，同一按钮再次提交（第 2A 批）。
+      const candidates = kind === 'city' ? placeChoiceCandidatesOf(error) : undefined
+      if (candidates) setPlaceChoice(placeChoiceStateOf(cityChoiceKey, candidates))
       // 例如重复添加时服务端返回「这个地方已在想去列表中。」（FR-WTG-8）。
       setNotice(editorErrorNotice(error, 'editor:addFailed'))
       setBusy(false)
@@ -282,6 +303,19 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
             />
             <small>{note.length}/{noteMaxLength}</small>
           </label>
+
+          {activePlaceChoice ? (
+            <PlaceChoiceList
+              candidates={activePlaceChoice.candidates}
+              selected={activePlaceChoice.selected}
+              newPlaceName={cityForSubmit?.nameZh || cityForSubmit?.nameEn || ''}
+              disabled={busy}
+              onSelect={(selected) => {
+                setPlaceChoice({ ...activePlaceChoice, selected })
+                setNotice('')
+              }}
+            />
+          ) : null}
 
           {notice ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{notice}</p> : null}
 

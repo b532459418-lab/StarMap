@@ -4,7 +4,8 @@ import { promisify } from 'node:util'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
 
 const defaultExecFileAsync = promisify(execFile)
-const blockingPattern = /需要处理|缺少日期或分辨率|缺少日期、分辨率或有效坐标|无法读取|找不到国家|找不到城市/
+// Batch 2A: folder bindings matched by name need explicit confirmation, which this endpoint cannot give, so they block too.
+const blockingPattern = /需要处理|缺少日期或分辨率|缺少日期、分辨率或有效坐标|无法读取|找不到国家|找不到城市|待确认的文件夹绑定/
 /** The editor importer's preflight blocks on these words; delete preflight (v2-media-store.mjs) applies the same rule. */
 export const IMPORT_BLOCKING_PATTERN = blockingPattern
 

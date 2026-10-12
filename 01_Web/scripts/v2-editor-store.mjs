@@ -72,9 +72,15 @@ const bracketReason = (error) => reasonOf(error).replace(/[。.]$/, '')
 const isV2WriteError = (error) => error instanceof V2WriteError
   || (error?.name === 'V2WriteError' && typeof error?.code === 'string')
 
-/** 纯函数抛出的错误 → 400 响应。意料之外的错误（程序缺陷）也不吞掉原因。 */
+/**
+ * 需要用户先做选择、本次什么都没写的拒绝 → 409（第 2A 批：按名字新增城市时有候选，`params.candidates` 交给界面）。
+ * 其余拒绝仍是 400。
+ */
+const CHOICE_REQUIRED_CODES = new Set(['E_PLACE_CHOICE_REQUIRED'])
+
+/** 纯函数抛出的错误 → 400 响应（需要选择的为 409）。意料之外的错误（程序缺陷）也不吞掉原因。 */
 const failureResponse = (error) => ({
-  status: 400,
+  status: isV2WriteError(error) && CHOICE_REQUIRED_CODES.has(error.code) ? 409 : 400,
   body: isV2WriteError(error) ? errorBody(error) : v2ErrorBody('E_UNEXPECTED', { reason: reasonOf(error) }),
 })
 

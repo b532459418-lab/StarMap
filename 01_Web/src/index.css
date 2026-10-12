@@ -6898,6 +6898,64 @@ button {
   line-height: 1.45;
 }
 
+/* Batch 2A: inline choice between existing same-name places and a separate new place. */
+.atlas-place-choice {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid rgba(103, 232, 249, 0.3);
+  border-radius: 10px;
+  background: rgba(8, 145, 178, 0.08);
+}
+
+.atlas-place-choice > legend {
+  padding: 0 4px;
+  color: #cffafe;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.atlas-place-choice-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: rgba(226, 232, 240, 0.92);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.atlas-place-choice-option:hover,
+.atlas-place-choice-option:has(input:checked) {
+  background: rgba(8, 145, 178, 0.18);
+}
+
+.atlas-place-choice-option > input {
+  margin-top: 2px;
+  accent-color: #22d3ee;
+}
+
+.atlas-place-choice-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+.atlas-place-choice-option strong {
+  font-weight: 600;
+}
+
+.atlas-place-choice-option small {
+  color: rgba(148, 163, 184, 0.86);
+  font-size: 11px;
+}
+
 .atlas-wtg-note textarea {
   min-width: 0;
   min-height: 64px;

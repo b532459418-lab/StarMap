@@ -16,6 +16,8 @@ import { localDate } from './common.ts'
 import { addWantToGo, deleteHiddenWantToGo, updateWantToGo } from './wantToGo.ts'
 import {
   GHOST_ID,
+  SUZHOU_AH,
+  SUZHOU_JS,
   WRITE_NOW,
   applyWrites,
   assertIntact,
@@ -104,10 +106,18 @@ test('新增想去：新国家的新城市——先写地点（国家按目录�
   assert.equal(next.wantToGo.generated_at, WRITE_NOW.toISOString())
 })
 
-test('新增想去复用足迹城市：不新建地点，只写想去；条目引用足迹城市（地图上自然合并）；名称以地点为准', () => {
+test('新增想去：按名字遇到足迹城市 → E_PLACE_CHOICE_REQUIRED（候选，不写）；用户按地点 id 选定后才引用足迹城市（地图上自然合并）', () => {
+  // 改写（第 2A 批）：旧用例按名字（reykjavik）静默复用足迹城市雷克雅未克。新规则：按名字只给候选；
+  // 中文名不同（雷克雅未克市）所以不是强候选、不预选；用户选定后按 placeId 引用，名称以地点为准。
   const files = migratedFiles()
+  const before = structuredClone(files)
   const reykjavik = placeNamed(files, 'Reykjavik')
-  const outcome = addWantToGo(files, cityInput({ nameZh: '雷克雅未克市', nameEn: 'reykjavik', countryCode: 'IS', lat: 64.15, lng: -21.95 }), testContext())
+  assertV2Error(() => addWantToGo(files, cityInput({ nameZh: '雷克雅未克市', nameEn: 'reykjavik', countryCode: 'IS', lat: 64.15, lng: -21.95 }), testContext()), 'E_PLACE_CHOICE_REQUIRED', undefined, (error) => {
+    const candidates = error.params?.candidates as { placeId: string; strong: boolean }[]
+    assert.deepEqual(candidates.map(({ placeId, strong }) => ({ placeId, strong })), [{ placeId: reykjavik.id, strong: false }])
+  })
+  assert.deepEqual(files, before, '不写')
+  const outcome = addWantToGo(files, { placeId: reykjavik.id }, testContext())
   assert.deepEqual(writeOrder(outcome.writes), ['wantToGo'])
   const next = applyWrites(files, outcome.writes)
   assertIntact(next)
@@ -137,11 +147,16 @@ test('新增想去：没有坐标的城市可以新建；国家条目指向国�
   assert.deepEqual(writeOrder(norway.writes), ['wantToGo'], '挪威已有坐标，不改地点')
 })
 
-test('新增想去：已有想去条目（含隐藏的）引用同一地点 → E_WTG_EXISTS（沿用旧文案）', () => {
+test('新增想去：同名地点已在想去列表（含隐藏的）→ 按名字先要求选择；选定这个地点后才是 E_WTG_EXISTS（沿用旧文案）', () => {
+  // 改写（第 2A 批）：旧用例按名字（NUUK、Tromsø、Akureyri）解析到已有地点后报 E_WTG_EXISTS；按名字现在只会要求选择。
   const files = migratedFiles()
-  assertV2Error(() => addWantToGo(files, cityInput({ nameZh: '努克', nameEn: 'NUUK', countryCode: 'gl' }), testContext()), 'E_WTG_EXISTS', '这个地方已在想去列表中。')
-  assertV2Error(() => addWantToGo(files, cityInput({ nameEn: 'Tromsø', countryCode: 'NO' }), testContext()), 'E_WTG_EXISTS')
-  assertV2Error(() => addWantToGo(files, cityInput({ nameEn: 'Akureyri', countryCode: 'IS' }), testContext()), 'E_WTG_EXISTS', undefined, (error) => {
+  for (const [nameEn, countryCode, placeEn] of [['NUUK', 'gl', 'Nuuk'], ['Tromsø', 'NO', 'Tromsø'], ['Akureyri', 'IS', 'Akureyri']]) {
+    assertV2Error(() => addWantToGo(files, cityInput({ nameEn, countryCode }), testContext()), 'E_PLACE_CHOICE_REQUIRED', undefined, (error) => {
+      assert.deepEqual((error.params?.candidates as { placeId: string }[]).map((candidate) => candidate.placeId), [placeNamed(files, placeEn).id])
+    })
+  }
+  assertV2Error(() => addWantToGo(files, { placeId: placeNamed(files, 'Nuuk').id }, testContext()), 'E_WTG_EXISTS', '这个地方已在想去列表中。')
+  assertV2Error(() => addWantToGo(files, { placeId: placeNamed(files, 'Akureyri').id }, testContext()), 'E_WTG_EXISTS', undefined, (error) => {
     assert.equal(error.params?.placeId, placeNamed(files, 'Akureyri').id)
   })
 })
@@ -170,11 +185,63 @@ test('新增想去：输入校验与旧 store 相同的文案；加入日期默�
   assert.equal(Object.hasOwn(item, 'note'), false, '空备注不写')
 })
 
-test('新增想去：候选地点不唯一 → E_PLACE_AMBIGUOUS', () => {
+test('新增想去：多个同名候选 → E_PLACE_CHOICE_REQUIRED 列出全部候选（不猜）', () => {
+  // 改写（第 2A 批）：旧用例报 E_PLACE_AMBIGUOUS（文案引导「先合并」）；现在列出候选请用户选择。
   const files = migratedFiles()
   const iceland = placeNamed(files, 'Iceland').id
   files.places.places.push({ id: '019b76da-a8f0-7000-8000-0000000000f0', subtype: 'city', names: { en: 'Reykjavik' }, partOf: iceland })
-  assertV2Error(() => addWantToGo(files, cityInput({ nameEn: 'Reykjavik', countryCode: 'IS' }), testContext()), 'E_PLACE_AMBIGUOUS')
+  assertV2Error(() => addWantToGo(files, cityInput({ nameEn: 'Reykjavik', countryCode: 'IS' }), testContext()), 'E_PLACE_CHOICE_REQUIRED', undefined, (error) => {
+    const ids = (error.params?.candidates as { placeId: string }[]).map((candidate) => candidate.placeId)
+    assert.deepEqual([...ids].sort(), [placeNamed(files, 'Reykjavik').id, '019b76da-a8f0-7000-8000-0000000000f0'].sort())
+  })
+})
+
+test('新增想去 · 同名不同城（第 2A 批）：已有苏州，按名字提交宿州 → E_PLACE_CHOICE_REQUIRED（不写）；createNew → 新建；苏州的 placeId → 引用苏州；只给英文名时只比英文名', () => {
+  const ctx = testContext()
+  const base = migratedFiles()
+  const files = applyWrites(base, addWantToGo(base, cityInput({ nameZh: '苏州', nameEn: 'Suzhou', countryCode: 'CN', ...SUZHOU_JS }), ctx).writes)
+  const suzhou = placeNamed(files, 'Suzhou')
+  const before = structuredClone(files)
+  assertV2Error(() => addWantToGo(files, cityInput({ nameZh: '宿州', nameEn: 'Suzhou', countryCode: 'CN', ...SUZHOU_AH }), ctx), 'E_PLACE_CHOICE_REQUIRED', undefined, (error) => {
+    const candidates = error.params?.candidates as { placeId: string; strong: boolean; location?: unknown }[]
+    assert.deepEqual(candidates.map(({ placeId, strong, location }) => ({ placeId, strong, location })), [{ placeId: suzhou.id, strong: false, location: SUZHOU_JS }])
+  })
+  // 没有坐标也一样要求选择（候选不因为缺坐标而消失）。
+  assertV2Error(() => addWantToGo(files, cityInput({ nameZh: '宿州', nameEn: 'Suzhou', countryCode: 'CN' }), ctx), 'E_PLACE_CHOICE_REQUIRED')
+  // 只给英文名（中文名由英文名补齐只用于新建，不参与比较）：名字一致、坐标相同 → 强候选。
+  assertV2Error(() => addWantToGo(files, cityInput({ nameEn: 'Suzhou', countryCode: 'CN', ...SUZHOU_JS }), ctx), 'E_PLACE_CHOICE_REQUIRED', undefined, (error) => {
+    assert.equal((error.params?.candidates as { strong: boolean }[])[0].strong, true)
+  })
+  assert.deepEqual(files, before, '不写')
+
+  const created = addWantToGo(files, cityInput({ nameZh: '宿州', nameEn: 'Suzhou', countryCode: 'CN', ...SUZHOU_AH }, { createNew: true }), ctx)
+  assert.deepEqual(writeOrder(created.writes), ['places', 'wantToGo'])
+  const next = applyWrites(files, created.writes)
+  assertIntact(next)
+  const suxian = next.places.places.find((place) => place.names['zh-Hans'] === '宿州')
+  assert.deepEqual(suxian?.location, SUZHOU_AH)
+  assert.equal(itemOf(next, created.result.id)?.placeId, suxian?.id)
+  assert.equal(next.places.places.filter((place) => place.names.en === 'Suzhou').length, 2)
+
+  // 苏州已在想去列表：按 placeId 再加一次 → E_WTG_EXISTS；条目不在时按 placeId 加 → 引用苏州。
+  assertV2Error(() => addWantToGo(files, { placeId: suzhou.id }, ctx), 'E_WTG_EXISTS')
+  const emptied = { ...files, wantToGo: { ...files.wantToGo, items: [] } }
+  const chosen = addWantToGo(emptied, { placeId: suzhou.id }, ctx)
+  assert.equal(itemOf(applyWrites(emptied, chosen.writes), chosen.result.id)?.placeId, suzhou.id)
+
+  // placeId 不能带 createNew；createNew 必须是布尔值。
+  assertV2Error(() => addWantToGo(emptied, { placeId: suzhou.id, createNew: true }, ctx), 'E_UNKNOWN_PLACE_REF')
+  assertV2Error(() => addWantToGo(files, cityInput({ nameEn: 'Suzhou', countryCode: 'CN' }, { createNew: 1 }), ctx), 'E_UNKNOWN_PLACE_REF')
+})
+
+test('新增想去 · kind: country 不受影响：按 ISO 解析到已有国家地点，createNew 对国家不起作用', () => {
+  const files = migratedFiles()
+  const greenland = placeNamed(files, 'Greenland')
+  const outcome = addWantToGo(files, { place: { kind: 'country', nameEn: 'Greenland', countryCode: 'GL' }, createNew: true }, testContext())
+  const next = applyWrites(files, outcome.writes)
+  assertIntact(next)
+  assert.equal(itemOf(next, outcome.result.id)?.placeId, greenland.id)
+  assert.equal(next.places.places.length, files.places.places.length)
 })
 
 test('新增想去 · 全新 V2 目录：只写地点与想去，合法；想去文件为 local-only；没有样例数据', () => {

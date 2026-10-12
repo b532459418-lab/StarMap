@@ -123,7 +123,12 @@ export const V2_WRITE_MESSAGES = {
   E_MEDIA_DELETE_BLOCKED: () => '投递箱预检发现需要处理的问题，没有删除任何文件。请先处理诊断详情里列出的问题，再彻底删除。',
 
   // ---- 新：V2 才有的情形 ----
-  E_PLACE_AMBIGUOUS: () => '地点注册表里有不止一个地点与之匹配，无法确定是哪一个，未写入。请先合并重复的地点。',
+  E_PLACE_AMBIGUOUS: () => '找到多个可能的地点，请选择要使用的地点，或新建一个独立地点。本次尚未保存。',
+  /**
+   * 新（第 2A 批）：按名字新增城市时找到了可能是同一个地方的已有地点。`params.candidates` 是候选列表
+   * （地点 id、中英文名、坐标、距离、是否强候选——名称是地点数据，不是界面文案）；响应状态码 409，什么都没写。
+   */
+  E_PLACE_CHOICE_REQUIRED: () => '找到可能是同一个地方的已有地点，请选择要使用的地点，或新建一个独立地点。本次尚未保存。',
   E_UNKNOWN_PLACE_REF: () => '编辑状态引用了不存在的地点，或地点类型不对，未保存。请刷新页面后重试。',
   E_INTEGRITY: () => 'V2 数据没有通过完整性检查（例如引用了不存在的地点），未写入任何文件。',
   E_WRITE_FAILED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '写入 V2 数据文件失败。'),
@@ -141,6 +146,8 @@ export const V2_WRITE_MESSAGES = {
   E_MEDIA_JOB_CONFLICT: () => '媒体待办的版本、库身份或操作意图已经改变。请重新核对，未执行本次写入。',
   E_MEDIA_JOB_REVIEW: () => '媒体待办的实际结果需要核对。记录与原文件保留，不会自动重传或导入。',
   E_MEDIA_JOB_NOT_FOUND: () => '找不到这个媒体待办。',
+  /** 新（第 2A 批）：导入预览里有按文件夹名匹配、还没确认的地点绑定，导入请求却没有确认它们。 */
+  E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED: () => '投递箱里有按文件夹名匹配到地点、尚未确认的文件夹绑定。请在导入预览里核对并确认这些绑定后再导入；本次没有写入任何文件。',
   E_UNKNOWN_ENDPOINT: () => '未知的本地编辑接口。',
   E_EDITOR_READ_FORBIDDEN: () => '仅允许本机编辑会话读取。',
   E_EDITOR_WRITE_FORBIDDEN: () => '仅允许本机编辑会话写入。',

@@ -197,7 +197,12 @@ export async function createMediaImportPlan({ privatePaths, unsafeTestDerivative
     updatedIds: scan.items.filter((item) => prior.has(item.id) && stable(prior.get(item.id)) !== stable(item)).map((item) => item.id),
     removedIds: oldItems.filter((item) => !nextIds.has(item.id)).map((item) => item.id),
     sources: entries,
-    pins: scan.pins.map((pin) => ({ sourcePath: `${relative(privatePaths.inboxRoot, pin.directory)}/place.json`, placeId: pin.placeId })),
+    // Batch 2A: each pin is a folder binding found by name (or a legacy country.json) that the user must confirm in the
+    // import confirmation step; the folder, the place and its names are shown, and the plan digest covers them.
+    pins: scan.pins.map((pin) => ({
+      sourcePath: `${relative(privatePaths.inboxRoot, pin.directory)}/place.json`, placeId: pin.placeId,
+      folder: relative(privatePaths.inboxRoot, pin.directory), subtype: pin.subtype, names: { ...pin.names }, source: pin.source,
+    })),
     outputs,
     blockers,
   }
@@ -222,12 +227,17 @@ export async function verifyMediaImportPlanInputs({ privatePaths, plan, editorWr
   return true
 }
 
-/** Recompute and validate before the first output; never trusts caller-supplied scanner internals. */
-export async function applyMediaImportPlan({ privatePaths, plan, onStage = async () => {}, now = () => new Date() }) {
+/**
+ * Recompute and validate before the first output; never trusts caller-supplied scanner internals.
+ * Batch 2A: folder bindings found by name are written (place.json) and imported only with `acceptFolderBindings`;
+ * without it a plan that has any binding stops before the first write.
+ */
+export async function applyMediaImportPlan({ privatePaths, plan, onStage = async () => {}, now = () => new Date(), acceptFolderBindings = false }) {
   const fresh = await createMediaImportPlan({ privatePaths })
   if (fresh.digest !== plan?.digest) throw fault('E_MEDIA_JOB_CONFLICT')
   if (fresh.blockers.length) throw fault('E_MEDIA_JOB_REVIEW')
-  const result = await applyV2MediaImportScan({ privatePaths, scan: fresh.scan, now, onStage })
+  if (fresh.summary.pins.length > 0 && acceptFolderBindings !== true) throw fault('E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED')
+  const result = await applyV2MediaImportScan({ privatePaths, scan: fresh.scan, now, onStage, acceptFolderBindings })
   await verifyMediaImportPlanInputs({ privatePaths, plan: fresh })
   return result
 }
