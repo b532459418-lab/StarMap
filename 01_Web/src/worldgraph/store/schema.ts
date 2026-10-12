@@ -27,7 +27,7 @@ export function validateWorldStore(value: unknown, policy: StorePolicy = {}): as
     }
     indices.set(table,index)
   }
-  const lookup:RowLookup={get:(table,id)=>indices.get(table)!.get(id)}
+  const lookup:RowLookup={get:(table,id)=>indices.get(table as StoreTable)?.get(id)}
   const proposalIds=new Set<unknown>(),systemKeys=new Set<unknown>(),identities=new Set<string>()
   for (const table of STORE_TABLES) for (const r of [...indices.get(table)!.values()]) {
     validateRow(table,r,lookup,policy)

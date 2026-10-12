@@ -4,12 +4,20 @@
  */
 import { isCalendarDate } from '../timeFilter.ts'
 import type { StorePolicy, StoreTable } from './types.ts'
+import type { FormalTable } from './formal.ts'
 import { type ObjectValue, opaqueId, plain, reject, revision, shape, utcTimestamp, uuid, validateStoredDates } from './primitives.ts'
+import { isPosition } from './position.ts'
 
+export type RowTable = StoreTable | FormalTable
+/** 'g1': the G1 world-store tables and field definitions, unchanged.
+ * 'formal': the formal store (formal.ts): viewItems/viewSettings instead of
+ * viewStates, and field definitions may carry `deprecated: true`. */
+export type RowDialect = 'g1' | 'formal'
 export interface RowLookup {
   /** The row with this id, or undefined. Rows are trusted to have passed validateRowBase. */
-  get(table: StoreTable, id: string): object | undefined
+  get(table: RowTable, id: string): object | undefined
 }
+const VIEW_ITEM_TABLES: readonly string[] = ['entries','entities','assets']
 
 function names(value: unknown, path: string) {
   shape(value, ['names','originalLanguage'], ['names'], path)
@@ -32,11 +40,15 @@ function ids(value: unknown, path: string): string[] {
 function finite(value: unknown, path: string): asserts value is number {
   if (typeof value !== 'number' || !Number.isFinite(value)) reject('E_NUMBER',path)
 }
-function definitions(value: unknown, path: string): ObjectValue[] {
+function fieldDefinitions(value: unknown, path: string, dialect: RowDialect): ObjectValue[] {
   if (!Array.isArray(value)) reject('E_SCHEMA',path)
   const keys = new Set<string>()
   for (const field of value) {
-    shape(field,['key','kind','required','min','max'],['key','kind'],path)
+    if (dialect==='formal') {
+      shape(field,['key','kind','required','min','max','deprecated'],['key','kind'],path)
+      // A deprecated field accepts no new values, so it cannot also be required.
+      if (field.deprecated!==undefined && (field.deprecated!==true || field.required===true)) reject('E_SCHEMA',path)
+    } else shape(field,['key','kind','required','min','max'],['key','kind'],path)
     opaqueId(field.key,path)
     if (['__proto__','constructor','prototype'].includes(field.key) || keys.has(field.key)) reject('E_SCHEMA',path)
     keys.add(field.key)
@@ -52,9 +64,10 @@ function definitions(value: unknown, path: string): ObjectValue[] {
   return value
 }
 const visibility = (v: unknown, path: string) => { if (typeof v !== 'string' || !['private','friends','selected','link','public'].includes(v)) reject('E_VISIBILITY',path) }
+const scope = (v: unknown, path: string) => { if (typeof v !== 'string' || !v.trim() || v.length > 256) reject('E_SCOPE',path) }
 
 /** Identity, revision and the opaque extensions lane: the part every table shares. */
-export function validateRowBase(table: StoreTable, row: unknown): asserts row is ObjectValue {
+export function validateRowBase(table: RowTable, row: unknown): asserts row is ObjectValue {
   if (!plain(row)) reject('E_SHAPE',table)
   opaqueId(row.id,table+'.id'); revision(row.revision,table+'.revision')
   if (row.extensions!==undefined&&!plain(row.extensions)) reject('E_EXTENSIONS',table+'.extensions')
@@ -62,10 +75,11 @@ export function validateRowBase(table: StoreTable, row: unknown): asserts row is
 
 /** Every per-row rule of the G1 contract: shape, field primitives, source and review
  * receipt, references, entry/relation type limits, times and coordinates. */
-export function validateRow(table: StoreTable, row: unknown, lookup: RowLookup, policy: StorePolicy = {}): asserts row is ObjectValue {
+export function validateRow(table: RowTable, row: unknown, lookup: RowLookup, policy: StorePolicy = {}, dialect: RowDialect = 'g1'): asserts row is ObjectValue {
   validateRowBase(table,row)
   const r=row
-  const get=(t:StoreTable,id:unknown,path:string):ObjectValue => {
+  const definitions=(value:unknown,path:string) => fieldDefinitions(value,path,dialect)
+  const get=(t:RowTable,id:unknown,path:string):ObjectValue => {
     const found=typeof id==='string'?lookup.get(t,id):undefined
     if (!found) reject('E_REFERENCE',path); return found as ObjectValue
   }
@@ -99,6 +113,8 @@ export function validateRow(table: StoreTable, row: unknown, lookup: RowLookup, 
       if (f.kind==='asset_ref') get('assets',x,path)
     }
   }
+  const g1=dialect==='g1'
+  if (g1 ? table==='viewItems'||table==='viewSettings' : table==='viewStates') reject('E_TABLE',table)
   switch (table) {
     case 'sources':
       shape(r,['id','revision','title','origin']); names(r.title,'sources.title')
@@ -184,6 +200,28 @@ export function validateRow(table: StoreTable, row: unknown, lookup: RowLookup, 
       shape(r,['id','revision','layerId','orderedEntryIds','hiddenEntryIds']); get('layers',r.layerId,'viewStates.layerId')
       for (const key of ['orderedEntryIds','hiddenEntryIds']) {
         for (const id of ids(r[key],'viewStates.'+key)) if (get('entries',id,'viewStates.'+key).layerId!==r.layerId) reject('E_VIEW_LAYER','viewStates.'+key)
+      }
+      return
+    case 'viewItems': {
+      shape(r,['id','revision','scope','itemTable','itemId','layerId','position','hidden'],['id','revision','scope','itemTable','itemId','position','hidden'])
+      scope(r.scope,'viewItems.scope')
+      if (typeof r.itemTable!=='string' || !VIEW_ITEM_TABLES.includes(r.itemTable)) reject('E_VIEW_TABLE','viewItems.itemTable')
+      const item=get(r.itemTable as RowTable,r.itemId,'viewItems.itemId')
+      if (r.layerId!==undefined) {
+        get('layers',r.layerId,'viewItems.layerId')
+        if (r.itemTable==='entries' && item.layerId!==r.layerId) reject('E_VIEW_LAYER','viewItems.layerId')
+      }
+      if (!isPosition(r.position)) reject('E_POSITION','viewItems.position')
+      if (typeof r.hidden!=='boolean') reject('E_SHAPE','viewItems.hidden')
+      return
+    }
+    case 'viewSettings':
+      shape(r,['id','revision','scope','key','value','ref'],['id','revision','scope','key'])
+      scope(r.scope,'viewSettings.scope'); opaqueId(r.key,'viewSettings.key')
+      if (r.ref!==undefined) {
+        shape(r.ref,['table','id'],['table','id'],'viewSettings.ref')
+        if (typeof r.ref.table!=='string' || !VIEW_ITEM_TABLES.includes(r.ref.table)) reject('E_VIEW_TABLE','viewSettings.ref')
+        get(r.ref.table as RowTable,r.ref.id,'viewSettings.ref')
       }
       return
     default: reject('E_TABLE',String(table))
