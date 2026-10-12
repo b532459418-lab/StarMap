@@ -182,17 +182,34 @@ test('端到端：迁移之后的私人根 → 一组编辑；每一步五个 V2
   assert.ok(step.files.editorState.countryOrder.includes(norway), '挪威首次进入足迹，进入国家顺序')
   step = await run('POST /__travelatlas/editor/wanttogo', { place: { kind: 'city', nameZh: '斯塔万格', nameEn: 'Stavanger', countryCode: 'NO', lat: 58.97, lng: 5.7331 } }, '新增想去斯塔万格')
   const stavangerItem = step.body.id
-  step = await run('POST /__travelatlas/editor/wanttogo/convert', { source: 'want-to-go', id: stavangerItem, startDate: '2026-06-03' }, '斯塔万格转足迹（不保留）')
+  // 第 2C 批：行程标题与卑尔根的 planned 记录相同（同一个计划）；还没有同名的已去过行程，所以直接新建行程。
+  step = await run('POST /__travelatlas/editor/wanttogo/convert', { source: 'want-to-go', id: stavangerItem, startDate: '2026-06-03', tripTitle: '2027 Fjord Plan' }, '斯塔万格转足迹（不保留）')
   assert.equal(step.body.wantToGoRemoved, true)
+  const stavangerJourney = step.files.travel.records.find((record) => record.id === step.body.travelRecordId).journeyId
+  assert.match(stavangerJourney, /^journey-/)
   assert.equal(step.files.wantToGo.items.some((item) => item.id === stavangerItem), false)
   assert.deepEqual(step.files.editorState.addedCountries.find((country) => country.placeId === norway), norwayCountry, '再次转足迹不覆盖国家首次到访信息')
 
-  // 5. planned 转足迹：补 journeyId。
-  step = await run('POST /__travelatlas/editor/wanttogo/convert', { source: 'planned', recordId: 'planned_bergen', startDate: '2026-06-05' }, '卑尔根 planned 转足迹')
+  // 5. planned 转足迹：补 journeyId。第 2C 批：标题「2027 Fjord Plan」已是斯塔万格的行程 → 409 请用户选择（附候选），
+  //    什么都不写；带上所选的 journeyId 再提交，才加入那个行程。
+  const beforeChoice = await readDiskV2(paths)
+  step = await run('POST /__travelatlas/editor/wanttogo/convert', { source: 'planned', recordId: 'planned_bergen', startDate: '2026-06-05' }, '卑尔根 planned 转足迹（需要选择行程）')
+  assert.equal(step.status, 409, JSON.stringify(step.body))
+  assert.equal(step.body.code, 'E_JOURNEY_CHOICE_REQUIRED')
+  assert.equal(step.body.error, '已有同名的行程，请选择加入已有行程，或新建一个行程。本次尚未保存。')
+  assert.deepEqual(step.body.params.candidates.map(({ journeyId, title, startDate, endDate, cityCount }) => ({ journeyId, title, startDate, endDate, cityCount })), [
+    { journeyId: stavangerJourney, title: '2027 Fjord Plan', startDate: '2026-06-03', endDate: '2026-06-03', cityCount: 1 },
+  ])
+  assert.deepEqual(await readDiskV2(paths), beforeChoice)
+  step = await run('POST /__travelatlas/editor/wanttogo/convert', { source: 'planned', recordId: 'planned_bergen', startDate: '2026-06-05', journeyId: 'journey-missing' }, '卑尔根：不是同名行程')
+  assert.equal(step.status, 400)
+  assert.equal(step.body.code, 'E_UNKNOWN_JOURNEY')
+  assert.deepEqual(await readDiskV2(paths), beforeChoice)
+  step = await run('POST /__travelatlas/editor/wanttogo/convert', { source: 'planned', recordId: 'planned_bergen', startDate: '2026-06-05', journeyId: stavangerJourney }, '卑尔根 planned 转足迹（加入斯塔万格的行程）')
   assert.equal(step.status, 200, JSON.stringify(step.body))
   const bergen = step.files.travel.records.find((record) => record.id === 'planned_bergen')
   assert.equal(bergen.status, 'visited')
-  assert.match(bergen.journeyId, /^journey-/)
+  assert.equal(bergen.journeyId, stavangerJourney)
 
   // 6. 隐藏一个没有媒体的国家并彻底删除。
   step = await put((state) => ({ ...state, hiddenCountryIds: [japan] }), '隐藏日本')

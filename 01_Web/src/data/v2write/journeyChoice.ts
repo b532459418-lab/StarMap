@@ -4,7 +4,11 @@
  * 行程的身份是记录上的 `journeyId`。行程标题（`trip_title`）只用来找候选，不再决定新的已去过记录并入哪个行程：
  * - `findJourneyCandidates(files, tripTitle)`：已去过的记录里，`trip_title` 与给定标题完全相同、且带 `journeyId` 的行程，
  *   每个行程附上日期范围与城市，供界面显示；
- * - `journeyIdFor(files, tripTitle, ctx, choice)`：新变成「已去过」的记录用哪个 `journeyId`，由用户的选择决定。
+ * - `journeyIdFor(files, tripTitle, ctx, choice)`：新变成「已去过」的记录用哪个 `journeyId`，由用户的选择决定；
+ * - `journeyChoiceOf(body)`：请求里的选择——`journeyId`（加入这个已有行程）或 `newJourney: true`（新建行程）。
+ *
+ * 与第 2A 批的地点选择同时出现时，【先地点、后行程】：写入端点先确定城市（`E_PLACE_CHOICE_REQUIRED`），再确定行程
+ * （`E_JOURNEY_CHOICE_REQUIRED`），一次只返回一种选择。默认标题「国家 · 城市」取决于选定的城市，所以顺序不能反过来。
  *
  * 不改已有记录的 `journeyId`；不看日期判断两次旅行是不是同一次。
  *
@@ -100,6 +104,22 @@ export const findJourneyCandidates = (files: V2Files, tripTitle: string | undefi
     }
     return compareCodePoints(left.journeyId, right.journeyId)
   })
+}
+
+/**
+ * 请求里的行程选择（`POST /records` 与 `POST /wanttogo/convert` 共用）：
+ * - 都没有（或 `newJourney: false`）→ `ask`；
+ * - `journeyId`（trim 后非空的字符串）→ `join`；
+ * - `newJourney: true` → `new`。
+ * 其它写法（`journeyId` 不是非空字符串、`newJourney` 不是布尔值、两者同时给出）→ `E_UNKNOWN_JOURNEY`。
+ * 这里只检查写法；`journeyId` 是不是同标题的已有行程，要等地点与标题确定之后由 `journeyIdFor` 判断。
+ */
+export const journeyChoiceOf = (body: Record<string, unknown>): JourneyChoice => {
+  const { journeyId, newJourney } = body
+  if (newJourney !== undefined && typeof newJourney !== 'boolean') return fail('E_UNKNOWN_JOURNEY')
+  if (journeyId === undefined) return newJourney === true ? { kind: 'new' } : { kind: 'ask' }
+  if (typeof journeyId !== 'string' || !journeyId.trim() || newJourney === true) return fail('E_UNKNOWN_JOURNEY')
+  return { kind: 'join', journeyId: journeyId.trim() }
 }
 
 const newJourneyId = (ctx: V2WriteContext) => `journey-${ctx.newId()}`

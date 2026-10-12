@@ -30,7 +30,7 @@ import {
   zhNameOf,
   type EnsuredPlace,
 } from './common.ts'
-import { journeyIdFor } from './journeyChoice.ts'
+import { journeyChoiceOf, journeyIdFor } from './journeyChoice.ts'
 import { removeUnreferencedPlaces, runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 
 /** 旧模式「足迹已创建，但……」：新增足迹之后国家排序没写成。 */
@@ -96,8 +96,13 @@ const namedTargetOf = (body: Record<string, unknown>): RecordTarget => {
  * - 只按名称：国家按 `country_code` 解析（没有就按目录新建）；城市在该国家下找候选——没有候选就新建；有任何候选
  *   （包括只被想去引用的城市）→ `E_PLACE_CHOICE_REQUIRED`（`params.candidates`），不写。从不按名字静默复用。
  * - 任何记录（含 planned）已引用该城市 → `E_CITY_EXISTS`（沿用旧文案；只有按地点 id 引用时可能发生）。
+ * - 行程（第 2C 批，三种输入都可以带）：`journeyId` 加入这个同标题的已有行程（不是 → `E_UNKNOWN_JOURNEY`），`newJourney: true`
+ *   新建行程；都没有时，标题（含默认标题）没有撞上已有行程就新建，撞上了 → `E_JOURNEY_CHOICE_REQUIRED`（`params.candidates`），不写。
+ *   见 ./journeyChoice.ts。
+ * - 顺序固定：先地点选择（`E_PLACE_CHOICE_REQUIRED`），再 `E_CITY_EXISTS` 与坐标，最后行程选择——默认标题取决于选定的城市，
+ *   一次只返回一种选择。
  * - 新记录：UUIDv7 `id`、`placeId`、日期、`year`、`trip_title`（默认「国家中文名 · 城市中文名」）、
- *   `type: 'visit'`、`status: 'visited'`、`source: 'local-editor'`、`journeyId`（./journeyChoice.ts：标题撞上已有行程时请用户选择）。坐标与城市
+ *   `type: 'visit'`、`status: 'visited'`、`source: 'local-editor'`、`journeyId`（见上）。坐标与城市
  *   `location` 相同就省略，否则写入。
  * - 国家首次进入足迹时按最近到访日期重排 `countryOrder`。
  * 写盘：地点注册表（有新地点或补了坐标时）→ 足迹 → editor-state（排序变了时）。
@@ -110,6 +115,7 @@ export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknow
   }
   const target = referencesPlace ? referencedTargetOf(body) : namedTargetOf(body)
   const tripTitleInput = optionalText(body.trip_title)
+  const journeyChoice = journeyChoiceOf(body)
 
   return runV2Transaction(files, ctx, (draft) => {
     let country: EnsuredPlace
@@ -131,6 +137,7 @@ export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknow
     if (draft.files.travel.records.some((record) => record.placeId === city.place.id)) fail('E_CITY_EXISTS', { cityId: city.place.id })
     const { lat, lng } = coordinates ?? fail('E_REQUIRED', { field: 'lat' })
 
+    // 到这里地点已经确定（地点选择在前）；行程选择在后，要用到由城市决定的默认标题（第 2C 批）。
     const tripTitle = tripTitleInput ?? `${zhNameOf(country.place)} · ${zhNameOf(city.place)}`
     const record: V2TravelRecord = {
       id: ctx.newId(),
@@ -143,7 +150,7 @@ export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknow
       status: 'visited',
       ...(sameAsLocation(city.place, lat, lng) ? {} : { lat, lng }),
       source: 'local-editor',
-      journeyId: journeyIdFor(draft.files, tripTitle, ctx, { kind: 'ask' }),
+      journeyId: journeyIdFor(draft.files, tripTitle, ctx, journeyChoice),
     }
     draft.files.travel.records.push(record)
     const reordered = !wasInFootprint && reorderCountries(draft.files)
