@@ -41,9 +41,13 @@ the read-only V2 bridge), with their tests.
 
 ## Worth reusing
 
-- The v2 host's split storage: a baseline, the current state and a compact
-  operation history in separate tables that commit atomically
-  (`world-store-repository-v2.mjs`).
+- The principle behind the v2 host (`world-store-repository-v2.mjs`): keep the
+  current state and the operation records apart, and commit them in one
+  transaction. Its idempotent receipts (request digests, a conflict on reuse
+  with different content, an explicit "outcome unknown") are worth keeping too.
+  Its layout is not: the baseline and the current state are each one row
+  holding the whole World as JSON, rewritten and hashed on every save.
+  Production storage keeps one row per record.
 - The fault-injection tests: bounded child workers pause at named write phases
   and are terminated there, and the tests then verify recovery or a clean
   refusal.
