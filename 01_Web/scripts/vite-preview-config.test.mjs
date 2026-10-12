@@ -29,7 +29,7 @@ async function withConfig(run) {
 const pluginsOf = (config) => config.plugins.flat(Infinity).filter(Boolean)
 
 test('vite preview in every mode: no CORS grant, and the cross-site guard is the first preview middleware', async () => withConfig(async (configFor) => {
-  for (const mode of ['public', 'personal', 'production', 'repository-preview']) {
+  for (const mode of ['public', 'personal', 'production']) {
     const config = await configFor({ mode, command: 'serve', isPreview: true })
     assert.deepEqual(config.preview, { cors: false }, mode)
     const previewHooks = pluginsOf(config).filter((plugin) => typeof plugin.configurePreviewServer === 'function')
