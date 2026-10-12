@@ -11,7 +11,9 @@ const sourceIdentity = (r: AnyStoreRow): string | undefined => {
   if (!('source' in r)) return undefined
   return JSON.stringify([r.source.sourceId,r.source.recordId])
 }
-/** No IO or durable transaction claim. All validation precedes returning a new world. */
+/** No IO or durable transaction claim. All validation precedes returning a new world.
+ * Reference implementation: every call validates and clones the whole world, so it
+ * defines the semantics but is not meant for a high-frequency write path. */
 export function applyStoreCommands(
   world: WorldStore, commands: readonly StoreCommand[], expectedRevision: number, context: CommandContext = {},
 ): WorldStore {
