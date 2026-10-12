@@ -6,6 +6,9 @@ import { LocalEditorError } from '../i18n/editorErrors.ts'
 import { assertLocalEditorReloadAllowed, withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
 import { assertMediaJob, assertMediaJobsRead, assertMediaJobPreview, type MediaJob, type MediaJobsRead, type MediaJobPreview, type MediaJobIntent, type MediaJobVersion } from './mediaJobs.ts'
 
+/** 第 2A 批：409 `E_PLACE_CHOICE_REQUIRED` 的候选列表交给界面（./placeChoice.ts）。 */
+export { placeChoiceCandidatesOf, type PlaceChoiceCandidate } from './placeChoice.ts'
+
 const editorHeaders = {
   'content-type': 'application/json',
   'x-travelatlas-local-editor': '1',
@@ -199,7 +202,11 @@ export const deleteHiddenLocalCountries = (ids: string[]) => withLocalEditorWrit
   }>(response)
 })
 
-export type LocalTravelRecordInput = {
+/**
+ * 按名称新增足迹城市。服务端在同一国家找到同名的已有地点时返回 409 `E_PLACE_CHOICE_REQUIRED`（什么都不写），
+ * 候选列表用 `placeChoiceCandidatesOf` 取出；用户选「新建独立地点」时带 `createNew: true` 再提交（第 2A 批）。
+ */
+export type NamedTravelRecordInput = {
   country: string
   country_en: string
   country_code?: string
@@ -210,7 +217,20 @@ export type LocalTravelRecordInput = {
   lat: number
   lng: number
   trip_title?: string
+  createNew?: true
 }
+
+/** 引用用户选定的已有城市（第 2A 批）：记录坐标就是地点坐标；`lat` / `lng` 只在地点没有坐标时补上。 */
+export type ExistingPlaceTravelRecordInput = {
+  placeId: string
+  start_date: string
+  end_date?: string
+  lat?: number
+  lng?: number
+  trip_title?: string
+}
+
+export type LocalTravelRecordInput = NamedTravelRecordInput | ExistingPlaceTravelRecordInput
 
 export const addLocalTravelRecord = (input: LocalTravelRecordInput) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/records', {
@@ -224,6 +244,7 @@ export const addLocalTravelRecord = (input: LocalTravelRecordInput) => withLocal
 // ---- Want to Go（FR-WTG-6 / D26）----
 // 写入路径的唯一出口就是本文件：组件里不得出现任何 fetch。
 
+/** 按名称新增想去；城市有同名候选时同样返回 409 `E_PLACE_CHOICE_REQUIRED`，选「新建」时带 `createNew: true`（第 2A 批）。 */
 export type LocalWantToGoInput = {
   place: {
     kind: 'city' | 'country'
@@ -233,6 +254,7 @@ export type LocalWantToGoInput = {
     lat?: number
     lng?: number
   }
+  createNew?: true
   note?: string
   addedAt?: string
 }

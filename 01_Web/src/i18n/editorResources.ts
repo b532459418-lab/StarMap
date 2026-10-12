@@ -108,6 +108,13 @@ export const editorResources = {
     "restoreCities_other": "恢复本国已隐藏城市（{{count}}）",
     "restorePhotos_other": "恢复本城隐藏照片（{{count}}）",
     "minimumQuery_other": "请至少输入 {{count}} 个字符。",
+    "placeChoiceTitle": "选择要使用的地点",
+    "placeChoiceExisting": "已有地点：{{names}}",
+    "placeChoiceDistance": "距离约 {{km}} km",
+    "placeChoiceNoCoordinates": "无坐标",
+    "placeChoiceStrong": "名称一致、位置相近",
+    "placeChoiceNew": "新建独立地点：{{name}}",
+    "placeChoiceRequired": "请先选择要使用的地点，或新建一个独立地点。",
     "attributionEnd": "。"
   },
   "en": {
@@ -226,6 +233,13 @@ export const editorResources = {
     "restoreCountries_one": "Restore hidden countries ({{count}})",
     "restoreCities_one": "Restore hidden cities ({{count}})",
     "restorePhotos_one": "Restore hidden photos ({{count}})",
+    "placeChoiceTitle": "Choose the place to use",
+    "placeChoiceExisting": "Existing place: {{names}}",
+    "placeChoiceDistance": "About {{km}} km away",
+    "placeChoiceNoCoordinates": "No coordinates",
+    "placeChoiceStrong": "Same name, nearby",
+    "placeChoiceNew": "Create a separate place: {{name}}",
+    "placeChoiceRequired": "Choose the place to use, or create a separate place.",
     "attributionEnd": "."
   }
 }
