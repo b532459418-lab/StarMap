@@ -17,7 +17,6 @@ import { fail } from './errors.ts'
 import {
   bodyOf,
   isCountryInFootprint,
-  journeyIdFor,
   optionalText,
   reorderCountries,
   requireText,
@@ -25,6 +24,7 @@ import {
   zhNameOf,
 } from './common.ts'
 import { REORDER_FAILURE } from './footprint.ts'
+import { journeyIdFor } from './journeyChoice.ts'
 import { runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 
 export interface ConvertToTravelResult {
@@ -74,7 +74,7 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
       type: 'visit',
       status: 'visited',
       source: 'local-editor',
-      journeyId: journeyIdFor(draft.files, tripTitle, ctx),
+      journeyId: journeyIdFor(draft.files, tripTitle, ctx, { kind: 'ask' }),
     }
     draft.files.travel.records.push(record)
     const wantToGoRemoved = body.keepWantToGo !== true
@@ -97,7 +97,7 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
 
 /**
  * planned → 足迹：同一条记录 `status` 改 `visited`，写日期与 `year`（结束日期没填时删掉该键），其它字段原样；
- * 没有 `journeyId` 时补上（./common.ts 的 journeyIdFor），已有的保留。
+ * 没有 `journeyId` 时补上（./journeyChoice.ts 的 journeyIdFor：标题撞上已有行程时请用户选择），已有的保留。
  * 能不能转由 ../canonical/convertRules.ts 判断（与界面同一份规则）：记录存在且是 planned（`E_PLANNED_NOT_FOUND`），
  * 有坐标——自身的 lat / lng，省略时取城市的 location；都没有 → `E_PLANNED_NO_COORDINATES`（沿用旧文案）。
  * 国家首次进入足迹时重排 `countryOrder`。写盘：足迹 → editor-state（排序变了时）。
@@ -124,7 +124,7 @@ const convertPlannedTravelRecord = (files: V2FilesOrEmpty | undefined, body: Rec
       year: Number(dates.start.slice(0, 4)),
     }
     if (!dates.end) delete next.end_date
-    if (typeof next.journeyId !== 'string' || next.journeyId === '') next.journeyId = journeyIdFor(draft.files, next.trip_title, ctx)
+    if (typeof next.journeyId !== 'string' || next.journeyId === '') next.journeyId = journeyIdFor(draft.files, next.trip_title, ctx, { kind: 'ask' })
     records[index] = next
     const reordered = !wasInFootprint && reorderCountries(draft.files)
 

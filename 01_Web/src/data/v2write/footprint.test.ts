@@ -85,12 +85,13 @@ test('新增足迹：新城市——先写地点、再写足迹；记录只引�
   assert.equal(next.places.places.length, files.places.places.length + 1)
 })
 
-test('新增足迹：行程标题与已去过的记录完全相同 → 沿用那条的 journeyId；按地点 id 引用时记录坐标就是地点坐标', () => {
+test('新增足迹：行程标题与已去过的行程完全相同、又没有选择 → E_JOURNEY_CHOICE_REQUIRED（不写）；按地点 id 引用时记录坐标就是地点坐标', () => {
+  // 改写（第 2C 批）：旧用例断言「标题相同就沿用那条的 journeyId」。新规则：标题相同时由用户选择加入哪个行程或新建，不自动并入。
   const files = migratedFiles()
-  const outcome = addTravelRecord(files, hofnInput({ trip_title: ' 2025 North Atlantic Demo ' }), testContext())
-  const record = lastRecord(applyWrites(files, outcome.writes))
-  assert.equal(record.journeyId, '2025-north-atlantic-demo')
-  assert.equal(record.trip_title, '2025 North Atlantic Demo')
+  assertV2Error(() => addTravelRecord(files, hofnInput({ trip_title: ' 2025 North Atlantic Demo ' }), testContext()), 'E_JOURNEY_CHOICE_REQUIRED', undefined, (error) => {
+    assert.equal(error.params?.tripTitle, '2025 North Atlantic Demo', '比较的是 trim 后的标题')
+    assert.deepEqual((error.params?.candidates as { journeyId: string }[]).map(({ journeyId }) => journeyId), ['2025-north-atlantic-demo'])
+  })
 
   // 改写（第 2A 批）：旧用例按名字解析到努克、记录保留与城市不同的输入坐标（「身份是努克，坐标是别处」）。
   // 新规则：按名字不再复用；用户选定努克（地点 id）时，记录坐标就是地点坐标，输入的坐标不覆盖，城市坐标不改。

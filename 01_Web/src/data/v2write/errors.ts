@@ -130,6 +130,14 @@ export const V2_WRITE_MESSAGES = {
    */
   E_PLACE_CHOICE_REQUIRED: () => '找到可能是同一个地方的已有地点，请选择要使用的地点，或新建一个独立地点。本次尚未保存。',
   E_UNKNOWN_PLACE_REF: () => '编辑状态引用了不存在的地点，或地点类型不对，未保存。请刷新页面后重试。',
+  /**
+   * 新（第 2C 批）：新的已去过记录的行程标题与已有行程相同，请求里又没有明确选择加入哪个行程或新建。
+   * `params.tripTitle` 是标题，`params.candidates` 是候选行程（行程 id、标题、日期范围、城市的中英文名与总数——
+   * 名称是地点数据，不是界面文案）；响应状态码 409，什么都没写。
+   */
+  E_JOURNEY_CHOICE_REQUIRED: () => '已有同名的行程，请选择加入已有行程，或新建一个行程。本次尚未保存。',
+  /** 新（第 2C 批）：要加入的行程不是同标题的已有行程（或选择的写法不对）。 */
+  E_UNKNOWN_JOURNEY: () => '要加入的行程不是同名的已有行程，未保存。请重新选择。',
   E_INTEGRITY: () => 'V2 数据没有通过完整性检查（例如引用了不存在的地点），未写入任何文件。',
   E_WRITE_FAILED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '写入 V2 数据文件失败。'),
   E_PARTIAL_WRITE: (params: V2ErrorParams) => (typeof params.message === 'string' ? params.message : '部分 V2 数据文件已写入，其余没有写入。'),

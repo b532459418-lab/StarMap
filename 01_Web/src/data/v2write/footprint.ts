@@ -19,7 +19,6 @@ import {
   createNewOf,
   ensureCountryPlace,
   isCountryInFootprint,
-  journeyIdFor,
   newOrChosenCityPlace,
   optionalText,
   referencedCityPlace,
@@ -31,6 +30,7 @@ import {
   zhNameOf,
   type EnsuredPlace,
 } from './common.ts'
+import { journeyIdFor } from './journeyChoice.ts'
 import { removeUnreferencedPlaces, runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 
 /** 旧模式「足迹已创建，但……」：新增足迹之后国家排序没写成。 */
@@ -97,7 +97,7 @@ const namedTargetOf = (body: Record<string, unknown>): RecordTarget => {
  *   （包括只被想去引用的城市）→ `E_PLACE_CHOICE_REQUIRED`（`params.candidates`），不写。从不按名字静默复用。
  * - 任何记录（含 planned）已引用该城市 → `E_CITY_EXISTS`（沿用旧文案；只有按地点 id 引用时可能发生）。
  * - 新记录：UUIDv7 `id`、`placeId`、日期、`year`、`trip_title`（默认「国家中文名 · 城市中文名」）、
- *   `type: 'visit'`、`status: 'visited'`、`source: 'local-editor'`、`journeyId`（./common.ts）。坐标与城市
+ *   `type: 'visit'`、`status: 'visited'`、`source: 'local-editor'`、`journeyId`（./journeyChoice.ts：标题撞上已有行程时请用户选择）。坐标与城市
  *   `location` 相同就省略，否则写入。
  * - 国家首次进入足迹时按最近到访日期重排 `countryOrder`。
  * 写盘：地点注册表（有新地点或补了坐标时）→ 足迹 → editor-state（排序变了时）。
@@ -143,7 +143,7 @@ export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknow
       status: 'visited',
       ...(sameAsLocation(city.place, lat, lng) ? {} : { lat, lng }),
       source: 'local-editor',
-      journeyId: journeyIdFor(draft.files, tripTitle, ctx),
+      journeyId: journeyIdFor(draft.files, tripTitle, ctx, { kind: 'ask' }),
     }
     draft.files.travel.records.push(record)
     const reordered = !wasInFootprint && reorderCountries(draft.files)
