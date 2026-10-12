@@ -3,6 +3,7 @@
 import { emptyWorldStore, freezeCopy, readWorldStore, reject, shape, utcTimestamp, validateJson } from '../../worldgraph/store/schema.ts'
 import type { JsonObject, JsonValue, LayerEntry, SourceDefinition, SourceRef, WorldStore } from '../../worldgraph/store/types.ts'
 import { deriveTimeQueryContext } from '../derive/timeQueryContext.ts'
+import { compareJourneyRecords } from './journeyRoutes.ts'
 import { bridgeAllocator, type BridgeManifest } from './storeBridgeIdentity.ts'
 import { readV2 } from './v2Reader.ts'
 import { validateV2Files, type V2Files } from './v2Schema.ts'
@@ -127,7 +128,7 @@ export function bridgeV2(files: V2Files, options: BridgeOptions): BridgeDocument
   for (const [recordId, records] of journeys) {
     const id = allocator.get('journey', BRIDGE.journey, recordId), source = bridgeSource(BRIDGE.journey, recordId)
     store.entities.push({ id, revision: 0, typeId: 'bridge:journey', title: { names: {} }, fields: {}, source, visibility: 'private' })
-    const ordered = [...records].sort((a, b) => `${a.start_date}-${a.id}`.localeCompare(`${b.start_date}-${b.id}`))
+    const ordered = [...records].sort(compareJourneyRecords)
     store.sequences.push({ id: bridgeRowId('journey-sequence', recordId), revision: 0, entityId: id, source, entryIds: ordered.map(r => allocator.get('entry', BRIDGE.travel, r.id)) })
   }
   for (const layerId of [BRIDGE.footprint, BRIDGE.wishlist]) {

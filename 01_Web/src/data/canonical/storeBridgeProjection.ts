@@ -7,6 +7,7 @@ import type { OriginalRouteCandidate } from '../../worldgraph/timeQuery.ts'
 import { buildBaseline } from '../derive/baseline.ts'
 import { deriveTimeQueryContext } from '../derive/timeQueryContext.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
+import { compareJourneyRecords, routeTypeBetween } from './journeyRoutes.ts'
 import { BRIDGE, bridgeObject, bridgeRowId, type BridgeDocument } from './storeBridge.ts'
 import { identityKey, readBridgeManifest } from './storeBridgeIdentity.ts'
 import { readV2 } from './v2Reader.ts'
@@ -110,7 +111,7 @@ export function restoreBridgeV2(document: BridgeDocument): V2Files {
   for (const [journeyId, group] of groups) {
     const sequence = store.sequences.find(s => s.id === bridgeRowId('journey-sequence', journeyId))
     const entity = sequence && entities.get(sequence.entityId)
-    const expected = [...group].sort((a, b) => `${a.start_date}-${a.id}`.localeCompare(`${b.start_date}-${b.id}`)).map(r => entries.get(JSON.stringify([BRIDGE.travel, r.id]))!.id)
+    const expected = [...group].sort(compareJourneyRecords).map(r => entries.get(JSON.stringify([BRIDGE.travel, r.id]))!.id)
     if (!sequence || entity?.typeId !== 'bridge:journey' || entity.source.sourceId !== BRIDGE.journey || entity.source.recordId !== journeyId || jsonKey(sequence.entryIds) !== jsonKey(expected)) reject('E_BRIDGE_DERIVATIVE', '$.sequence')
   }
   return freezeCopy(files)
@@ -121,17 +122,15 @@ export function restoreBridgeV2(document: BridgeDocument): V2Files {
 export function projectBridgeOriginalRoutes(document: BridgeDocument): readonly OriginalRouteCandidate[] {
   restoreBridgeV2(document)
   const world = document.store, entities = new Map(world.entities.map(e => [e.id, e])), entries = new Map(world.entries.map(e => [e.id, e]))
-  const countryName = (entityId: string) => {
-    const place = entities.get(entityId)!, country = entities.get(place.fields.parent as string)
-    return country?.title.names.en ?? ''
-  }
+  // Route kind compares the two cities' country entity ids (review C3), the same rule as the time query context.
+  const countryIdOf = (entityId: string) => entities.get(entities.get(entityId)!.fields.parent as string)?.id
   const routes: OriginalRouteCandidate[] = []
   for (const sequence of world.sequences) for (let i = 1; i < sequence.entryIds.length; i++) {
     const from = entries.get(sequence.entryIds[i - 1])!, to = entries.get(sequence.entryIds[i])!
     if (from.entityId === to.entityId) continue
     routes.push({ id: JSON.stringify(['original-route', sequence.source.recordId, from.source.recordId, to.source.recordId]), journeyId: sequence.source.recordId,
       fromRecordId: from.source.recordId, toRecordId: to.source.recordId, fromPlaceId: from.entityId, toPlaceId: to.entityId,
-      kind: countryName(from.entityId) === countryName(to.entityId) ? 'main' : 'flight' })
+      kind: routeTypeBetween(countryIdOf(from.entityId), countryIdOf(to.entityId)) })
   }
   return freezeCopy(routes)
 }
