@@ -7,6 +7,7 @@ import type { DroneMediaItem } from '../data/droneMedia'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { DEFAULT_UI_LOCALE } from '../data/uiLocale'
 import { panoramaCaption, panoramaLanguageKeys } from '../i18n/mediaViewerOptions.ts'
+import { panoramaLoadUrl } from './panoramaLoadUrl.ts'
 
 type DronePanoramaModalProps = {
   item?: DroneMediaItem
@@ -72,8 +73,7 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
 
     const loadPanorama = () => {
       const source = item.type === 'aerialPhoto' ? item.previewSrc : item.src
-      const separator = source.includes('?') ? '&' : '?'
-      image.src = `${source}${separator}starmapLoad=${Date.now()}-${attempt}`
+      image.src = panoramaLoadUrl(source, attempt, Date.now())
     }
 
     image.onload = () => {

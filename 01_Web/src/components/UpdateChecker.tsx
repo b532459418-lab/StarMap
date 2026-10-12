@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { ArrowUpRight, Check, Copy, RefreshCw } from 'lucide-react'
+import { ArrowUpRight, Check, Copy, RefreshCw, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ReleaseUpdateState } from '../data/releaseUpdates'
 import { useUiLocale } from '../i18n/useUiLocale'
@@ -100,8 +100,8 @@ export function ReleaseUpdatePage({ state }: ReleaseUpdatePageProps) {
                 disabled={!state.release}
                 onClick={() => void state.copyUpdatePrompt()}
               >
-                {state.copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-                {t(state.copied ? 'copied' : 'copyUpdatePrompt')}
+                {state.copied ? <Check aria-hidden="true" /> : state.copyFailed ? <X aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                {t(state.copied ? 'copied' : state.copyFailed ? 'copyFailed' : 'copyUpdatePrompt')}
               </button>
               <button
                 type="button"
