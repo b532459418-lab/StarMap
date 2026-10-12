@@ -6,8 +6,9 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource } from '../data/mediaCatalog'
-import { addLocalTravelRecord, deleteHiddenLocalMedia, placeChoiceCandidatesOf, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState } from '../data/localEditorApi'
+import { addLocalTravelRecord, deleteHiddenLocalMedia, journeyChoiceCandidatesOf, placeChoiceCandidatesOf, reloadAfterLocalSave, searchLocalCities, updateLocalEditorState } from '../data/localEditorApi'
 import { placeChoiceKey, placeChoiceStateOf, type PlaceChoiceState } from '../data/placeChoice.ts'
+import { journeyChoiceInput, journeyChoiceKey, journeyChoiceStateOf, type JourneyChoiceState } from '../data/journeyChoice.ts'
 import { cityDraftUpdater, photoDraftUpdater, withoutIds } from '../data/editorStateDelta'
 import type { CitySearchOption } from '../data/localEditorApi'
 import { cityById, countryById, countryIdOfCity, getCitiesForCountry } from '../data/travelAtlas'
@@ -15,6 +16,7 @@ import type { CityId, Country, CountryId, SelectionMode, TravelMapRecord } from 
 import type { CityPhotoGalleryRequest } from './CityPhotoGalleryModal'
 import { LocationSearchField } from './LocationSearchField'
 import { PlaceChoiceList } from './PlaceChoiceList'
+import { JourneyChoiceList } from './JourneyChoiceList'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
 import { MediaRecoveryEntry } from './MediaRecoveryCenter'
 import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
@@ -111,6 +113,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   const [cityVisitDates, setCityVisitDates] = useState({ startDate: '', endDate: '' })
   // 第 2A 批：服务端返回的同名地点候选与用户的选择（属于提交时的输入）。
   const [placeChoice, setPlaceChoice] = useState<PlaceChoiceState>()
+  // 第 2C 批：默认行程标题「国家 · 城市」与已有行程相同时，服务端返回的候选行程与用户的选择。
+  const [journeyChoice, setJourneyChoice] = useState<JourneyChoiceState>()
   const cityByDraftId = new Map(memoryCities.map((item) => [item.id, item]))
   const photoByDraftId = new Map(cityPhotos.map((item) => [item.id, item]))
   const displayedMemoryCities = cityEditing
@@ -184,6 +188,10 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   const cityChoiceKey = placeChoiceKey([country?.id, submittedCity?.nameZh, submittedCity?.nameEn, submittedCity?.lat, submittedCity?.lng])
   // 输入变了，原来的候选就作废，重新走一遍流程。
   const activePlaceChoice = placeChoice?.key === cityChoiceKey ? placeChoice : undefined
+  // 行程候选属于「城市 + 地点选择」：默认标题取决于选定的城市，所以换了城市或地点选择，候选就作废（第 2C 批）。
+  // 服务端先返回地点选择、再返回行程选择，两张列表可能同时显示。
+  const cityJourneyKey = journeyChoiceKey([cityChoiceKey, activePlaceChoice?.selected ?? null])
+  const activeJourneyChoice = journeyChoice?.key === cityJourneyKey ? journeyChoice : undefined
 
   const addCity = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -212,13 +220,18 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
       setEditorNotice({ key: 'editor:placeChoiceRequired' })
       return
     }
+    if (activeJourneyChoice && !activeJourneyChoice.selected) {
+      setEditorNotice({ key: 'editor:journeyChoiceRequired' })
+      return
+    }
+    const journey = journeyChoiceInput(activeJourneyChoice?.selected)
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:creatingCity' })
     const dates = { start_date: cityVisitDates.startDate, end_date: cityVisitDates.endDate || undefined }
     try {
       if (choice?.selected?.kind === 'existing') {
         // 用户选定的已有地点：按 id 引用，不再按名字匹配。坐标只在地点没有坐标时补上。
-        await addLocalTravelRecord({ placeId: choice.selected.placeId, ...dates, lat: cityOption.lat, lng: cityOption.lng })
+        await addLocalTravelRecord({ placeId: choice.selected.placeId, ...dates, lat: cityOption.lat, lng: cityOption.lng, ...journey })
       } else {
         await addLocalTravelRecord({
           country: country.nameZh,
@@ -230,6 +243,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
           lat: cityOption.lat,
           lng: cityOption.lng,
           ...(choice?.selected?.kind === 'new' ? { createNew: true as const } : {}),
+          ...journey,
         })
       }
       reloadAfterLocalSave()
@@ -237,6 +251,9 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
       // 409 E_PLACE_CHOICE_REQUIRED：在表单里列出候选，同一按钮再次提交（第 2A 批）。
       const candidates = placeChoiceCandidatesOf(error)
       if (candidates) setPlaceChoice(placeChoiceStateOf(cityChoiceKey, candidates))
+      // 409 E_JOURNEY_CHOICE_REQUIRED：默认标题撞上已有行程，列出候选行程，不预选（第 2C 批）。
+      const journeys = journeyChoiceCandidatesOf(error)
+      if (journeys) setJourneyChoice(journeyChoiceStateOf(cityJourneyKey, journeys))
       setEditorNotice(editorErrorNotice(error, 'editor:createFailed'))
       setEditorBusy(false)
     }
@@ -504,6 +521,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                       setManualCity({ nameZh: '', nameEn: '', lat: '', lng: '' })
                       setCityVisitDates({ startDate: '', endDate: '' })
                       setPlaceChoice(undefined)
+                      setJourneyChoice(undefined)
                       setEditorNotice('')
                     }}
                     onReset={() => {
@@ -514,6 +532,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                       setSelectedCityOption(undefined)
                       setCityVisitDates({ startDate: '', endDate: '' })
                       setPlaceChoice(undefined)
+                      setJourneyChoice(undefined)
                       setEditorNotice({ key: 'editor:undoCities' })
                     }}
                     onAdd={() => {
@@ -597,7 +616,18 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                     }}
                   />
                 ) : null}
-                <button type="submit" disabled={editorActionBusy || (!isManualCityEntry && !selectedCityOption) || Boolean(activePlaceChoice && !activePlaceChoice.selected)}>{t('editor:confirmCity')}</button>
+                {activeJourneyChoice ? (
+                  <JourneyChoiceList
+                    candidates={activeJourneyChoice.candidates}
+                    selected={activeJourneyChoice.selected}
+                    disabled={editorActionBusy}
+                    onSelect={(selected) => {
+                      setJourneyChoice({ ...activeJourneyChoice, selected })
+                      setEditorNotice('')
+                    }}
+                  />
+                ) : null}
+                <button type="submit" disabled={editorActionBusy || (!isManualCityEntry && !selectedCityOption) || Boolean(activePlaceChoice && !activePlaceChoice.selected) || Boolean(activeJourneyChoice && !activeJourneyChoice.selected)}>{t('editor:confirmCity')}</button>
               </form>
             ) : null}
 
