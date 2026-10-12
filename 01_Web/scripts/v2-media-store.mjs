@@ -10,8 +10,9 @@
  * 判断在纯函数里（src/data/v2media/editorWrites.ts）；这里只做 IO：
  *
  * - 上传：目标（城市地点 id，countryId 必须是它的 partOf）→ 收件箱 `MediaInbox/<国家显示名>/<城市显示名>/photos|drone/`
- *   → 选文件夹：显示名的文件夹已被别的地点占用（place.json 指向别处）时改用 `<显示名> (<地点 id 后缀>)`，两个都被占用才报错、
- *   不写文件 → 接收文件 → 给新用上的文件夹写 place.json → 无人机 sidecar。
+ *   → 选文件夹（第 2D 批）：只用 place.json 已指向这个地点的文件夹，或新建一个；显示名的文件夹被别的地点占用（place.json 指向
+ *   别处）或是手放的（没有 place.json，上传不认领）时，改用 `<显示名> (<地点 id 后缀>)`，再不行依次用 `… 2` 到 `… 9`；全都
+ *   不能用才报错、不写文件 → 接收文件 → 给新建的文件夹写 place.json → 无人机 sidecar。
  * - 导入：运行导入器（先预检、后应用，同旧）→ 按 V2 源文件索引恢复新导入条目的隐藏状态并追加进排序表（editor-state 走
  *   PR3b-2 的事务与完整性检查）。
  * - 删除：只能删该城市里已隐藏的照片或无人机影像 → 先算好 editor-state 的清理（事务，含完整性检查）→ 对整个投递箱做只读预检
@@ -107,14 +108,18 @@ const directoryExists = async (target) => {
 }
 
 /**
- * 在 `parentDirectory` 下为地点 `placeId` 选收件箱文件夹（§2.4）：候选是显示名与 `<显示名> (<地点 id 后缀>)`
- * （都经 safeSegment）；按顺序取第一个不存在、没有 place.json、或 place.json 已指向这个地点的。
+ * 在 `parentDirectory` 下为地点 `placeId` 选收件箱文件夹（§2.4；第 2D 批）：候选见 `inboxFolderCandidates`
+ * （显示名、`<显示名> (<地点 id 后缀>)`、再加数字，都经 safeSegment）。place.json 已指向这个地点的优先；没有就用第一个
+ * 不存在的，新建并写 place.json。手放的文件夹（存在但没有 place.json）只读不写：既不写 place.json，也不往里放文件，
+ * 它属于哪个地点由导入时的文件夹绑定确认决定（第 2A 批）。
  * 文件系统不分大小写时（Windows），只差大小写的同名文件夹就是同一个文件夹，同样按它的 place.json 判断。
- * 返回 `{ name, claim }`，`claim` 为 true 表示要写入 place.json。候选都被占用 → E_MEDIA_FOLDER_CONFLICT。
+ * 返回 `{ name, claim }`，`claim` 为 true 表示要写入 place.json。候选全都不能用 → E_MEDIA_FOLDER_CONFLICT。
  */
 const chooseInboxFolder = async (parentDirectory, parentLabel, displayName, placeId, label, deps) => {
   const candidates = []
-  for (const name of inboxFolderCandidates(displayName, placeId).map((candidate) => deps.safeSegment(candidate, label))) {
+  // safeSegment 最多保留 120 个字符：显示名很长时，几个候选截断后可能同名，同一个文件夹只看一次。
+  const names = [...new Set(inboxFolderCandidates(displayName, placeId).map((candidate) => deps.safeSegment(candidate, label)))]
+  for (const name of names) {
     const directory = path.join(parentDirectory, name)
     const state = await directoryExists(directory)
       ? { exists: true, placeConfig: await readControlFile(path.join(directory, 'place.json')) }
@@ -136,7 +141,8 @@ export async function prepareV2Upload({ privatePaths, query, deps, now = new Dat
     const kind = uploadKindOf(query)
     const files = await readV2Files(privatePaths)
     const target = uploadTargetOf(files, { countryId: query.get('countryId') ?? '', cityId: query.get('cityId') ?? '' }, now)
-    // 先选国家文件夹，再在它下面选城市文件夹：显示名已被别的地点占用时改用带地点 id 后缀的名字。
+    // 先选国家文件夹，再在它下面选城市文件夹，两级同一套规则：显示名的文件夹被别的地点占用、或是手放的时，
+    // 改用带地点 id 后缀的名字（第 2D 批：手放的国家文件夹同样不认领，上传会新建 `<国家名> (<后缀>)`）。
     const country = await chooseInboxFolder(privatePaths.inboxRoot, '', target.countryFolderName, target.country.id, '国家名', deps)
     const countryRoot = path.join(privatePaths.inboxRoot, country.name)
     const city = await chooseInboxFolder(countryRoot, country.name, target.cityFolderName, target.city.id, '城市名', deps)

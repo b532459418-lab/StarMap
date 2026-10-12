@@ -114,7 +114,7 @@ npm run media:check
 npm run media:import
 ```
 
-A folder you put into the Inbox yourself is matched to a place by its name only as a hint. The first such binding needs your confirmation, even when only one place matches: `npm run media:check` lists each `folder → place`, and `npm run media:import` writes nothing (exit code 2) until you run `npm run media:import -- --accept-folder-bindings`. Media tasks show these bindings in their import preview with their own checkbox. Folders that already have `place.json` are not affected.
+A folder you put into the Inbox yourself is matched to a place by its name only as a hint. The first such binding needs your confirmation, even when only one place matches: `npm run media:check` lists each `folder → place`, and `npm run media:import` writes nothing (exit code 2) until you run `npm run media:import -- --accept-folder-bindings`. Media tasks show these bindings in their import preview with their own checkbox. Folders that already have `place.json` are not affected. Uploads from the editor never take such a folder over: when a folder with the same name has no `place.json`, the upload creates a new folder, for example `Suzhou (1a2b3c4d)`, and leaves yours untouched.
 
 The importer never rewrites Inbox originals. It publishes generated files only after they are completely written, and `npm run media:check -- --verify` re-checks existing originals, and the files named by completed media-task receipts, against their content hashes. Personal source media, generated derivatives, local travel records, editor state, and `.env.local` stay in the external private layer and never enter the source repository.
 

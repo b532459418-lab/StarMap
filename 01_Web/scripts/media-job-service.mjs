@@ -14,6 +14,12 @@
  * to that list; otherwise the request is refused (409 `E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED`) before the task record
  * changes, and nothing is written. Folders with a place.json, including every folder a task upload uses, never appear.
  *
+ * Upload folders (batch 2D): reception picks its Inbox folders through `prepareV2Upload`, which uses only a folder whose
+ * place.json already names the task's place, or a folder it creates and pins (`<name> (<place id suffix>)`, then
+ * `… 2` to `… 9`, when the plain name belongs to another place or to a hand-made folder). A hand-made folder of the
+ * same name, one without place.json, is never written to or pinned by a reception; it stays as it is and appears in
+ * the preview as a binding to confirm.
+ *
  * Completion receipts (batch 2 D4) cover the task, not the library: the selected Inbox sources, the generated files of
  * the media they became and the V2 files this import rewrote (`taskReceiptScope`), each with size, SHA-256 and
  * modification time; `libraryDigest` summarizes the whole catalog and source index instead of listing them, so a

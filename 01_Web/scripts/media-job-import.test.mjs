@@ -19,6 +19,7 @@ import * as service from './media-job-service.mjs'
 import { assertMediaJobRecord, largestCompletedMediaJobRecord, mediaJobReceiptSeal } from './media-job-store.mjs'
 import { prepareV2Upload } from './v2-media-store.mjs'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
+import { placeFolderSuffix } from '../src/data/v2media/editorWrites.ts'
 
 const newId = sequentialUuids(Date.UTC(2026, 9, 4))
 const ID = { country: newId(), city: newId(), otherCity: newId() }
@@ -587,4 +588,73 @@ test('Batch 2A: a hand-made folder matched only by name is listed in the preview
   assert.deepEqual(await readJson(path.join(env.paths.inboxRoot, 'Test Country', 'Other City', 'place.json')), { placeId: ID.otherCity })
   const catalog = await readJson(env.paths.v2FilePaths.media)
   assert.equal(catalog.items.find(item => item.originalFileName === 'manual.jpg')?.placeId, ID.otherCity)
+}))
+
+// ---------------------------------------------------------------------------
+// Batch 2D: task reception never claims a hand-made folder
+// ---------------------------------------------------------------------------
+
+/** A city folder the user made by hand: one photo, no place.json. */
+async function handMadeCity(cityRoot) {
+  await mkdir(path.join(cityRoot, 'photos'), { recursive: true }); await writeFile(path.join(cityRoot, 'photos', 'manual.jpg'), await jpeg({ r: 200, g: 120, b: 30 }))
+}
+/** Every file under a folder (SHA-256, size, modification time) and the folder's own modification time. */
+const folderState = async (directory) => ({ files: await tree(directory), mtimeMs: (await stat(directory)).mtimeMs })
+const handMadeBinding = (folder, placeId, subtype, names) => ({ sourcePath: `${folder}/place.json`, placeId, folder, subtype, names, source: 'name' })
+
+test('Batch 2D: task reception never claims a hand-made city folder; it creates "<name> (<suffix>)", reuses it, and leaves the hand-made folder unchanged and listed as a binding to confirm', async () => withRoot(async env => {
+  const countryRoot = path.join(env.paths.inboxRoot, 'Test Country'), handMade = path.join(countryRoot, 'Test City')
+  await handMadeCity(handMade)
+  const countryPin = JSON.stringify({ placeId: ID.country })
+  await writeFile(path.join(countryRoot, 'place.json'), countryPin)
+  const before = await folderState(handMade)
+
+  const first = await jpeg({ r: 10, g: 140, b: 90 }), second = await jpeg({ r: 150, g: 40, b: 120 })
+  let job = await create(env, first, { files: [{ fileName: 'scene.jpg', bytes: first.length }, { fileName: 'second.jpg', bytes: second.length }] })
+  job = await receive(env, job, first, job.files[0].fileId)
+  job = await receive(env, job, second, job.files[1].fileId)
+  const folder = `Test City (${placeFolderSuffix(ID.city)})`
+  assert.deepEqual((await readJson(jobPath(env, job))).files.map(file => file.sourcePath), [`Test Country/${folder}/photos/scene.jpg`, `Test Country/${folder}/photos/second.jpg`])
+  assert.deepEqual(await readJson(path.join(countryRoot, folder, 'place.json')), { placeId: ID.city })
+  assert.equal(await readFile(path.join(countryRoot, 'place.json'), 'utf8'), countryPin, 'the country folder already pinned to the place is reused as it is')
+  assert.equal(fs.existsSync(path.join(handMade, 'place.json')), false)
+  assert.deepEqual(await folderState(handMade), before, 'not one byte, file or folder entry of the hand-made folder changes')
+
+  const result = await preview(env, job)
+  assert.equal(result.status, 200, JSON.stringify(result)); assert.deepEqual(result.body.plan.blockers, [])
+  assert.deepEqual(result.body.plan.summary.pins, [handMadeBinding('Test Country/Test City', ID.city, 'city', { 'zh-Hans': '测试城', en: 'Test City' })])
+  assert.deepEqual(await folderState(handMade), before)
+}))
+
+test('Batch 2D: task reception never claims a hand-made country folder either; it creates "<country> (<suffix>)/<city>", and both hand-made folders are bound only after confirmation', async () => withRoot(async env => {
+  const handMade = path.join(env.paths.inboxRoot, 'Test Country')
+  await handMadeCity(path.join(handMade, 'Test City'))
+  const before = await folderState(handMade)
+
+  const job = await received(env, await jpeg({ r: 30, g: 30, b: 200 }))
+  const countryFolder = `Test Country (${placeFolderSuffix(ID.country)})`
+  assert.deepEqual((await readJson(jobPath(env, job))).files[0].sourcePath.split('/'), [countryFolder, 'Test City', 'photos', 'scene.jpg'])
+  assert.deepEqual(await readJson(path.join(env.paths.inboxRoot, countryFolder, 'place.json')), { placeId: ID.country })
+  assert.deepEqual(await readJson(path.join(env.paths.inboxRoot, countryFolder, 'Test City', 'place.json')), { placeId: ID.city })
+  assert.equal(fs.existsSync(path.join(handMade, 'place.json')), false)
+  assert.equal(fs.existsSync(path.join(handMade, 'Test City', 'place.json')), false)
+  assert.deepEqual(await folderState(handMade), before)
+
+  const result = await preview(env, job)
+  assert.equal(result.status, 200, JSON.stringify(result)); assert.deepEqual(result.body.plan.blockers, [])
+  assert.deepEqual(result.body.plan.summary.pins, [
+    handMadeBinding('Test Country', ID.country, 'country', { 'zh-Hans': '测试国', en: 'Test Country' }),
+    handMadeBinding('Test Country/Test City', ID.city, 'city', { 'zh-Hans': '测试城', en: 'Test City' }),
+  ])
+  const refused = await write(env, 'import', job, importInput(job, result.body.plan))
+  assert.equal(refused.status, 409, JSON.stringify(refused)); assert.equal(refused.body.code, 'E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED')
+  assert.deepEqual(await folderState(handMade), before)
+
+  // Once confirmed, both country folders refer to the same place (spec §3 accepts this) and both photos import to the city.
+  const imported = await write(env, 'import', job, { ...importInput(job, result.body.plan), acceptFolderBindings: true })
+  assert.equal(imported.status, 200, JSON.stringify(imported)); assert.equal(imported.body.job.status, 'completed')
+  assert.deepEqual(await readJson(path.join(handMade, 'place.json')), { placeId: ID.country })
+  assert.deepEqual(await readJson(path.join(handMade, 'Test City', 'place.json')), { placeId: ID.city })
+  const owners = Object.fromEntries((await readJson(env.paths.v2FilePaths.media)).items.map(item => [item.originalFileName, item.placeId]))
+  assert.deepEqual(owners, { 'manual.jpg': ID.city, 'scene.jpg': ID.city })
 }))
