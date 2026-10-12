@@ -501,6 +501,91 @@ test('缺 journeyId 的段、任一端没有 location Anchor 的段被丢弃；�
   assert.equal(queryVisiblePlaces(unknownKind, ['travel']).routes[1].kind, 'main')
 })
 
+test('国家内顺序段：同一对城市有多条 related_to 时第一条胜出；反方向的不算同端点；第一条缺的字段不从后面几条补', () => {
+  const snapshot = demoSnapshot()
+  snapshot.relations.push(
+    relation('rel:related_to:b__a', 'related_to', 'b', 'a', { kind: 'drive', routeId: 'r-b-a', journeyId: 'j7' }),
+    relation('rel:related_to:a__b:1', 'related_to', 'a', 'b', { kind: 'ferry', routeId: 'r-a-b-1', journeyId: 'j9' }),
+    relation('rel:related_to:a__b:2', 'related_to', 'a', 'b', { kind: 'drive', routeId: 'r-a-b-2', journeyId: 'j8' }),
+  )
+  const routes = queryVisiblePlaces(snapshot, ['travel']).routes
+  assert.deepEqual(routes.map((route) => [route.id, route.journeyId, route.kind]), [['r-a-b-1', 'j9', 'ferry'], ['r-b-z', 'j1', 'flight']])
+
+  // 第一条只有 kind：routeId 退回 country-order id、journeyId 退回两端共享的 j1，都不取第二条的值。
+  const sparse = demoSnapshot()
+  sparse.relations.push(
+    relation('rel:related_to:a__b:1', 'related_to', 'a', 'b', { kind: 'ferry' }),
+    relation('rel:related_to:a__b:2', 'related_to', 'a', 'b', { kind: 'drive', routeId: 'r-a-b-2', journeyId: 'j8' }),
+  )
+  const [sparseFirst] = queryVisiblePlaces(sparse, ['travel']).routes
+  assert.deepEqual([sparseFirst.id, sparseFirst.journeyId, sparseFirst.kind], ['country-order__c1__a__b', 'j1', 'ferry'])
+
+  // 第一条没有 metadata：kind 回落成 main，同样不取第二条的 drive。
+  const bare = demoSnapshot()
+  bare.relations.push(
+    relation('rel:related_to:a__b:1', 'related_to', 'a', 'b'),
+    relation('rel:related_to:a__b:2', 'related_to', 'a', 'b', { kind: 'drive', routeId: 'r-a-b-2', journeyId: 'j8' }),
+  )
+  const [bareFirst] = queryVisiblePlaces(bare, ['travel']).routes
+  assert.deepEqual([bareFirst.id, bareFirst.journeyId, bareFirst.kind], ['country-order__c1__a__b', 'j1', 'main'])
+})
+
+/**
+ * 规模用的快照（第 5A 批 P1）：`countryCount` 个国家，每国 `citiesPerCountry` 个城市。
+ * - 每国一个行程（journeyId `j-<国>`）到访本国全部城市；国家足迹成员关系的 cityIds 按城市序号排列；
+ * - 每对相邻城市一条 related_to（`r-<国>-<序号>`）；每第 10 对再有一条同端点的 related_to（`dup-…`），
+ *   排在全部关系的后面，它不能胜出；
+ * - 相邻两国之间一条跨国 related_to（`x-<国>`），也排在最后。
+ */
+const scaleSnapshot = (countryCount: number, citiesPerCountry: number): WorldGraphSnapshot => {
+  const snapshot = emptySnapshot()
+  const duplicates: Relation[] = []
+  const crossings: Relation[] = []
+  const cityId = (country: number, index: number): EntityId => `city-${country}-${index}`
+  for (let country = 0; country < countryCount; country += 1) {
+    const countryId = `country-${country}`
+    const tripEntityId = journeyEntityId(`trip-${country}`)
+    const cityIds = Array.from({ length: citiesPerCountry }, (_, index) => cityId(country, index))
+    snapshot.entities.push(place(countryId, 'country', { names: { en: countryId } }), journey(tripEntityId, `j-${country}`))
+    snapshot.memberships.push(member(countryId, 'travel', { cityIds }))
+    cityIds.forEach((id, index) => {
+      snapshot.entities.push(place(id, 'city', { names: { en: id } }))
+      snapshot.memberships.push(member(id, 'travel'))
+      snapshot.anchors.push(location(id, country / 10, index / 10))
+      snapshot.relations.push(relation(`rel:part_of:${id}`, 'part_of', id, countryId), relation(`rel:visited:${id}`, 'visited', tripEntityId, id))
+      if (index === 0) return
+      const from = cityIds[index - 1]
+      snapshot.relations.push(relation(`rel:related_to:${from}__${id}`, 'related_to', from, id, { kind: 'main', routeId: `r-${country}-${index - 1}`, journeyId: `j-${country}` }))
+      if ((index - 1) % 10 === 0) {
+        duplicates.push(relation(`rel:related_to:${from}__${id}:dup`, 'related_to', from, id, { kind: 'ferry', routeId: `dup-${country}-${index - 1}`, journeyId: 'j-dup' }))
+      }
+    })
+    if (country > 0) {
+      crossings.push(relation(`rel:related_to:x-${country - 1}`, 'related_to', cityId(country - 1, citiesPerCountry - 1), cityId(country, 0), { kind: 'flight', routeId: `x-${country - 1}`, journeyId: 'j-x' }))
+    }
+  }
+  snapshot.relations.push(...duplicates, ...crossings)
+  return snapshot
+}
+
+test('规模：4000 个城市、每对相邻城市都有 related_to，路线与逐条构造的期望完全相同（耗时只记录，不断言）', (t) => {
+  const countryCount = 40
+  const citiesPerCountry = 100
+  const snapshot = scaleSnapshot(countryCount, citiesPerCountry)
+  const started = performance.now()
+  const result = queryVisiblePlaces(snapshot, ['travel', 'want_to_go'])
+  const elapsedMs = performance.now() - started
+  t.diagnostic(`queryVisiblePlaces: ${countryCount * citiesPerCountry} cities, ${snapshot.relations.length} relations, ${elapsedMs.toFixed(1)} ms`)
+
+  const expected: [string, string, string][] = []
+  for (let country = 0; country < countryCount; country += 1) {
+    for (let index = 0; index + 1 < citiesPerCountry; index += 1) expected.push([`r-${country}-${index}`, 'main', `j-${country}`])
+  }
+  for (let country = 0; country + 1 < countryCount; country += 1) expected.push([`x-${country}`, 'flight', 'j-x'])
+  assert.equal(result.places.length, countryCount * citiesPerCountry)
+  assert.deepEqual(result.routes.map((route) => [route.id, route.kind, route.journeyId]), expected)
+})
+
 // ---------------------------------------------------------------------------
 // 5. 纯函数
 // ---------------------------------------------------------------------------

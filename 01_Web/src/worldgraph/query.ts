@@ -425,7 +425,7 @@ interface PendingSegment {
  * 逐条复刻 PR3 之前 `CesiumAtlasGlobe.mappedRoutes` 的规则：
  *
  * 1. `orderedCountryRoutes`：每个国家按它足迹成员关系上 `metadata.cityIds` 的顺序取相邻两两成段，
- *    能在 `related_to` 里找到同端点的关系时用它的 routeId / journeyId / kind 覆盖；
+ *    能在 `related_to` 里找到同端点的关系时用它（有多条时取第一条）的 routeId / journeyId / kind 覆盖；
  *    找不到 journeyId 时退回"两端共享的 journeyId"。
  * 2. `crossCountryRoutes`：所有两端国家不同的 `related_to` 关系。
  * 3. 合并后逐条：没有 journeyId、任一端没有 location Anchor → 丢弃。
@@ -438,6 +438,15 @@ const buildRoutes = (
 ): LayerRouteSegment[] => {
   const { relatedToRelations, visitJourneyIdsByEntityId, countryIdOf } = indexes
   const pending: PendingSegment[] = []
+
+  // ---- 同端点的 related_to：起点 → 终点 → 关系，循环前建一次。同一对端点只留第一条（按 relations 顺序），
+  //      与原来在城市对循环里 `relatedToRelations.find(...)` 的「第一条胜出」相同；后面的同端点关系不会覆盖它。 ----
+  const relatedToByEndpoints = new Map<EntityId, Map<EntityId, Relation>>()
+  for (const relation of relatedToRelations) {
+    const byToEntityId = relatedToByEndpoints.get(relation.fromEntityId) ?? new Map<EntityId, Relation>()
+    relatedToByEndpoints.set(relation.fromEntityId, byToEntityId)
+    if (!byToEntityId.has(relation.toEntityId)) byToEntityId.set(relation.toEntityId, relation)
+  }
 
   // ---- 1. 国家内的顺序段：国家的 cityIds 在它的足迹成员关系上，按成员关系的顺序遍历 ----
   const seenCountryIds = new Set<EntityId>()
@@ -460,9 +469,7 @@ const buildRoutes = (
       const toEntityId = toCityId
       if (!entityById.has(fromEntityId) || !entityById.has(toEntityId)) continue
 
-      const existing = relatedToRelations.find(
-        (relation) => relation.fromEntityId === fromEntityId && relation.toEntityId === toEntityId,
-      )
+      const existing = relatedToByEndpoints.get(fromEntityId)?.get(toEntityId)
       const fromJourneyIds = new Set(
         (visitJourneyIdsByEntityId.get(fromEntityId) ?? []).filter((journeyId) => Boolean(journeyId)),
       )
