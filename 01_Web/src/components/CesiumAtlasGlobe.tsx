@@ -1776,7 +1776,7 @@ export function CesiumAtlasGlobe({
             show={showMapContent && showLabelsOverlay}
           />
         ) : null}
-        <GooglePhotorealisticTiles show={showCity3DTiles && showMapContent} onUnavailable={onCity3DUnavailable} />
+        <GooglePhotorealisticTiles enabled={showCity3DTiles} visible={showMapContent} onUnavailable={onCity3DUnavailable} />
         <Scene backgroundColor={Color.fromCssColorString(isNight ? '#010409' : '#dbeafe')} />
         <CesiumGlobe
           baseColor={Color.fromCssColorString(isNight ? '#07111f' : '#cbd5e1')}
