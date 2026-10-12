@@ -111,7 +111,7 @@ npm run media:check
 npm run media:import
 ```
 
-自己放进投递箱的文件夹，按文件夹名匹配到地点只是提示。第一次绑定需要你确认，只匹配到一个地点时也一样：`npm run media:check` 列出每个「文件夹 → 地点」，`npm run media:import` 在你运行 `npm run media:import -- --accept-folder-bindings` 之前什么都不写（退出码 2）。「媒体待办」的导入预览也会列出这些绑定，并单独加一个确认框。已有 `place.json` 的文件夹不受影响。
+自己放进投递箱的文件夹，按文件夹名匹配到地点只是提示。第一次绑定需要你确认，只匹配到一个地点时也一样：`npm run media:check` 列出每个「文件夹 → 地点」，`npm run media:import` 在你运行 `npm run media:import -- --accept-folder-bindings` 之前什么都不写（退出码 2）。「媒体待办」的导入预览也会列出这些绑定，并单独加一个确认框。已有 `place.json` 的文件夹不受影响。编辑器上传不会占用这类文件夹：同名文件夹没有 `place.json` 时，上传会新建一个文件夹，例如 `Suzhou (1a2b3c4d)`，你放的文件夹保持原样。
 
 导入程序不会改写 Inbox 原文件。生成文件完整写好之后才发布；`npm run media:check -- --verify` 会按内容哈希核对已经生成的原图，以及已完成媒体待办的凭据所记录的文件。个人源媒体、生成图片、本地旅行记录、编辑状态与 `.env.local` 全部留在外置私有层，不进入源码仓库。
 
