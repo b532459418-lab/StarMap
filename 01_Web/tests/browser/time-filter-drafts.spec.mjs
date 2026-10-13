@@ -12,6 +12,10 @@ if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).sta
 }
 const panel = (page) => page.locator('#atlas-time-query-panel')
 
+// Every case rebuilds the synthetic fixture before and after itself and uses a fresh browser context, so no case
+// depends on another or on their order. Parallel mode makes each case its own Playwright test group, which lets CI
+// shard this group by case (batch 4, E2). Workers stay at 1, so a shard still runs its cases one at a time.
+test.describe.configure({ mode: 'parallel' })
 test.beforeEach(async () => { await createBrowserFixture(root) })
 test.afterEach(async ({ page }) => {
   await page.close()

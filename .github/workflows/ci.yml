@@ -42,20 +42,37 @@ jobs:
         run: npm run release:check
 
   browser-checks:
-    name: Browser checks (${{ matrix.suite }})
+    name: Browser checks (${{ matrix.suite }}${{ matrix.shards > 1 && format(' {0}/{1}', matrix.shard, matrix.shards) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
       fail-fast: false
-      max-parallel: 3
+      # Every entry runs in parallel on its own runner. Playwright splits a group by
+      # test group: the time-filter files use parallel mode, so time is split by case.
+      # media stays whole because its file is serial by design (the cases share task
+      # history in one synthetic library); critical is short and stays whole too.
       matrix:
         include:
           - suite: critical
             flag: --critical-flows
+            shard: 1
+            shards: 1
           - suite: media
             flag: --media-recovery
+            shard: 1
+            shards: 1
           - suite: time
             flag: --time-filters
+            shard: 1
+            shards: 3
+          - suite: time
+            flag: --time-filters
+            shard: 2
+            shards: 3
+          - suite: time
+            flag: --time-filters
+            shard: 3
+            shards: 3
     defaults:
       run:
         working-directory: 01_Web
@@ -78,15 +95,15 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      # Independent runners keep one worker, port 5173 and private fixture per group.
+      # Independent runners keep one worker, port 5173 and private fixture per shard.
       - name: Check browser group with isolated synthetic data
-        run: npm run test:browser -- ${{ matrix.flag }}
+        run: npm run test:browser -- ${{ matrix.flag }} --shard=${{ matrix.shard }}/${{ matrix.shards }}
 
       - name: Preserve failed synthetic browser evidence
         if: failure() && !cancelled()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: synthetic-browser-failure-${{ matrix.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: synthetic-browser-failure-${{ matrix.suite }}-${{ matrix.shard }}of${{ matrix.shards }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             01_Web/test-results/browser/
             01_Web/playwright-report/browser/
