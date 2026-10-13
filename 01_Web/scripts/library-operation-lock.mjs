@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
@@ -298,6 +299,39 @@ export async function recoverLibraryOperation(privatePaths, { confirm = false, c
   await unlink(lockPath)
   log('已推进库操作记录的 generation，并清除了残留的库操作锁。现在可以正常写入。')
   return 0
+}
+
+/**
+ * The pre-write check of ordinary formal-store writes (3C-2b, design 3B v1.1 §16.2-1). They take no lease: SQLite's
+ * BEGIN IMMEDIATE keeps writers apart. They only refuse while somebody else holds the library operation lock (a media
+ * operation, a backup, a restore or a migration). Resolves the private root once and returns `check(leaseToken)`:
+ * - no lock: one lstat, returns (a `leaseToken` naming a lease that is no longer held is E_LIBRARY_BUSY);
+ * - a lock, and no `leaseToken`, or a token that is not that lock's holder: E_LIBRARY_BUSY;
+ * - a lock held by the caller (its verified `leaseToken`, as withLibraryOperation hands it out): returns.
+ * Never creates, changes or removes anything.
+ */
+export function libraryLockProbe(privatePaths) {
+  const root = realpathSync(path.resolve(privatePaths.root))
+  const lockPath = path.join(root, 'operations', 'library-operation.lock')
+  const rootBinding = binding(root)
+  return Object.freeze({
+    lockPath,
+    check(leaseToken) {
+      let metadata
+      try { metadata = lstatSync(lockPath) } catch (error) {
+        if (missing(error) && leaseToken === undefined) return
+        throw busy()
+      }
+      if (leaseToken === undefined) throw busy()
+      const supplied = decodeToken(leaseToken)
+      let actual
+      try {
+        if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 4096) throw busy()
+        actual = JSON.parse(readFileSync(lockPath, 'utf8'))
+      } catch { throw busy() }
+      if (!valid(actual) || actual.owner !== supplied.owner || actual.rootBinding !== rootBinding || supplied.rootBinding !== rootBinding) throw busy()
+    },
+  })
 }
 
 /** Explicit trusted parent leases allow child importers to join, never to release the lock. */

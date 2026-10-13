@@ -182,10 +182,11 @@ const editRequest = (seed) => ({
   commands: [{ op: 'update', table: 'entries', id: seed.entries[0].id, expectedRevision: 0, value: { ...seed.entries[0], revision: 1, fields: { rating: 2 } } }],
 })
 
-test('library:recover (new-store mode): a writer killed inside its transaction; --confirm checks the store, clears the lock, and the same request commits', { timeout: 120_000 }, async (t) => {
+test('library:recover (new-store mode): a lease holder killed inside its store transaction; --confirm checks the store, clears the lock, and the same request commits', { timeout: 120_000 }, async (t) => {
   const { directory, root, file, seed } = await storeLibrary(t)
   const edit = editRequest(seed)
-  await killedAt(directory, { mode: 'commit', root, file, now: NOW, request: edit }, 'written')
+  // Ordinary commits take no lease; a holder such as a media operation commits with its leaseToken.
+  await killedAt(directory, { mode: 'commit', lease: true, root, file, now: NOW, request: edit }, 'written')
   assert.equal((await inspectLibraryOperation({ root })).state, 'busy')
   const confirmed = recoverCli(root, ['--confirm'])
   assert.equal(confirmed.status, 0, confirmed.stdout + confirmed.stderr)
@@ -241,11 +242,87 @@ test('a writer killed while its store is open: the next open runs quick_check on
   await handle.close()
 })
 
+/** Start a 'race' worker and wait until its store is open: `go()` lets it commit, `result()` resolves its outcome. */
+async function raceWorker(t, directory, spec) {
+  const specFile = path.join(directory, `worker-${++workerSpecs}.json`)
+  await writeFile(specFile, JSON.stringify({ ...spec, mode: 'race' }))
+  const child = spawn(process.execPath, [worker, specFile], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+  const exited = once(child, 'exit')
+  t.after(async () => { if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited } })
+  let output = '', stderr = ''
+  child.stderr.on('data', (bytes) => { stderr += bytes })
+  child.stdout.on('data', (bytes) => { output += bytes })
+  const waitFor = (pattern) => new Promise((resolve, reject) => {
+    const timer = setInterval(() => {
+      const match = output.match(pattern)
+      if (match) { clearInterval(timer); clearTimeout(limit); resolve(match) }
+      else if (child.exitCode !== null) { clearInterval(timer); clearTimeout(limit); reject(new Error(`race worker exited (${child.exitCode}): ${output} ${stderr}`)) }
+    }, 5)
+    const limit = setTimeout(() => { clearInterval(timer); reject(new Error(`race worker timeout: ${output} ${stderr}`)) }, 30_000)
+  })
+  await waitFor(/^ready$/m)
+  return {
+    go: () => child.stdin.end('go\n'),
+    holding: () => waitFor(/^holding$/m),
+    result: async () => {
+      const [, json] = await waitFor(/^result:(.*)$/m)
+      const [code] = await exited
+      assert.equal(code, 0, stderr)
+      return JSON.parse(json)
+    },
+  }
+}
+
+test('two processes commit at the same moment without a lease: one commits, the other gets E_STORE_BUSY or E_STALE and writes nothing', { timeout: 120_000 }, async (t) => {
+  const { directory, root, file, seed } = await storeLibrary(t)
+  const observed = []
+  // Rounds 0-1 race freely; in round 2 the first writer holds its BEGIN IMMEDIATE while the second one tries.
+  for (let round = 0; round < 3; round++) {
+    const holdFile = round === 2 ? path.join(directory, 'release-hold') : undefined
+    const reader = openStore(file, { readOnly: true })
+    const revision = reader.meta().revision
+    const requests = [0, 1].map((k) => {
+      const row = reader.read((current) => current.get('entries', seed.entries[k].id))
+      return { requestId: nextRequestId(), baseRevision: revision, kind: 'test.race', actor: `writer-${k}`,
+        commands: [{ op: 'update', table: 'entries', id: row.id, expectedRevision: row.revision, value: { ...row, revision: row.revision + 1, fields: { rating: round + k } } }] }
+    })
+    await reader.close()
+    const writers = []
+    for (const [k, request] of requests.entries()) writers.push(await raceWorker(t, directory, { root, file, now: NOW, request, holdFile: k === 0 ? holdFile : undefined }))
+    let results
+    if (holdFile) {
+      writers[0].go()
+      await writers[0].holding()
+      writers[1].go()
+      const second = await writers[1].result()
+      assert.deepEqual(second, { code: 'E_STORE_BUSY', outcome: 'not_committed' }, 'a held write lock: busy at once, never queued')
+      await writeFile(holdFile, '')
+      results = [await writers[0].result(), second]
+    } else {
+      for (const writer of writers) writer.go()
+      results = await Promise.all(writers.map((writer) => writer.result()))
+    }
+    const winners = results.flatMap((result, k) => (result.status === 'committed' ? [k] : []))
+    assert.equal(winners.length, 1, JSON.stringify(results))
+    const loser = results[1 - winners[0]]
+    assert.ok(['E_STORE_BUSY', 'E_STALE'].includes(loser.code), JSON.stringify(loser))
+    assert.equal(loser.outcome, 'not_committed')
+    observed.push(loser.code)
+    const handle = openStore(file, { privatePaths: { root }, now: () => NOW })
+    try {
+      assert.equal(handle.meta().revision, revision + 1, 'exactly one request was written')
+      assert.deepEqual(requests.map((request) => handle.lookup(request.requestId).found), [winners[0] === 0, winners[0] === 1])
+      assert.deepEqual(handle.check(), { ok: true, problems: [] })
+    } finally { await handle.close() }
+  }
+  t.diagnostic(`the second writer got: ${observed.join(', ')}`)
+})
+
 // ---------------------------------------------------------------------------
 // Fault injection: a real writer process killed at each write phase
 // ---------------------------------------------------------------------------
 
-const PHASES = ['leased', 'begun', 'deleted', 'written', 'before-commit', 'committed']
+const PHASES = ['probed', 'begun', 'deleted', 'written', 'before-commit', 'committed']
 const fileHash = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 /**
  * The rollback journal next to `file`: 'absent'; 'empty' (zero length: what TRUNCATE leaves between writes, never hot);
@@ -284,11 +361,12 @@ function faultRequest(seed) {
   }
 }
 
-test('fault injection: a writer killed at each phase leaves exactly the state before or after; recovery and a same-id retry never write twice', { timeout: 300_000 }, async (t) => {
+test('fault injection: an ordinary writer (no lease) killed at each phase leaves exactly the state before or after and no lock; the next open rolls back and checks; a same-id retry never writes twice', { timeout: 300_000 }, async (t) => {
   const report = []
   let hotRollbacks = 0
   for (const phase of PHASES) {
-    const { directory, root, paths, file, seed } = await storeLibrary(t)
+    const { directory, root, file, seed } = await storeLibrary(t)
+    const { generation } = await inspectLibraryOperation({ root })
     const fault = faultRequest(seed)
     const after = applyChangeSet(seed, planCommands(memoryReader(seed), fault.commands, { baseRevision: 1, now: NOW }))
     // Start from clean_shutdown 0, so that the writer's open does not write the flag itself: then a changed
@@ -306,19 +384,19 @@ test('fault injection: a writer killed at each phase leaves exactly the state be
       assert.equal(journal, 'hot', `${phase}: the database file was written under a hot journal`)
       hotRollbacks++
     }
-    assert.equal((await inspectLibraryOperation({ root })).state, 'busy', `${phase}: the killed writer left its lock`)
-    // The lock is cleared by library:recover (the real CLI once, the same function otherwise).
+    // Design 3B v1.1 §16.2-1: an ordinary commit takes no lease, so a killed writer leaves no lock to recover.
+    assert.deepEqual(await inspectLibraryOperation({ root }), { state: 'idle', generation }, `${phase}: no lock left, generation unchanged`)
     if (phase === 'written') {
-      const cli = recoverCli(root, ['--confirm'])
+      const cli = recoverCli(root)
       assert.equal(cli.status, 0, cli.stdout + cli.stderr)
-    } else assert.equal(await recoverLibrary(paths, { confirm: true, ...quietly() }), 0, phase)
-    assert.equal(await exists(lockPath(root)), false, phase)
-    // The recovery check's writable connection rolled a hot journal back (SQLite deletes or truncates it afterwards).
-    assert.ok(['absent', 'empty', 'unsynced'].includes(journalState(file)), `${phase}: no hot journal is left after recovery`)
+      assert.match(cli.stdout, /没有库操作锁/)
+    }
     let checks = 0
     const handle = openStore(file, { privatePaths: { root }, now: () => NOW, unsafeTestPhase: (name) => { if (name === 'quick-check') checks++ } })
     try {
       assert.deepEqual([checks, handle.readOnly], [1, false], `${phase}: the killed writer never closed its session, so the open ran quick_check`)
+      // The open's writable connection rolled a hot journal back (SQLite deletes or truncates it afterwards).
+      assert.ok(['absent', 'empty', 'unsynced'].includes(journalState(file)), `${phase}: no hot journal is left after the open`)
       assert.equal(normalized(handle.readFormalState()), normalized(committed ? after : seed), `${phase}: exactly the state ${committed ? 'after' : 'before'}`)
       assert.equal(handle.lookup(fault.requestId).found, committed, phase)
       assert.equal(countRows(file, 'receipts'), committed ? 2 : 1, phase)

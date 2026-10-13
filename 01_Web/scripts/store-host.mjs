@@ -13,7 +13,7 @@
 import { createHash } from 'node:crypto'
 import { closeSync, lstatSync, openSync, realpathSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
-import { withLibraryOperation } from './library-operation-lock.mjs'
+import { libraryLockProbe, withLibraryOperation } from './library-operation-lock.mjs'
 import {
   StoreHostError, closeQuietly, openConnection, pragmaValue, scratchConnection, sqliteDetail, storeErrorFrom, transactionState,
 } from './store-sqlite.mjs'
@@ -713,18 +713,52 @@ function startSession(db, settings, timings) {
   }
 }
 
-function resolveLock({ lock, privatePaths }) {
+/**
+ * How the host coordinates with the library operation lock (design 3B §5.2 as revised by v1.1
+ * §16.2-1). The lock (scripts/library-operation-lock.mjs) belongs to operations that span more
+ * than the store file: createStore and `npm run library:recover` take it here; migration, backup
+ * and restore (3C-3) and media import and deletion (3C-4) will take it too. Ordinary writes
+ * (commit, pruneLogs, putIdMappings) take no lease: SQLite's BEGIN IMMEDIATE keeps writers apart,
+ * and before it they only check that nobody else holds the lock (libraryLockProbe), passing the
+ * caller's `leaseToken` when the caller holds it.
+ *
+ * - `privatePaths`: `lease` runs a callback under withLibraryOperation; `check(leaseToken)` is the
+ *   pre-write probe, resolved on first use (the private root's real path, once per handle).
+ * - `lock` (tests and benchmarks: withoutLibraryLock): `lease` is that runner and nothing is probed.
+ */
+function resolveLibrary({ lock, privatePaths }) {
   if (lock !== undefined) {
     if (typeof lock !== 'function') fail('E_STORE_OPTIONS', { path: 'lock' })
-    return lock
+    return Object.freeze({ lease: lock, check: () => {} })
   }
   if (typeof privatePaths?.root !== 'string') fail('E_STORE_LOCK_REQUIRED', { path: 'privatePaths' })
-  // One lease per write, released when the write ends (design 3B §5.2).
-  return (callback) => withLibraryOperation(privatePaths, () => callback())
+  let probe
+  return Object.freeze({
+    lease: (callback) => withLibraryOperation(privatePaths, () => callback()),
+    check(leaseToken) {
+      if (!probe) {
+        try { probe = libraryLockProbe(privatePaths) } catch (error) {
+          throw new StoreHostError(missing(error) ? 'E_STORE_PATH' : 'E_STORE_LOCK', { path: 'privatePaths.root', outcome: 'not_committed', cause: error })
+        }
+      }
+      try { probe.check(leaseToken) } catch (error) {
+        const code = typeof error?.code === 'string' && /^E_[A-Z0-9_]+$/.test(error.code) ? error.code : 'E_STORE_LOCK'
+        throw new StoreHostError(code, { outcome: 'not_committed', cause: error })
+      }
+    },
+  })
 }
 
-/** For tests and benchmarks only: run writes without the library operation lease. */
+/** For tests and benchmarks only: no library coordination (createStore runs without the lease, writes are not probed). */
 export const withoutLibraryLock = (callback) => callback()
+
+/** The options of an ordinary write: `{ leaseToken }` when the caller holds the library lease. */
+function writeOptions(options) {
+  if (options === undefined) return undefined
+  if (options === null || typeof options !== 'object' || Object.keys(options).some((key) => key !== 'leaseToken')
+    || (options.leaseToken !== undefined && typeof options.leaseToken !== 'string')) fail('E_STORE_OPTIONS', { path: 'leaseToken', outcome: 'not_committed' })
+  return options.leaseToken
+}
 
 function hostOptions(options) {
   const now = options.now ?? (() => new Date().toISOString())
@@ -737,9 +771,9 @@ function hostOptions(options) {
  * carries `diagnostic` ({ code }): writes are refused with that code and nothing is repaired.
  * A writable open starts a writer session (clean_shutdown, see startSession); `close()` ends it.
  *
- * Options: `privatePaths` (writes take the library operation lease under it) or `lock`
- * (a callback runner; tests and benchmarks may pass withoutLibraryLock), `now`, `policy`
- * (StorePolicy for planning and full validation), `readOnly`.
+ * Options: `privatePaths` (ordinary writes check the library operation lock under it, see
+ * resolveLibrary) or `lock: withoutLibraryLock` (tests and benchmarks: no coordination), `now`,
+ * `policy` (StorePolicy for planning and full validation), `readOnly`.
  */
 export function openStore(file, options = {}) {
   return openHandle(file, options, { session: true })
@@ -755,7 +789,7 @@ function openHandle(file, options, { session }) {
   existingFile(target)
   const settings = hostOptions(options)
   if (options.readOnly === true) return readOnlyHandle(target, settings, undefined)
-  const lock = resolveLock(options)
+  const library = resolveLibrary(options)
   const key = writerKey(target)
   if (writers.has(key)) fail('E_STORE_ALREADY_OPEN', { path: 'file' })
   // A writable connection rolls back a hot journal left by a crashed writer (SQLite's own recovery).
@@ -772,7 +806,7 @@ function openHandle(file, options, { session }) {
     closeQuietly(db)
     return readOnlyHandle(target, settings, diagnostic)
   }
-  return writableHandle(db, target, key, lock, settings, timings, session)
+  return writableHandle(db, target, key, library, settings, timings, session)
 }
 
 /**
@@ -796,15 +830,15 @@ function readOnlyHandle(file, settings, diagnostic) {
   return makeHandle({ db: readable ? db : (closeQuietly(db), undefined), file, settings, diagnostic: failure, writable: false })
 }
 
-function writableHandle(db, file, key, lock, settings, timings, session) {
+function writableHandle(db, file, key, library, settings, timings, session) {
   writers.add(key)
-  return makeHandle({ db, file, settings, writable: true, lock, timings, session, release: () => writers.delete(key) })
+  return makeHandle({ db, file, settings, writable: true, library, timings, session, release: () => writers.delete(key) })
 }
 
 /** SQLITE_CORRUPT or SQLITE_NOTADB behind a host error (also inside E_OUTCOME_UNKNOWN). */
 const isSqliteCorruption = (error) => [11, 26].includes((error?.sqlite?.errcode ?? 0) & 0xff)
 
-function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, session = false, release }) {
+function makeHandle({ db, file, settings, diagnostic, writable, library, timings, session = false, release }) {
   let closed = false
   let lost = false
   let tail = Promise.resolve()
@@ -836,22 +870,11 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, s
     if (lost) fail('E_STORE_REOPEN_REQUIRED', { outcome: 'not_committed' })
     return db
   }
-  /** Writes in this process run one at a time, each under its own lease. */
+  /** Writes in this process run one at a time. Other processes are kept apart by BEGIN IMMEDIATE. */
   const enqueue = (work) => {
     const run = tail.then(work, work)
     tail = run.catch(() => {})
     return run
-  }
-  /** One lease per write, never held between writes (design 3B §5.2). A refused lease ran nothing. */
-  const leased = async (work) => {
-    let entered = false
-    try {
-      return await lock(() => { entered = true; return work() })
-    } catch (error) {
-      if (entered) throw error
-      const code = typeof error?.code === 'string' && /^E_[A-Z0-9_]+$/.test(error.code) ? error.code : 'E_STORE_LOCK'
-      throw new StoreHostError(code, { outcome: 'not_committed', cause: error })
-    }
   }
   /**
    * Test-only fault injection: `unsafeTestPhase(name, { db })` runs synchronously at each write
@@ -878,14 +901,19 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, s
       }
     }
   }
-  /** Design 3B §4.4: receipt check, revision check, plan and execute, COMMIT; failures settled into the three outcomes. */
-  const runCommit = (request, digest) => {
+  /**
+   * Design 3B §4.4 with v1.1 §16.2-1: the library lock check (no lease), BEGIN IMMEDIATE (a
+   * writer in another process makes it E_STORE_BUSY after the short busy timeout, never a queue),
+   * receipt check, revision check, plan and execute, COMMIT; failures settled into the three outcomes.
+   */
+  const runCommit = (request, digest, leaseToken) => {
     const connection = writer()
     const hook = (name) => phase(name, connection)
     let commitIssued = false
     let result
     try {
-      hook('leased')
+      library.check(leaseToken)
+      hook('probed')
       if (transactionState(connection) !== false) fail('E_STORE_BUSY')
       connection.exec('BEGIN IMMEDIATE')
       hook('begun')
@@ -907,11 +935,12 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, s
     hook('committed')
     return result
   }
-  /** One small write transaction outside commit (pruning steps, identity map). */
-  const smallWrite = (work) => {
+  /** One small write transaction outside commit (pruning steps, identity map), after the same library lock check. */
+  const smallWrite = (work, leaseToken) => {
     const connection = writer()
     let commitIssued = false
     try {
+      library.check(leaseToken)
       if (transactionState(connection) !== false) fail('E_STORE_BUSY')
       connection.exec('BEGIN IMMEDIATE')
       const result = work(connection)
@@ -980,12 +1009,19 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, s
      * the original receipt when the same request was already committed. Rejects with a
      * StoreHostError whose `outcome` is 'not_committed', or 'unknown' (E_OUTCOME_UNKNOWN: look
      * the request up with lookup(requestId), or retry with the same requestId).
+     *
+     * No library lease is taken (design 3B v1.1 §16.2-1). While somebody else holds the library
+     * operation lock the commit is refused with E_LIBRARY_BUSY; a caller that holds the lease
+     * itself (a media operation, a migration) passes `{ leaseToken }` from withLibraryOperation.
+     * Another process writing at the same moment makes it E_STORE_BUSY (or E_STALE once that
+     * write has committed); neither waits in a queue.
      */
-    async commit(request) {
+    async commit(request, options) {
       writer()
+      const leaseToken = writeOptions(options)
       const valid = validRequest(request)
       const digest = requestDigest(valid)
-      return enqueue(() => leased(() => runCommit(valid, digest)))
+      return enqueue(() => runCommit(valid, digest, leaseToken))
     },
     /** The original receipt of a committed request: { found: true, receipt } or { found: false }. */
     lookup(requestId) {
@@ -999,26 +1035,28 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, s
      * Retention (design 3B §4.6): receipts are kept for RETENTION.receipts.days and at least the
      * newest RETENTION.receipts.count, op_log likewise; a row goes only when both limits are
      * passed. Each step deletes at most `batchSize` rows per table in its own ordinary write
-     * transaction, under one lease. `retention` overrides the defaults (tests).
+     * transaction; like commit it takes no lease and checks the library lock before each step
+     * (`leaseToken` when the caller holds it). `retention` overrides the defaults (tests).
      */
-    async pruneLogs({ now, batchSize = 500, maxSteps = 100, retention = RETENTION } = {}) {
+    async pruneLogs({ now, batchSize = 500, maxSteps = 100, retention = RETENTION, leaseToken } = {}) {
       writer()
+      writeOptions({ leaseToken })
       core(() => utcTimestamp(now, 'now'))
       const limits = validRetention(retention)
       if (!Number.isSafeInteger(batchSize) || batchSize < 1) fail('E_STORE_OPTIONS', { path: 'batchSize' })
       if (!Number.isSafeInteger(maxSteps) || maxSteps < 1) fail('E_STORE_OPTIONS', { path: 'maxSteps' })
       const cutoffs = { receipts: cutoff(now, limits.receipts.days), opLog: cutoff(now, limits.opLog.days) }
-      return enqueue(() => leased(() => {
+      return enqueue(() => {
         let receipts = 0, opLog = 0, steps = 0, done = false
         while (!done && steps < maxSteps) {
           steps++
-          const removed = smallWrite((connection) => pruneStep(connection, cutoffs, limits, batchSize))
+          const removed = smallWrite((connection) => pruneStep(connection, cutoffs, limits, batchSize), leaseToken)
           receipts += removed.receipts
           opLog += removed.opLog
           done = removed.receipts < batchSize && removed.opLog < batchSize
         }
         return Object.freeze({ receipts, opLog, steps, done })
-      }))
+      })
     },
     /** id_map lookup for 3C-1b's identity manifest: the formal id, or undefined. */
     getIdMapping(kind, sourceId, recordId) {
@@ -1027,12 +1065,14 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, s
     /**
      * Add identity mappings `{ kind, sourceId, recordId, id }` in one write transaction. An
      * identical mapping is a no-op; a different id for a mapped key rejects the whole batch
-     * with E_ID_MAP_CONFLICT. Resolves { added }.
+     * with E_ID_MAP_CONFLICT. Resolves { added }. An ordinary write: no lease, the library lock
+     * check first (`{ leaseToken }` when the caller holds the lease, as a migration will).
      */
-    async putIdMappings(mappings) {
+    async putIdMappings(mappings, options) {
       writer()
+      const leaseToken = writeOptions(options)
       const list = validMappings(mappings)
-      return enqueue(() => leased(() => smallWrite((connection) => {
+      return enqueue(() => smallWrite((connection) => {
         const sql = statements(connection)
         let added = 0
         for (const mapping of list) {
@@ -1043,7 +1083,7 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, s
           added++
         }
         return Object.freeze({ added })
-      })))
+      }, leaseToken))
     },
     /**
      * Wait for queued writes, then close the connection. A writer session that is still writable
@@ -1090,8 +1130,9 @@ export async function createStore(file, options = {}) {
   const settings = hostOptions(options)
   core(() => uuid(options.libraryId, 'libraryId'), 'not_committed')
   const initial = options.initial === undefined ? undefined : validRequest({ kind: 'store.create', ...options.initial, baseRevision: 0 })
-  const lock = resolveLock(options)
-  return lock(() => {
+  const library = resolveLibrary(options)
+  // Creation takes the library lease (it makes a new file under the private root).
+  return library.lease(() => {
     const createdAt = hostTime(settings)
     try { closeSync(openSync(target, 'wx', 0o600)) } catch (error) {
       if (error?.code === 'EEXIST') fail('E_STORE_EXISTS', { path: 'file' })
@@ -1124,7 +1165,7 @@ export async function createStore(file, options = {}) {
     }
     const key = writerKey(target)
     if (writers.has(key)) { closeQuietly(db); fail('E_STORE_ALREADY_OPEN', { path: 'file' }) }
-    return writableHandle(db, target, key, lock, settings, undefined, true)
+    return writableHandle(db, target, key, library, settings, undefined, true)
   })
 }
 

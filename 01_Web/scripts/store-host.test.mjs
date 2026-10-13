@@ -154,7 +154,7 @@ test('create is exclusive, needs an absolute path and a UUIDv7 library id; open 
   rejectsWith(() => openStore(path.join(root, 'absent.sqlite'), { lock: withoutLibraryLock }), 'E_STORE_NOT_FOUND')
 })
 
-test('writes take the library lease by default; one writable handle per file in a process', async (t) => {
+test('creation takes the library lease; writes need privatePaths (or the test-only lock option); one writable handle per file in a process', async (t) => {
   const root = await tempRoot(t)
   const file = storePathFor(root)
   await mkdir(path.dirname(file), { recursive: true })
@@ -374,8 +374,8 @@ function countRows(file, table) {
   const db = new DatabaseSync(file, { readOnly: true })
   try { return db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n } finally { db.close() }
 }
-const attemptCommit = async (handle, value) => {
-  try { return await handle.commit(value) } catch (error) {
+const attemptCommit = async (handle, value, options) => {
+  try { return await handle.commit(value, options) } catch (error) {
     if (error instanceof StoreHostError) return { code: error.code, outcome: error.outcome, error }
     throw error
   }
@@ -601,27 +601,47 @@ test('the outcome rule depends on isTransaction, not on the error code', () => {
   assert.equal(discarded, true, 'a transaction that cannot be rolled back is discarded by closing the connection')
 })
 
-test('commits take one lease each and queue in the process; a lease held elsewhere refuses without writing', async (t) => {
+test('ordinary writes take no lease and queue in the process; a lock held elsewhere refuses them, its holder\'s leaseToken lets them through', async (t) => {
   const root = await tempRoot(t)
   const file = storePathFor(root)
   await mkdir(path.dirname(file), { recursive: true })
   const seed = startState()
   const handle = track(t, await createStore(file, { libraryId: LIBRARY_ID, now: clock, privatePaths: { root },
     initial: { requestId: nextRequestId(), actor: 'test', commands: createCommands(seed) } }))
-  const before = (await inspectLibraryOperation({ root })).generation
-  const results = await Promise.all([
-    handle.commit(request(1, [update('entries', seed.entries[0], { fields: { rating: 1 } })])),
-    handle.commit(request(2, [update('entries', seed.entries[1], { fields: { rating: 2 } })])),
-  ])
+  const generation = (await inspectLibraryOperation({ root })).generation
+  assert.equal(typeof generation, 'string', 'creation took the lease')
+  const entryEdit = (revision, index, rating) => request(revision, [update('entries', handle.read((reader) => reader.get('entries', seed.entries[index].id)), { fields: { rating } })])
+  const results = await Promise.all([handle.commit(entryEdit(1, 0, 1)), handle.commit(entryEdit(2, 1, 2))])
   assert.deepEqual(results.map((result) => [result.status, result.revision]), [['committed', 2], ['committed', 3]])
-  const after = await inspectLibraryOperation({ root })
-  assert.equal(after.state, 'idle')
-  assert.notEqual(after.generation, before)
-  await withLibraryOperation({ root }, async () => {
-    const refused = await attemptCommit(handle, request(3, [update('entries', seed.entries[2], { fields: { rating: 3 } })]))
-    assert.deepEqual([refused.code, refused.outcome], ['E_LIBRARY_BUSY', 'not_committed'])
+  assert.deepEqual(await inspectLibraryOperation({ root }), { state: 'idle', generation }, 'no lease was taken: the generation did not move')
+  await handle.pruneLogs({ now: NOW })
+  await handle.putIdMappings([{ kind: 'place', sourceId: 'v2', recordId: 'a', id: 'id-a' }])
+  assert.equal((await inspectLibraryOperation({ root })).generation, generation)
+  let held
+  await withLibraryOperation({ root }, async (leaseToken) => {
+    held = leaseToken
+    const before = sha256(file)
+    // Somebody else's lock (no token, or a token that is not this lock's holder): refused before BEGIN, nothing written.
+    const pending = entryEdit(3, 2, 3)
+    const foreign = Buffer.from(JSON.stringify({ schemaVersion: 1, owner: '00000000-0000-4000-8000-000000000000', rootBinding: 'f'.repeat(64) })).toString('base64url')
+    for (const options of [undefined, { leaseToken: foreign }, { leaseToken: 'not a token' }]) {
+      const refused = await attemptCommit(handle, pending, options)
+      assert.deepEqual([refused.code, refused.outcome], ['E_LIBRARY_BUSY', 'not_committed'])
+    }
+    for (const write of [() => handle.pruneLogs({ now: NOW }), () => handle.putIdMappings([{ kind: 'place', sourceId: 'v2', recordId: 'b', id: 'id-b' }])]) {
+      await assert.rejects(write(), (error) => error.code === 'E_LIBRARY_BUSY' && error.outcome === 'not_committed')
+    }
+    assert.equal(sha256(file), before)
+    // The holder (a media operation, a migration) commits with its own lease.
+    assert.deepEqual(await handle.commit(pending, { leaseToken }).then((result) => [result.status, result.revision]), ['committed', 4])
+    assert.deepEqual(await handle.putIdMappings([{ kind: 'place', sourceId: 'v2', recordId: 'b', id: 'id-b' }], { leaseToken }), { added: 1 })
+    assert.equal((await handle.pruneLogs({ now: NOW, leaseToken })).done, true)
   })
-  assert.equal(handle.meta().revision, 3)
+  // A token of a lease that has ended is refused too; without a lock, ordinary writes go on.
+  const after = entryEdit(4, 0, 4)
+  await rejectsWith(handle.commit(after, { leaseToken: held }), 'E_LIBRARY_BUSY')
+  await rejectsWith(handle.commit(after, { leaseToken: 7 }), 'E_STORE_OPTIONS')
+  assert.deepEqual(await handle.commit(after).then((result) => [result.status, result.revision]), ['committed', 5])
 })
 
 test('a read-only store refuses every write with its diagnostic code and stays byte-identical', async (t) => {

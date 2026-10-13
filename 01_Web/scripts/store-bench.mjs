@@ -285,7 +285,7 @@ const SEGMENTS = {
   async age({ dir, db, count, offset, fast }) {
     const file = storeFile(dir, db)
     const relax = (name, { db: connection }) => {
-      if (name === 'leased') { connection.exec('PRAGMA journal_mode = WAL'); connection.exec('PRAGMA synchronous = OFF') }
+      if (name === 'probed') { connection.exec('PRAGMA journal_mode = WAL'); connection.exec('PRAGMA synchronous = OFF') }
     }
     const handle = openStore(file, { lock: withoutLibraryLock, ...(fast ? { unsafeTestPhase: relax } : {}) })
     const started = performance.now(), deadline = started + 6 * 60_000
@@ -317,7 +317,7 @@ const SEGMENTS = {
       const copy = storeFile(dir, `mode-${journal}-${sync}`)
       copyFileSync(storeFile(dir, db), copy)
       const handle = openStore(copy, { lock: withoutLibraryLock, unsafeTestPhase: (name, { db: connection }) => {
-        if (name === 'leased') { connection.exec(`PRAGMA journal_mode = ${journal}`); connection.exec(`PRAGMA synchronous = ${sync}`) }
+        if (name === 'probed') { connection.exec(`PRAGMA journal_mode = ${journal}`); connection.exec(`PRAGMA synchronous = ${sync}`) }
       } })
       try { results[`${journal}+${sync}`] = await timedCommits(handle, FULL_SCALE, 100, offset) } finally { await handle.close() }
       for (const suffix of ['', '-journal', '-wal', '-shm']) rmSync(`${copy}${suffix}`, { force: true })
