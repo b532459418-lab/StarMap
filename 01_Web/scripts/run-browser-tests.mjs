@@ -5,14 +5,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createBrowserFixture } from './browser-fixture.mjs'
+import { parseBrowserTestArgs } from './browser-test-options.mjs'
 
 const webRoot = fileURLToPath(new URL('../', import.meta.url))
-const large = process.argv.slice(2).includes('--performance')
-const timeFilters = process.argv.slice(2).includes('--time-filters')
-const criticalFlows = process.argv.slice(2).includes('--critical-flows')
-const mediaRecovery = process.argv.slice(2).includes('--media-recovery')
-const mediaLifecycle = process.argv.slice(2).includes('--media-lifecycle')
-if (process.argv.slice(2).some((arg) => !['--performance', '--time-filters', '--critical-flows', '--media-recovery', '--media-lifecycle'].includes(arg)) || [large, timeFilters, criticalFlows, mediaRecovery, mediaLifecycle].filter(Boolean).length > 1) throw new Error('Supported options: --performance, --time-filters, --critical-flows, --media-recovery or --media-lifecycle')
+// Option rules (one group, optional --shard, nothing else) live in ./browser-test-options.mjs.
+const { group, playwrightArgs } = parseBrowserTestArgs(process.argv.slice(2))
+const large = group === '--performance'
+const mediaRecovery = group === '--media-recovery'
+const mediaLifecycle = group === '--media-lifecycle'
 const occupied = await new Promise((resolve, reject) => {
   const socket = net.connect({ host: '127.0.0.1', port: 5173 })
   socket.setTimeout(2000)
@@ -36,7 +36,7 @@ async function cleanupOwnedRoot() {
 }
 try {
   await createBrowserFixture(root, { large })
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url)), 'test', '--config', 'playwright.config.mjs', ...(timeFilters ? ['time-filter'] : criticalFlows ? ['critical-flows.spec.mjs'] : mediaRecovery ? ['media-recovery.spec.mjs'] : mediaLifecycle ? ['media-recovery.spec.mjs', '--grep', 'lost responses, storage loss'] : [])], {
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url)), 'test', '--config', 'playwright.config.mjs', ...playwrightArgs], {
     cwd: webRoot,
     stdio: 'inherit',
     env: { ...process.env, STARMAP_BROWSER_TEST_ROOT: root, STARMAP_BROWSER_PERFORMANCE: large ? '1' : '0', STARMAP_BROWSER_MEDIA_DIAGNOSTIC: mediaLifecycle ? '1' : '0', STARMAP_BROWSER_MEDIA_SUITE: mediaRecovery ? '1' : '0', STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '' },
