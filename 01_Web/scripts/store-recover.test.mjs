@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { closeSync, openSync, readFileSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -19,7 +19,9 @@ import { V2_FILE_KEYS } from '../src/data/canonical/v2Schema.ts'
 import { FORMAL_TABLES, readFormalState } from '../src/worldgraph/store/formal.ts'
 import { formalFixture, formalFromWorld } from '../src/worldgraph/store/formal.fixture.ts'
 import { withFilm } from '../src/worldgraph/store/parity.fixture.ts'
+import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts'
 import { jsonKey } from '../src/worldgraph/store/primitives.ts'
+import { memoryReader } from '../src/worldgraph/store/reader.ts'
 
 const LIBRARY_ID = '01900000-0000-7000-8000-00000000abce'
 const NOW = '2026-10-13T00:00:00.000Z'
@@ -221,4 +223,66 @@ test('library:recover (new-store mode) keeps the lock when quick_check or Core v
     assert.match(output.lines.join('\n'), damage === 'page' ? /E_STORE_CORRUPT/ : /E_REFERENCE: entities\.fields/)
     assert.deepEqual(await snapshot(root), before, `${damage}: lock, generation and store untouched`)
   }
+})
+
+// ---------------------------------------------------------------------------
+// Fault injection: a real writer process killed at each write phase
+// ---------------------------------------------------------------------------
+
+const PHASES = ['leased', 'begun', 'deleted', 'written', 'before-commit', 'committed']
+const fileHash = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
+function countRows(file, table) {
+  const db = new DatabaseSync(file, { readOnly: true })
+  try { return db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n } finally { db.close() }
+}
+/** One request with work in every phase: a delete, an update, and a create large enough (3 MB) to spill
+ * SQLite's page cache into the database file before COMMIT, so recovery has a real hot journal to roll back. */
+function faultRequest(seed) {
+  const [entity] = seed.entities
+  const anchor = seed.anchors.find((row) => row.id === 'time-one')
+  return {
+    requestId: nextRequestId(), baseRevision: 1, kind: 'test.fault', actor: 'test',
+    commands: [
+      { op: 'remove', table: 'anchors', id: anchor.id, expectedRevision: 0 },
+      { op: 'update', table: 'entities', id: entity.id, expectedRevision: 0, value: { ...entity, revision: 1, title: { names: { en: 'Renamed' } } } },
+      { op: 'create', table: 'entities', value: { ...entity, id: '01900000-0000-7000-8000-000000000900', source: { ...entity.source, recordId: 'large' },
+        fields: { author: 'Synthetic '.repeat(300_000) } } },
+    ],
+  }
+}
+
+test('fault injection: a writer killed at each phase leaves exactly the state before or after; recovery and a same-id retry never write twice', { timeout: 300_000 }, async (t) => {
+  const report = []
+  for (const phase of PHASES) {
+    const { directory, root, paths, file, seed } = await storeLibrary(t)
+    const fault = faultRequest(seed)
+    const after = applyChangeSet(seed, planCommands(memoryReader(seed), fault.commands, { baseRevision: 1, now: NOW }))
+    const bytesBefore = fileHash(file)
+    await killedAt(directory, { mode: 'commit', root, file, now: NOW, request: fault }, phase)
+    const journal = existsSync(`${file}-journal`)
+    const fileChanged = fileHash(file) !== bytesBefore
+    assert.equal((await inspectLibraryOperation({ root })).state, 'busy', `${phase}: the killed writer left its lock`)
+    // The lock is cleared by library:recover (the real CLI once, the same function otherwise).
+    if (phase === 'written') {
+      const cli = recoverCli(root, ['--confirm'])
+      assert.equal(cli.status, 0, cli.stdout + cli.stderr)
+    } else assert.equal(await recoverLibrary(paths, { confirm: true, ...quietly() }), 0, phase)
+    assert.equal(await exists(lockPath(root)), false, phase)
+    const committed = phase === 'committed'
+    const handle = openStore(file, { privatePaths: { root }, now: () => NOW })
+    try {
+      assert.equal(normalized(handle.readFormalState()), normalized(committed ? after : seed), `${phase}: exactly the state ${committed ? 'after' : 'before'}`)
+      assert.equal(handle.lookup(fault.requestId).found, committed, phase)
+      assert.equal(countRows(file, 'receipts'), committed ? 2 : 1, phase)
+      const retried = await handle.commit(fault)
+      assert.deepEqual([retried.status, retried.revision], [committed ? 'duplicate' : 'committed', 2], phase)
+      assert.equal(normalized(handle.readFormalState()), normalized(after), `${phase}: after the retry`)
+      assert.deepEqual([countRows(file, 'receipts'), countRows(file, 'op_log')], [2, 2], `${phase}: written once`)
+      assert.deepEqual(handle.check(), { ok: true, problems: [] }, phase)
+    } finally { await handle.close() }
+    report.push(`${phase}: ${committed ? 'after' : 'before'} (journal ${journal}, file changed ${fileChanged}), retry ${committed ? 'duplicate' : 'committed'}`)
+  }
+  t.diagnostic(report.join(' | '))
+  assert.ok(report.some((line) => !line.startsWith('committed') && line.includes('journal true, file changed true')),
+    'at least one uncommitted phase had already written to the database file, so a hot journal was rolled back')
 })
