@@ -38,30 +38,71 @@ The product editions that build on it are described in
 
 Run the tests with `npm test` from `01_Web/` (plain `node --test`, no bundler).
 
-## Experimental logical store (RD-08 G1)
+## Logical store (RD-08 G1) and the formal planner (3C-1a)
 
-`store/` adds a versioned **experimental** Entity / Layer / LayerEntry contract
-alongside the existing V0.4 graph. It is the RD-08 G1 contract and reference
-implementation, **not production storage**. The App still uses the V2 adapters and original
-two-layer queries. This is not a storage migration, a stable SDK, or a custom-layer UI.
-`applyStoreCommands` validates and copies the whole world on every call, so it
-defines the semantics but does not belong on a high-frequency write path. The
-experimental G3 persistence built on this contract is archived; see
+`store/` holds a versioned **experimental** Entity / Layer / LayerEntry contract
+alongside the existing V0.4 graph. The App still uses the V2 adapters and original
+two-layer queries; nothing in `store/` is wired into the App or a host yet. This is
+not a storage migration, a stable SDK, or a custom-layer UI.
+
+- **`planCommands` (`store/planner.ts`) is the formal write path.** It plans one
+  command batch against a `StoreReader`, reads only the rows the batch touches or
+  references, and returns a frozen JSON change set (upserts, deletes, tombstones,
+  reference changes, per-table counts) that a host can execute without knowing
+  domain rules. `applyChangeSet` is the pure reference executor for that host.
+- **`applyStoreCommands` (`store/commands.ts`) is the G1 reference implementation.**
+  It validates and copies the whole world on every call, so it defines the shared
+  semantics but does not belong on a write path. `store/parity.test.ts` runs the
+  same scenarios through both paths: both accept with equal results or both reject
+  with the same code, except for the differences listed below.
+- Whole-store validation and incremental planning use one set of row rules
+  (`store/rows.ts`), so they cannot drift apart.
+
+The experimental G3 persistence built on the G1 contract is archived; see
 [docs/world-store-lab.md](../../../docs/world-store-lab.md).
 
 | File | Responsibility |
 | --- | --- |
 | `store/types.ts` | Deeply readonly JSON-shaped definitions, facts, source/evidence/review references, anchors, relations, assets, original entry sequences and view state; pending proposals live outside the fact store. |
-| `store/schema.ts` | Version 1 runtime shape and semantic validation, UUIDv7 entity/entry IDs, registered types, field constraints, source identities, closed references, safe JSON and immutable copies. |
+| `store/primitives.ts` | Store errors (code and path only), safe JSON, opaque/UUIDv7 IDs, revisions, UTC timestamps, structural keys and immutable copies. `schema.ts` re-exports the public ones. |
+| `store/rows.ts` | Every per-row rule, checked one row at a time through a lookup: shape, field primitives, source and review receipt, references, entry/relation type limits, times, coordinates. The `formal` dialect adds view rows and deprecated fields. |
+| `store/schema.ts` | Version 1 whole-world validation: indexes every table, runs the row rules in table order and checks store-wide uniqueness. |
 | `store/commands.ts` | Explicit in-memory command batches with world/object revision checks; reject conflicts, schema reinterpretation and deletion with dangling references. Removing the last entry preserves its entity. |
+| `store/formal.ts` | Formal row shapes: the G1 fact and definition rows, `viewItems` / `viewSettings`, deprecated fields, permanent tombstones, unique keys, and `FormalState`, a JSON-serializable state for tests and the reference executor. |
+| `store/reader.ts` | `StoreReader` (single rows, reverse references, tombstones, unique-key lookups; no method returns a whole table), `memoryReader` and `referencesOf`. |
+| `store/position.ts` | `positionBetween`: deterministic base-62 sort keys of at most 64 characters; `E_POSITION` when no key fits. |
+| `store/evolution.ts` | `checkDefinitionChange`: which definition edits are compatible. |
+| `store/planner.ts` | `planCommands` and `applyChangeSet`. |
 | `store/query.ts` | Complete management rows, RD-04 classification of verbatim raw dates, and original adjacency without bridging a filtered middle entry. |
 | `store/conflicts.ts` | Merge preflight: structural duplicates are idempotent; same-ID different payloads return conflicts and no partial command plan. |
 | `store/proposals.ts` | Separate proposal validation and explicit review acceptance/rejection. Accepted AI facts retain their source, evidence and review receipt. |
 
+### Formal planner compared with G1
+
+Shared with G1: identical creates are no-ops and same-ID different payloads are
+`E_CONFLICT`; new rows start at revision 0 and updates add one; source identity,
+entity type, an entry's layer, entity and `createdAt` never change and `updatedAt`
+never moves back; AI-sourced content needs the accepted review (`E_UNCONFIRMED`);
+review receipts enter only through the host's accepted review and never twice
+(`E_REVIEW_REPLAY`); evidence is immutable; official `systemKey`s need the host
+policy. The differences:
+
+| Topic | G1 `applyStoreCommands` | Formal `planCommands` |
+| --- | --- | --- |
+| Definition edits | Any update of a source, entity type, layer or relation type is `E_SCHEMA_CHANGE`. | Compatible edits are allowed (`checkDefinitionChange`): names, extensions, field order, new optional fields, setting or clearing `deprecated`, required to optional, wider numeric ranges, wider type lists (an empty list accepts every type). Removing a field, changing its kind, optional to required, narrower ranges or type lists, any `systemKey` change and a source's `origin` stay `E_SCHEMA_CHANGE`. |
+| Deprecated fields | Not part of the G1 field definition (`E_SHAPE`). | `deprecated: true`, never together with `required`. Stored values stay readable and may be kept unchanged; writing a different value is `E_FIELD_DEPRECATED`. |
+| Deleted IDs | `E_RECREATE_ID` only within one call. | Every deletion writes a permanent tombstone, so recreating the ID is `E_RECREATE_ID` in later batches and after a restart. Review receipts cannot be deleted. |
+| Deleting a referenced row | The command passes; whole-world validation then fails with `E_REFERENCE`. | `E_DEPENDENTS` before deleting, with the first referencing table and field as the path. Referrers deleted earlier in the batch do not count; view rows are deleted with the row they point at, with tombstones. Deleting the last entry keeps the entity; a layer that still has entries cannot be deleted. |
+| Batch order | The final world is validated, so a command may reference a row created later in the batch, and a row may be deleted before its referrers. | Commands run in order and each row is validated when written: a forward reference is `E_REFERENCE`, and referrers must be deleted first. |
+| View state | `viewStates`: one row per layer with ordered and hidden ID arrays. | `viewItems`: one row per item, unique per (scope, item table, item ID), ordered by `positionBetween` keys. `viewSettings`: unique per (scope, key), with an optional checked `ref`. |
+| Store revision | `expectedRevision` argument against the world revision (`command.worldRevision`). | `ctx.baseRevision` against `reader.revision` (`E_STALE`, `command.baseRevision`); `applyChangeSet` checks the change set's base revision again. Row revisions are checked as in G1. |
+| Store-wide uniqueness | Scans whole tables. | Asked of the reader: entry identity, `systemKey`, `proposalId`, view item and view setting keys. |
+
 Layer/type IDs are open registry IDs. Entity/entry IDs are injected UUIDv7 values;
 Core does not generate them. `sourceRecordKey` / `entryIdentityKey` preserve opaque
-source record IDs and distinguish colliding planned/saved sources. Persisting a
-stable source-to-entry allocation manifest belongs to the forthcoming V2 bridge.
+source record IDs and distinguish colliding planned/saved sources. The G2 V2 bridge
+(see *What does not belong here*) keeps the caller-owned source-to-entry allocation
+ledger.
 
 `date` fields require complete calendar dates. `date_evidence` retains raw
 start/end/year values, including historical invalid or partial values; quality is
@@ -75,7 +116,9 @@ The host must authorize access and review decisions. A proposed AI change cannot
 register new sources/types or fabricate receipts through ordinary commands.
 
 These functions make defensive immutable copies for small contract workloads.
-They do not implement IO, disk transactions, multi-process concurrency,
+The planner reads only what a batch touches (`store/scale.test.ts` counts the
+reader calls on 10,000 entities and 30,000 entries) but persists nothing: a host
+executes its change sets. None of them implement IO, disk transactions, multi-process concurrency,
 authentication, schema migrations, persistent proposal ledgers, external import
 history policy, or performance guarantees. New review receipts and nonzero
 revision history require a later explicit import policy. A Repository must
