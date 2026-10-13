@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { closeSync, existsSync, openSync, readFileSync, writeSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -231,6 +231,18 @@ test('library:recover (new-store mode) keeps the lock when quick_check or Core v
 
 const PHASES = ['leased', 'begun', 'deleted', 'written', 'before-commit', 'committed']
 const fileHash = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
+/**
+ * The rollback journal next to `file`: 'absent'; 'empty' (zero length: what TRUNCATE leaves between writes, never hot);
+ * 'unsynced' (content under a zeroed header: written before any database page, so SQLite ignores it); or 'hot' (a
+ * synced header: the database file may hold pages of an unfinished transaction, and the next writable connection rolls
+ * them back).
+ */
+function journalState(file) {
+  let bytes
+  try { bytes = readFileSync(`${file}-journal`) } catch { return 'absent' }
+  if (bytes.length === 0) return 'empty'
+  return bytes[0] === 0 ? 'unsynced' : 'hot'
+}
 function countRows(file, table) {
   const db = new DatabaseSync(file, { readOnly: true })
   try { return db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n } finally { db.close() }
@@ -253,14 +265,23 @@ function faultRequest(seed) {
 
 test('fault injection: a writer killed at each phase leaves exactly the state before or after; recovery and a same-id retry never write twice', { timeout: 300_000 }, async (t) => {
   const report = []
+  let hotRollbacks = 0
   for (const phase of PHASES) {
     const { directory, root, paths, file, seed } = await storeLibrary(t)
     const fault = faultRequest(seed)
     const after = applyChangeSet(seed, planCommands(memoryReader(seed), fault.commands, { baseRevision: 1, now: NOW }))
     const bytesBefore = fileHash(file)
     await killedAt(directory, { mode: 'commit', root, file, now: NOW, request: fault }, phase)
-    const journal = existsSync(`${file}-journal`)
+    const journal = journalState(file)
     const fileChanged = fileHash(file) !== bytesBefore
+    const committed = phase === 'committed'
+    // TRUNCATE: after COMMIT the journal is an empty file, which must not undo the commit.
+    if (committed) assert.equal(journal, 'empty', 'after COMMIT the journal is truncated to zero length')
+    // SQLite syncs a valid journal header before it writes any page into the database file.
+    if (!committed && fileChanged) {
+      assert.equal(journal, 'hot', `${phase}: the database file was written under a hot journal`)
+      hotRollbacks++
+    }
     assert.equal((await inspectLibraryOperation({ root })).state, 'busy', `${phase}: the killed writer left its lock`)
     // The lock is cleared by library:recover (the real CLI once, the same function otherwise).
     if (phase === 'written') {
@@ -268,7 +289,8 @@ test('fault injection: a writer killed at each phase leaves exactly the state be
       assert.equal(cli.status, 0, cli.stdout + cli.stderr)
     } else assert.equal(await recoverLibrary(paths, { confirm: true, ...quietly() }), 0, phase)
     assert.equal(await exists(lockPath(root)), false, phase)
-    const committed = phase === 'committed'
+    // The recovery check's writable connection rolled a hot journal back (SQLite deletes or truncates it afterwards).
+    assert.ok(['absent', 'empty', 'unsynced'].includes(journalState(file)), `${phase}: no hot journal is left after recovery`)
     const handle = openStore(file, { privatePaths: { root }, now: () => NOW })
     try {
       assert.equal(normalized(handle.readFormalState()), normalized(committed ? after : seed), `${phase}: exactly the state ${committed ? 'after' : 'before'}`)
@@ -283,6 +305,5 @@ test('fault injection: a writer killed at each phase leaves exactly the state be
     report.push(`${phase}: ${committed ? 'after' : 'before'} (journal ${journal}, file changed ${fileChanged}), retry ${committed ? 'duplicate' : 'committed'}`)
   }
   t.diagnostic(report.join(' | '))
-  assert.ok(report.some((line) => !line.startsWith('committed') && line.includes('journal true, file changed true')),
-    'at least one uncommitted phase had already written to the database file, so a hot journal was rolled back')
+  assert.ok(hotRollbacks > 0, 'at least one uncommitted phase had already written to the database file, so a hot journal was rolled back')
 })

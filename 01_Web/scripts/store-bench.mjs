@@ -279,7 +279,7 @@ const SEGMENTS = {
    * Long-term use: `count` ordinary edits (alternately 1 and 2 changed rows), each its own request
    * through the full commit path (planning, execution, receipt, op_log). With `--fast`, durability
    * is relaxed through the test hook (WAL, synchronous OFF) only to shorten the aging; the file is
-   * converted back to DELETE on the next open, and the measurements run with DELETE + EXTRA.
+   * converted back to TRUNCATE on the next open, and the measurements run with TRUNCATE + EXTRA.
    * Stops after six minutes; rerun with --offset to continue.
    */
   async age({ dir, db, count, offset, fast }) {
@@ -307,9 +307,9 @@ const SEGMENTS = {
     }
   },
   /**
-   * For the design 3B §4.3 decision only (DELETE + EXTRA, or WAL + FULL if the targets are missed):
-   * the same commits on copies of the store with other journal/sync settings, set through the
-   * test hook. The host itself always runs DELETE + EXTRA. The copies are removed afterwards.
+   * The journal/sync comparison behind design 3B v1.1 §16.2-2: the same commits on copies of the
+   * store with other journal/sync settings, set through the test hook. The host itself always
+   * runs TRUNCATE + EXTRA. The copies are removed afterwards.
    */
   async modes({ dir, db, offset }) {
     const results = {}

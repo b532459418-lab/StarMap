@@ -31,6 +31,12 @@ export const STORE_FORMAT = 'starmap.formal-store'
 export const STORE_FORMAT_VERSION = 1
 /** `PRAGMA application_id` of a formal store file ('SMF1'). */
 export const STORE_APPLICATION_ID = 0x534d4631
+/**
+ * `PRAGMA auto_vacuum` of a formal store file: INCREMENTAL (2), part of schema v1 (design 3B
+ * v1.1 §16.2-5). SQLite accepts it only before the first table exists, so createStore sets it
+ * first; pruning then returns freed pages to the file system with `incremental_vacuum`.
+ */
+export const STORE_AUTO_VACUUM = 2
 /** Planned production location under the private root (not wired in 3C-2). */
 export const STORE_RELATIVE_PATH = Object.freeze(['data', 'store', 'world.sqlite'])
 export const storePathFor = (privateRoot) => path.join(privateRoot, ...STORE_RELATIVE_PATH)
@@ -626,7 +632,7 @@ const writerKey = (file) => {
 
 /**
  * The open checks (design 3B §4.3): application_id, user_version (newer is E_STORE_TOO_NEW,
- * older migrates), schema, store_meta and quick_check. Returns undefined when the store is
+ * older migrates), schema (the DDL rows and auto_vacuum), store_meta and quick_check. Returns undefined when the store is
  * usable, otherwise a diagnostic { code, detail? }. Never repairs anything.
  */
 function openDiagnostic(db, timings = {}) {
@@ -639,6 +645,7 @@ function openDiagnostic(db, timings = {}) {
       if (!Object.hasOwn(MIGRATIONS, version)) return { code: 'E_STORE_VERSION', detail: { version } }
     }
     if (JSON.stringify(db.prepare(SCHEMA_QUERY).all().map((row) => ({ ...row }))) !== expectedSchema()) return { code: 'E_STORE_SCHEMA' }
+    if (pragmaValue(db, 'auto_vacuum') !== STORE_AUTO_VACUUM) return { code: 'E_STORE_SCHEMA', detail: { pragma: 'auto_vacuum' } }
     const meta = db.prepare('SELECT format, format_version FROM store_meta WHERE singleton = 1').get()
     if (meta?.format !== STORE_FORMAT || meta.format_version !== STORE_FORMAT_VERSION) return { code: 'E_STORE_SCHEMA', detail: { table: 'store_meta' } }
     const started = performance.now()
@@ -947,10 +954,19 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
 // Creation
 // ---------------------------------------------------------------------------
 
+/** Remove `<file>-journal` when it is a zero-length regular file (a journal with content is never touched). */
+function removeEmptyJournal(file) {
+  const journal = `${file}-journal`
+  try {
+    const metadata = lstatSync(journal)
+    if (metadata.isFile() && !metadata.isSymbolicLink() && metadata.size === 0) unlinkSync(journal)
+  } catch { /* Absent, or left for review. */ }
+}
+
 /**
  * Create a new store file, exclusively: an existing target is E_STORE_EXISTS and is never
- * touched. Schema, `application_id`, `user_version` and `store_meta` are written in one
- * transaction under the library lease, together with the optional `initial` request
+ * touched. `auto_vacuum` is set before the first table; schema, `application_id`, `user_version`
+ * and `store_meta` are written in one transaction under the library lease, together with the optional `initial` request
  * `{ requestId, kind?, actor, commands }` (base revision 0). Until 3C-1b's official definitions
  * exist, the initial commands always come from the caller. `libraryId` (UUIDv7) is injected.
  * On any failure the new file is removed: nothing half-created is left behind.
@@ -971,6 +987,9 @@ export async function createStore(file, options = {}) {
     let db
     try {
       db = openConnection(target)
+      // Before any table exists (SQLite ignores it afterwards); confirmed by reading it back.
+      db.exec(`PRAGMA auto_vacuum = ${STORE_AUTO_VACUUM}`)
+      if (pragmaValue(db, 'auto_vacuum') !== STORE_AUTO_VACUUM) fail('E_STORE_SETTINGS', { path: 'auto_vacuum' })
       db.exec('BEGIN IMMEDIATE')
       db.exec(`PRAGMA application_id = ${STORE_APPLICATION_ID}`)
       db.exec(`PRAGMA user_version = ${STORE_FORMAT_VERSION}`)
@@ -982,8 +1001,10 @@ export async function createStore(file, options = {}) {
     } catch (error) {
       if (db && transactionState(db) === true) { try { db.exec('ROLLBACK') } catch { /* Closing releases it. */ } }
       closeQuietly(db)
-      // The file was created exclusively by this call and never committed: remove it.
+      // The file was created exclusively by this call and never committed: remove it, and the
+      // zero-length journal its rolled-back transaction leaves in TRUNCATE mode.
       try { unlinkSync(target) } catch { /* Left for review. */ }
+      removeEmptyJournal(target)
       throw withOutcome(error, 'not_committed')
     }
     const key = writerKey(target)

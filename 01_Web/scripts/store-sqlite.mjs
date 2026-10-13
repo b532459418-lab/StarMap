@@ -1,5 +1,5 @@
 /**
- * Thin adapter over `node:sqlite` for the formal store host (3C-2, design 3B §4.1, §4.3).
+ * Thin adapter over `node:sqlite` for the formal store host (3C-2, design 3B §4.1, §4.3 and v1.1 §16).
  *
  * Everything that depends on the `node:sqlite` API lives here: constructor options, the
  * connection settings and their read-back, transaction state (`isTransaction`) and the
@@ -21,10 +21,17 @@ export const TESTED_NODE = '24.19.0'
 /** Writers never wait long: a competing writer is a conflict to report, not to queue behind. */
 export const BUSY_TIMEOUT_MS = 25
 
-/** Connection settings applied to every connection and read back to confirm they took effect. */
+/**
+ * Connection settings applied to every connection and read back to confirm they took effect.
+ * TRUNCATE + EXTRA (design 3B v1.1 §16.2-2): a commit truncates the rollback journal instead of
+ * creating and deleting it, which on Windows costs about half as much as DELETE. Between writes
+ * the journal is a zero-length file; SQLite never treats a zero-length journal as hot, and a
+ * journal with content left by a crashed writer is rolled back by the next writable connection.
+ * WAL is not used: its checkpoints add a long tail to commits.
+ */
 const SETTINGS = Object.freeze([
   // [statement, read-back pragma, read-back column, expected value]
-  ['PRAGMA journal_mode = DELETE', 'journal_mode', 'journal_mode', 'delete'],
+  ['PRAGMA journal_mode = TRUNCATE', 'journal_mode', 'journal_mode', 'truncate'],
   ['PRAGMA synchronous = EXTRA', 'synchronous', 'synchronous', 3],
   ['PRAGMA foreign_keys = ON', 'foreign_keys', 'foreign_keys', 1],
   ['PRAGMA trusted_schema = OFF', 'trusted_schema', 'trusted_schema', 0],

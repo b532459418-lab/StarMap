@@ -11,7 +11,7 @@ import {
   BUSY_TIMEOUT_MS, StoreHostError, classifySqliteError, nodeSupportsStore, openConnection, pragmaValue,
 } from './store-sqlite.mjs'
 import {
-  ROW_TABLES, STORE_APPLICATION_ID, STORE_FORMAT, STORE_FORMAT_VERSION, checkStoreFile, createStore, encodeRow, openStore, settleFailure,
+  ROW_TABLES, STORE_APPLICATION_ID, STORE_AUTO_VACUUM, STORE_FORMAT, STORE_FORMAT_VERSION, checkStoreFile, createStore, encodeRow, openStore, settleFailure,
   storePathFor, withoutLibraryLock,
 } from './store-host.mjs'
 import { FORMAL_TABLES, emptyFormalState, readFormalState, uniqueClaims } from '../src/worldgraph/store/formal.ts'
@@ -78,7 +78,7 @@ test('adapter: Node version gate, connection settings read back, SQLite errors c
   await handle.close()
   const db = openConnection(file)
   try {
-    assert.deepEqual(['journal_mode', 'synchronous', 'foreign_keys', 'trusted_schema'].map((name) => pragmaValue(db, name)), ['delete', 3, 1, 0])
+    assert.deepEqual(['journal_mode', 'synchronous', 'foreign_keys', 'trusted_schema'].map((name) => pragmaValue(db, name)), ['truncate', 3, 1, 0])
     assert.equal(pragmaValue(db, 'busy_timeout', 'timeout'), BUSY_TIMEOUT_MS)
   } finally { db.close() }
 })
@@ -92,6 +92,7 @@ test('create writes the schema, store_meta, application_id and user_version in o
   try {
     assert.equal(pragmaValue(db, 'application_id'), STORE_APPLICATION_ID)
     assert.equal(pragmaValue(db, 'user_version'), STORE_FORMAT_VERSION)
+    assert.equal(pragmaValue(db, 'auto_vacuum'), STORE_AUTO_VACUUM, 'INCREMENTAL, set before the first table')
     const tables = db.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'table'").all()
     assert.deepEqual(tables.map((row) => row.name).sort(), [
       ...Object.values(ROW_TABLES).map((spec) => spec.sql), 'store_meta', 'refs', 'tombstones', 'receipts', 'op_log', 'id_map', 'pending_file_ops',
@@ -153,6 +154,7 @@ test('failed open checks open read-only with a diagnostic and never change the f
     ['newer format', 'PRAGMA user_version = 2', 'E_STORE_TOO_NEW', false, 'PRAGMA user_version = 1'],
     ['unknown older format', 'PRAGMA user_version = 0', 'E_STORE_VERSION', false, 'PRAGMA user_version = 1'],
     ['unexpected schema', 'CREATE TABLE extra (x TEXT) STRICT', 'E_STORE_SCHEMA', false, 'DROP TABLE extra'],
+    ['auto_vacuum other than INCREMENTAL', 'PRAGMA auto_vacuum = FULL', 'E_STORE_SCHEMA', false, 'PRAGMA auto_vacuum = INCREMENTAL'],
     ['missing store_meta row', 'DELETE FROM store_meta', 'E_STORE_SCHEMA', false,
       `INSERT INTO store_meta VALUES (1, '${STORE_FORMAT}', 1, '${LIBRARY_ID}', 0, '${NOW}')`],
     ['damaged page (test-only byte overwrite)', damagePage, 'E_STORE_CORRUPT', true, undefined],
@@ -365,6 +367,7 @@ test('a new store can be seeded by the caller\'s initial request in the creating
   await rejectsWith(createStore(rejected, { libraryId: LIBRARY_ID, now: clock, lock: withoutLibraryLock,
     initial: { requestId: nextRequestId(), actor: 'test', commands: [{ op: 'create', table: 'entries', value: { ...seed.entries[0], id: 'not-a-uuid' } }] } }), 'E_UUID7')
   assert.equal(existsSync(rejected), false)
+  assert.equal(existsSync(`${rejected}-journal`), false, 'nor the zero-length journal of its rolled-back transaction')
 })
 
 test('commit executes change sets exactly like the reference applyChangeSet on random 3C-1a batches', async (t) => {
