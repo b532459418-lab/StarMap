@@ -175,7 +175,7 @@ npm run privacy:check
 npm run media:check
 ```
 
-`npm run build:public` 会在 `01_Web/dist/` 生成不带本地编辑能力的静态公开站点。`npm run release:check` 还会要求工作区干净，只把 Git 已跟踪文件归档到系统临时目录，在这个“无私有层”的洁净环境里重新安装依赖，并运行 Lint、测试和公开构建，从机制上证明私人内容无法混入公开发布。`build:personal` 只用于你自己控制的私人部署。
+`npm run build:public` 会在 `01_Web/dist/` 生成不带本地编辑器的静态公开站点：任何构建都不含编辑器的客户端代码，公开构建里一旦出现，CI 就会拒绝。`npm run release:check` 还会要求工作区干净，只把 Git 已跟踪文件归档到系统临时目录，在这个“无私有层”的洁净环境里重新安装依赖，并运行 Lint、测试和公开构建，从机制上证明私人内容无法混入公开发布。`build:personal` 只用于你自己控制的私人部署。
 
 研发时可在 `01_Web/` 运行 `npx playwright install chromium`、`npm run test:browser`，自动检查语言草稿、城市选择、想去快捷入口、媒体重试、转足迹和手机面板。测试使用新建的临时合成数据目录，不访问真实私人数据；端口 5173 已占用时会拒绝启动。`npm run perf:browser` 单独测量 1,000 条合成条目的界面与滚动表现，数据只作为本地研发基线，不作为发布验收或 CI 性能阈值。配置与报告位置见 `01_Web/README.md`。
 

@@ -7,9 +7,10 @@ import { LocalEditorError } from '../i18n/editorErrors.ts'
  * 本地编辑器在浏览器一侧的唯一入口（第 5B 批）。组件与媒体任务都从这里调用编辑 API，不再静态导入 ./localEditorApi.ts。
  *
  * - ./localEditorApi.ts（全部 `/__travelatlas/editor/*` 请求都在那里）只经下面这一处 `import()` 加载，条件是
- *   `import.meta.env.DEV && localEditorAvailable`。前半句不能省：构建时它被替换成字面量 false，Rolldown 在打包阶段就删掉
- *   这条分支，不生成编辑 API 的 chunk，任何构建产物里都没有这些请求路径。只写 `localEditorAvailable`（从另一个模块导入）时，
- *   Rolldown 仍会生成那个 chunk，压缩阶段才把调用删掉，chunk 文件留在 dist 里（第 5B 批实测，Vite 8.3 / Rolldown 1.2.8）。
+ *   `import.meta.env.DEV && localEditorAvailable`。前半句不能省：构建时它在模块转换阶段就被替换成字面量 false，Rolldown
+ *   不把这个 `import()` 计入 chunk 图，不生成编辑 API 的 chunk，任何构建产物里都没有这些请求路径。只写
+ *   `localEditorAvailable`（从另一个模块导入）时，Rolldown 输出时虽然也把它折叠成 false、删掉调用，但 chunk 在此之前
+ *   已经确定，文件照样留在 dist 里（第 5B 批实测，Vite 8.3 / Rolldown 1.2.8）。
  * - 下面的同名函数与原接口签名相同。API 加载之后同步转调（写入照常在调用时就登记到 localEditorCoordination），
  *   加载完成之前先等加载。个人模式下 App 启动时就会读取媒体任务，所以 API 在第一次编辑之前就已加载。
  * - 编辑器不可用时（公开模式、强制样例）调用这些函数只会得到 `E_LOCAL_EDITOR_FAILED`，不发出任何请求；
