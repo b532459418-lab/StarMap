@@ -42,8 +42,10 @@ Run the tests with `npm test` from `01_Web/` (plain `node --test`, no bundler).
 
 `store/` holds a versioned **experimental** Entity / Layer / LayerEntry contract
 alongside the existing V0.4 graph. The App still uses the V2 adapters and original
-two-layer queries; nothing in `store/` is wired into the App or a host yet. This is
-not a storage migration, a stable SDK, or a custom-layer UI.
+two-layer queries; nothing in `store/` is wired into the App yet. The SQLite host
+(`scripts/store-host.mjs`, 3C-2) executes planner change sets in one transaction with
+receipts, but the App does not use it yet either. This is not a storage migration, a
+stable SDK, or a custom-layer UI.
 
 - **`planCommands` (`store/planner.ts`) is the formal write path.** It plans one
   command batch against a `StoreReader`, reads only the rows the batch touches or

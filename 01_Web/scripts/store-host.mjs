@@ -404,13 +404,12 @@ function writeStatements(db) {
   const prepare = (sql) => db.prepare(sql)
   const perTable = (make) => Object.fromEntries(FORMAL_TABLES.map((table) => [table, prepare(make(ROW_TABLES[table]))]))
   cached = {
-    upsert: perTable((spec) => {
-      const names = ['revision', ...spec.columns.map((column) => column.name), 'body']
-      return `INSERT INTO ${spec.sql} (${columnList(spec)}) VALUES (${placeholders(names.length + 1)}) `
-        + `ON CONFLICT (id) DO UPDATE SET ${names.map((name) => `${name} = excluded.${name}`).join(', ')}`
-    }),
+    insert: perTable((spec) => `INSERT INTO ${spec.sql} (${columnList(spec)}) VALUES (${placeholders(spec.columns.length + 3)})`),
+    // Columns unchanged: rewrite only revision and body, so no index entry is touched.
+    updateBody: perTable((spec) => `UPDATE ${spec.sql} SET revision = ?, body = ? WHERE id = ?`),
+    updateAll: perTable((spec) => `UPDATE ${spec.sql} SET ${['revision', ...spec.columns.map((column) => column.name), 'body'].map((name) => `${name} = ?`).join(', ')} WHERE id = ?`),
     remove: perTable((spec) => `DELETE FROM ${spec.sql} WHERE id = ?`),
-    uniqueOf: perTable((spec) => `SELECT ${spec.unique?.join(', ') ?? 'id'} FROM ${spec.sql} WHERE id = ?`),
+    stored: perTable((spec) => `SELECT ${['id', ...spec.columns.map((column) => column.name)].join(', ')} FROM ${spec.sql} WHERE id = ?`),
     refAdd: prepare('INSERT INTO refs (from_table, from_id, field, to_table, to_id) VALUES (?, ?, ?, ?, ?)'),
     refRemove: prepare('DELETE FROM refs WHERE from_table = ? AND from_id = ? AND field = ? AND to_table = ? AND to_id = ?'),
     tombstone: prepare('INSERT INTO tombstones (table_name, id, deleted_at) VALUES (?, ?, ?)'),
@@ -429,21 +428,29 @@ const inconsistent = (pathName) => fail('E_STORE_INCONSISTENT', { path: pathName
  * every write (the ChangeSet contract), with foreign keys checked at COMMIT. SQLite checks
  * UNIQUE per statement, so a row whose unique key changes is moved out before the writes:
  * two rows swapping unique keys in one batch never meet a value the batch is about to vacate.
+ * An update whose indexed columns are unchanged rewrites only revision and body.
  */
 function executeChangeSet(db, changeSet, phase) {
   const sql = writeStatements(db)
   for (const { table, id } of changeSet.deletes) if (sql.remove[table].run(id).changes !== 1) inconsistent(table)
   phase('deleted')
-  const encoded = changeSet.upserts.map(({ table, row }) => ({ table, values: encodeRow(table, row) }))
-  for (const { table, values } of encoded) {
-    const spec = ROW_TABLES[table]
-    if (!spec.unique) continue
-    const stored = sql.uniqueOf[table].get(values[0])
-    if (!stored) continue
-    const next = spec.unique.map((name) => values[2 + spec.columns.findIndex((column) => column.name === name)])
-    if (spec.unique.some((name, i) => stored[name] !== next[i])) sql.remove[table].run(values[0])
+  const writes = changeSet.upserts.map(({ table, row }) => {
+    const spec = ROW_TABLES[table], values = encodeRow(table, row)
+    const stored = sql.stored[table].get(values[0])
+    const changed = (names) => names.some((name) => stored[name] !== values[2 + spec.columns.findIndex((column) => column.name === name)])
+    return {
+      table, values, stored: stored !== undefined,
+      columnsChanged: stored !== undefined && changed(spec.columns.map((column) => column.name)),
+      moved: stored !== undefined && spec.unique !== undefined && changed(spec.unique),
+    }
+  })
+  for (const { table, values, moved } of writes) if (moved) sql.remove[table].run(values[0])
+  for (const { table, values, stored, columnsChanged, moved } of writes) {
+    const [id, revision] = values, body = values.at(-1)
+    if (!stored || moved) sql.insert[table].run(...values)
+    else if (columnsChanged) sql.updateAll[table].run(...values.slice(1), id)
+    else sql.updateBody[table].run(revision, body, id)
   }
-  for (const { table, values } of encoded) sql.upsert[table].run(...values)
   phase('written')
   for (const ref of changeSet.refsRemoved) {
     if (sql.refRemove.run(ref.fromTable, ref.fromId, ref.field, ref.toTable, ref.toId).changes !== 1) inconsistent('refs')

@@ -122,6 +122,8 @@ Media recovery is connected to the photo and drone panels and discovers durable 
 
 The library's coordination records are bound to the private root's path. If you move or rename the private root, or its drive letter changes, every write stops with `E_LIBRARY_ROOT_MOVED` instead of reporting a busy library. Stop the personal preview, then run `npm run library:rebind` in `01_Web/`: it prints the old and new bindings and changes nothing. If this is the same library, run `npm run library:rebind -- --confirm` to rebind it to the current path. The command refuses while an operation lock exists.
 
+If StarMap or a media command crashes or is killed while it holds the library operation lock, the lock stays behind and later writes report a busy library. A lock is never released because it is old or because its process ID is gone. Once you are sure the program that held it is no longer running, run `npm run library:recover` in `01_Web/`: it prints the lock's holder, its creation time and the private-root binding, and changes nothing. Then run `npm run library:recover -- --confirm`: it first checks the library data (the V2 files and their place references; for the coming SQLite store, `quick_check` and a full validation) and removes the lock only when the check passes. If the check fails, the lock stays and the problems are listed; restore from a backup before writing again.
+
 ## Places you want to go
 
 The Want to Go layer marks places you have not been to yet. The map layers button in the bottom dock (地图图层, a separate button from the imagery-source menu) opens the layer panel, where the Travel and Want to Go layers can be shown or hidden independently. The browser remembers the choice across sessions.

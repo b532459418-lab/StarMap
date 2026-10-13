@@ -53,6 +53,16 @@ The runner uses at most two file workers to bound memory while synthetic image
 and process-exit checks run. This is a test-resource limit, not an application
 memory requirement.
 
+The formal store host (`scripts/store-host.mjs`, SQLite through `node:sqlite`,
+Node 24.15 or newer) is not used by the App yet. `npm test` covers it, including
+real writer processes killed at each write phase, and runs its benchmark at a
+1,000-entity smoke scale only. The full benchmark (design 3B §6 scale) runs
+separately and in segments, each a separate command:
+`npm run store:bench -- --dir <absolute work directory> --segment load|validate|copy|commit|cold|age|prune|modes`
+(see the header of `scripts/store-bench.mjs`). `npm run library:recover` clears a
+library operation lock left by a crashed writer after checking the data; see the
+root README.
+
 ### Browser regression and performance baseline
 
 ```powershell
