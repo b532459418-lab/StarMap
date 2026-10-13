@@ -10,6 +10,8 @@ export default defineConfig({
   testMatch: performance ? '**/*.perf.mjs' : '**/*.spec.mjs',
   workers: 1,
   fullyParallel: false,
+  // A committed test.only would silently skip the rest of a CI group.
+  forbidOnly: !!process.env.CI,
   retries: 0,
   timeout: performance ? 180000 : 60000,
   globalTimeout: 1500000,
