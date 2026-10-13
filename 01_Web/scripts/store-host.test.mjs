@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { closeSync, existsSync, openSync, readFileSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, writeSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -58,6 +58,37 @@ function rawEdit(file, sql) {
   const db = new DatabaseSync(file)
   try { db.exec(sql) } finally { db.close() }
 }
+/**
+ * Test-only damage: overwrite the b-tree page header of `table`'s root page with 0xff bytes, and
+ * advance the file change counter (header offsets 24 and 92) the way any other writer would, so
+ * that an open connection drops its page cache and reads the damaged page from the file.
+ */
+function damagePage(file, table) {
+  const db = new DatabaseSync(file, { readOnly: true })
+  const pageSize = pragmaValue(db, 'page_size')
+  const rootPage = db.prepare('SELECT rootpage FROM sqlite_schema WHERE name = ?').get(table).rootpage
+  db.close()
+  const fd = openSync(file, 'r+')
+  try {
+    writeSync(fd, Buffer.alloc(16, 0xff), 0, 16, (rootPage - 1) * pageSize)
+    const counter = Buffer.alloc(4)
+    readSync(fd, counter, 0, 4, 24)
+    counter.writeUInt32BE((counter.readUInt32BE(0) + 1) >>> 0)
+    writeSync(fd, counter, 0, 4, 24)
+    writeSync(fd, counter, 0, 4, 92)
+  } finally { closeSync(fd) }
+}
+/** store_meta.clean_shutdown, read through a separate read-only connection. */
+function cleanShutdown(file) {
+  const db = new DatabaseSync(file, { readOnly: true })
+  try { return db.prepare('SELECT clean_shutdown FROM store_meta').get().clean_shutdown } finally { db.close() }
+}
+/** Options that count the host's quick_check runs (the 'quick-check' test hook). */
+function countingChecks(options = {}) {
+  const counter = { checks: 0 }
+  counter.options = { lock: withoutLibraryLock, ...options, unsafeTestPhase: (name) => { if (name === 'quick-check') counter.checks++ } }
+  return counter
+}
 
 // ---------------------------------------------------------------------------
 // Adapter, schema and the open flow
@@ -107,7 +138,7 @@ test('create writes the schema, store_meta, application_id and user_version in o
   const reopened = track(t, openStore(file, { lock: withoutLibraryLock }))
   assert.equal(reopened.diagnostic, undefined)
   assert.equal(reopened.readOnly, false)
-  assert.equal(typeof reopened.openTimings.quickCheckMs, 'number')
+  assert.equal(reopened.openTimings.quickCheckMs, undefined, 'closed cleanly: the open ran no quick_check')
 })
 
 test('create is exclusive, needs an absolute path and a UUIDv7 library id; open needs an existing file', async (t) => {
@@ -140,13 +171,10 @@ test('writes take the library lease by default; one writable handle per file in 
 })
 
 test('failed open checks open read-only with a diagnostic and never change the file', async (t) => {
-  const damagePage = (file) => {
-    const db = new DatabaseSync(file, { readOnly: true })
-    const pageSize = pragmaValue(db, 'page_size')
-    const rootPage = db.prepare("SELECT rootpage FROM sqlite_schema WHERE name = 'entities'").get().rootpage
-    db.close()
-    const fd = openSync(file, 'r+')
-    try { writeSync(fd, Buffer.alloc(16, 0xff), 0, 16, (rootPage - 1) * pageSize) } finally { closeSync(fd) }
+  // quick_check runs at open only when the last writer session did not end with close().
+  const uncleanDamagedPage = (file) => {
+    rawEdit(file, 'UPDATE store_meta SET clean_shutdown = 0')
+    damagePage(file, 'entities')
   }
   // [case, damage, expected code, still readable, SQL that undoes the damage]
   const cases = [
@@ -156,8 +184,8 @@ test('failed open checks open read-only with a diagnostic and never change the f
     ['unexpected schema', 'CREATE TABLE extra (x TEXT) STRICT', 'E_STORE_SCHEMA', false, 'DROP TABLE extra'],
     ['auto_vacuum other than INCREMENTAL', 'PRAGMA auto_vacuum = FULL', 'E_STORE_SCHEMA', false, 'PRAGMA auto_vacuum = INCREMENTAL'],
     ['missing store_meta row', 'DELETE FROM store_meta', 'E_STORE_SCHEMA', false,
-      `INSERT INTO store_meta VALUES (1, '${STORE_FORMAT}', 1, '${LIBRARY_ID}', 0, '${NOW}')`],
-    ['damaged page (test-only byte overwrite)', damagePage, 'E_STORE_CORRUPT', true, undefined],
+      `INSERT INTO store_meta VALUES (1, '${STORE_FORMAT}', 1, '${LIBRARY_ID}', 0, '${NOW}', 1)`],
+    ['damaged page after an unclean shutdown (test-only byte overwrite)', uncleanDamagedPage, 'E_STORE_CORRUPT', true, undefined],
   ]
   for (const [name, damage, code, readable, undo] of cases) {
     const { file, handle } = await freshStore(t)
@@ -649,4 +677,81 @@ test('id_map stores identity mappings for 3C-1b; a conflicting remap rejects the
   assert.equal(handle.getIdMapping('place', 'v2', 'b'), 'id-b')
   await rejectsWith(handle.putIdMappings([]), 'E_ID_MAP')
   await rejectsWith(handle.putIdMappings([{ kind: 'place' }]), 'E_SHAPE')
+})
+
+// ---------------------------------------------------------------------------
+// Open flow, clean shutdown and integrity (design 3B v1.1 §16.2-3)
+// ---------------------------------------------------------------------------
+
+test('open runs quick_check only after an unclean shutdown; clean_shutdown is 0 during a writer session and 1 after close', async (t) => {
+  const counter = countingChecks()
+  const { file, handle } = await freshStore(t, counter.options)
+  assert.equal(cleanShutdown(file), 0, 'the creating handle is a writer session')
+  await handle.close()
+  assert.equal(cleanShutdown(file), 1)
+  // Closed cleanly: the open checks the header, schema and store_meta only.
+  let opened = openStore(file, counter.options)
+  assert.deepEqual([counter.checks, opened.openTimings.quickCheckMs, cleanShutdown(file)], [0, undefined, 0])
+  await opened.close()
+  assert.equal(cleanShutdown(file), 1)
+  // A session that never reached close() (simulated here; real killed writers are in store-recover.test.mjs).
+  rawEdit(file, 'UPDATE store_meta SET clean_shutdown = 0')
+  opened = openStore(file, counter.options)
+  assert.equal(counter.checks, 1, 'unclean: the open ran quick_check')
+  assert.equal(typeof opened.openTimings.quickCheckMs, 'number')
+  assert.deepEqual([opened.readOnly, opened.diagnostic], [false, undefined])
+  await opened.close()
+  assert.equal(cleanShutdown(file), 1, 'the checked session closed normally')
+  // An explicit read-only open never runs quick_check and never writes (the flag may belong to an open writer).
+  rawEdit(file, 'UPDATE store_meta SET clean_shutdown = 0')
+  let before = sha256(file)
+  const reader = openStore(file, { ...counter.options, readOnly: true })
+  assert.deepEqual([counter.checks, reader.readOnly, reader.diagnostic], [1, true, undefined])
+  await reader.close()
+  assert.equal(sha256(file), before)
+  // library:recover's check is an inspection: it rolls back a hot journal but starts no writer session.
+  rawEdit(file, 'UPDATE store_meta SET clean_shutdown = 1')
+  before = sha256(file)
+  assert.deepEqual(await checkStoreFile(file), { ok: true, problems: [] })
+  assert.equal(sha256(file), before, 'a clean store is not written by the check')
+})
+
+test('checkIntegrity runs quick_check on request; a failure turns the handle read-only and nothing is repaired', async (t) => {
+  const counter = countingChecks()
+  const { file, handle, seed } = await seededStore(t, counter.options)
+  assert.deepEqual(handle.checkIntegrity(), { ok: true, problems: [] })
+  assert.deepEqual([counter.checks, handle.readOnly], [1, false])
+  const entry = seed.entries[0]
+  assert.equal((await handle.commit(request(1, [update('entries', entry, { fields: { rating: 2 } })]))).status, 'committed')
+  damagePage(file, 'anchors')
+  const result = handle.checkIntegrity()
+  assert.equal(result.ok, false)
+  assert.match(result.problems[0], /^E_STORE_CORRUPT: quick_check \(\d+\)$/)
+  assert.deepEqual([counter.checks, handle.readOnly, handle.diagnostic.code], [2, true, 'E_STORE_CORRUPT'])
+  const refused = await attemptCommit(handle, request(2, [update('entries', bump(entry, { fields: { rating: 2 } }), { fields: { rating: 3 } })]))
+  assert.deepEqual([refused.code, refused.outcome], ['E_STORE_CORRUPT', 'not_committed'])
+  const before = sha256(file)
+  await handle.close()
+  assert.equal(sha256(file), before, 'the corrupt session is not marked clean, and nothing is repaired')
+  assert.equal(cleanShutdown(file), 0)
+})
+
+test('a damaged page met at run time turns the handle read-only with E_STORE_CORRUPT; the next open checks and stays read-only', async (t) => {
+  const { file, handle, seed } = await seededStore(t)
+  await handle.close()
+  const counter = countingChecks()
+  const opened = track(t, openStore(file, counter.options))
+  assert.deepEqual([counter.checks, opened.readOnly], [0, false], 'closed cleanly: opened without quick_check')
+  damagePage(file, 'entities')
+  rejectsWith(() => opened.read((reader) => reader.get('entities', seed.entities[0].id)), 'E_STORE_CORRUPT')
+  assert.deepEqual([opened.readOnly, opened.diagnostic.code], [true, 'E_STORE_CORRUPT'])
+  const refused = await attemptCommit(opened, request(1, [update('entries', seed.entries[0], { fields: { rating: 1 } })]))
+  assert.deepEqual([refused.code, refused.outcome], ['E_STORE_CORRUPT', 'not_committed'])
+  assert.equal(opened.meta().revision, 1, 'undamaged pages stay readable for rescue')
+  const before = sha256(file)
+  await opened.close()
+  assert.equal(sha256(file), before, 'nothing repaired, and the session is not marked clean')
+  const again = track(t, openStore(file, counter.options))
+  assert.equal(counter.checks, 1, 'the next open runs quick_check')
+  assert.deepEqual([again.readOnly, again.diagnostic.code], [true, 'E_STORE_CORRUPT'])
 })

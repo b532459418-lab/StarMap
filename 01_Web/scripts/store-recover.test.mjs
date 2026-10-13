@@ -225,6 +225,22 @@ test('library:recover (new-store mode) keeps the lock when quick_check or Core v
   }
 })
 
+test('a writer killed while its store is open: the next open runs quick_check once; after a clean close it does not', { timeout: 120_000 }, async (t) => {
+  const { directory, root, file } = await storeLibrary(t)
+  let checks = 0
+  const options = { privatePaths: { root }, now: () => NOW, unsafeTestPhase: (name) => { if (name === 'quick-check') checks++ } }
+  let handle = openStore(file, options)
+  await handle.close()
+  assert.equal(checks, 0, 'created and closed cleanly')
+  await killedAt(directory, { mode: 'open', root, file }, 'opened')
+  handle = openStore(file, options)
+  assert.deepEqual([checks, handle.readOnly, handle.diagnostic], [1, false, undefined], 'killed: the open ran quick_check, which passed')
+  await handle.close()
+  handle = openStore(file, options)
+  assert.equal(checks, 1, 'that session closed cleanly: no quick_check this time')
+  await handle.close()
+})
+
 // ---------------------------------------------------------------------------
 // Fault injection: a real writer process killed at each write phase
 // ---------------------------------------------------------------------------
@@ -246,6 +262,11 @@ function journalState(file) {
 function countRows(file, table) {
   const db = new DatabaseSync(file, { readOnly: true })
   try { return db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n } finally { db.close() }
+}
+/** Raw SQL for test setup only. */
+function rawSql(file, sql) {
+  const db = new DatabaseSync(file)
+  try { db.exec(sql) } finally { db.close() }
 }
 /** One request with work in every phase: a delete, an update, and a create large enough (3 MB) to spill
  * SQLite's page cache into the database file before COMMIT, so recovery has a real hot journal to roll back. */
@@ -270,6 +291,9 @@ test('fault injection: a writer killed at each phase leaves exactly the state be
     const { directory, root, paths, file, seed } = await storeLibrary(t)
     const fault = faultRequest(seed)
     const after = applyChangeSet(seed, planCommands(memoryReader(seed), fault.commands, { baseRevision: 1, now: NOW }))
+    // Start from clean_shutdown 0, so that the writer's open does not write the flag itself: then a changed
+    // database file below means pages of the killed request (the open runs quick_check instead).
+    rawSql(file, 'UPDATE store_meta SET clean_shutdown = 0')
     const bytesBefore = fileHash(file)
     await killedAt(directory, { mode: 'commit', root, file, now: NOW, request: fault }, phase)
     const journal = journalState(file)
@@ -291,8 +315,10 @@ test('fault injection: a writer killed at each phase leaves exactly the state be
     assert.equal(await exists(lockPath(root)), false, phase)
     // The recovery check's writable connection rolled a hot journal back (SQLite deletes or truncates it afterwards).
     assert.ok(['absent', 'empty', 'unsynced'].includes(journalState(file)), `${phase}: no hot journal is left after recovery`)
-    const handle = openStore(file, { privatePaths: { root }, now: () => NOW })
+    let checks = 0
+    const handle = openStore(file, { privatePaths: { root }, now: () => NOW, unsafeTestPhase: (name) => { if (name === 'quick-check') checks++ } })
     try {
+      assert.deepEqual([checks, handle.readOnly], [1, false], `${phase}: the killed writer never closed its session, so the open ran quick_check`)
       assert.equal(normalized(handle.readFormalState()), normalized(committed ? after : seed), `${phase}: exactly the state ${committed ? 'after' : 'before'}`)
       assert.equal(handle.lookup(fault.requestId).found, committed, phase)
       assert.equal(countRows(file, 'receipts'), committed ? 2 : 1, phase)

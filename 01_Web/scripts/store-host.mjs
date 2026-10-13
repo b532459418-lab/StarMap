@@ -1,5 +1,5 @@
 /**
- * Formal store host (3C-2, design 3B §4–§6): one SQLite file holds the World Graph's formal
+ * Formal store host (3C-2, design 3B §4–§6 as revised by v1.1 §16): one SQLite file holds the World Graph's formal
  * state, one row per record, with receipts and diagnostics committed in the same transaction.
  *
  * - SQLite access goes through the thin adapter ./store-sqlite.mjs (`node:sqlite`).
@@ -151,8 +151,10 @@ function rowTableDdl(spec) {
 
 /** Every CREATE statement of user_version 1, in creation order. */
 export const SCHEMA_V1 = Object.freeze([
+  // clean_shutdown: 0 while a writer session is open, 1 after its close() (design 3B v1.1 §16.2-3).
   'CREATE TABLE store_meta (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), format TEXT NOT NULL, format_version INTEGER NOT NULL, '
-    + 'library_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision >= 0), created_at TEXT NOT NULL) STRICT',
+    + 'library_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision >= 0), created_at TEXT NOT NULL, '
+    + 'clean_shutdown INTEGER NOT NULL CHECK (clean_shutdown IN (0, 1))) STRICT',
   ...FORMAL_TABLES.flatMap((table) => rowTableDdl(ROW_TABLES[table])),
   // Reverse references for StoreReader.dependents. Table names are Core names (e.g. viewItems).
   'CREATE TABLE refs (from_table TEXT NOT NULL, from_id TEXT NOT NULL, field TEXT NOT NULL, to_table TEXT NOT NULL, to_id TEXT NOT NULL, '
@@ -326,16 +328,29 @@ function formalStateValue(db) {
 }
 
 /**
+ * `PRAGMA quick_check`: its problem lines, [] when the file is sound. Every run goes through
+ * here, announced to the test hook as phase 'quick-check' (tests count the runs).
+ */
+function quickCheck(db, settings) {
+  settings.phase?.('quick-check', { db })
+  const lines = db.prepare('PRAGMA quick_check').all().map((row) => row.quick_check)
+  return lines.length === 1 && lines[0] === 'ok' ? [] : lines
+}
+/** A failed quick_check as a problem: a count only, never the lines (they name pages and indexes). */
+const quickCheckProblem = (lines) => `E_STORE_CORRUPT: quick_check (${lines.length})`
+const QUICK_CHECK_PROBLEM = /^E_STORE_CORRUPT: quick_check /
+
+/**
  * Full consistency check of one read transaction: quick_check, Core's full validation
  * (readFormalState), the stored index columns against the row bodies, the refs table against
  * referencesOf, and foreign keys. Problems carry codes, tables and counts only.
  */
-function checkConnection(db, policy) {
+function checkConnection(db, settings) {
   const problems = []
-  const quick = db.prepare('PRAGMA quick_check').all().map((row) => row.quick_check)
-  if (quick.length !== 1 || quick[0] !== 'ok') problems.push(`E_STORE_CORRUPT: quick_check (${quick.length})`)
+  const quick = quickCheck(db, settings)
+  if (quick.length) problems.push(quickCheckProblem(quick))
   let state
-  try { state = readFormalStateCore(formalStateValue(db), policy) } catch (error) {
+  try { state = readFormalStateCore(formalStateValue(db), settings.policy) } catch (error) {
     problems.push(error?.path ? `${error.code}: ${error.path}` : error?.code ?? 'E_STORE_CHECK')
     return problems
   }
@@ -630,12 +645,21 @@ const writerKey = (file) => {
   return process.platform === 'win32' ? real.toLowerCase() : real
 }
 
+/** A SQLite failure met while opening as a diagnostic. A busy store is not damaged: it is thrown for the caller to retry. */
+function openFailure(error) {
+  const failure = storeErrorFrom(error)
+  if (failure.code === 'E_STORE_BUSY') throw failure
+  return { code: failure.code === 'E_STORE_SQLITE' ? 'E_STORE_CORRUPT' : failure.code, detail: failure.sqlite }
+}
+
 /**
- * The open checks (design 3B §4.3): application_id, user_version (newer is E_STORE_TOO_NEW,
- * older migrates), schema (the DDL rows and auto_vacuum), store_meta and quick_check. Returns undefined when the store is
- * usable, otherwise a diagnostic { code, detail? }. Never repairs anything.
+ * The open checks (design 3B §4.3, v1.1 §16.2-3), all of them cheap: application_id,
+ * user_version (newer is E_STORE_TOO_NEW, older migrates), schema (the DDL rows and auto_vacuum)
+ * and store_meta. No quick_check here: it runs only after an unclean shutdown (startSession), and
+ * on request (checkIntegrity). Returns undefined when the store is usable, otherwise a diagnostic
+ * { code, detail? }. Never repairs anything.
  */
-function openDiagnostic(db, timings = {}) {
+function openDiagnostic(db) {
   try {
     if (pragmaValue(db, 'application_id') !== STORE_APPLICATION_ID) return { code: 'E_STORE_APPLICATION_ID' }
     const version = pragmaValue(db, 'user_version')
@@ -648,16 +672,44 @@ function openDiagnostic(db, timings = {}) {
     if (pragmaValue(db, 'auto_vacuum') !== STORE_AUTO_VACUUM) return { code: 'E_STORE_SCHEMA', detail: { pragma: 'auto_vacuum' } }
     const meta = db.prepare('SELECT format, format_version FROM store_meta WHERE singleton = 1').get()
     if (meta?.format !== STORE_FORMAT || meta.format_version !== STORE_FORMAT_VERSION) return { code: 'E_STORE_SCHEMA', detail: { table: 'store_meta' } }
-    const started = performance.now()
-    const check = db.prepare('PRAGMA quick_check').all().map((row) => row.quick_check)
-    timings.quickCheckMs = performance.now() - started
-    if (check.length !== 1 || check[0] !== 'ok') return { code: 'E_STORE_CORRUPT', detail: { problems: check.length } }
     return undefined
   } catch (error) {
-    const failure = storeErrorFrom(error)
-    // A busy store is not damaged: let the caller retry later.
-    if (failure.code === 'E_STORE_BUSY') throw failure
-    return { code: failure.code === 'E_STORE_SQLITE' ? 'E_STORE_CORRUPT' : failure.code, detail: failure.sqlite }
+    return openFailure(error)
+  }
+}
+
+/** Set store_meta.clean_shutdown in its own small write transaction. */
+function setCleanShutdown(db, value) {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.prepare('UPDATE store_meta SET clean_shutdown = ? WHERE singleton = 1').run(value)
+    db.exec('COMMIT')
+  } catch (error) {
+    if (transactionState(db) === true) { try { db.exec('ROLLBACK') } catch { /* Closing releases it. */ } }
+    throw error
+  }
+}
+
+/**
+ * Start a writer session on a store that passed the open checks (design 3B v1.1 §16.2-3).
+ * clean_shutdown 0 means its last writer session never reached close() (killed, crashed, or still
+ * open in another process): quick_check runs first, and a failure is a diagnostic (read-only,
+ * never repaired). Otherwise the flag is set to 0 for this session; close() sets it back to 1.
+ * Returns a diagnostic or undefined; a busy store throws E_STORE_BUSY.
+ */
+function startSession(db, settings, timings) {
+  try {
+    const clean = db.prepare('SELECT clean_shutdown FROM store_meta WHERE singleton = 1').get().clean_shutdown === 1
+    if (clean) {
+      setCleanShutdown(db, 0)
+      return undefined
+    }
+    const started = performance.now()
+    const problems = quickCheck(db, settings)
+    timings.quickCheckMs = performance.now() - started
+    return problems.length ? { code: 'E_STORE_CORRUPT', detail: { problems: problems.length } } : undefined
+  } catch (error) {
+    return openFailure(error)
   }
 }
 
@@ -683,12 +735,22 @@ function hostOptions(options) {
 /**
  * Open an existing store. With failed open checks the store opens read-only and the handle
  * carries `diagnostic` ({ code }): writes are refused with that code and nothing is repaired.
+ * A writable open starts a writer session (clean_shutdown, see startSession); `close()` ends it.
  *
  * Options: `privatePaths` (writes take the library operation lease under it) or `lock`
  * (a callback runner; tests and benchmarks may pass withoutLibraryLock), `now`, `policy`
  * (StorePolicy for planning and full validation), `readOnly`.
  */
 export function openStore(file, options = {}) {
+  return openHandle(file, options, { session: true })
+}
+
+/**
+ * `session: false` opens an inspection (library:recover's check): writable, so that SQLite rolls
+ * back a hot journal, but clean_shutdown is neither read nor written and quick_check is left to
+ * the caller's full check.
+ */
+function openHandle(file, options, { session }) {
   const target = absoluteFile(file)
   existingFile(target)
   const settings = hostOptions(options)
@@ -701,16 +763,23 @@ export function openStore(file, options = {}) {
   const db = openConnection(target)
   const timings = { connectMs: performance.now() - started }
   let diagnostic
-  try { diagnostic = openDiagnostic(db, timings) } catch (error) { closeQuietly(db); throw error }
+  try {
+    diagnostic = openDiagnostic(db)
+    if (!diagnostic && session) diagnostic = startSession(db, settings, timings)
+  } catch (error) { closeQuietly(db); throw error }
   timings.openMs = performance.now() - started
   if (diagnostic) {
     closeQuietly(db)
     return readOnlyHandle(target, settings, diagnostic)
   }
-  return writableHandle(db, target, key, lock, settings, timings)
+  return writableHandle(db, target, key, lock, settings, timings, session)
 }
 
-/** Read-only handle: explicit read-only opens and stores that failed an open check. */
+/**
+ * Read-only handle: explicit read-only opens and stores that failed an open check. An explicit
+ * read-only open runs the cheap open checks only, whatever clean_shutdown says (it may belong to a
+ * writer that is open right now); callers that need more call checkIntegrity().
+ */
 function readOnlyHandle(file, settings, diagnostic) {
   let db
   let failure = diagnostic
@@ -727,15 +796,31 @@ function readOnlyHandle(file, settings, diagnostic) {
   return makeHandle({ db: readable ? db : (closeQuietly(db), undefined), file, settings, diagnostic: failure, writable: false })
 }
 
-function writableHandle(db, file, key, lock, settings, timings) {
+function writableHandle(db, file, key, lock, settings, timings, session) {
   writers.add(key)
-  return makeHandle({ db, file, settings, writable: true, lock, timings, release: () => writers.delete(key) })
+  return makeHandle({ db, file, settings, writable: true, lock, timings, session, release: () => writers.delete(key) })
 }
 
-function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, release }) {
+/** SQLITE_CORRUPT or SQLITE_NOTADB behind a host error (also inside E_OUTCOME_UNKNOWN). */
+const isSqliteCorruption = (error) => [11, 26].includes((error?.sqlite?.errcode ?? 0) & 0xff)
+
+function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, session = false, release }) {
   let closed = false
   let lost = false
   let tail = Promise.resolve()
+  /**
+   * Corruption found while running (design 3B v1.1 §16.2-3): the handle turns read-only with
+   * E_STORE_CORRUPT and stays that way until it is closed. Nothing is repaired, and the writer
+   * session is not marked clean, so the next open runs quick_check.
+   */
+  const becomeCorrupt = (detail) => {
+    writable = false
+    diagnostic ??= Object.freeze({ code: 'E_STORE_CORRUPT', ...(detail === undefined ? {} : { detail }) })
+  }
+  const corruptionSeen = (error) => {
+    if (isSqliteCorruption(error)) becomeCorrupt(error.sqlite)
+    return error
+  }
   /** After a failed rollback the connection is closed (which discards its transaction): reopen. */
   const discard = () => { lost = true; closeQuietly(db) }
   const usable = () => {
@@ -768,7 +853,10 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
       throw new StoreHostError(code, { outcome: 'not_committed', cause: error })
     }
   }
-  /** Test-only fault injection: `unsafeTestPhase(name, { db })` runs synchronously at each write phase. */
+  /**
+   * Test-only fault injection: `unsafeTestPhase(name, { db })` runs synchronously at each write
+   * phase (and, outside this function, before every quick_check as 'quick-check').
+   */
   const phase = (name, connection) => {
     const result = settings.phase?.(name, { db: connection })
     if (result && typeof result.then === 'function') fail('E_STORE_ASYNC_HOOK')
@@ -783,7 +871,7 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
       if (result && typeof result.then === 'function') fail('E_STORE_ASYNC_READ')
       return result
     } catch (error) {
-      throw storeErrorFrom(error)
+      throw corruptionSeen(storeErrorFrom(error))
     } finally {
       if (transactionState(connection) === true) {
         try { connection.exec('ROLLBACK') } catch { /* Released on close. */ }
@@ -814,7 +902,7 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
       connection.exec('COMMIT')
       result = Object.freeze({ status: 'committed', revision: receipt.revision, receipt })
     } catch (error) {
-      throw settleFailure(connection, error, commitIssued, discard)
+      throw corruptionSeen(settleFailure(connection, error, commitIssued, discard))
     }
     hook('committed')
     return result
@@ -831,14 +919,14 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
       connection.exec('COMMIT')
       return result
     } catch (error) {
-      throw settleFailure(connection, error, commitIssued, discard)
+      throw corruptionSeen(settleFailure(connection, error, commitIssued, discard))
     }
   }
   const handle = {
     file,
     get readOnly() { return !writable },
     get diagnostic() { return diagnostic },
-    /** Open timings in milliseconds (connectMs, quickCheckMs, openMs), for benchmarks. */
+    /** Open timings in milliseconds (connectMs, openMs, and quickCheckMs when the open ran quick_check), for benchmarks. */
     get openTimings() { return timings },
     /** store_meta as an object: format, formatVersion, libraryId, revision, createdAt. */
     meta() {
@@ -862,10 +950,29 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
     readFormalState() {
       return readTransaction((connection) => core(() => readFormalStateCore(formalStateValue(connection), settings.policy)))
     },
-    /** Full consistency check (recovery, tests): { ok, problems }, codes only. */
+    /**
+     * Full consistency check (recovery, the check command, tests): quick_check plus Core's full
+     * validation and the host's own tables. { ok, problems }, codes and counts only. A failed
+     * quick_check turns the handle read-only, like checkIntegrity.
+     */
     check() {
-      const problems = readTransaction((connection) => checkConnection(connection, settings.policy))
+      const problems = readTransaction((connection) => checkConnection(connection, settings))
+      if (problems.some((problem) => QUICK_CHECK_PROBLEM.test(problem))) becomeCorrupt()
       return Object.freeze({ ok: problems.length === 0, problems: Object.freeze(problems) })
+    },
+    /**
+     * `PRAGMA quick_check` on request (design 3B v1.1 §16.2-3): before a backup, after a restore,
+     * and for the check command; opening runs it only after an unclean shutdown. Returns
+     * { ok, problems } (counts only); a failure turns the handle read-only with E_STORE_CORRUPT.
+     */
+    checkIntegrity() {
+      let lines
+      try { lines = readTransaction((connection) => quickCheck(connection, settings)) } catch (error) {
+        if (!isSqliteCorruption(error)) throw error
+        lines = ['unreadable']
+      }
+      if (lines.length) becomeCorrupt()
+      return Object.freeze({ ok: lines.length === 0, problems: Object.freeze(lines.length ? [quickCheckProblem(lines)] : []) })
     },
     /**
      * Commit one request `{ requestId, baseRevision, kind, actor, commands }` (design 3B §4.4).
@@ -938,11 +1045,18 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
         return Object.freeze({ added })
       })))
     },
-    /** Wait for queued writes, then close the connection. */
+    /**
+     * Wait for queued writes, then close the connection. A writer session that is still writable
+     * ends with clean_shutdown = 1. When that write fails (busy, I/O), or the handle turned
+     * read-only or lost its connection, the flag stays 0 and the next open runs quick_check.
+     */
     async close() {
       if (closed) return
       closed = true
       await tail
+      if (session && writable && !lost) {
+        try { setCleanShutdown(db, 1) } catch { /* Left at 0: the next open checks the file. */ }
+      }
       closeQuietly(db)
       release?.()
     },
@@ -994,7 +1108,8 @@ export async function createStore(file, options = {}) {
       db.exec(`PRAGMA application_id = ${STORE_APPLICATION_ID}`)
       db.exec(`PRAGMA user_version = ${STORE_FORMAT_VERSION}`)
       for (const statement of SCHEMA_V1) db.exec(statement)
-      db.prepare('INSERT INTO store_meta (singleton, format, format_version, library_id, revision, created_at) VALUES (1, ?, ?, ?, 0, ?)')
+      // The creating handle is the store's first writer session: clean_shutdown 0 until its close().
+      db.prepare('INSERT INTO store_meta (singleton, format, format_version, library_id, revision, created_at, clean_shutdown) VALUES (1, ?, ?, ?, 0, ?, 0)')
         .run(STORE_FORMAT, STORE_FORMAT_VERSION, options.libraryId, createdAt)
       if (initial) applyRequest(db, initial, requestDigest(initial), createdAt, settings, () => {})
       db.exec('COMMIT')
@@ -1009,17 +1124,19 @@ export async function createStore(file, options = {}) {
     }
     const key = writerKey(target)
     if (writers.has(key)) { closeQuietly(db); fail('E_STORE_ALREADY_OPEN', { path: 'file' }) }
-    return writableHandle(db, target, key, lock, settings)
+    return writableHandle(db, target, key, lock, settings, undefined, true)
   })
 }
 
 /**
- * Open `file`, run the full check and close (library:recover's store check). Any open
- * diagnostic or check problem is reported; nothing is repaired.
+ * Open `file`, run the full check (quick_check included) and close: library:recover's store
+ * check. The open is an inspection: it rolls back a hot journal like any writable connection,
+ * but starts no writer session, so clean_shutdown is left as it was and a clean store is not
+ * written at all. Any open diagnostic or check problem is reported; nothing is repaired.
  */
 export async function checkStoreFile(file, { policy } = {}) {
   let handle
-  try { handle = openStore(file, { lock: withoutLibraryLock, policy }) } catch (error) {
+  try { handle = openHandle(file, { lock: withoutLibraryLock, policy }, { session: false }) } catch (error) {
     return Object.freeze({ ok: false, problems: Object.freeze([error?.code ?? 'E_STORE_OPEN']) })
   }
   try {
