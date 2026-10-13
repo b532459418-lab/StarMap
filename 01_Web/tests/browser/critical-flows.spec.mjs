@@ -1,6 +1,35 @@
 import { test, expect, openMap, selectReykjavik, openCollection, readFixture, saveAndWaitForReload } from './helpers.mjs'
-import { fixtureIds } from '../../scripts/browser-fixture.mjs'
+import { fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
+import { readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import sharp from 'sharp'
+
+// Cases that seed sample media restore the shared fixture after closing their page, so later cases and files read
+// exactly the files they would have read without them.
+let restoreFixture
+test.afterEach(async ({ page }) => {
+  if (!restoreFixture) return
+  const restore = restoreFixture
+  restoreFixture = undefined
+  await page.close()
+  await restore()
+})
+// The tracked unit-test fixture holds two Reykjavik photos and a Torshavn aerial photo; the runner's fixture drops them.
+async function seedSampleMedia(page, changeEditorState = () => {}) {
+  const sample = JSON.parse(await readFile(new URL('../../src/data/v2write/fixtures/migrated-files.json', import.meta.url), 'utf8'))
+  const originals = []
+  for (const [key, change] of [['media', (file) => { file.items.push(...sample.media.items) }], ['editorState', changeEditorState]]) {
+    const file = path.join(process.env.STARMAP_BROWSER_TEST_ROOT, 'data', 'v2', fixtureFileNames[key])
+    const text = await readFile(file, 'utf8')
+    originals.push([file, text])
+    const value = JSON.parse(text)
+    change(value)
+    await writeFile(file, JSON.stringify(value, null, 2) + '\n')
+  }
+  restoreFixture = () => Promise.all(originals.map(([file, text]) => writeFile(file, text)))
+  const image = await sharp({ create: { width: 64, height: 32, channels: 3, background: { r: 60, g: 120, b: 180 } } }).png().toBuffer()
+  await page.route('**/media/user/sample/*', (route) => route.fulfill({ contentType: 'image/png', body: image }))
+}
 
 test('Journey mapped visit count stays unchanged when map footprints are hidden', async ({ page }) => {
   await openMap(page)
@@ -162,4 +191,31 @@ test('an unconfirmed conversion keeps every write on the page blocked until a re
   await page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click()
   await expect(page.getByText(/Nothing more can be saved until you reload/)).toBeVisible()
   expect(writes).toEqual(['/__travelatlas/editor/wanttogo/convert'])
+})
+
+test('keyboard: a drone card opens its viewer from View, and the globe scale slider keeps focus while stepping', async ({ page }) => {
+  await seedSampleMedia(page)
+  const droneLoads = []
+  page.on('request', (request) => { if (request.url().includes('/media/user/sample/drone-1.jpg')) droneLoads.push(new URL(request.url()).search) })
+  await openMap(page)
+  await page.getByRole('button', { name: 'Faroe Islands', exact: true }).click()
+  await page.getByRole('button', { name: 'Torshavn Drone media available', exact: true }).click()
+  const view = page.getByRole('button', { name: 'View Torshavn drone media 01', exact: true })
+  await view.focus()
+  await page.keyboard.press('Enter')
+  const viewer = page.locator('.drone-panorama-modal')
+  await expect(viewer.locator('img.drone-aerial-preview')).toBeVisible()
+  // The first load uses the plain URL, so the HTTP cache can answer it; only a retry would add starmapLoad.
+  expect(droneLoads).toContain('')
+  expect(droneLoads.filter((search) => search.includes('starmapLoad'))).toEqual([])
+  await page.keyboard.press('Escape')
+  await expect(viewer).toHaveCount(0)
+  const scale = page.getByRole('slider', { name: 'Globe scale', exact: true })
+  await scale.focus()
+  const start = Number(await scale.inputValue())
+  for (let step = 1; step <= 3; step++) {
+    await page.keyboard.press('ArrowLeft')
+    await expect(scale).toBeFocused()
+    await expect.poll(async () => Number(await scale.inputValue())).toBeCloseTo(start - 0.05 * step, 5)
+  }
 })

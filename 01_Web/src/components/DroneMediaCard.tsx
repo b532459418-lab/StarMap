@@ -505,6 +505,8 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                     if (!editing) onSelectItem(item)
                   }}
                   onKeyDown={(event) => {
+                    // Only keys pressed on the card itself: its View button handles its own Enter and Space.
+                    if (event.target !== event.currentTarget) return
                     if (!editing && (event.key === 'Enter' || event.key === ' ')) {
                       event.preventDefault()
                       event.stopPropagation()
