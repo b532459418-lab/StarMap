@@ -7,6 +7,7 @@
  *    按界面语言现算（LOC-3：回退规则是公共函数，不存进数据）。
  * 2. 放在 Core：Collection 的搜索与排序也要用（RFC LOC-3）。只用 ECMAScript 内建的 `Intl`，不引 i18n 库。
  * 3. 纯函数：不修改输入、不读时钟、不读环境（不取运行环境的默认 locale）。界面语言由调用方传入。
+ *    第 0 步的补全结果有一个模块级缓存（见 `maximizeTag`）：同一个标签的补全结果恒定，缓存只省时间，不改变任何结果。
  *
  * 语法约束：erasable-only TypeScript（只用 type / interface）。
  */
@@ -22,12 +23,12 @@ export interface LocalizedText {
   originalLanguage?: LanguageTag
 }
 
-/** 补全后的标签（第 0 步）。 */
+/** 补全后的标签（第 0 步）。缓存里存的是冻结的对象，所以字段只读。 */
 interface MaximizedTag {
-  tag: LanguageTag
-  language: string
-  script: string | undefined
-  region: string | undefined
+  readonly tag: LanguageTag
+  readonly language: string
+  readonly script: string | undefined
+  readonly region: string | undefined
 }
 
 /** 按 Unicode 码点比较（不是 UTF-16 码元，也不受运行环境 locale 影响）：给标签排序，保证结果稳定。 */
@@ -41,10 +42,10 @@ const compareCodePoints = (left: string, right: string): number => {
 }
 
 /**
- * 第 0 步：`Intl.Locale#maximize()` 补全书写系统与地区（zh-CN → zh-Hans-CN，zh-TW → zh-Hant-TW，ja → ja-Jpan-JP）。
+ * 第 0 步（不带缓存）：`Intl.Locale#maximize()` 补全书写系统与地区（zh-CN → zh-Hans-CN，zh-TW → zh-Hant-TW，ja → ja-Jpan-JP）。
  * 解析失败、或语言是 `und` 时返回 undefined：这样的键只参加第 5 步（`und` 补全后会变成 en-Latn-US，不能拿来匹配）。
  */
-const maximizeTag = (tag: LanguageTag): MaximizedTag | undefined => {
+const computeMaximizedTag = (tag: LanguageTag): MaximizedTag | undefined => {
   let locale: Intl.Locale
   try {
     locale = new Intl.Locale(tag)
@@ -54,8 +55,38 @@ const maximizeTag = (tag: LanguageTag): MaximizedTag | undefined => {
   // 有的引擎对 `und` 返回 language === undefined（V8 即如此），两种都算 und。
   if (!locale.language || locale.language === 'und') return undefined
   const maximized = locale.maximize()
-  return { tag, language: maximized.language, script: maximized.script, region: maximized.region }
+  return Object.freeze({ tag, language: maximized.language, script: maximized.script, region: maximized.region })
 }
+
+/** 第 0 步缓存的上限。存满后再来新标签时整体清空，异常输入（大量不同的标签）不会让缓存无限增长。 */
+const MAXIMIZE_CACHE_LIMIT = 512
+
+/** 第 0 步的模块级缓存：键是标签原样的字符串（大小写不同算不同的键），解析失败的 undefined 也缓存。 */
+const maximizeCache = new Map<LanguageTag, MaximizedTag | undefined>()
+
+/**
+ * 第 0 步（带缓存）。`new Intl.Locale(tag).maximize()` 一次约几十微秒，而地球每次渲染、每个标记要取名 2–3 次，
+ * 所以按标签缓存。缓存的值是冻结的对象，调用方改不了它；同一个标签每次补全的结果相同，所以结果与不缓存时一致。
+ */
+const maximizeTag = (tag: LanguageTag): MaximizedTag | undefined => {
+  if (maximizeCache.has(tag)) return maximizeCache.get(tag)
+  const maximized = computeMaximizedTag(tag)
+  if (maximizeCache.size >= MAXIMIZE_CACHE_LIMIT) maximizeCache.clear()
+  maximizeCache.set(tag, maximized)
+  return maximized
+}
+
+/**
+ * 只给 `localizedText.test.ts` 用：带缓存的第 0 步、缓存的上限、当前条数与清空。不是公开 API，
+ * 界面与其他模块不要调用（README 的 Core 公开函数里也不列它）。写成普通对象字面量（不包 `Object.freeze`），
+ * 打包时没人引用就整段摇掉，不进公开包。
+ */
+export const maximizeTagCacheForTests = {
+  limit: MAXIMIZE_CACHE_LIMIT,
+  maximize: (tag: LanguageTag): MaximizedTag | undefined => maximizeTag(tag),
+  size: (): number => maximizeCache.size,
+  clear: (): void => maximizeCache.clear(),
+} as const
 
 /** 非空的名称，按标签码点序。 */
 const presentEntries = (text: LocalizedText): [LanguageTag, string][] =>

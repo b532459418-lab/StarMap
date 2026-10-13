@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import packageJson from '../../package.json'
+// Only `version`: a named JSON import lets the bundler drop the rest of package.json (scripts, dependencies) from the
+// public bundle, so editing npm scripts no longer changes the bundle hash (batch 5A P6).
+import { version as packageVersion } from '../../package.json'
 
 export type GitHubRelease = {
   body: string | null
@@ -20,7 +22,7 @@ type UpdateCache = {
 const repository = import.meta.env.VITE_GITHUB_REPOSITORY?.trim() || 'b532459418-lab/StarMap'
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const repositoryConfigured = repositoryPattern.test(repository)
-const currentVersion = packageJson.version
+const currentVersion = packageVersion
 const checkIntervalMs = 12 * 60 * 60 * 1000
 
 const numericVersion = (version: string) => {

@@ -1,4 +1,10 @@
-@import 'tailwindcss';
+/* Tailwind scans only the files that write class names: the .tsx components and index.html (batch 5A P6).
+   Automatic detection used to scan the whole 01_Web tree, so words in tests, scripts, docs and in the Core
+   (src/worldgraph/**) and data (src/data/**) modules became unused utilities, and the bundle hash moved with
+   edits to those files. No .ts file writes class names today; if one starts to, add an @source line for it. */
+@import 'tailwindcss' source(none);
+@source '../index.html';
+@source './**/*.tsx';
 
 :root {
   font-family:
