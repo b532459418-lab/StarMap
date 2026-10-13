@@ -1,4 +1,11 @@
-import exifr from 'exifr'
+import { localEditorAvailable } from './editorState'
+
+// exifr is only needed when the local editor reads a drone file before upload, so it is loaded then, behind the same
+// gate as the editor API (see ./localEditorClient.ts for why `import.meta.env.DEV` is spelled out): builds hold no
+// exifr chunk at all (batch 5B). A failed load surfaces as the existing "could not read EXIF" notice.
+const loadExifr = () => import.meta.env.DEV && localEditorAvailable
+  ? import('exifr').then((module) => module.default)
+  : Promise.reject(new Error('Drone file metadata is read only in the local editor.'))
 
 export type DroneFileMetadata = {
   date?: string
@@ -43,6 +50,7 @@ const cameraName = (metadata: ExifRecord) => {
 }
 
 export async function readDroneFileMetadata(file: File): Promise<DroneFileMetadata> {
+  const exifr = await loadExifr()
   const metadata = await exifr.parse(file, true) as ExifRecord | undefined
   if (!metadata) return {}
 

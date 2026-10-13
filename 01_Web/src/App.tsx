@@ -4,7 +4,6 @@ import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from '
 import { AtlasHeader } from './components/AtlasHeader'
 import type { AtlasPage } from './components/AtlasHeader'
 import { CesiumAtlasGlobe } from './components/CesiumAtlasGlobe'
-import { CollectionPage } from './components/CollectionPage'
 import { CountrySelector } from './components/CountrySelector'
 import { PrivateDataNotice } from './components/PrivateDataNotice'
 import type { ThemeMode } from './components/DayNightToggle'
@@ -17,10 +16,9 @@ import { MouseControlGuide } from './components/MouseControlGuide'
 import { DroneMediaCard } from './components/DroneMediaCard'
 import { InfoCard } from './components/InfoCard'
 import { mediaJobs } from './data/localEditorClient'
-import { CityPhotoGalleryModal } from './components/CityPhotoGalleryModal'
 import type { CityPhotoGalleryRequest } from './components/CityPhotoGalleryModal'
 import { Timeline } from './components/Timeline'
-import { ReleaseUpdateButton, ReleaseUpdatePage } from './components/UpdateChecker'
+import { ReleaseUpdateButton } from './components/ReleaseUpdateButton'
 import { WantToGoCard } from './components/WantToGoCard'
 import { JourneyViewToggle } from './components/JourneyViewToggle'
 import type { JourneyViewMode } from './components/JourneyViewToggle'
@@ -64,6 +62,13 @@ const DronePanoramaModal = lazy(() =>
     default: module.DronePanoramaModal,
   })),
 )
+
+// 首屏地图之外、只在切页或点开时才用到的组件（第 5B 批），公开版与个人版都按需加载：
+// Collection 与更新页第一次打开时才加载并挂载，之后一直挂载，保留各自的滚动位置；城市照片浮层点开时才加载。
+// Journey 页不拆：它的时间线在切页后会被立即读取（time-filters 浏览器用例），而且体积很小。
+const CollectionPage = lazy(() => import('./components/CollectionPage').then((module) => ({ default: module.CollectionPage })))
+const ReleaseUpdatePage = lazy(() => import('./components/UpdateChecker').then((module) => ({ default: module.ReleaseUpdatePage })))
+const CityPhotoGalleryModal = lazy(() => import('./components/CityPhotoGalleryModal').then((module) => ({ default: module.CityPhotoGalleryModal })))
 
 // 只在本地编辑时出现的组件（第 5B 批）：按需加载，而且只在 `import.meta.env.DEV && localEditorAvailable` 时才定义。
 // 构建时前半句是字面量 false，Rolldown 在打包阶段就删掉这些 import()，任何构建产物里都没有它们的 chunk；
@@ -179,6 +184,8 @@ function App() {
   const [globeDistance, setGlobeDistance] = useState(restoredGlobeDistance)
   const [globeResetVersion, setGlobeResetVersion] = useState(0)
   const [activePage, setActivePage] = useState<AtlasPage>(restoredActivePage)
+  // 打开过的页面（第 5B 批）：按需加载的 Collection 与更新页从第一次打开起才挂载，切走后保持挂载。
+  const [visitedPages, setVisitedPages] = useState<ReadonlySet<AtlasPage>>(() => new Set([restoredActivePage]))
   // 当前页面是否已滚离顶部，决定顶部标题的玻璃背景。页面的滚动位置不随刷新恢复，初值为 false。
   const [pageScrolled, setPageScrolled] = useState(false)
   // 当前页面滚动条占的宽度（px）：玻璃背景右侧让出这一段，经典滚动条不被压暗；浮层滚动条为 0。
@@ -313,9 +320,11 @@ function App() {
 
   // 所有切页都经过这里。各页面保留自己的滚动位置，切页时按新页面的滚动容器重新算一次；地图页恒为 false。
   // 地图页没有滚动容器，滚动条宽度保留上一次的值：此时玻璃背景正在淡出，右边缘不跟着跳。
+  // 第一次打开 Collection 或更新页时页面还没加载，滚动容器不存在：按未滚动处理，滚动时再由 syncPageScrolled 测量。
   const showPage = (page: AtlasPage) => {
     const scroller = getPageScroller(page)
     setActivePage(page)
+    setVisitedPages((visited) => visited.has(page) ? visited : new Set(visited).add(page))
     setPageScrolled(isPastBackdropThreshold(scroller))
     if (scroller) setPageScrollbarWidth(measureScrollbarWidth(scroller))
   }
@@ -979,12 +988,17 @@ function App() {
             className="atlas-collection-stage absolute inset-0 z-30"
             aria-hidden={activePage !== 'collection'}
           >
-            <CollectionPage
-              entries={collectionEntries}
-              onViewOnMap={viewOnMap}
-              onAddWantToGo={() => setIsAddWantToGoOpen(true)}
-              onConvertToTravel={setConvertTarget}
-            />
+            {/* 舞台本身常驻（切页的淡入淡出在舞台上）；页面加载期间舞台为空，淡入过程中出现。 */}
+            {visitedPages.has('collection') ? (
+              <Suspense fallback={null}>
+                <CollectionPage
+                  entries={collectionEntries}
+                  onViewOnMap={viewOnMap}
+                  onAddWantToGo={() => setIsAddWantToGoOpen(true)}
+                  onConvertToTravel={setConvertTarget}
+                />
+              </Suspense>
+            ) : null}
           </div>
 
           <div
@@ -992,7 +1006,11 @@ function App() {
             className="atlas-update-stage absolute inset-0 z-30"
             aria-hidden={activePage !== 'about'}
           >
-            <ReleaseUpdatePage state={releaseUpdates} />
+            {visitedPages.has('about') ? (
+              <Suspense fallback={null}>
+                <ReleaseUpdatePage state={releaseUpdates} />
+              </Suspense>
+            ) : null}
           </div>
       </section>
 
@@ -1006,10 +1024,12 @@ function App() {
       ) : null}
 
       {cityPhotoGallery ? (
-        <CityPhotoGalleryModal
-          {...cityPhotoGallery}
-          onClose={() => setCityPhotoGallery(undefined)}
-        />
+        <Suspense fallback={null}>
+          <CityPhotoGalleryModal
+            {...cityPhotoGallery}
+            onClose={() => setCityPhotoGallery(undefined)}
+          />
+        </Suspense>
       ) : null}
 
       {/* FR-PUB-2 / AC-10：公开构建不挂载添加对话框与转换对话框，构建产物里也没有它们（见文件开头的按需加载）。
