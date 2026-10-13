@@ -47,7 +47,7 @@ StarMap 使用 React、TypeScript、Vite 与 Cesium 构建。全新下载的仓�
 
 ## 快速开始
 
-需要 Git，以及与 Vite 8 兼容的当前 Node.js LTS 版本。
+需要 Git，以及 Node.js 24 或更高版本（见 `01_Web/.nvmrc`；`package.json` 的 `engines` 也有声明）。
 
 ```powershell
 git clone https://github.com/b532459418-lab/StarMap.git
