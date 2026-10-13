@@ -180,7 +180,6 @@ function App() {
   const [hoveredCountryId, setHoveredCountryId] = useState<CountryId | undefined>()
   const [selectedDayId, setSelectedDayId] = useState(restoredSelectedDayId)
   const [selectionMode, setSelectionMode] = useState<SelectionMode>(restoredSelectionMode)
-  const [, setHoverCityId] = useState<CityId>()
   const [globeDistance, setGlobeDistance] = useState(restoredGlobeDistance)
   const [globeResetVersion, setGlobeResetVersion] = useState(0)
   const [activePage, setActivePage] = useState<AtlasPage>(restoredActivePage)
@@ -974,7 +973,6 @@ function App() {
                     projection={browseProjection}
                     selectedDayId={selectedDayId}
                     onSelectDay={selectDay}
-                    onHoverCity={setHoverCityId}
                   />
                 ) : (
                   <JourneyYearCards projection={browseProjection} />

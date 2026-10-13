@@ -3,17 +3,16 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, Clock3, MapPin, Sparkles } from 'lucide-react'
 import { cityById, countryById, journeyDays } from '../data/travelAtlas'
-import type { CityId, JourneyDay } from '../types/travel'
+import type { JourneyDay } from '../types/travel'
 import { buildBrowseTimeProjection, journeyTimeContext, type BrowseTimeProjection } from '../data/derive/browseTimeProjection'
 
 type TimelineProps = {
   selectedDayId: string
   onSelectDay: (day: JourneyDay) => void
-  onHoverCity: (cityId?: CityId) => void
   projection?: BrowseTimeProjection
 }
 
-export function Timeline({ selectedDayId, onSelectDay, onHoverCity, projection }: TimelineProps) {
+export function Timeline({ selectedDayId, onSelectDay, projection }: TimelineProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
   const browse = useMemo(() => projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {}), [projection])
@@ -74,8 +73,6 @@ export function Timeline({ selectedDayId, onSelectDay, onHoverCity, projection }
                 data-selected={isSelected}
                 style={{ '--journey-accent': country.accent } as React.CSSProperties}
                 onClick={() => onSelectDay(day)}
-                onMouseEnter={() => onHoverCity(day.cityId)}
-                onMouseLeave={() => onHoverCity(undefined)}
               >
                 <span className="journey-timeline-date">
                   <span>{dateLabel}{match?.record.date.precision === 'year' ? ` · ${yearOnly}` : ''}{match?.result.match === 'uncertain' ? ` · ${uncertainDate}` : ''}</span>
