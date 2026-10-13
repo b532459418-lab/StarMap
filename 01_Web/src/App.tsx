@@ -9,7 +9,6 @@ import { CountrySelector } from './components/CountrySelector'
 import { PrivateDataNotice } from './components/PrivateDataNotice'
 import type { ThemeMode } from './components/DayNightToggle'
 import { CompassButton } from './components/CompassButton'
-import { ConvertToTravelDialog } from './components/ConvertToTravelDialog'
 import type { ConvertToTravelTarget } from './components/ConvertToTravelDialog'
 import { LayerPanel } from './components/LayerPanel'
 import { LayerTimeFilters } from './components/LayerTimeFilters'
@@ -17,13 +16,11 @@ import { MapSourceSwitcher } from './components/MapSourceSwitcher'
 import { MouseControlGuide } from './components/MouseControlGuide'
 import { DroneMediaCard } from './components/DroneMediaCard'
 import { InfoCard } from './components/InfoCard'
-import { MediaRecoveryCenter } from './components/MediaRecoveryCenter'
 import { mediaJobs } from './data/localEditorClient'
 import { CityPhotoGalleryModal } from './components/CityPhotoGalleryModal'
 import type { CityPhotoGalleryRequest } from './components/CityPhotoGalleryModal'
 import { Timeline } from './components/Timeline'
 import { ReleaseUpdateButton, ReleaseUpdatePage } from './components/UpdateChecker'
-import { WantToGoAddDialog } from './components/WantToGoAddDialog'
 import { WantToGoCard } from './components/WantToGoCard'
 import { JourneyViewToggle } from './components/JourneyViewToggle'
 import type { JourneyViewMode } from './components/JourneyViewToggle'
@@ -67,6 +64,19 @@ const DronePanoramaModal = lazy(() =>
     default: module.DronePanoramaModal,
   })),
 )
+
+// 只在本地编辑时出现的组件（第 5B 批）：按需加载，而且只在 `import.meta.env.DEV && localEditorAvailable` 时才定义。
+// 构建时前半句是字面量 false，Rolldown 在打包阶段就删掉这些 import()，任何构建产物里都没有它们的 chunk；
+// 只写 localEditorAvailable 不够，原因见 ./data/localEditorClient.ts。对话框只在打开时渲染，第一次打开时才加载。
+const MediaRecoveryCenter = import.meta.env.DEV && localEditorAvailable
+  ? lazy(() => import('./components/MediaRecoveryCenter').then((module) => ({ default: module.MediaRecoveryCenter })))
+  : undefined
+const WantToGoAddDialog = import.meta.env.DEV && localEditorAvailable
+  ? lazy(() => import('./components/WantToGoAddDialog').then((module) => ({ default: module.WantToGoAddDialog })))
+  : undefined
+const ConvertToTravelDialog = import.meta.env.DEV && localEditorAvailable
+  ? lazy(() => import('./components/ConvertToTravelDialog').then((module) => ({ default: module.ConvertToTravelDialog })))
+  : undefined
 
 const overviewDistance = 3.25
 const countryDistance = 1.95
@@ -1002,35 +1012,42 @@ function App() {
         />
       ) : null}
 
-      {/* FR-PUB-2 / AC-10：公开构建不挂载添加对话框与转换对话框。 */}
-      {localEditorAvailable ? (
-        <MediaRecoveryCenter onOpenTarget={(_countryId, cityId) => {
-          const city = cityById[cityId]
-          if (!city) return
-          changePrimaryPage('map')
-          openMobileDetails()
-          setSelectedWantToGoEntityId(undefined)
-          setMapFocusPlace(undefined)
-          setSelectedCountryId(city.countryId)
-          setSelectedCityId(cityId)
-          setActiveDroneMediaCityId(undefined)
-          setActiveDroneMediaItemId(undefined)
-          setSelectionMode('city')
-          setGlobeDistance(cityDistance)
-        }} />
+      {/* FR-PUB-2 / AC-10：公开构建不挂载添加对话框与转换对话框，构建产物里也没有它们（见文件开头的按需加载）。
+          加载期间的占位为空：对话框与恢复中心都是浮层，不占文档流；对话框挂载时焦点照常进入。 */}
+      {MediaRecoveryCenter ? (
+        <Suspense fallback={null}>
+          <MediaRecoveryCenter onOpenTarget={(_countryId, cityId) => {
+            const city = cityById[cityId]
+            if (!city) return
+            changePrimaryPage('map')
+            openMobileDetails()
+            setSelectedWantToGoEntityId(undefined)
+            setMapFocusPlace(undefined)
+            setSelectedCountryId(city.countryId)
+            setSelectedCityId(cityId)
+            setActiveDroneMediaCityId(undefined)
+            setActiveDroneMediaItemId(undefined)
+            setSelectionMode('city')
+            setGlobeDistance(cityDistance)
+          }} />
+        </Suspense>
       ) : null}
-      {localEditorAvailable ? (
-        <WantToGoAddDialog
-          open={isAddWantToGoOpen}
-          onClose={() => setIsAddWantToGoOpen(false)}
-        />
+      {WantToGoAddDialog && isAddWantToGoOpen ? (
+        <Suspense fallback={null}>
+          <WantToGoAddDialog
+            open
+            onClose={() => setIsAddWantToGoOpen(false)}
+          />
+        </Suspense>
       ) : null}
-      {localEditorAvailable ? (
-        <ConvertToTravelDialog
-          target={convertTarget}
-          onClose={() => setConvertTarget(undefined)}
-          onConverted={rememberConvertedPlace}
-        />
+      {ConvertToTravelDialog && convertTarget ? (
+        <Suspense fallback={null}>
+          <ConvertToTravelDialog
+            target={convertTarget}
+            onClose={() => setConvertTarget(undefined)}
+            onConverted={rememberConvertedPlace}
+          />
+        </Suspense>
       ) : null}
     </main>
   )

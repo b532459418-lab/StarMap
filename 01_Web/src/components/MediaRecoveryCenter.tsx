@@ -16,17 +16,6 @@ import { useDialogFocus } from './useDialogFocus'
 const places = new Map(worldGraphSnapshot.entities.map((place) => [place.id, place]))
 const mediaById = new Map(allImportedMediaItems.map((item) => [item.id, item]))
 
-export function MediaRecoveryEntry({ countryId, cityId }: { countryId?: string; cityId?: string }) {
-  const { t } = useTranslation('mediaRecovery')
-  const state = useMediaJobs()
-  const active = state.jobs.filter((job) => job.phase !== 'closed' && job.phase !== 'abandoned')
-  const relevant = active.find((job) => job.countryId === countryId && job.cityId === cityId)
-  if (!active.length && !state.error && !state.status) return null
-  return <button type="button" className="atlas-local-editor-restore" onClick={() => requestMediaRecovery(relevant?.jobId)}>
-    {t('open')}
-  </button>
-}
-
 function ImportScope({ job, preview, disabled, onImport }: {
   job: MediaJob; preview: MediaJobPreview; disabled: boolean; onImport: (options: { acceptFolderBindings?: boolean }) => Promise<unknown>
 }) {
