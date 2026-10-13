@@ -15,10 +15,11 @@ test.afterEach(async ({ page }) => {
   await restore()
 })
 // The tracked unit-test fixture holds two Reykjavik photos and a Torshavn aerial photo; the runner's fixture drops them.
-async function seedSampleMedia(page, changeEditorState = () => {}) {
+async function seedSampleMedia(page, adjust = {}) {
   const sample = JSON.parse(await readFile(new URL('../../src/data/v2write/fixtures/migrated-files.json', import.meta.url), 'utf8'))
   const originals = []
-  for (const [key, change] of [['media', (file) => { file.items.push(...sample.media.items) }], ['editorState', changeEditorState]]) {
+  const changes = [['media', (file) => { file.items.push(...sample.media.items); adjust.media?.(file) }], ['editorState', (state) => adjust.editorState?.(state)]]
+  for (const [key, change] of changes) {
     const file = path.join(process.env.STARMAP_BROWSER_TEST_ROOT, 'data', 'v2', fixtureFileNames[key])
     const text = await readFile(file, 'utf8')
     originals.push([file, text])
@@ -238,4 +239,35 @@ test('keyboard: a drone card opens its viewer from View, the viewer keeps and re
     await expect(scale).toBeFocused()
     await expect.poll(async () => Number(await scale.inputValue())).toBeCloseTo(start - 0.05 * step, 5)
   }
+})
+
+test('keyboard hiding the current cover photo clears the draft cover, and hiding a city by keyboard asks first', async ({ page }) => {
+  // No saved cover for Reykjavik, so the photo marked as cover is the current cover.
+  await seedSampleMedia(page, { media: (file) => { file.items.find((item) => item.id === 'photo-reykjavik-1').isCover = true } })
+  await openMap(page)
+  await selectReykjavik(page)
+  const info = page.locator('.atlas-info-panel')
+  await info.getByRole('button', { name: 'Edit city photos', exact: true }).click()
+  const cover = info.locator('[data-flip-id="photo-reykjavik-1"]')
+  await expect(cover.getByRole('button', { name: 'Set as city cover', exact: true })).toHaveAttribute('data-active', 'true')
+  await cover.getByRole('button', { name: 'Hide photo', exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await expect(cover).toHaveCount(0)
+  await saveAndWaitForReload(page, async () => {
+    const saved = page.waitForResponse((response) => response.url().endsWith('/editor/state') && response.request().method() === 'PUT')
+    await info.getByRole('button', { name: 'Save city photos', exact: true }).click()
+    expect((await saved).ok()).toBe(true)
+  })
+  const state = await readFixture('editorState')
+  expect(state.hiddenMediaIds).toContain('photo-reykjavik-1')
+  expect(state.coverMediaByCity[fixtureIds.reykjavik]).not.toBe('photo-reykjavik-1')
+  // Choosing the selected city again returns to Iceland's city list.
+  await page.getByRole('button', { name: 'Reykjavik', exact: true }).click()
+  await info.getByRole('button', { name: 'Edit cities', exact: true }).click()
+  let question
+  page.once('dialog', (dialog) => { question = dialog.message(); void dialog.dismiss() })
+  await info.getByRole('button', { name: 'Hide Reykjavik', exact: true }).focus()
+  await page.keyboard.press(' ')
+  await expect.poll(() => question).toBe('Hide “Reykjavik” from this view? Your travel records will be kept.')
+  await expect(info.getByRole('button', { name: 'Hide Reykjavik', exact: true })).toBeVisible()
 })

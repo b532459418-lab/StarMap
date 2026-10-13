@@ -25,6 +25,7 @@ import { useFlipLayout } from './useFlipLayout'
 import { useMediaJobs } from './useMediaJobs'
 import { isFinishedMediaJob } from '../data/mediaJobs'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
+import { activateOnKey } from './keyboardActivation.ts'
 import type { DateEvidence } from '../worldgraph/timeFilter'
 import { formatRecordDate, formatRecordDateSummary } from '../data/derive/recordDateLabel'
 import { continentOfCountry } from '../data/continents'
@@ -725,6 +726,14 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
             >
               {isCityMode ? displayedCityPhotos.map((photo, index) => {
                 if (!photo) return null
+                // Mouse and keyboard run the same handlers on the photo tools below.
+                const makeCover = () => setDraftCoverPhotoId(photo.id)
+                const hidePhoto = () => {
+                  setDraftPhotoIds((current) => current.filter((id) => id !== photo.id))
+                  setDraftHiddenPhotoIds((current) => [...new Set([...current, photo.id])])
+                  // A hidden photo cannot stay the city cover.
+                  if (draftCoverPhotoId === photo.id) setDraftCoverPhotoId(undefined)
+                }
                 return (
                 <button
                   type="button"
@@ -771,27 +780,16 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                         data-active={draftCoverPhotoId === photo.id}
                         aria-label={t('editor:cityCover')}
                         title={t('editor:cityCover')}
-                        onClick={() => setDraftCoverPhotoId(photo.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') setDraftCoverPhotoId(photo.id)
-                        }}
+                        onClick={makeCover}
+                        onKeyDown={(event) => activateOnKey(event, makeCover)}
                       ><Star /></span>
                       <span
                         role="button"
                         tabIndex={0}
                         aria-label={t('editor:hidePhoto')}
                         title={t('editor:hideOriginal')}
-                        onClick={() => {
-                          setDraftPhotoIds((current) => current.filter((id) => id !== photo.id))
-                          setDraftHiddenPhotoIds((current) => [...new Set([...current, photo.id])])
-                          if (draftCoverPhotoId === photo.id) setDraftCoverPhotoId(undefined)
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            setDraftPhotoIds((current) => current.filter((id) => id !== photo.id))
-                            setDraftHiddenPhotoIds((current) => [...new Set([...current, photo.id])])
-                          }
-                        }}
+                        onClick={hidePhoto}
+                        onKeyDown={(event) => activateOnKey(event, hidePhoto)}
                       ><X /></span>
                     </span>
                   ) : null}
@@ -801,6 +799,12 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                 if (!memoryCity) return null
                 const isActive = memoryCity.id === selectedCityId
                 const memoryCoverPhoto = getCityCoverPhoto(memoryCity.id)
+                // Mouse and keyboard both ask first on the hide tool below.
+                const hideCity = () => {
+                  if (!window.confirm(t('editor:hideConfirm', { name: name(memoryCity) }))) return
+                  setDraftCityIds((current) => current.filter((id) => id !== memoryCity.id))
+                  setDraftHiddenCityIds((current) => [...new Set([...current, memoryCity.id])])
+                }
 
                 return (
                   <button
@@ -883,11 +887,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                           tabIndex={0}
                           aria-label={t('editor:hideFor', { name: name(memoryCity) })}
                           title={t('editor:hideRecords')}
-                          onClick={() => {
-                            if (!window.confirm(t('editor:hideConfirm', { name: name(memoryCity) }))) return
-                            setDraftCityIds((current) => current.filter((id) => id !== memoryCity.id))
-                            setDraftHiddenCityIds((current) => [...new Set([...current, memoryCity.id])])
-                          }}
+                          onClick={hideCity}
+                          onKeyDown={(event) => activateOnKey(event, hideCity)}
                         ><X /></span>
                       </span>
                     ) : null}
