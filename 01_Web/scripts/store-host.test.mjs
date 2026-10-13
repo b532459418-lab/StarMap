@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { closeSync, existsSync, openSync, readFileSync, readSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -11,7 +11,7 @@ import {
   BUSY_TIMEOUT_MS, StoreHostError, classifySqliteError, nodeSupportsStore, openConnection, pragmaValue,
 } from './store-sqlite.mjs'
 import {
-  ROW_TABLES, STORE_APPLICATION_ID, STORE_AUTO_VACUUM, STORE_FORMAT, STORE_FORMAT_VERSION, checkStoreFile, createStore, encodeRow, openStore, settleFailure,
+  RETENTION, ROW_TABLES, STORE_APPLICATION_ID, STORE_AUTO_VACUUM, STORE_FORMAT, STORE_FORMAT_VERSION, checkStoreFile, createStore, encodeRow, openStore, settleFailure,
   storePathFor, withoutLibraryLock,
 } from './store-host.mjs'
 import { FORMAL_TABLES, emptyFormalState, readFormalState, uniqueClaims } from '../src/worldgraph/store/formal.ts'
@@ -687,7 +687,10 @@ test('a read-only store refuses every write with its diagnostic code and stays b
   assert.equal(sha256(file), before)
 })
 
-test('pruneLogs keeps receipts and op_log by age or by count, whichever keeps more, in small write steps', async (t) => {
+/** The record counts of a pruneLogs result (the vacuum fields depend on page layout). */
+const pruned = ({ receipts, opLog, steps, done }) => ({ receipts, opLog, steps, done })
+
+test('pruneLogs keeps receipts by age or by count, whichever keeps more, and op_log by both, whichever keeps fewer, in small write steps', async (t) => {
   let now = '2026-01-01T00:00:00.000Z'
   const { handle, seed } = await seededStore(t, { now: () => now })
   const ids = []
@@ -699,19 +702,65 @@ test('pruneLogs keeps receipts and op_log by age or by count, whichever keeps mo
     ids.push(edit.requestId)
   }
   const state = normalized(handle.readFormalState())
-  assert.deepEqual(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z' }), { receipts: 0, opLog: 0, steps: 1, done: true }, 'defaults keep 10,000 / 50,000')
-  // Receipts: age keeps Jan 8-10, count keeps the newest four (Jan 7-10). op_log: age keeps Jan 6-10, count the newest two.
-  const retention = { receipts: { days: 2.5, count: 4 }, opLog: { days: 4.5, count: 2 } }
-  assert.deepEqual(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', batchSize: 2, retention }), { receipts: 6, opLog: 5, steps: 4, done: true })
-  assert.deepEqual(ids.map((id) => handle.lookup(id).found), [false, false, false, false, false, true, true, true, true])
+  assert.deepEqual(pruned(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z' })), { receipts: 0, opLog: 0, steps: 1, done: true }, 'defaults: 30 days or 10,000 / a year and 50,000')
+  // op_log by age alone: Jan 1-5 are older than 4.5 days although they are among the newest 50.
+  assert.deepEqual(pruned(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', retention: { receipts: RETENTION.receipts, opLog: { days: 4.5, count: 50 } } })),
+    { receipts: 0, opLog: 5, steps: 1, done: true })
   assert.equal(countRows(handle.file, 'op_log'), 5)
+  // Receipts: age keeps Jan 8-10, count keeps the newest four (Jan 7-10): the four stay. op_log: age keeps Jan 6-10,
+  // count keeps the newest two (Jan 9-10): only those two stay.
+  const retention = { receipts: { days: 2.5, count: 4 }, opLog: { days: 4.5, count: 2 } }
+  assert.deepEqual(pruned(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', batchSize: 2, retention })), { receipts: 6, opLog: 3, steps: 4, done: true })
+  assert.deepEqual(ids.map((id) => handle.lookup(id).found), [false, false, false, false, false, true, true, true, true])
+  assert.equal(countRows(handle.file, 'op_log'), 2)
   assert.equal(normalized(handle.readFormalState()), state, 'pruning never touches the data')
   assert.deepEqual(handle.check(), { ok: true, problems: [] })
   const entity = handle.read((reader) => reader.get('entities', seed.entities[0].id))
   assert.equal((await handle.commit(request(10, [update('entities', entity, { title: { names: { en: 'After' } } })]))).revision, 11)
-  // The newer receipt pushes Jan 7 out of the newest four; op_log keeps Jan 6 by age.
-  assert.deepEqual(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', retention }), { receipts: 1, opLog: 0, steps: 1, done: true })
+  // The newer request pushes Jan 7's receipt out of the newest four and Jan 9's op_log row out of the newest two.
+  assert.deepEqual(pruned(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', retention })), { receipts: 1, opLog: 1, steps: 1, done: true })
   await rejectsWith(handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', retention: { receipts: { days: 1, count: 0 }, opLog: retention.opLog } }), 'E_STORE_OPTIONS')
+  await rejectsWith(handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', vacuumPages: 0 }), 'E_STORE_OPTIONS')
+})
+
+test('pruneLogs gives the pages of pruned records back to the file system (auto_vacuum INCREMENTAL), in bounded steps', async (t) => {
+  const { file, handle } = await seededStore(t)
+  const state = normalized(handle.readFormalState())
+  await handle.close()
+  // Test-only bulk history written straight into the file: 20,000 old receipts and op_log rows of about 1 KB each.
+  const pad = "replace(hex(zeroblob(500)), '0', 'x')"
+  rawEdit(file, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000)
+    INSERT INTO receipts (request_id, request_digest, status, revision_after, response, at)
+      SELECT printf('old-%05d', i), 'digest', 'committed', 1, ${pad}, '2020-01-01T00:00:00.000Z' FROM n;
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000)
+    INSERT INTO op_log (request_id, at, actor, kind, summary) SELECT printf('old-%05d', i), '2020-01-01T00:00:00.000Z', 'test', 'old', ${pad} FROM n`)
+  const before = statSync(file).size
+  const opened = track(t, openStore(file, { lock: withoutLibraryLock }))
+  const pageSize = (() => {
+    const db = new DatabaseSync(file, { readOnly: true })
+    try { return pragmaValue(db, 'page_size') } finally { db.close() }
+  })()
+  // Bounded: three pruning steps of 5,000 rows per table, then three vacuum steps of 1,024 pages; the rest in later calls.
+  const options = { now: NOW, batchSize: 5_000, maxSteps: 3 }
+  let result = await opened.pruneLogs(options)
+  assert.deepEqual([result.steps, result.vacuumSteps, result.done], [3, 3, false])
+  const total = { receipts: 0, opLog: 0, freedPages: 0, calls: 0 }
+  for (;;) {
+    for (const key of ['receipts', 'opLog', 'freedPages']) total[key] += result[key]
+    total.calls++
+    if (result.done) break
+    result = await opened.pruneLogs(options)
+  }
+  // Receipts beyond the newest 10,000 that are older than 30 days; every op_log row older than a year.
+  assert.deepEqual([total.receipts, total.opLog], [10_001, 20_000])
+  assert.equal(countRows(file, 'receipts'), 10_000)
+  const after = statSync(file).size
+  t.diagnostic(`${(before / 1048576).toFixed(1)} MB → ${(after / 1048576).toFixed(1)} MB, ${total.freedPages} pages freed in ${total.calls} calls`)
+  assert.ok(total.freedPages * pageSize > 20 * 1048576, 'more than 20 MB of pages went back')
+  assert.ok(after <= before - total.freedPages * pageSize + pageSize * 16, `the file shrank by the freed pages: ${before} → ${after}`)
+  assert.equal(normalized(opened.readFormalState()), state, 'pruning and vacuum never touch the data')
+  assert.deepEqual(opened.check(), { ok: true, problems: [] })
+  assert.deepEqual(await opened.pruneLogs({ now: NOW }), { receipts: 0, opLog: 0, steps: 1, vacuumSteps: 0, freedPages: 0, done: true })
 })
 
 test('id_map stores identity mappings for 3C-1b; a conflicting remap rejects the whole batch', async (t) => {

@@ -567,11 +567,19 @@ function parseReceipt(text) {
 // Retention and the identity map
 // ---------------------------------------------------------------------------
 
-/** Design 3B §4.6: a row goes only when it is both older than `days` and outside the newest `count`. */
+/**
+ * Record retention (design 3B §4.6 as revised by v1.1 §16.2-6), `days` and `count` per table:
+ * - receipts keep retries safe, so the rule keeping MORE wins: a receipt goes only when it is both
+ *   older than 30 days and outside the newest 10,000;
+ * - op_log is diagnostics only, so the rule keeping FEWER wins: a row goes when it is older than a
+ *   year or outside the newest 50,000.
+ */
 export const RETENTION = Object.freeze({
   receipts: Object.freeze({ days: 30, count: 10_000 }),
   opLog: Object.freeze({ days: 365, count: 50_000 }),
 })
+/** Free pages returned to the file system per incremental_vacuum step after pruning (4 MiB at the default 4 KiB page size). */
+export const VACUUM_PAGES = 1024
 const DAY_MS = 86_400_000
 const cutoff = (now, days) => new Date(Date.parse(now) - days * DAY_MS).toISOString()
 
@@ -594,7 +602,8 @@ function pruneStatements(db) {
     receiptPrune: db.prepare('DELETE FROM receipts WHERE rowid IN (SELECT rowid FROM receipts WHERE at < ? '
       + 'AND (at < ? OR (at = ? AND rowid < ?)) ORDER BY at, rowid LIMIT ?)'),
     opLogBoundary: db.prepare('SELECT seq FROM op_log ORDER BY seq DESC LIMIT 1 OFFSET ?'),
-    opLogPrune: db.prepare('DELETE FROM op_log WHERE seq IN (SELECT seq FROM op_log WHERE seq < ? AND at < ? ORDER BY seq LIMIT ?)'),
+    // Outside the newest `count` (seq below the boundary) OR older than the cutoff.
+    opLogPrune: db.prepare('DELETE FROM op_log WHERE seq IN (SELECT seq FROM op_log WHERE seq < ? OR at < ? ORDER BY seq LIMIT ?)'),
   }
   pruneCache.set(db, cached)
   return cached
@@ -605,9 +614,22 @@ function pruneStep(db, cutoffs, limits, batchSize) {
   const sql = pruneStatements(db)
   const receipt = sql.receiptBoundary.get(limits.receipts.count - 1)
   const receipts = receipt ? sql.receiptPrune.run(cutoffs.receipts, receipt.at, receipt.at, receipt.position, batchSize).changes : 0
+  // With fewer rows than `count` nothing is outside the newest `count` (seq starts at 1): only the age rule applies.
   const entry = sql.opLogBoundary.get(limits.opLog.count - 1)
-  const opLog = entry ? sql.opLogPrune.run(entry.seq, cutoffs.opLog, batchSize).changes : 0
+  const opLog = sql.opLogPrune.run(entry?.seq ?? 0, cutoffs.opLog, batchSize).changes
   return { receipts, opLog }
+}
+
+/**
+ * One incremental_vacuum step inside an open write transaction (auto_vacuum = INCREMENTAL): moves
+ * at most `pages` free pages to the end of the file and truncates them. Returns the pages freed.
+ */
+function vacuumStep(db, pages) {
+  const before = pragmaValue(db, 'freelist_count')
+  if (before === 0) return 0
+  // exec runs the pragma to its end (each step of a prepared statement frees only one page).
+  db.exec(`PRAGMA incremental_vacuum(${pages})`)
+  return before - pragmaValue(db, 'freelist_count')
 }
 
 const MAPPING_KEYS = Object.freeze(['kind', 'sourceId', 'recordId', 'id'])
@@ -1047,30 +1069,40 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
       })
     },
     /**
-     * Retention (design 3B §4.6): receipts are kept for RETENTION.receipts.days and at least the
-     * newest RETENTION.receipts.count, op_log likewise; a row goes only when both limits are
-     * passed. Each step deletes at most `batchSize` rows per table in its own ordinary write
-     * transaction; like commit it takes no lease and checks the library lock before each step
+     * Retention (RETENTION: receipts by the rule that keeps more, op_log by the rule that keeps
+     * fewer). Each step deletes at most `batchSize` rows per table in its own ordinary write
+     * transaction; then the freed pages go back to the file system with `incremental_vacuum`, at
+     * most `vacuumPages` per write transaction (design 3B v1.1 §16.2-5). At most `maxSteps`
+     * pruning steps and `maxSteps` vacuum steps per call; `done` is false while either has work
+     * left. Like commit it takes no lease and checks the library lock before each step
      * (`leaseToken` when the caller holds it). `retention` overrides the defaults (tests).
+     * Resolves { receipts, opLog, steps, vacuumSteps, freedPages, done }.
      */
-    async pruneLogs({ now, batchSize = 500, maxSteps = 100, retention = RETENTION, leaseToken } = {}) {
+    async pruneLogs({ now, batchSize = 500, maxSteps = 100, vacuumPages = VACUUM_PAGES, retention = RETENTION, leaseToken } = {}) {
       writer()
       writeOptions({ leaseToken })
       core(() => utcTimestamp(now, 'now'))
       const limits = validRetention(retention)
-      if (!Number.isSafeInteger(batchSize) || batchSize < 1) fail('E_STORE_OPTIONS', { path: 'batchSize' })
-      if (!Number.isSafeInteger(maxSteps) || maxSteps < 1) fail('E_STORE_OPTIONS', { path: 'maxSteps' })
+      for (const [name, value] of Object.entries({ batchSize, maxSteps, vacuumPages })) {
+        if (!Number.isSafeInteger(value) || value < 1) fail('E_STORE_OPTIONS', { path: name })
+      }
       const cutoffs = { receipts: cutoff(now, limits.receipts.days), opLog: cutoff(now, limits.opLog.days) }
       return enqueue(() => {
-        let receipts = 0, opLog = 0, steps = 0, done = false
-        while (!done && steps < maxSteps) {
+        let receipts = 0, opLog = 0, steps = 0, pruned = false
+        while (!pruned && steps < maxSteps) {
           steps++
           const removed = smallWrite((connection) => pruneStep(connection, cutoffs, limits, batchSize), leaseToken)
           receipts += removed.receipts
           opLog += removed.opLog
-          done = removed.receipts < batchSize && removed.opLog < batchSize
+          pruned = removed.receipts < batchSize && removed.opLog < batchSize
         }
-        return Object.freeze({ receipts, opLog, steps, done })
+        let vacuumSteps = 0, freedPages = 0, vacuumed = false
+        while (!vacuumed && vacuumSteps < maxSteps) {
+          const freed = smallWrite((connection) => vacuumStep(connection, vacuumPages), leaseToken)
+          if (freed > 0) { vacuumSteps++; freedPages += freed }
+          vacuumed = freed < vacuumPages
+        }
+        return Object.freeze({ receipts, opLog, steps, vacuumSteps, freedPages, done: pruned && vacuumed })
       })
     },
     /** id_map lookup for 3C-1b's identity manifest: the formal id, or undefined. */
