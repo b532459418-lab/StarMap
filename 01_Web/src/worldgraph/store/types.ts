@@ -1,6 +1,10 @@
 /** RD-08 G1: versioned, experimental logical store. Not an App persistence API
  * or a published SDK. Registry IDs are open; fact IDs retain RFC-LOC-1 UUIDv7.
  * Core has no filesystem, clock, randomness, Provider, or permission authority.
+ * This is the G1 contract and its reference implementation, not production
+ * storage: applyStoreCommands (commands.ts) validates and copies the whole world
+ * on every call, so it stays off high-frequency write paths. The archived G3
+ * persistence is described in docs/world-store-lab.md.
  */
 import type { LocalizedText } from '../localizedText.ts'
 import type { AnchorPrecision, Visibility } from '../types.ts'

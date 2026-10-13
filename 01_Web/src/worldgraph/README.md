@@ -41,8 +41,13 @@ Run the tests with `npm test` from `01_Web/` (plain `node --test`, no bundler).
 ## Experimental logical store (RD-08 G1)
 
 `store/` adds a versioned **experimental** Entity / Layer / LayerEntry contract
-alongside the existing V0.4 graph. The App still uses the V2 adapters and original
+alongside the existing V0.4 graph. It is the RD-08 G1 contract and reference
+implementation, **not production storage**. The App still uses the V2 adapters and original
 two-layer queries. This is not a storage migration, a stable SDK, or a custom-layer UI.
+`applyStoreCommands` validates and copies the whole world on every call, so it
+defines the semantics but does not belong on a high-frequency write path. The
+experimental G3 persistence built on this contract is archived; see
+[docs/world-store-lab.md](../../../docs/world-store-lab.md).
 
 | File | Responsibility |
 | --- | --- |
@@ -190,62 +195,12 @@ writer. File bytes, media resolution, persistence, authorization, and any
 planned-to-visited write transition remain host responsibilities for later
 phases. Core must not import that bridge or the Canonical domain types.
 
-RD-08 G3's Node-only persistence foundation is separately implemented in
-`scripts/world-store-repository.mjs`. Its experimental SQLite transaction stores
-the world, G2 allocation ledger, proposals, retired IDs and operation receipt
-together. Repository versions also advance on proposal-only/audit saves;
-Core world revisions advance on fact changes. Commit acknowledgement loss
-requires operation discovery; the repository never automatically retries.
-Core stays pure, and the current App/V2 writer does not use this repository.
-The tests require Node 24 with `node:sqlite` and use temporary synthetic databases
-plus bounded, terminated child workers. Device power-loss, hostile filesystem
-changes, advanced history import and schema upgrades are not
-established by these tests.
-
-G3b's isolated `scripts/world-store-backup.mjs` uses SQLite `VACUUM INTO` for a
-consistent database snapshot, then validates and seals a new directory. Restore
-copies a verified package into another new directory, preserving facts, allocation
-identities, proposal states, retired IDs and all operation receipts. It never
-overwrites an existing destination. Completion/discovery helpers reject partial
-or corrupt packages. A restore marker describes the initial restored snapshot;
-later application writes legitimately invalidate that snapshot checksum. These
-packages contain database metadata and asset references, not external media,
-V2 files or configuration. The current library-backup CLI retains its V2/media
-scope. This prototype trusts caller-owned directories and has no App endpoint,
-schema migration, cryptographic authenticity or device power-loss guarantee.
-
-G3b history intake now has a read-only preflight in
-`scripts/world-store-history-preview.mjs`. It binds a validated backup to a
-host-supplied source label and exact byte digest, compares record/identity/
-proposal/retired-ID conflicts, and checks the merged semantics for fresh-only
-input. Every report has `executable: false` and no commands. Refresh validation
-binds the full target state, package and entire report; it does not hold a write
-lock. Foreign receipts stay in their original backup package. Existing receipts
-store commit summaries and request hashes, not every prior value or request body;
-therefore this evidence is a validated current snapshot, not a complete edit log.
-Stable repository identity, foreign archives, persisted import decisions and
-schema upgrades remain later work. No App, repository writes or schema changes
-are introduced by this preflight.
-
-The separate experimental v2 host now uses SQLite storage version 3 while
-retaining logical envelope version 2. Baseline, current state and compact
-request/receipt history have separate tables and commit atomically. Opening a
-file or observing another connection's change validates the complete semantic
-history; normal same-connection `state()` reads use immutable verified state.
-`snapshot()` explicitly materializes full historical states for export/review,
-so large history exports and first-open replay still have linear cost. Old
-storage-version-2 files remain readable with `readOnly: true`; writing them
-requires explicit creation of a new file from the validated snapshot. No
-existing database is silently migrated. This host has no App endpoint or
-external-media backup contract.
-
-New AI-origin facts must come through proposal acceptance, and repository
-validation binds their source/record identity to the approved commands. Later
-ordinary edits to that approved identity remain allowed. Upgrade artifact
-sealing holds a consistent SQLite source read snapshot through completion;
-competing writers may need operation discovery after a refused commit.
-Sealing supports the repository's default DELETE journal mode; WAL sources are
-refused before target creation because WAL read locks do not exclude commits.
+RD-08 G3, the experimental Node-only SQLite persistence for this store
+(writable branches, merges, Saved backup and restore, host authorization, a
+read-only App projection and a development preview mode), was archived on
+2026-10-12 and is no longer on `main`.
+[docs/world-store-lab.md](../../../docs/world-store-lab.md) says where to find
+it, why it was archived and which parts are worth reusing.
 
 - React components, hooks, CSS, browser storage, or anything that touches
   `window`. Example: `src/data/layerVisibility.ts` reads `localStorage`, so it
