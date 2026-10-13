@@ -9,6 +9,7 @@ import { placeChoiceKey, placeChoiceStateOf, type PlaceChoiceState } from '../da
 import type { CitySearchOption, CountrySearchOption, LocalWantToGoInput } from '../data/localEditorApi'
 import { LocationSearchField } from './LocationSearchField'
 import { PlaceChoiceList } from './PlaceChoiceList'
+import { useDialogFocus } from './useDialogFocus'
 
 type WantToGoAddDialogProps = {
   open: boolean
@@ -36,6 +37,7 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
   const titleId = useId()
   const disabledCityInputId = useId()
   const formRef = useRef<HTMLFormElement>(null)
+  const { dialogRef, trapFocus } = useDialogFocus<HTMLElement>()
   const [kind, setKind] = useState<PlaceKind>('city')
   const [countryOption, setCountryOption] = useState<CountrySearchOption>()
   const [cityOption, setCityOption] = useState<CitySearchOption>()
@@ -171,7 +173,7 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
         if (event.target === event.currentTarget && !busy) onClose()
       }}
     >
-      <section className="atlas-wtg-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <section ref={dialogRef} className="atlas-wtg-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={trapFocus}>
         <header className="atlas-wtg-dialog-header">
           <div>
             <p>{t('editor:wantToGo')}</p>

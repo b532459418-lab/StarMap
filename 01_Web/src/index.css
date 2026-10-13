@@ -6818,6 +6818,11 @@ button {
   color: #f8fafc;
 }
 
+/* A dialog element takes focus only as the fallback when it opens (useDialogFocus); focus rings belong to its controls. */
+:is(.atlas-wtg-dialog, .city-photo-gallery-modal, .drone-panorama-modal):focus {
+  outline: none;
+}
+
 .atlas-wtg-dialog-header {
   display: flex;
   align-items: flex-start;

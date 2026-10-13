@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 // Only `version`: a named JSON import lets the bundler drop the rest of package.json (scripts, dependencies) from the
 // public bundle, so editing npm scripts no longer changes the bundle hash (batch 5A P6).
 import { version as packageVersion } from '../../package.json'
+import { copyUpdateText, readUpdateStorage, writeUpdateStorage } from './releaseUpdateStorage.ts'
 
 export type GitHubRelease = {
   body: string | null
@@ -13,6 +14,7 @@ export type GitHubRelease = {
 }
 
 type UpdateStatus = 'idle' | 'checking' | 'current' | 'available' | 'unconfigured' | 'error'
+type CopyResult = 'idle' | 'copied' | 'failed'
 
 type UpdateCache = {
   checkedAt: number
@@ -50,7 +52,7 @@ export function useReleaseUpdates() {
   const { t } = useTranslation('appShell')
   const [status, setStatus] = useState<UpdateStatus>(repositoryConfigured ? 'idle' : 'unconfigured')
   const [release, setRelease] = useState<GitHubRelease>()
-  const [copied, setCopied] = useState(false)
+  const [copyResult, setCopyResult] = useState<CopyResult>('idle')
   const [messageKey, setMessageKey] = useState('')
   const [hasUnseenUpdate, setHasUnseenUpdate] = useState(false)
 
@@ -78,13 +80,13 @@ export function useReleaseUpdates() {
       setStatus(available ? 'available' : 'current')
       setMessageKey('')
       setHasUnseenUpdate(
-        available && window.localStorage.getItem(dismissedKey) !== latestRelease.tag_name,
+        available && readUpdateStorage(dismissedKey) !== latestRelease.tag_name,
       )
     }
 
     try {
       if (!force) {
-        const cachedValue = window.localStorage.getItem(cacheKey)
+        const cachedValue = readUpdateStorage(cacheKey)
         if (cachedValue) {
           const cached = JSON.parse(cachedValue) as UpdateCache
           if (Date.now() - cached.checkedAt < checkIntervalMs) {
@@ -101,7 +103,7 @@ export function useReleaseUpdates() {
       })
 
       if (response.status === 404) {
-        window.localStorage.setItem(cacheKey, JSON.stringify({
+        writeUpdateStorage(cacheKey, JSON.stringify({
           checkedAt: Date.now(),
           release: null,
         } satisfies UpdateCache))
@@ -111,7 +113,7 @@ export function useReleaseUpdates() {
       if (!response.ok) throw new Error(`GitHub release request failed: ${response.status}`)
 
       const latestRelease = await response.json() as GitHubRelease
-      window.localStorage.setItem(cacheKey, JSON.stringify({
+      writeUpdateStorage(cacheKey, JSON.stringify({
         checkedAt: Date.now(),
         release: latestRelease,
       } satisfies UpdateCache))
@@ -133,20 +135,21 @@ export function useReleaseUpdates() {
   const markSeen = () => {
     setHasUnseenUpdate(false)
     if (release && status === 'available') {
-      window.localStorage.setItem(`travel-atlas:update:${repository}:dismissed`, release.tag_name)
+      writeUpdateStorage(`travel-atlas:update:${repository}:dismissed`, release.tag_name)
     }
   }
 
   const copyUpdatePrompt = async () => {
     if (!release) return
-    await navigator.clipboard.writeText(t('updatePrompt', { version: release.tag_name, url: release.html_url }))
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1800)
+    const copied = await copyUpdateText(t('updatePrompt', { version: release.tag_name, url: release.html_url }))
+    setCopyResult(copied ? 'copied' : 'failed')
+    window.setTimeout(() => setCopyResult('idle'), 1800)
   }
 
   return {
     checkForUpdates,
-    copied,
+    copied: copyResult === 'copied',
+    copyFailed: copyResult === 'failed',
     copyUpdatePrompt,
     currentVersion,
     hasUnseenUpdate,

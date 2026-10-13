@@ -78,6 +78,7 @@ export function CountrySelector({
   const selectedCountry = selectedCountryId ? countries.find((country) => country.id === selectedCountryId) : undefined
   const committedDistanceRef = useRef(globeDistance)
   const hasDraftDistanceChangeRef = useRef(false)
+  const globeScaleInputRef = useRef<HTMLInputElement>(null)
   const [isImageTuningOpen, setIsImageTuningOpen] = useState(false)
   const [isGlobeScaleOpen, setIsGlobeScaleOpen] = useState(true)
   const defaultCountryIds = (travelAtlasEditorState.countryOrder.length > 0
@@ -245,6 +246,9 @@ export function CountrySelector({
   useEffect(() => {
     committedDistanceRef.current = globeDistance
     hasDraftDistanceChangeRef.current = false
+    // The slider stays uncontrolled and mounted: an outside change (reset view, choosing a place) moves its thumb here.
+    // Rebuilding it for every new value (key={globeDistance}) dropped keyboard focus after each committed arrow key.
+    if (globeScaleInputRef.current) globeScaleInputRef.current.value = String(globeDistance)
   }, [globeDistance])
 
   const commitGlobeDistance = (distance: number) => {
@@ -637,8 +641,8 @@ export function CountrySelector({
             <input
               aria-label={t('details:globeScaleAria')}
               className="atlas-slider w-full"
+              ref={globeScaleInputRef}
               defaultValue={globeDistance}
-              key={globeDistance}
               max="3.25"
               min="1"
               step="0.05"

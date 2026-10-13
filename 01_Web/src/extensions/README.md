@@ -30,6 +30,7 @@ Key 会出现在浏览器的网络请求里，这是 Map Tiles API 的固有特�
 
 - 谷歌影像或注记创建失败时会输出 `console.warn` 并说明排查方向，不再静默降级；该图源会从缓存中移除，下次切换时重试。
 - 开启城市 3D 时会隐藏 Cesium 地球底图。Photorealistic 3D Tiles 自带全球地形与地表，隐藏底图可避免地形穿插与闪烁。
+- 城市 3D 开着时，3D 瓦片集一直保持挂载：切到旅程、收藏等页面只把它隐藏（`show`），回到地图不会重建，也就不会开新的 Google 计费会话；关掉城市 3D 才会卸载。判断在 `city3dPreference.ts` 的 `city3DTilesPresence`。
 - 图源 provider 按图源缓存复用，来回切换不会重复创建 Google session。地名/路网开关只切换 ImageryLayer 的显示，不新建 session。
 
 ## 与核心文件的接缝

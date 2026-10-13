@@ -7,7 +7,10 @@ import {
 const emptySnapshot = Object.freeze({ target: undefined, writes: 0 })
 const serverSnapshot = () => emptySnapshot
 
-/** Observe the shared editor lease without changing it or issuing a request. */
+/**
+ * Observe the shared editor lease without changing it or issuing a request. `reloadRequired` is the page-wide state set
+ * after a write with an unconfirmed result: every write on the page is refused until a reload.
+ */
 export function useLocalEditorCoordination(target?: string) {
   const snapshot = useSyncExternalStore(
     subscribeLocalEditorCoordination,
@@ -21,5 +24,6 @@ export function useLocalEditorCoordination(target?: string) {
     mediaPending: snapshot.target !== undefined,
     otherPending,
     otherWriting,
+    reloadRequired: snapshot.reloadRequired === true,
   }
 }

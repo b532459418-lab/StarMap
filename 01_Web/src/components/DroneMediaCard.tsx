@@ -20,6 +20,7 @@ import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { useMediaJobs } from './useMediaJobs'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 import { useFlipLayout } from './useFlipLayout'
+import { activateOnKey } from './keyboardActivation.ts'
 
 type DroneMediaCardProps = {
   cityId?: CityId
@@ -472,6 +473,14 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
             {displayedItems.map((item, index) => {
               if (!item) return null
               const itemNumber = String(index + 1).padStart(2, '0')
+              // Mouse and keyboard run the same handlers on the card and its hide tool.
+              const selectItem = () => {
+                if (!editing) onSelectItem(item)
+              }
+              const hideItem = () => {
+                setDraftItemIds((current) => current.filter((id) => id !== item.id))
+                setDraftHiddenIds((current) => [...new Set([...current, item.id])])
+              }
               return (
                 <article
                   key={item.id}
@@ -500,16 +509,11 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                     })
                   }}
                   onDragEnd={() => setDraggedItemId(undefined)}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    if (!editing) onSelectItem(item)
-                  }}
+                  onClick={(event) => { event.stopPropagation(); selectItem() }}
                   onKeyDown={(event) => {
-                    if (!editing && (event.key === 'Enter' || event.key === ' ')) {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      onSelectItem(item)
-                    }
+                    // Only keys pressed on the card itself: its View button handles its own Enter and Space.
+                    if (event.target !== event.currentTarget || editing) return
+                    if (activateOnKey(event, selectItem)) event.stopPropagation()
                   }}
                   className="drone-media-item-card drone-media-item-card-thumbnail rounded-xl border border-white/65 bg-white/52 p-2 shadow-[0_8px_18px_rgba(15,23,42,0.07)]"
                 >
@@ -536,10 +540,8 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                         tabIndex={0}
                         aria-label={t('hide')}
                         title={t('hideTitle')}
-                        onClick={() => {
-                          setDraftItemIds((current) => current.filter((id) => id !== item.id))
-                          setDraftHiddenIds((current) => [...new Set([...current, item.id])])
-                        }}
+                        onClick={hideItem}
+                        onKeyDown={(event) => activateOnKey(event, hideItem)}
                       ><X /></span>
                     </span>
                   ) : (

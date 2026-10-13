@@ -21,6 +21,21 @@ export const resolveInitialCity3DEnabled = (
   readStoredPreference: () => boolean = getInitialCity3DEnabled,
 ): boolean => googleConfigured && readStoredPreference()
 
+/**
+ * Whether the Google Photorealistic 3D Tiles are mounted and shown. They stay mounted while City 3D is on and a key is
+ * configured; leaving the Map page only hides them through the tileset's `show`. Unmounting destroys the tileset, and
+ * creating it again opens a new billed Google session, so a page change must never remount it. Turning City 3D off
+ * still unmounts it.
+ */
+export const city3DTilesPresence = (
+  city3DEnabled: boolean,
+  googleConfigured: boolean,
+  onMapPage: boolean,
+): { mounted: boolean; show: boolean } => {
+  const mounted = city3DEnabled && googleConfigured
+  return { mounted, show: mounted && onMapPage }
+}
+
 export const rememberCity3DEnabled = (enabled: boolean) => {
   if (typeof window === 'undefined') return
 
