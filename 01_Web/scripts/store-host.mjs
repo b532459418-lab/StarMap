@@ -316,7 +316,11 @@ function transactionReader(db) {
   return { reader, close: () => { open = false } }
 }
 
-/** Every row, tombstone and the revision as a FormalState value (not yet validated). */
+/**
+ * Every row, tombstone and the revision as a FormalState value: plain, unfrozen objects decoded
+ * from SQL (rows ordered by id, tombstones by table and id), not validated. readFormalState
+ * validates and freezes it; readRowsUnchecked returns it as it is.
+ */
 function formalStateValue(db) {
   const sql = statements(db)
   const value = {
@@ -973,11 +977,22 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
       })
     },
     /**
-     * Every row as a FormalState, through Core's full validation (readFormalState). For
-     * projections, export and tests; the write path never calls it.
+     * Every row as a FormalState, through Core's full validation (readFormalState) and deep
+     * frozen. For migration, restore, export, the check command and tests; neither the write path
+     * nor the start-up read model calls it.
      */
     readFormalState() {
       return readTransaction((connection) => core(() => readFormalStateCore(formalStateValue(connection), settings.policy)))
+    },
+    /**
+     * Every row, tombstone and the revision in one read transaction, as a plain object shaped like
+     * FormalState, WITHOUT any validation (design 3B v1.1 §16.2-4): each row was checked by the
+     * planner before it was committed, so the start-up read model decodes the rows straight from
+     * SQL. No readFormalState, validateJson or freezeCopy, and nothing is frozen: callers (the
+     * projections) must not modify the result. Same rows and order as readFormalState().
+     */
+    readRowsUnchecked() {
+      return readTransaction((connection) => formalStateValue(connection))
     },
     /**
      * Full consistency check (recovery, the check command, tests): quick_check plus Core's full

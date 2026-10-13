@@ -308,6 +308,7 @@ test('SqliteStoreReader answers every StoreReader method like memoryReader on ra
     const { handle } = await storeWithState(t, root, `state-${sequence}`, state)
     calls += handle.read((reader) => assertSameReader(reader, memoryReader(state), state, `sequence ${sequence}`))
     assert.equal(normalized(handle.readFormalState()), normalized(state), `sequence ${sequence}: readFormalState`)
+    assert.equal(jsonKey(handle.readRowsUnchecked()), jsonKey(handle.readFormalState()), `sequence ${sequence}: readRowsUnchecked`)
     assert.deepEqual(handle.check(), { ok: true, problems: [] })
     rows += FORMAL_TABLES.reduce((sum, table) => sum + state[table].length, 0)
     tombstones += state.tombstones.length
@@ -315,6 +316,32 @@ test('SqliteStoreReader answers every StoreReader method like memoryReader on ra
   }
   t.diagnostic(`16 random states, ${rows} rows, ${tombstones} tombstones, ${calls} reader calls compared`)
   assert.ok(tombstones > 0, 'the random states include deletions')
+})
+
+test('readRowsUnchecked: the same rows as readFormalState, decoded straight from SQL, neither validated nor frozen', async (t) => {
+  const root = await tempRoot(t)
+  let rows = 0
+  for (let sequence = 0; sequence < 12; sequence++) {
+    const state = randomState(100 + sequence, 8)
+    const { handle } = await storeWithState(t, root, `unchecked-${sequence}`, state)
+    const unchecked = handle.readRowsUnchecked()
+    assert.deepEqual(Object.keys(unchecked).sort(), ['revision', 'tombstones', ...FORMAL_TABLES].sort(), 'shaped like FormalState')
+    assert.equal(jsonKey(unchecked), jsonKey(handle.readFormalState()), `sequence ${sequence}`)
+    assert.equal(normalized(unchecked), normalized(state), `sequence ${sequence}: the state that was loaded`)
+    rows += FORMAL_TABLES.reduce((sum, table) => sum + unchecked[table].length, 0)
+    await handle.close()
+  }
+  t.diagnostic(`12 random states, ${rows} rows read both ways`)
+  // Not frozen, and not validated: a row that breaks a Core rule is returned as stored, while readFormalState refuses.
+  const state = startState()
+  const { file, handle } = await storeWithState(t, root, 'unvalidated', state)
+  await handle.close()
+  rawEdit(file, `UPDATE entities SET body = json_set(body, '$.fields.related', 'missing-entity') WHERE id = '${state.entities[0].id}'`)
+  const opened = track(t, openStore(file, { lock: withoutLibraryLock }))
+  const unchecked = opened.readRowsUnchecked()
+  assert.equal(Object.isFrozen(unchecked) || Object.isFrozen(unchecked.entities) || Object.isFrozen(unchecked.entities[0]), false)
+  assert.equal(unchecked.entities.find((row) => row.id === state.entities[0].id).fields.related, 'missing-entity')
+  rejectsWith(() => opened.readFormalState(), 'E_REFERENCE')
 })
 
 test('the reader lives only inside its read transaction; reads stay synchronous', async (t) => {
@@ -427,6 +454,7 @@ test('commit executes change sets exactly like the reference applyChangeSet on r
         commits++
       }
       assert.equal(normalized(handle.readFormalState()), normalized(state), label)
+      assert.equal(jsonKey(handle.readRowsUnchecked()), jsonKey(handle.readFormalState()), `${label}: readRowsUnchecked`)
       const key = expected.code ?? 'committed'
       outcomes.set(key, (outcomes.get(key) ?? 0) + 1)
     }
