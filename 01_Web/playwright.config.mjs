@@ -12,6 +12,9 @@ const serverEnv = { STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_C
 export default defineConfig({
   testDir: './tests/browser',
   testMatch: performance ? '**/*.perf.mjs' : publicSmoke ? '**/*.smoke.mjs' : '**/*.spec.mjs',
+  // Dev-server groups warm Vite once before their first case (see the file). The public smoke uses vite preview, and
+  // the performance baseline keeps measuring the unwarmed first load it has always recorded.
+  ...(performance || publicSmoke ? {} : { globalSetup: './tests/browser/dev-server-warmup.mjs' }),
   workers: 1,
   fullyParallel: false,
   // A committed test.only would silently skip the rest of a CI group.

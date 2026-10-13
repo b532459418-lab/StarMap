@@ -31,6 +31,7 @@ test('the default run uses *.spec.mjs against the personal dev server', async ()
   assert.equal(config.testMatch, '**/*.spec.mjs')
   assert.equal(config.webServer.command, 'npm run dev:personal')
   assert.equal(config.webServer.reuseExistingServer, false)
+  assert.equal(config.globalSetup, './tests/browser/dev-server-warmup.mjs')
 })
 
 test('--public-smoke uses only *.smoke.mjs against vite preview of the public build on port 5173', async () => {
@@ -39,12 +40,14 @@ test('--public-smoke uses only *.smoke.mjs against vite preview of the public bu
   assert.equal(config.webServer.command, 'npm run preview -- --mode public --host 127.0.0.1 --port 5173 --strictPort')
   assert.equal(config.webServer.url, 'http://127.0.0.1:5173')
   assert.equal(config.webServer.reuseExistingServer, false)
+  assert.equal(config.globalSetup, undefined, 'vite preview needs no dev-server warm-up')
 })
 
 test('the performance baseline keeps its own files and the dev server', async () => {
   const config = await configWith({ STARMAP_BROWSER_PERFORMANCE: '1' })
   assert.equal(config.testMatch, '**/*.perf.mjs')
   assert.equal(config.webServer.command, 'npm run dev:personal')
+  assert.equal(config.globalSetup, undefined, 'the baseline keeps measuring an unwarmed first load')
 })
 
 test('a committed test.only fails only under CI', async () => {
@@ -52,8 +55,8 @@ test('a committed test.only fails only under CI', async () => {
   assert.equal((await configWith({ CI: 'true' })).forbidOnly, true)
 })
 
-test('every browser test file belongs to exactly one runner mode, and the smoke file is not a spec', async () => {
-  const files = (await readdir(new URL('../tests/browser/', import.meta.url))).filter((name) => name !== 'helpers.mjs')
+test('every browser test file belongs to exactly one runner mode, and the smoke and warm-up files are not specs', async () => {
+  const files = (await readdir(new URL('../tests/browser/', import.meta.url))).filter((name) => !['helpers.mjs', 'dev-server-warmup.mjs'].includes(name))
   for (const name of files) {
     const modes = ['.spec.mjs', '.smoke.mjs', '.perf.mjs'].filter((suffix) => name.endsWith(suffix))
     assert.equal(modes.length, 1, name)
