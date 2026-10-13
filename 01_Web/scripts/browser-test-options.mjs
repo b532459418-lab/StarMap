@@ -14,6 +14,8 @@ const GROUP_ARGS = Object.freeze({
   '--critical-flows': Object.freeze(['critical-flows.spec.mjs']),
   '--media-recovery': Object.freeze(['media-recovery.spec.mjs']),
   '--media-lifecycle': Object.freeze(['media-recovery.spec.mjs', '--grep', 'lost responses, storage loss']),
+  // The built public bundle through `vite preview`; the config then matches only *.smoke.mjs.
+  '--public-smoke': Object.freeze([]),
 })
 
 export const BROWSER_TEST_GROUPS = Object.freeze(Object.keys(GROUP_ARGS))

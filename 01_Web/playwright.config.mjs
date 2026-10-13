@@ -5,9 +5,13 @@ import os from 'node:os'
 const root = process.env.STARMAP_BROWSER_TEST_ROOT
 if (!root || path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('starmap-browser-')) throw new Error('Use npm run test:browser or npm run perf:browser to create isolated data.')
 const performance = process.env.STARMAP_BROWSER_PERFORMANCE === '1'
+// `--public-smoke` checks the built public bundle (dist/) through `vite preview`, never the dev server. Its cases
+// live in *.smoke.mjs, so the default run (*.spec.mjs against the dev server) never picks them up.
+const publicSmoke = process.env.STARMAP_BROWSER_PUBLIC_SMOKE === '1'
+const serverEnv = { STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '' }
 export default defineConfig({
   testDir: './tests/browser',
-  testMatch: performance ? '**/*.perf.mjs' : '**/*.spec.mjs',
+  testMatch: performance ? '**/*.perf.mjs' : publicSmoke ? '**/*.smoke.mjs' : '**/*.spec.mjs',
   workers: 1,
   fullyParallel: false,
   // A committed test.only would silently skip the rest of a CI group.
@@ -31,10 +35,10 @@ export default defineConfig({
     launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
   },
   webServer: {
-    command: 'npm run dev:personal',
+    command: publicSmoke ? 'npm run preview -- --mode public --host 127.0.0.1 --port 5173 --strictPort' : 'npm run dev:personal',
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: false,
     timeout: 60000,
-    env: { STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '' },
+    env: serverEnv,
   },
 })

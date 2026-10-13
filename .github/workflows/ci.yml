@@ -111,17 +111,79 @@ jobs:
           retention-days: 7
           include-hidden-files: false
 
+  public-smoke:
+    name: Public build smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: 01_Web
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: 01_Web/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build the public bundle
+        run: npm run build:public
+
+      # These markers exist only in server-side code: the private-root variable, the
+      # default private directory and the media task store. The editor client's own
+      # request paths still ship until the editing components are lazy-loaded (5B),
+      # so the endpoint itself is checked at runtime by the smoke cases below.
+      - name: Refuse server-only code in the public bundle
+        run: |
+          found=0
+          for marker in STARMAP_PRIVATE_ROOT 06_private operations/media-import; do
+            if grep -rlF --include='*.js' -e "$marker" dist; then
+              echo "::error::The public bundle contains the server-only marker $marker"
+              found=1
+            fi
+          done
+          exit "$found"
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Serves dist/ through vite preview on port 5173; the dev server is not used.
+      - name: Smoke-test the public preview
+        run: npm run test:browser -- --public-smoke
+
+      - name: Preserve failed smoke evidence
+        if: failure() && !cancelled()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: public-smoke-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            01_Web/test-results/browser/
+            01_Web/playwright-report/browser/
+          if-no-files-found: ignore
+          retention-days: 7
+          include-hidden-files: false
+
   public-checks:
     name: Public checks
-    needs: [source-checks, browser-checks]
+    needs: [source-checks, browser-checks, public-smoke]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every source and browser check to succeed
+      - name: Require every source, browser and public smoke check to succeed
         env:
           SOURCE_RESULT: ${{ needs['source-checks'].result }}
           BROWSER_RESULT: ${{ needs['browser-checks'].result }}
+          SMOKE_RESULT: ${{ needs['public-smoke'].result }}
         run: |
           test "$SOURCE_RESULT" = success
           test "$BROWSER_RESULT" = success
+          test "$SMOKE_RESULT" = success

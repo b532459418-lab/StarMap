@@ -8,13 +8,15 @@ test('without options every spec case runs and nothing is passed to Playwright',
 })
 
 test('each group keeps its existing Playwright selection', () => {
-  assert.deepEqual(BROWSER_TEST_GROUPS, ['--performance', '--time-filters', '--critical-flows', '--media-recovery', '--media-lifecycle'])
+  assert.deepEqual(BROWSER_TEST_GROUPS, ['--performance', '--time-filters', '--critical-flows', '--media-recovery', '--media-lifecycle', '--public-smoke'])
   const expected = {
     '--performance': [],
     '--time-filters': ['time-filter'],
     '--critical-flows': ['critical-flows.spec.mjs'],
     '--media-recovery': ['media-recovery.spec.mjs'],
     '--media-lifecycle': ['media-recovery.spec.mjs', '--grep', 'lost responses, storage loss'],
+    // The config selects *.smoke.mjs for this group (see playwright-config.test.mjs).
+    '--public-smoke': [],
   }
   for (const group of BROWSER_TEST_GROUPS) {
     assert.deepEqual(parseBrowserTestArgs([group]), { group, shard: null, playwrightArgs: expected[group] }, group)
