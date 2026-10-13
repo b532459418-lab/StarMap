@@ -6,6 +6,9 @@
  *   新库模式（`data/store/world.sqlite` 存在）：quick_check 加 Core 的全量校验（store-host.mjs 的 checkStoreFile）；
  *   V2 模式：五个 V2 文件过 `validateV2Files`，再查悬空的地点引用（`integrityProblems`，缺的文件按空处理）。
  *   通过后推进一次 generation，再删除锁；不通过就保留锁，并列出问题。
+ * - `--confirm --rebind`（3C-2b，设计 3B v1.1 §16.3）：私人根被移动过、同时又留着残留锁时，锁或库操作记录绑定的是旧路径，
+ *   单用 `--confirm` 会拒绝，而 `library:rebind` 遇到锁也拒绝。加上 `--rebind`，先做与 `--confirm` 相同的数据检查，
+ *   通过后把库操作记录与媒体待办身份重新绑定到当前私人根（同 library:rebind），再删除锁。
  * - 绝不按锁存在的时长或 PID 自动清理。退出码同 library:rebind：0 完成、不需要处理或只是预览；1 拒绝。
  *
  * 新库模式只在 3C-3 之后出现；本批只按正式路径判断模式，不接入私人根的读写。
@@ -45,9 +48,9 @@ export async function checkLibraryData(privatePaths, { policy } = {}) {
 const MODE_LABELS = Object.freeze({ store: '新库（data/store/world.sqlite）', v2: 'V2（data/v2/）' })
 
 /** `npm run library:recover`: see recoverLibraryOperation (library-operation-lock.mjs). Returns the exit code. */
-export function recoverLibrary(privatePaths, { confirm = false, policy, log, logError } = {}) {
+export function recoverLibrary(privatePaths, { confirm = false, rebind = false, policy, log, logError } = {}) {
   return recoverLibraryOperation(privatePaths, {
-    confirm, log, logError,
+    confirm, rebind, log, logError,
     modeLabel: MODE_LABELS[libraryMode(privatePaths)],
     checkData: () => checkLibraryData(privatePaths, { policy }),
   })
@@ -55,7 +58,7 @@ export function recoverLibrary(privatePaths, { confirm = false, policy, log, log
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
-    process.exitCode = await recoverLibrary(getPrivatePaths(), { confirm: process.argv.includes('--confirm') })
+    process.exitCode = await recoverLibrary(getPrivatePaths(), { confirm: process.argv.includes('--confirm'), rebind: process.argv.includes('--rebind') })
   } catch (error) {
     console.error(error)
     process.exitCode = 1

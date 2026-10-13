@@ -230,9 +230,13 @@ export async function rebindLibraryRoot(privatePaths, { confirm = false, log = c
  * the lock's creation time and the root bindings, and changes nothing. With `confirm` it runs `checkData` (the caller's
  * data check for the library's mode); only when that reports no problems does it advance the generation and then remove
  * exactly the lock it inspected. Otherwise the lock stays and the problems are printed.
+ *
+ * A lock or generation record bound to another root path (the private root was moved while a lock was left behind) is
+ * refused, unless `rebind` (`--confirm --rebind`, 3C-2b, design 3B v1.1 §16.3): after the same data check it rebinds the
+ * generation record and the media task identity to the current root, as library:rebind would, and then removes the lock.
  * Returns an exit code (same as library:rebind): 0 done / nothing to do / dry run, 1 refused.
  */
-export async function recoverLibraryOperation(privatePaths, { confirm = false, checkData, modeLabel, log = console.log, logError = console.error } = {}) {
+export async function recoverLibraryOperation(privatePaths, { confirm = false, rebind = false, checkData, modeLabel, log = console.log, logError = console.error } = {}) {
   let root
   try { root = await realpath(path.resolve(privatePaths.root)) } catch (error) {
     if (!missing(error)) throw error
@@ -269,12 +273,23 @@ export async function recoverLibraryOperation(privatePaths, { confirm = false, c
   log(generation
     ? `库操作记录：generation ${generation.generation}，binding ${generation.rootBinding === rootBinding ? '与当前私人根一致' : `${generation.rootBinding}（与当前私人根不一致）`}`
     : '库操作记录：不存在')
+  const moved = Boolean((record && record.rootBinding !== rootBinding) || (generation && generation.rootBinding !== rootBinding))
+  // The media task identity carries the same binding; only --rebind reads and rewrites it.
+  const identity = moved && rebind ? await readMediaTaskIdentity(root) : null
+  if (identity?.value) log(`媒体待办身份：binding ${identity.value.rootBinding === rootBinding ? '与当前私人根一致' : `${identity.value.rootBinding}（与当前私人根不一致）`}`)
   if (!confirm) {
-    log('\n未加 --confirm，没有修改任何文件。确认持有这个锁的进程已经不在了（编辑器、导入或其他写入已经关闭或崩溃）之后运行：npm run library:recover -- --confirm')
+    log(moved
+      ? '\n未加 --confirm，没有修改任何文件。锁或库操作记录绑定的不是当前私人根（私人根可能被移动、改名或换了盘符）。确认这就是原来的私人库、并且持有这个锁的进程已经不在了之后运行：npm run library:recover -- --confirm --rebind'
+      : '\n未加 --confirm，没有修改任何文件。确认持有这个锁的进程已经不在了（编辑器、导入或其他写入已经关闭或崩溃）之后运行：npm run library:recover -- --confirm')
     return 0
   }
-  if ((record && record.rootBinding !== rootBinding) || (generation && generation.rootBinding !== rootBinding)) {
-    logError('[library:recover] 锁或库操作记录绑定的不是当前私人根（私人根可能被移动过），拒绝执行。锁保留。')
+  if (moved && !rebind) {
+    logError('[library:recover] 锁或库操作记录绑定的不是当前私人根（私人根可能被移动过），拒绝执行。锁保留。'
+      + '如果私人根只是被移动、改名或换了盘符，确认之后运行：npm run library:recover -- --confirm --rebind')
+    return 1
+  }
+  if (identity?.invalid) {
+    logError('[library:recover] 媒体待办身份（operations/media-import/v1/library.json）损坏或不是普通文件，拒绝重新绑定。锁保留。')
     return 1
   }
   log('\n请确认持有这个锁的进程已经不在了：锁不会因为存在时间长、或进程号不存在而被自动清除，--confirm 表示你已经确认。')
@@ -295,9 +310,15 @@ export async function recoverLibraryOperation(privatePaths, { confirm = false, c
     logError('[library:recover] 库操作锁在检查期间发生了变化，拒绝执行。')
     return 1
   }
+  // A new generation bound to the current root: the ordinary advance, and with --rebind also the rebinding.
   await writeGenerationRecord(statePath, rootBinding)
+  if (identity?.value && identity.value.rootBinding !== rootBinding) {
+    await atomicReplace(identity.target, `${JSON.stringify({ ...identity.value, rootBinding }, null, 2)}\n`)
+  }
   await unlink(lockPath)
-  log('已推进库操作记录的 generation，并清除了残留的库操作锁。现在可以正常写入。')
+  log(moved
+    ? '已把库操作记录（以及媒体待办身份）重新绑定到当前私人根、推进了 generation，并清除了残留的库操作锁。现在可以正常写入。'
+    : '已推进库操作记录的 generation，并清除了残留的库操作锁。现在可以正常写入。')
   return 0
 }
 

@@ -3,14 +3,14 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { closeSync, openSync, readFileSync, writeSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { atomicJsonWrite } from './json-file.mjs'
-import { inspectLibraryOperation, withLibraryOperation } from './library-operation-lock.mjs'
+import { inspectLibraryOperation, libraryRootBinding, rebindLibraryRoot, withLibraryOperation } from './library-operation-lock.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { createStore, openStore, storePathFor } from './store-host.mjs'
 import { recoverLibrary } from './store-recover.mjs'
@@ -152,6 +152,45 @@ test('library:recover (V2 mode) keeps the lock when the data check fails or the 
   assert.equal(await exists(lockPath(root)), true)
 })
 
+const identityPath = (base) => path.join(base, 'operations', 'media-import', 'v1', 'library.json')
+
+test('library:recover --confirm --rebind (V2 mode): a root moved while a lock was left behind is rebound after the data check, and writes work again', { timeout: 120_000 }, async (t) => {
+  const { directory, root } = await v2Library(t)
+  await killedAt(directory, { mode: 'lease', root }, 'leased')
+  const oldBinding = libraryRootBinding(await realpath(root))
+  const identity = { schemaVersion: 1, libraryId: '01900000-0000-7000-8000-00000000abcf', rootBinding: oldBinding, createdAt: NOW }
+  await mkdir(path.dirname(identityPath(root)), { recursive: true })
+  await writeFile(identityPath(root), JSON.stringify(identity))
+  const moved = path.join(directory, 'moved')
+  await rename(root, moved)
+  const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: moved })
+  assert.deepEqual(await inspectLibraryOperation(paths), { state: 'needs_review', reason: 'root_binding_mismatch' })
+  const before = await snapshot(moved)
+  // The two tools used to block each other: library:rebind refuses while a lock exists, --confirm alone refuses a moved root.
+  assert.equal(await rebindLibraryRoot(paths, { confirm: true, ...quietly() }), 1)
+  const refused = recoverCli(moved, ['--confirm'])
+  assert.equal(refused.status, 1)
+  assert.match(refused.stderr, /绑定的不是当前私人根.*npm run library:recover -- --confirm --rebind/s)
+  const dry = recoverCli(moved, ['--rebind'])
+  assert.equal(dry.status, 0, dry.stderr)
+  assert.match(dry.stdout, /未加 --confirm，没有修改任何文件。锁或库操作记录绑定的不是当前私人根/)
+  assert.deepEqual(await snapshot(moved), before, 'refusals and the dry run change nothing')
+  const done = recoverCli(moved, ['--confirm', '--rebind'])
+  assert.equal(done.status, 0, done.stdout + done.stderr)
+  for (const expected of ['数据检查通过', '重新绑定到当前私人根']) assert.ok(done.stdout.includes(expected), expected)
+  assert.equal(await exists(lockPath(moved)), false)
+  const newBinding = libraryRootBinding(await realpath(moved))
+  assert.equal((await inspectLibraryOperation(paths)).state, 'idle')
+  assert.equal(JSON.parse(await readFile(path.join(moved, 'operations', 'library-operation-state.json'), 'utf8')).rootBinding, newBinding)
+  assert.deepEqual(JSON.parse(await readFile(identityPath(moved), 'utf8')), { ...identity, rootBinding: newBinding }, 'the media task identity is rebound too')
+  // An ordinary V2 write works again.
+  const state = (await readV2EditorState({ privatePaths: paths })).body.state
+  const written = await withLibraryOperation(paths, () => runV2Write({
+    privatePaths: paths, route: V2_EDITOR_ROUTES['PUT /__travelatlas/editor/state'], input: state, ctx: createV2WriteContext({ countryCatalog: new Map() }),
+  }))
+  assert.equal(written.status, 200, JSON.stringify(written.body))
+})
+
 // ---------------------------------------------------------------------------
 // New-store mode
 // ---------------------------------------------------------------------------
@@ -198,6 +237,25 @@ test('library:recover (new-store mode): a lease holder killed inside its store t
     assert.deepEqual(handle.lookup(edit.requestId), { found: false })
     const committed = await handle.commit(edit)
     assert.deepEqual([committed.status, committed.revision], ['committed', 2])
+  } finally { await handle.close() }
+})
+
+test('library:recover --confirm --rebind (new-store mode): after the store check the moved root is rebound, the lock cleared, and commits work', { timeout: 120_000 }, async (t) => {
+  const { directory, root, seed } = await storeLibrary(t)
+  await killedAt(directory, { mode: 'lease', root }, 'leased')
+  const moved = path.join(directory, 'moved')
+  await rename(root, moved)
+  const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: moved })
+  assert.equal(await recoverLibrary(paths, { confirm: true, ...quietly() }), 1, '--confirm alone refuses the moved root')
+  const output = quietly()
+  assert.equal(await recoverLibrary(paths, { confirm: true, rebind: true, ...output }), 0, output.lines.join('\n'))
+  assert.match(output.lines.join('\n'), /新库（data\/store\/world\.sqlite）[\s\S]*数据检查通过[\s\S]*重新绑定到当前私人根/)
+  assert.equal((await inspectLibraryOperation(paths)).state, 'idle')
+  const handle = openStore(storePathFor(moved), { privatePaths: { root: moved }, now: () => NOW })
+  try {
+    assert.deepEqual(await handle.commit(editRequest(seed)).then((result) => [result.status, result.revision]), ['committed', 2])
+    // A lease-taking operation (creation, recovery, later media and backup) works under the moved root too.
+    assert.equal(await withLibraryOperation(paths, () => 'leased'), 'leased')
   } finally { await handle.close() }
 })
 
