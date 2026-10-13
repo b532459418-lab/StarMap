@@ -1,7 +1,7 @@
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 import { fileSha256 } from './fileSha256.ts'
 import { localEditorCoordination, type LocalEditorCoordination, type MediaImportPermit } from './localEditorCoordination.ts'
-import { readMediaJobs, createMediaJob, receiveMediaJobFile, previewMediaJob, importMediaJob, pauseMediaJob, closeMediaJob, abandonMediaJob, type LocalMediaUpload } from './localEditorApi.ts'
+import type { LocalMediaUpload } from './localEditorApi.ts'
 
 export type MediaJobFile = {
   fileId: string; fileName: string; bytes: number
@@ -128,12 +128,6 @@ export function assertMediaJobPreview(value: unknown): asserts value is MediaJob
     || Object.values(summary.editorEffects.orders).some(table => !record(table) || Object.values(table).some(ids => !strings(ids)))) throw invalid()
 }
 
-const defaultApi: MediaJobsApi = {
-  read: () => readMediaJobs(), create: (intent, permit) => createMediaJob(intent, permit),
-  receive: (...args) => receiveMediaJobFile(...args), preview: (...args) => previewMediaJob(...args),
-  import: (...args) => importMediaJob(...args), pause: (...args) => pauseMediaJob(...args), close: (...args) => closeMediaJob(...args),
-  abandon: (...args) => abandonMediaJob(...args),
-}
 const version = (job: MediaJob): MediaJobVersion => ({libraryId: job.libraryId, revision: job.revision})
 const unfinished = (job: MediaJob) => !isFinishedMediaJob(job)
 const selected = (job: MediaJob) => job.files.filter(file => file.phase === 'received' && file.status === 'pending').map(file => file.fileId).sort()
@@ -144,11 +138,14 @@ const checkContinuation = (before: MediaJob, after: MediaJob) => {
     || before.files.some(file => !after.files.some(next => next.fileId === file.fileId && next.fileName === file.fileName && next.bytes === file.bytes))) throw invalid()
 }
 
-/** Durable facts come only from the server. A failed write is followed by GET, never a replay. */
-export function createMediaJobs({api = defaultApi, coordination = localEditorCoordination,
+/**
+ * Durable facts come only from the server. A failed write is followed by GET, never a replay.
+ * The page's single queue is `mediaJobs` in ./localEditorClient.ts, bound to the gated editor API (batch 5B).
+ */
+export function createMediaJobs({api, coordination = localEditorCoordination,
   hashFile = fileSha256,
   operationId = () => crypto.randomUUID() as string,
-}: {api?: MediaJobsApi; coordination?: LocalEditorCoordination; hashFile?: (file: File) => Promise<string>; operationId?: () => string} = {}) {
+}: {api: MediaJobsApi; coordination?: LocalEditorCoordination; hashFile?: (file: File) => Promise<string>; operationId?: () => string}) {
   let state: MediaJobsSnapshot = Object.freeze({jobs: [], libraryId: null, loading: false, busy: false})
   let readSequence = 0, mutation = false
   let acknowledged: MediaJobPreview | undefined
@@ -312,4 +309,3 @@ export function createMediaJobs({api = defaultApi, coordination = localEditorCoo
     }),
   })
 }
-export const mediaJobs = createMediaJobs()

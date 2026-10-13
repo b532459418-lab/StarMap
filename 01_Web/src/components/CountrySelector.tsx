@@ -7,7 +7,7 @@ import { Check, ChevronDown, Drone, GripVertical, MapPin, Plus, RotateCcw, Setti
 import { withoutListedCountries } from '../data/countrySearchFilter'
 import { hasDroneMedia } from '../data/droneMedia'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
-import { addLocalCountry, deleteHiddenLocalCountries, reloadAfterLocalSave, searchLocalCountries, updateLocalEditorState } from '../data/localEditorApi'
+import { addLocalCountry, deleteHiddenLocalCountries, reloadAfterLocalSave, searchLocalCountries, updateLocalEditorState } from '../data/localEditorClient'
 import { countryDraftUpdater, withoutIds } from '../data/editorStateDelta'
 import type { CountrySearchOption } from '../data/localEditorApi'
 import { countries, getCitiesForCountry, shouldHideCityFromNavigation } from '../data/travelAtlas'
