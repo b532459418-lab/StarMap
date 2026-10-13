@@ -10,15 +10,19 @@
  * The production location is planned as `<private-root>/data/store/world.sqlite`
  * (STORE_RELATIVE_PATH). 3C-2 does not wire the private root: callers pass the file path.
  */
+import { createHash } from 'node:crypto'
 import { closeSync, lstatSync, openSync, realpathSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import {
-  StoreHostError, closeQuietly, openConnection, pragmaValue, scratchConnection, storeErrorFrom, transactionState,
+  StoreHostError, closeQuietly, openConnection, pragmaValue, scratchConnection, sqliteDetail, storeErrorFrom, transactionState,
 } from './store-sqlite.mjs'
 import { FORMAL_TABLES, readFormalState as readFormalStateCore } from '../src/worldgraph/store/formal.ts'
 import { memoryReader, refKey, referencesOf } from '../src/worldgraph/store/reader.ts'
-import { StoreError, utcTimestamp, uuid } from '../src/worldgraph/store/primitives.ts'
+import { planCommands } from '../src/worldgraph/store/planner.ts'
+import {
+  StoreError, freezeCopy, jsonKey, opaqueId, reject, revision, shape, utcTimestamp, uuid, validateJson,
+} from '../src/worldgraph/store/primitives.ts'
 
 export { StoreHostError } from './store-sqlite.mjs'
 
@@ -33,6 +37,16 @@ export const storePathFor = (privateRoot) => path.join(privateRoot, ...STORE_REL
 
 /** Upgrades from an older user_version, keyed by that version. Version 1 is the first. */
 const MIGRATIONS = Object.freeze({})
+
+const fail = (code, details) => { throw new StoreHostError(code, details) }
+const missing = (error) => error?.code === 'ENOENT'
+/** Core validation (StoreError) as a host error with the same code and path. */
+function core(callback, outcome) {
+  try { return callback() } catch (error) {
+    if (error instanceof StoreError) throw new StoreHostError(error.code, { path: error.path, outcome })
+    throw error
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Schema (user_version 1)
@@ -56,6 +70,7 @@ export const ROW_TABLES = Object.freeze({
   reviews: {
     sql: 'reviews',
     columns: [lifted('proposal_id', 'proposalId')],
+    unique: ['proposal_id'],
     // findReviewByProposal
     indexes: ['CREATE UNIQUE INDEX reviews_proposal ON reviews (proposal_id)'],
   },
@@ -63,6 +78,7 @@ export const ROW_TABLES = Object.freeze({
   layers: {
     sql: 'layers',
     columns: [lifted('system_key', 'systemKey', 'TEXT')],
+    unique: ['system_key'],
     // findLayerBySystemKey (NULLs are distinct: layers without a system key never collide)
     indexes: ['CREATE UNIQUE INDEX layers_system_key ON layers (system_key)'],
   },
@@ -75,6 +91,7 @@ export const ROW_TABLES = Object.freeze({
       derived('source_id', (row) => row.source.sourceId, 'sources'),
       derived('record_id', (row) => row.source.recordId),
     ],
+    unique: ['entity_id', 'layer_id', 'source_id', 'record_id'],
     indexes: [
       // findEntryByIdentity: the G1 entry identity key (entity, layer, source, record)
       'CREATE UNIQUE INDEX entries_identity ON entries (entity_id, layer_id, source_id, record_id)',
@@ -105,12 +122,14 @@ export const ROW_TABLES = Object.freeze({
   viewItems: {
     sql: 'view_items',
     columns: [lifted('scope', 'scope'), lifted('item_table', 'itemTable'), lifted('item_id', 'itemId')],
+    unique: ['scope', 'item_table', 'item_id'],
     // findViewItem
     indexes: ['CREATE UNIQUE INDEX view_items_item ON view_items (scope, item_table, item_id)'],
   },
   viewSettings: {
     sql: 'view_settings',
     columns: [lifted('scope', 'scope'), lifted('setting_key', 'key')],
+    unique: ['scope', 'setting_key'],
     // findViewSetting
     indexes: ['CREATE UNIQUE INDEX view_settings_key ON view_settings (scope, setting_key)'],
   },
@@ -230,6 +249,8 @@ function statements(db) {
     proposal: prepare('SELECT id FROM reviews WHERE proposal_id = ?'),
     viewItem: prepare('SELECT id FROM view_items WHERE scope = ? AND item_table = ? AND item_id = ?'),
     viewSetting: prepare('SELECT id FROM view_settings WHERE scope = ? AND setting_key = ?'),
+    receipt: prepare('SELECT request_digest, response FROM receipts WHERE request_id = ?'),
+    idMap: prepare('SELECT id FROM id_map WHERE kind = ? AND source_id = ? AND record_id = ?'),
   }
   statementCache.set(db, cached)
   return cached
@@ -335,20 +356,244 @@ function checkConnection(db, policy) {
 }
 
 // ---------------------------------------------------------------------------
-// Open checks and handles
+// Requests, change-set execution and the three outcomes
 // ---------------------------------------------------------------------------
 
-const fail = (code, details) => { throw new StoreHostError(code, details) }
-const missing = (error) => error?.code === 'ENOENT'
-/** Core validation (StoreError) as a host error with the same code and path. */
-function core(callback, outcome) {
-  try { return callback() } catch (error) {
-    if (error instanceof StoreError) throw new StoreHostError(error.code, { path: error.path, outcome })
-    throw error
+const REQUEST_KEYS = Object.freeze(['requestId', 'baseRevision', 'kind', 'actor', 'commands'])
+/** A receipt lists at most this many affected rows; a larger batch (a migration) keeps its counts only. */
+export const RECEIPT_AFFECTED_LIMIT = 1000
+
+/** Opaque, non-empty request metadata (kind, actor) of bounded length. */
+function requestText(value, pathName, max) {
+  opaqueId(value, pathName)
+  if (value.length > max) reject('E_REQUEST', pathName)
+}
+
+/** Validated, frozen copy of a request (design 3B §4.4). The commands are validated by the planner. */
+function validRequest(request) {
+  return core(() => {
+    validateJson(request, 'request')
+    shape(request, REQUEST_KEYS, REQUEST_KEYS, 'request')
+    uuid(request.requestId, 'request.requestId')
+    revision(request.baseRevision, 'request.baseRevision')
+    requestText(request.kind, 'request.kind', 128)
+    requestText(request.actor, 'request.actor', 256)
+    if (!Array.isArray(request.commands)) reject('E_COMMAND', 'request.commands')
+    return freezeCopy(request)
+  }, 'not_committed')
+}
+
+/** SHA-256 of this request only (kind, baseRevision, actor, commands), canonical JSON (Core jsonKey). Never a store hash. */
+export const requestDigest = (request) => createHash('sha256')
+  .update(jsonKey({ kind: request.kind, baseRevision: request.baseRevision, actor: request.actor, commands: request.commands }))
+  .digest('hex')
+
+/** Host timestamps in one canonical form (milliseconds, Z), so stored times order as strings. */
+function hostTime(settings) {
+  const value = settings.now()
+  core(() => utcTimestamp(value, 'now'), 'not_committed')
+  return new Date(Date.parse(value)).toISOString()
+}
+
+const placeholders = (count) => Array(count).fill('?').join(', ')
+const writeCache = new WeakMap()
+/** Prepared write statements of one connection. */
+function writeStatements(db) {
+  let cached = writeCache.get(db)
+  if (cached) return cached
+  const prepare = (sql) => db.prepare(sql)
+  const perTable = (make) => Object.fromEntries(FORMAL_TABLES.map((table) => [table, prepare(make(ROW_TABLES[table]))]))
+  cached = {
+    upsert: perTable((spec) => {
+      const names = ['revision', ...spec.columns.map((column) => column.name), 'body']
+      return `INSERT INTO ${spec.sql} (${columnList(spec)}) VALUES (${placeholders(names.length + 1)}) `
+        + `ON CONFLICT (id) DO UPDATE SET ${names.map((name) => `${name} = excluded.${name}`).join(', ')}`
+    }),
+    remove: perTable((spec) => `DELETE FROM ${spec.sql} WHERE id = ?`),
+    uniqueOf: perTable((spec) => `SELECT ${spec.unique?.join(', ') ?? 'id'} FROM ${spec.sql} WHERE id = ?`),
+    refAdd: prepare('INSERT INTO refs (from_table, from_id, field, to_table, to_id) VALUES (?, ?, ?, ?, ?)'),
+    refRemove: prepare('DELETE FROM refs WHERE from_table = ? AND from_id = ? AND field = ? AND to_table = ? AND to_id = ?'),
+    tombstone: prepare('INSERT INTO tombstones (table_name, id, deleted_at) VALUES (?, ?, ?)'),
+    revision: prepare('UPDATE store_meta SET revision = ? WHERE singleton = 1 AND revision = ?'),
+    receiptAdd: prepare('INSERT INTO receipts (request_id, request_digest, status, revision_after, response, at) VALUES (?, ?, ?, ?, ?, ?)'),
+    idMapAdd: prepare('INSERT INTO id_map (kind, source_id, record_id, id) VALUES (?, ?, ?, ?)'),
+    opLogAdd: prepare('INSERT INTO op_log (request_id, at, actor, kind, summary) VALUES (?, ?, ?, ?, ?)'),
+  }
+  writeCache.set(db, cached)
+  return cached
+}
+const inconsistent = (pathName) => fail('E_STORE_INCONSISTENT', { path: pathName })
+
+/**
+ * Execute a planned change set inside the open write transaction: every delete first, then
+ * every write (the ChangeSet contract), with foreign keys checked at COMMIT. SQLite checks
+ * UNIQUE per statement, so a row whose unique key changes is moved out before the writes:
+ * two rows swapping unique keys in one batch never meet a value the batch is about to vacate.
+ */
+function executeChangeSet(db, changeSet, phase) {
+  const sql = writeStatements(db)
+  for (const { table, id } of changeSet.deletes) if (sql.remove[table].run(id).changes !== 1) inconsistent(table)
+  phase('deleted')
+  const encoded = changeSet.upserts.map(({ table, row }) => ({ table, values: encodeRow(table, row) }))
+  for (const { table, values } of encoded) {
+    const spec = ROW_TABLES[table]
+    if (!spec.unique) continue
+    const stored = sql.uniqueOf[table].get(values[0])
+    if (!stored) continue
+    const next = spec.unique.map((name) => values[2 + spec.columns.findIndex((column) => column.name === name)])
+    if (spec.unique.some((name, i) => stored[name] !== next[i])) sql.remove[table].run(values[0])
+  }
+  for (const { table, values } of encoded) sql.upsert[table].run(...values)
+  phase('written')
+  for (const ref of changeSet.refsRemoved) {
+    if (sql.refRemove.run(ref.fromTable, ref.fromId, ref.field, ref.toTable, ref.toId).changes !== 1) inconsistent('refs')
+  }
+  for (const ref of changeSet.refsAdded) sql.refAdd.run(ref.fromTable, ref.fromId, ref.field, ref.toTable, ref.toId)
+  for (const tombstone of changeSet.tombstones) sql.tombstone.run(tombstone.table, tombstone.id, tombstone.deletedAt)
+}
+
+/** The original receipt: status committed, the revision after, counts and (bounded) affected rows. */
+function receiptFor(request, changeSet, at) {
+  const counts = Object.fromEntries(Object.entries(changeSet.summary.counts)
+    .filter(([, count]) => count.created || count.updated || count.removed))
+  const affected = [
+    ...changeSet.upserts.map(({ table, row }) => ({ table, id: row.id, change: 'written' })),
+    ...changeSet.deletes.map(({ table, id }) => ({ table, id, change: 'removed' })),
+  ]
+  return {
+    status: 'committed', requestId: request.requestId, kind: request.kind, baseRevision: request.baseRevision,
+    revision: changeSet.nextRevision, at, counts,
+    ...(affected.length <= RECEIPT_AFFECTED_LIMIT ? { affected } : { affectedOmitted: affected.length }),
   }
 }
-/** Handle internals shared by the sections below. */
-const internal = Symbol('store-host-internal')
+
+/**
+ * Plan and execute one validated request inside an open BEGIN IMMEDIATE transaction: revision
+ * check, planCommands over the transaction's reader, the change set, the store revision, the
+ * receipt and the op_log summary. Returns the receipt. Shared by commit and createStore.
+ */
+function applyRequest(db, request, digest, at, settings, phase) {
+  if (currentRevision(db) !== request.baseRevision) fail('E_STALE', { path: 'request.baseRevision' })
+  const { reader, close } = transactionReader(db)
+  let changeSet
+  try {
+    changeSet = core(() => planCommands(reader, request.commands, { baseRevision: request.baseRevision, now: at, policy: settings.policy }), 'not_committed')
+  } finally { close() }
+  executeChangeSet(db, changeSet, phase)
+  const sql = writeStatements(db)
+  if (changeSet.nextRevision !== request.baseRevision && sql.revision.run(changeSet.nextRevision, request.baseRevision).changes !== 1) inconsistent('store_meta')
+  const receipt = receiptFor(request, changeSet, at)
+  sql.receiptAdd.run(request.requestId, digest, 'committed', changeSet.nextRevision, JSON.stringify(receipt), at)
+  sql.opLogAdd.run(request.requestId, at, request.actor, request.kind,
+    JSON.stringify({ baseRevision: request.baseRevision, revision: changeSet.nextRevision, counts: receipt.counts }))
+  return deepFreeze(receipt)
+}
+
+/** A failure with what happened to the request: confirmed not committed, or unknown. */
+function withOutcome(error, outcome) {
+  if (error instanceof StoreError) return new StoreHostError(error.code, { path: error.path, outcome })
+  return storeErrorFrom(error, outcome)
+}
+function outcomeUnknown(error) {
+  return new StoreHostError('E_OUTCOME_UNKNOWN', {
+    outcome: 'unknown',
+    sqlite: sqliteDetail(error),
+    cause: error,
+    message: 'E_OUTCOME_UNKNOWN: COMMIT failed and whether it took effect cannot be determined. '
+      + 'Call lookup(requestId) with the same requestId, or retry with the same requestId; never retry with a new id.',
+  })
+}
+
+/**
+ * The three outcomes (design 3B §4.5) after a failure inside a write transaction:
+ * - COMMIT never issued: not committed, whatever the error (an open transaction is rolled back);
+ * - COMMIT failed and the transaction is still open (`isTransaction`): SQLite did not commit it
+ *   (busy, deferred foreign key, …); roll it back, confirmed not committed with the original code;
+ * - COMMIT failed and the transaction is gone, or its state cannot be read: unknown. Disk-full and
+ *   I/O errors follow the same rule and are never reported as rolled back by assumption.
+ * `discard` closes the connection when a rollback fails: closing discards an open transaction.
+ * Exported for tests.
+ */
+export function settleFailure(db, error, commitIssued, discard = () => {}) {
+  const state = transactionState(db)
+  if (state === true) {
+    let rolledBack = false
+    try { db.exec('ROLLBACK'); rolledBack = transactionState(db) === false } catch { /* Handled below. */ }
+    if (!rolledBack) discard()
+    return withOutcome(error, 'not_committed')
+  }
+  if (!commitIssued) return withOutcome(error, 'not_committed')
+  return outcomeUnknown(error)
+}
+
+/** A stored receipt (original response JSON), frozen. */
+function parseReceipt(text) {
+  try { return deepFreeze(JSON.parse(text)) } catch { return fail('E_STORE_CORRUPT', { path: 'receipts.response' }) }
+}
+
+// ---------------------------------------------------------------------------
+// Retention and the identity map
+// ---------------------------------------------------------------------------
+
+/** Design 3B §4.6: a row goes only when it is both older than `days` and outside the newest `count`. */
+export const RETENTION = Object.freeze({
+  receipts: Object.freeze({ days: 30, count: 10_000 }),
+  opLog: Object.freeze({ days: 365, count: 50_000 }),
+})
+const DAY_MS = 86_400_000
+const cutoff = (now, days) => new Date(Date.parse(now) - days * DAY_MS).toISOString()
+
+function validRetention(retention) {
+  const limit = (value, name) => {
+    if (value === null || typeof value !== 'object' || !Number.isFinite(value.days) || value.days < 0
+      || !Number.isSafeInteger(value.count) || value.count < 1) fail('E_STORE_OPTIONS', { path: `retention.${name}` })
+    return { days: value.days, count: value.count }
+  }
+  return { receipts: limit(retention?.receipts, 'receipts'), opLog: limit(retention?.opLog, 'opLog') }
+}
+
+const pruneCache = new WeakMap()
+function pruneStatements(db) {
+  let cached = pruneCache.get(db)
+  if (cached) return cached
+  cached = {
+    // The newest `count`-th receipt (OFFSET count - 1); anything older is outside the newest `count`.
+    receiptBoundary: db.prepare('SELECT at, rowid AS position FROM receipts ORDER BY at DESC, rowid DESC LIMIT 1 OFFSET ?'),
+    receiptPrune: db.prepare('DELETE FROM receipts WHERE rowid IN (SELECT rowid FROM receipts WHERE at < ? '
+      + 'AND (at < ? OR (at = ? AND rowid < ?)) ORDER BY at, rowid LIMIT ?)'),
+    opLogBoundary: db.prepare('SELECT seq FROM op_log ORDER BY seq DESC LIMIT 1 OFFSET ?'),
+    opLogPrune: db.prepare('DELETE FROM op_log WHERE seq IN (SELECT seq FROM op_log WHERE seq < ? AND at < ? ORDER BY seq LIMIT ?)'),
+  }
+  pruneCache.set(db, cached)
+  return cached
+}
+
+/** One small pruning step inside an open write transaction: at most `batchSize` rows per table. */
+function pruneStep(db, cutoffs, limits, batchSize) {
+  const sql = pruneStatements(db)
+  const receipt = sql.receiptBoundary.get(limits.receipts.count - 1)
+  const receipts = receipt ? sql.receiptPrune.run(cutoffs.receipts, receipt.at, receipt.at, receipt.position, batchSize).changes : 0
+  const entry = sql.opLogBoundary.get(limits.opLog.count - 1)
+  const opLog = entry ? sql.opLogPrune.run(entry.seq, cutoffs.opLog, batchSize).changes : 0
+  return { receipts, opLog }
+}
+
+const MAPPING_KEYS = Object.freeze(['kind', 'sourceId', 'recordId', 'id'])
+function validMappings(mappings) {
+  return core(() => {
+    validateJson(mappings, 'mappings')
+    if (!Array.isArray(mappings) || mappings.length === 0) reject('E_ID_MAP', 'mappings')
+    for (const mapping of mappings) {
+      shape(mapping, MAPPING_KEYS, MAPPING_KEYS, 'mappings')
+      for (const key of MAPPING_KEYS) opaqueId(mapping[key], `mappings.${key}`)
+    }
+    return freezeCopy(mappings)
+  }, 'not_committed')
+}
+
+// ---------------------------------------------------------------------------
+// Open checks and handles
+// ---------------------------------------------------------------------------
 
 function absoluteFile(file) {
   if (typeof file !== 'string' || !path.isAbsolute(file)) fail('E_STORE_PATH', { path: 'file' })
@@ -475,16 +720,21 @@ function writableHandle(db, file, key, lock, settings, timings) {
 
 function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, release }) {
   let closed = false
+  let lost = false
   let tail = Promise.resolve()
+  /** After a failed rollback the connection is closed (which discards its transaction): reopen. */
+  const discard = () => { lost = true; closeQuietly(db) }
   const usable = () => {
     if (closed) fail('E_STORE_CLOSED')
-    if (!db) fail(diagnostic?.code ?? 'E_STORE_CLOSED', { outcome: 'not_committed' })
+    if (lost) fail('E_STORE_REOPEN_REQUIRED')
+    if (!db) fail(diagnostic?.code ?? 'E_STORE_CLOSED')
     return db
   }
   /** Writes refuse on a read-only handle with the open diagnostic's code. */
   const writer = () => {
     if (closed) fail('E_STORE_CLOSED', { outcome: 'not_committed' })
     if (!writable) fail(diagnostic?.code ?? 'E_STORE_READONLY', { outcome: 'not_committed' })
+    if (lost) fail('E_STORE_REOPEN_REQUIRED', { outcome: 'not_committed' })
     return db
   }
   /** Writes in this process run one at a time, each under its own lease. */
@@ -492,6 +742,22 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
     const run = tail.then(work, work)
     tail = run.catch(() => {})
     return run
+  }
+  /** One lease per write, never held between writes (design 3B §5.2). A refused lease ran nothing. */
+  const leased = async (work) => {
+    let entered = false
+    try {
+      return await lock(() => { entered = true; return work() })
+    } catch (error) {
+      if (entered) throw error
+      const code = typeof error?.code === 'string' && /^E_[A-Z0-9_]+$/.test(error.code) ? error.code : 'E_STORE_LOCK'
+      throw new StoreHostError(code, { outcome: 'not_committed', cause: error })
+    }
+  }
+  /** Test-only fault injection: `unsafeTestPhase(name, { db })` runs synchronously at each write phase. */
+  const phase = (name, connection) => {
+    const result = settings.phase?.(name, { db: connection })
+    if (result && typeof result.then === 'function') fail('E_STORE_ASYNC_HOOK')
   }
   /** A short read transaction; SQLite's file lock keeps it consistent. */
   const readTransaction = (callback) => {
@@ -508,6 +774,50 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
       if (transactionState(connection) === true) {
         try { connection.exec('ROLLBACK') } catch { /* Released on close. */ }
       }
+    }
+  }
+  /** Design 3B §4.4: receipt check, revision check, plan and execute, COMMIT; failures settled into the three outcomes. */
+  const runCommit = (request, digest) => {
+    const connection = writer()
+    const hook = (name) => phase(name, connection)
+    let commitIssued = false
+    let result
+    try {
+      hook('leased')
+      if (transactionState(connection) !== false) fail('E_STORE_BUSY')
+      connection.exec('BEGIN IMMEDIATE')
+      hook('begun')
+      const previous = statements(connection).receipt.get(request.requestId)
+      if (previous) {
+        if (previous.request_digest !== digest) fail('E_OPERATION_CONFLICT', { path: 'request.requestId' })
+        const receipt = parseReceipt(previous.response)
+        connection.exec('ROLLBACK')
+        return Object.freeze({ status: 'duplicate', revision: receipt.revision, receipt })
+      }
+      const receipt = applyRequest(connection, request, digest, hostTime(settings), settings, hook)
+      hook('before-commit')
+      commitIssued = true
+      connection.exec('COMMIT')
+      result = Object.freeze({ status: 'committed', revision: receipt.revision, receipt })
+    } catch (error) {
+      throw settleFailure(connection, error, commitIssued, discard)
+    }
+    hook('committed')
+    return result
+  }
+  /** One small write transaction outside commit (pruning steps, identity map). */
+  const smallWrite = (work) => {
+    const connection = writer()
+    let commitIssued = false
+    try {
+      if (transactionState(connection) !== false) fail('E_STORE_BUSY')
+      connection.exec('BEGIN IMMEDIATE')
+      const result = work(connection)
+      commitIssued = true
+      connection.exec('COMMIT')
+      return result
+    } catch (error) {
+      throw settleFailure(connection, error, commitIssued, discard)
     }
   }
   const handle = {
@@ -543,6 +853,77 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
       const problems = readTransaction((connection) => checkConnection(connection, settings.policy))
       return Object.freeze({ ok: problems.length === 0, problems: Object.freeze(problems) })
     },
+    /**
+     * Commit one request `{ requestId, baseRevision, kind, actor, commands }` (design 3B §4.4).
+     * Resolves `{ status: 'committed', revision, receipt }`, or `{ status: 'duplicate', … }` with
+     * the original receipt when the same request was already committed. Rejects with a
+     * StoreHostError whose `outcome` is 'not_committed', or 'unknown' (E_OUTCOME_UNKNOWN: look
+     * the request up with lookup(requestId), or retry with the same requestId).
+     */
+    async commit(request) {
+      writer()
+      const valid = validRequest(request)
+      const digest = requestDigest(valid)
+      return enqueue(() => leased(() => runCommit(valid, digest)))
+    },
+    /** The original receipt of a committed request: { found: true, receipt } or { found: false }. */
+    lookup(requestId) {
+      core(() => uuid(requestId, 'requestId'))
+      return readTransaction((connection) => {
+        const row = statements(connection).receipt.get(requestId)
+        return Object.freeze(row ? { found: true, receipt: parseReceipt(row.response) } : { found: false })
+      })
+    },
+    /**
+     * Retention (design 3B §4.6): receipts are kept for RETENTION.receipts.days and at least the
+     * newest RETENTION.receipts.count, op_log likewise; a row goes only when both limits are
+     * passed. Each step deletes at most `batchSize` rows per table in its own ordinary write
+     * transaction, under one lease. `retention` overrides the defaults (tests).
+     */
+    async pruneLogs({ now, batchSize = 500, maxSteps = 100, retention = RETENTION } = {}) {
+      writer()
+      core(() => utcTimestamp(now, 'now'))
+      const limits = validRetention(retention)
+      if (!Number.isSafeInteger(batchSize) || batchSize < 1) fail('E_STORE_OPTIONS', { path: 'batchSize' })
+      if (!Number.isSafeInteger(maxSteps) || maxSteps < 1) fail('E_STORE_OPTIONS', { path: 'maxSteps' })
+      const cutoffs = { receipts: cutoff(now, limits.receipts.days), opLog: cutoff(now, limits.opLog.days) }
+      return enqueue(() => leased(() => {
+        let receipts = 0, opLog = 0, steps = 0, done = false
+        while (!done && steps < maxSteps) {
+          steps++
+          const removed = smallWrite((connection) => pruneStep(connection, cutoffs, limits, batchSize))
+          receipts += removed.receipts
+          opLog += removed.opLog
+          done = removed.receipts < batchSize && removed.opLog < batchSize
+        }
+        return Object.freeze({ receipts, opLog, steps, done })
+      }))
+    },
+    /** id_map lookup for 3C-1b's identity manifest: the formal id, or undefined. */
+    getIdMapping(kind, sourceId, recordId) {
+      return readTransaction((connection) => (strings([kind, sourceId, recordId]) ? statements(connection).idMap.get(kind, sourceId, recordId)?.id : undefined))
+    },
+    /**
+     * Add identity mappings `{ kind, sourceId, recordId, id }` in one write transaction. An
+     * identical mapping is a no-op; a different id for a mapped key rejects the whole batch
+     * with E_ID_MAP_CONFLICT. Resolves { added }.
+     */
+    async putIdMappings(mappings) {
+      writer()
+      const list = validMappings(mappings)
+      return enqueue(() => leased(() => smallWrite((connection) => {
+        const sql = statements(connection)
+        let added = 0
+        for (const mapping of list) {
+          const existing = sql.idMap.get(mapping.kind, mapping.sourceId, mapping.recordId)?.id
+          if (existing === mapping.id) continue
+          if (existing !== undefined) fail('E_ID_MAP_CONFLICT', { path: 'mappings' })
+          writeStatements(connection).idMapAdd.run(mapping.kind, mapping.sourceId, mapping.recordId, mapping.id)
+          added++
+        }
+        return Object.freeze({ added })
+      })))
+    },
     /** Wait for queued writes, then close the connection. */
     async close() {
       if (closed) return
@@ -552,8 +933,6 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
       release?.()
     },
   }
-  // Internal hooks for later sections of this module.
-  Object.defineProperty(handle, internal, { value: { readTransaction, writer, enqueue, lock, settings } })
   return handle
 }
 
@@ -564,16 +943,19 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
 /**
  * Create a new store file, exclusively: an existing target is E_STORE_EXISTS and is never
  * touched. Schema, `application_id`, `user_version` and `store_meta` are written in one
- * transaction under the library lease. `libraryId` (UUIDv7) is injected by the caller.
+ * transaction under the library lease, together with the optional `initial` request
+ * `{ requestId, kind?, actor, commands }` (base revision 0). Until 3C-1b's official definitions
+ * exist, the initial commands always come from the caller. `libraryId` (UUIDv7) is injected.
+ * On any failure the new file is removed: nothing half-created is left behind.
  */
 export async function createStore(file, options = {}) {
   const target = absoluteFile(file)
   const settings = hostOptions(options)
   core(() => uuid(options.libraryId, 'libraryId'), 'not_committed')
+  const initial = options.initial === undefined ? undefined : validRequest({ kind: 'store.create', ...options.initial, baseRevision: 0 })
   const lock = resolveLock(options)
   return lock(() => {
-    const createdAt = settings.now()
-    core(() => utcTimestamp(createdAt, 'now'), 'not_committed')
+    const createdAt = hostTime(settings)
     try { closeSync(openSync(target, 'wx', 0o600)) } catch (error) {
       if (error?.code === 'EEXIST') fail('E_STORE_EXISTS', { path: 'file' })
       if (missing(error)) fail('E_STORE_PATH', { path: 'file' })
@@ -588,20 +970,20 @@ export async function createStore(file, options = {}) {
       for (const statement of SCHEMA_V1) db.exec(statement)
       db.prepare('INSERT INTO store_meta (singleton, format, format_version, library_id, revision, created_at) VALUES (1, ?, ?, ?, 0, ?)')
         .run(STORE_FORMAT, STORE_FORMAT_VERSION, options.libraryId, createdAt)
+      if (initial) applyRequest(db, initial, requestDigest(initial), createdAt, settings, () => {})
       db.exec('COMMIT')
     } catch (error) {
       if (db && transactionState(db) === true) { try { db.exec('ROLLBACK') } catch { /* Closing releases it. */ } }
       closeQuietly(db)
       // The file was created exclusively by this call and never committed: remove it.
       try { unlinkSync(target) } catch { /* Left for review. */ }
-      throw error instanceof StoreError ? new StoreHostError(error.code, { path: error.path, outcome: 'not_committed' }) : storeErrorFrom(error, 'not_committed')
+      throw withOutcome(error, 'not_committed')
     }
     const key = writerKey(target)
     if (writers.has(key)) { closeQuietly(db); fail('E_STORE_ALREADY_OPEN', { path: 'file' }) }
     return writableHandle(db, target, key, lock, settings)
   })
 }
-
 
 /**
  * Open `file`, run the full check and close (library:recover's store check). Any open

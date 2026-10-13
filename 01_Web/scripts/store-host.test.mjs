@@ -1,20 +1,20 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { closeSync, openSync, readFileSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
-import { inspectLibraryOperation } from './library-operation-lock.mjs'
+import { inspectLibraryOperation, withLibraryOperation } from './library-operation-lock.mjs'
 import {
   BUSY_TIMEOUT_MS, StoreHostError, classifySqliteError, nodeSupportsStore, openConnection, pragmaValue,
 } from './store-sqlite.mjs'
 import {
-  ROW_TABLES, STORE_APPLICATION_ID, STORE_FORMAT, STORE_FORMAT_VERSION, checkStoreFile, createStore, encodeRow, openStore, storePathFor,
-  withoutLibraryLock,
+  ROW_TABLES, STORE_APPLICATION_ID, STORE_FORMAT, STORE_FORMAT_VERSION, checkStoreFile, createStore, encodeRow, openStore, settleFailure,
+  storePathFor, withoutLibraryLock,
 } from './store-host.mjs'
-import { FORMAL_TABLES, readFormalState, uniqueClaims } from '../src/worldgraph/store/formal.ts'
+import { FORMAL_TABLES, emptyFormalState, readFormalState, uniqueClaims } from '../src/worldgraph/store/formal.ts'
 import { formalFixture, formalFromWorld, worldFromFormal } from '../src/worldgraph/store/formal.fixture.ts'
 import { generator, randomBatch, withFilm } from '../src/worldgraph/store/parity.fixture.ts'
 import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts'
@@ -315,4 +315,335 @@ test('readFormalState and check find damage that quick_check cannot see', async 
     assert.equal(result.ok, false, name)
     assert.ok(result.problems.includes(problem), `${name}: ${result.problems.join('; ')}`)
   }
+})
+
+// ---------------------------------------------------------------------------
+// Commit, receipts, the three outcomes, lookup, pruning and the identity map
+// ---------------------------------------------------------------------------
+
+let requestCounter = 0
+const nextRequestId = () => `01900000-0000-7000-8000-${(++requestCounter).toString(16).padStart(12, '0')}`
+const request = (baseRevision, commands, extra = {}) => ({ requestId: nextRequestId(), baseRevision, kind: 'test.edit', actor: 'test', commands, ...extra })
+/** Creates for every row of a valid state, in FORMAL_TABLES (dependency) order. */
+const createCommands = (state) => FORMAL_TABLES.flatMap((table) => state[table].map((row) => ({ op: 'create', table, value: row })))
+/** A store seeded through its initial request with the 3C-1a start state (revision 1). */
+async function seededStore(t, options = {}) {
+  const seed = startState()
+  const created = await freshStore(t, { initial: { requestId: nextRequestId(), actor: 'test', commands: createCommands(seed) }, ...options })
+  return { ...created, seed }
+}
+/** The memory reference for one request on `state`: { state } after it, or { code }. */
+function reference(state, commands, baseRevision = state.revision, now = NOW) {
+  try { return { state: applyChangeSet(state, planCommands(memoryReader(state), commands, { baseRevision, now })) } } catch (error) {
+    if (error instanceof StoreError) return { code: error.code }
+    throw error
+  }
+}
+/** Row count of a bookkeeping table, from a separate read-only connection. */
+function countRows(file, table) {
+  const db = new DatabaseSync(file, { readOnly: true })
+  try { return db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n } finally { db.close() }
+}
+const attemptCommit = async (handle, value) => {
+  try { return await handle.commit(value) } catch (error) {
+    if (error instanceof StoreHostError) return { code: error.code, outcome: error.outcome, error }
+    throw error
+  }
+}
+const bump = (row, patch) => ({ ...row, ...patch, revision: row.revision + 1 })
+const update = (table, row, patch) => ({ op: 'update', table, id: row.id, expectedRevision: row.revision, value: bump(row, patch) })
+
+test('a new store can be seeded by the caller\'s initial request in the creating transaction', async (t) => {
+  const { file, handle, seed } = await seededStore(t)
+  assert.equal(handle.meta().revision, 1)
+  assert.equal(normalized(handle.readFormalState()), normalized(reference(emptyFormalState(), createCommands(seed), 0).state))
+  assert.deepEqual(handle.check(), { ok: true, problems: [] })
+  assert.equal(countRows(file, 'receipts'), 1)
+  // A rejected initial request rolls the creation back and leaves no file behind.
+  const root = await tempRoot(t)
+  const rejected = path.join(root, 'rejected.sqlite')
+  await rejectsWith(createStore(rejected, { libraryId: LIBRARY_ID, now: clock, lock: withoutLibraryLock,
+    initial: { requestId: nextRequestId(), actor: 'test', commands: [{ op: 'create', table: 'entries', value: { ...seed.entries[0], id: 'not-a-uuid' } }] } }), 'E_UUID7')
+  assert.equal(existsSync(rejected), false)
+})
+
+test('commit executes change sets exactly like the reference applyChangeSet on random 3C-1a batches', async (t) => {
+  const root = await tempRoot(t)
+  const outcomes = new Map()
+  let commits = 0
+  for (let sequence = 0; sequence < 8; sequence++) {
+    let state = startState()
+    let committed = 1
+    const file = path.join(root, `random-${sequence}.sqlite`)
+    const handle = track(t, await createStore(file, { libraryId: LIBRARY_ID, now: clock, lock: withoutLibraryLock,
+      initial: { requestId: nextRequestId(), actor: 'test', commands: createCommands(state) } }))
+    const random = generator(0xc3c2 + sequence), counter = { n: 400000 + sequence * 1000 }
+    for (let step = 0; step < 6; step++) {
+      const { commands, options } = randomBatch(worldFromFormal(state), random, counter)
+      if (!commands.length) continue
+      const baseRevision = options.expected ?? state.revision
+      const expected = reference(state, commands, baseRevision)
+      const actual = await attemptCommit(handle, request(baseRevision, commands))
+      const label = `sequence ${sequence} step ${step}`
+      if (expected.code) {
+        assert.equal(actual.code, expected.code, label)
+        assert.equal(actual.outcome, 'not_committed', label)
+      } else {
+        assert.equal(actual.status, 'committed', `${label}: ${actual.code}`)
+        assert.equal(actual.revision, expected.state.revision, label)
+        state = expected.state
+        committed++
+        commits++
+      }
+      assert.equal(normalized(handle.readFormalState()), normalized(state), label)
+      const key = expected.code ?? 'committed'
+      outcomes.set(key, (outcomes.get(key) ?? 0) + 1)
+    }
+    assert.deepEqual(handle.check(), { ok: true, problems: [] })
+    await handle.close()
+    assert.deepEqual([countRows(file, 'receipts'), countRows(file, 'op_log')], [committed, committed], 'rejected requests write nothing')
+  }
+  t.diagnostic(`8 sequences, ${commits} committed batches, outcomes ${JSON.stringify(Object.fromEntries([...outcomes].sort()))}`)
+  assert.ok(commits >= 15, `committed: ${commits}`)
+})
+
+test('receipts make a request idempotent; a different request under the same id, or a stale revision, is refused', async (t) => {
+  const { file, handle, seed } = await seededStore(t)
+  const entry = seed.entries[0]
+  const first = request(1, [update('entries', entry, { fields: { rating: 4 }, updatedAt: '2026-10-06T00:00:00.000Z' })])
+  const committed = await handle.commit(first)
+  assert.equal(committed.status, 'committed')
+  assert.equal(committed.revision, 2)
+  assert.deepEqual(committed.receipt, {
+    status: 'committed', requestId: first.requestId, kind: 'test.edit', baseRevision: 1, revision: 2, at: NOW,
+    counts: { entries: { created: 0, updated: 1, removed: 0 } }, affected: [{ table: 'entries', id: entry.id, change: 'written' }],
+  })
+  // Same request again (e.g. the response was lost): the original receipt, nothing written twice.
+  const replay = await handle.commit(structuredClone(first))
+  assert.equal(replay.status, 'duplicate')
+  assert.deepEqual(replay.receipt, committed.receipt)
+  assert.equal(handle.meta().revision, 2)
+  assert.deepEqual([countRows(file, 'receipts'), countRows(file, 'op_log')], [2, 2])
+  assert.deepEqual(handle.lookup(first.requestId), { found: true, receipt: committed.receipt })
+  // Same id, different content: refused even though the content alone would be valid.
+  const changed = { ...first, commands: [update('entries', entry, { fields: { rating: 3 }, updatedAt: '2026-10-06T00:00:00.000Z' })] }
+  const conflict = await attemptCommit(handle, changed)
+  assert.deepEqual([conflict.code, conflict.outcome], ['E_OPERATION_CONFLICT', 'not_committed'])
+  // A stale base revision is refused and leaves no receipt: the same id is judged again later.
+  const stale = request(1, [update('entries', seed.entries[1], { fields: { rating: 2 } })])
+  const refused = await attemptCommit(handle, stale)
+  assert.deepEqual([refused.code, refused.outcome], ['E_STALE', 'not_committed'])
+  assert.deepEqual(handle.lookup(stale.requestId), { found: false })
+  assert.equal((await attemptCommit(handle, stale)).code, 'E_STALE', 'judged again, same answer')
+  assert.equal((await handle.commit({ ...stale, baseRevision: 2 })).status, 'committed', 'nothing was stored for the refused request')
+  // A planner rejection is a confirmed non-commit with the planner's code and path.
+  const invalid = await attemptCommit(handle, request(3, [{ op: 'create', table: 'entries', value: { ...entry, id: seed.entries[1].id } }]))
+  assert.deepEqual([invalid.code, invalid.outcome], ['E_CONFLICT', 'not_committed'])
+  // Request shape: UUIDv7 request ids, known keys, bounded kind and actor.
+  for (const [value, code] of [
+    [{ ...request(3, []), requestId: '01900000-0000-4000-8000-000000000001' }, 'E_UUID7'],
+    [{ ...request(3, []), extra: true }, 'E_SHAPE'],
+    [Object.fromEntries(Object.entries(request(3, [])).filter(([key]) => key !== 'actor')), 'E_SHAPE'],
+    [request(3, [], { kind: 'k'.repeat(129) }), 'E_REQUEST'],
+    [request(3, [], { actor: ' ' }), 'E_ID'],
+    [request(3, []), 'E_COMMAND'],
+  ]) await rejectsWith(handle.commit(value), code)
+  assert.equal(handle.meta().revision, 3)
+  assert.deepEqual(handle.check(), { ok: true, problems: [] })
+})
+
+test('a batch may swap unique keys between rows and reuse a deleted row\'s key', async (t) => {
+  const { handle, seed } = await seededStore(t)
+  let state = seed
+  const run = async (commands) => {
+    const expected = reference(state, commands)
+    assert.equal(expected.code, undefined, 'the reference accepts the batch')
+    assert.equal((await handle.commit(request(state.revision, commands))).status, 'committed')
+    state = expected.state
+    assert.equal(normalized(handle.readFormalState()), normalized(state))
+  }
+  const [a, b] = seed.viewItems
+  const [first, second, third] = seed.entries
+  assert.deepEqual([a.itemId, b.itemId], [third.id, first.id])
+  // View items: A → spare, B → A's item, A → B's item. Executed in change-set order, A's final
+  // key collides with B's old key unless the moved rows leave first.
+  await run([
+    update('viewItems', a, { itemId: second.id }),
+    update('viewItems', b, { itemId: third.id }),
+    update('viewItems', bump(a, { itemId: second.id }), { itemId: first.id }),
+  ])
+  // View settings: the same swap on (scope, key).
+  const cover = seed.viewSettings[0]
+  const banner = { ...cover, id: 'banner-one', key: 'banner' }
+  await run([{ op: 'create', table: 'viewSettings', value: banner }])
+  await run([
+    update('viewSettings', cover, { key: 'spare' }),
+    update('viewSettings', banner, { key: 'cover' }),
+    update('viewSettings', bump(cover, { key: 'spare' }), { key: 'banner' }),
+  ])
+  // A deleted row's unique key is taken by a new row in the same batch.
+  const itemB = state.viewItems.find((row) => row.id === b.id)
+  await run([
+    { op: 'remove', table: 'viewItems', id: itemB.id, expectedRevision: itemB.revision },
+    { op: 'create', table: 'viewItems', value: { ...itemB, id: 'item-c', revision: 0 } },
+  ])
+  assert.deepEqual(handle.check(), { ok: true, problems: [] })
+})
+
+test('COMMIT failures settle into confirmed non-commits or an unknown outcome, never an assumed rollback', async (t) => {
+  let inject
+  const { file, handle, seed } = await seededStore(t, { unsafeTestPhase: (name, { db }) => { if (inject?.phase === name) inject.run(db) } })
+  const current = (table, id) => handle.read((reader) => reader.get(table, id))
+  const editRating = (rating) => {
+    const entry = current('entries', seed.entries[0].id)
+    return request(handle.meta().revision, [update('entries', entry, { fields: { rating } })])
+  }
+  const unchanged = (revision) => {
+    assert.equal(handle.meta().revision, revision)
+    assert.deepEqual(handle.check(), { ok: true, problems: [] })
+  }
+  // COMMIT fails with the transaction still open (deferred foreign key): rolled back, confirmed.
+  inject = { phase: 'before-commit', run: (db) => db.exec("INSERT INTO anchors (id, revision, entity_id, body) VALUES ('dangling', 0, 'missing-entity', '{}')") }
+  let edit = editRating(1)
+  let failure = await attemptCommit(handle, edit)
+  assert.deepEqual([failure.code, failure.outcome], ['E_STORE_CONSTRAINT', 'not_committed'])
+  assert.deepEqual(handle.lookup(edit.requestId), { found: false })
+  unchanged(1)
+  // COMMIT is busy (another connection is reading): the transaction stays open, so it is rolled back, confirmed.
+  let other
+  inject = { phase: 'before-commit', run: () => {
+    other = new DatabaseSync(file)
+    other.exec('BEGIN')
+    other.prepare('SELECT revision FROM store_meta').get()
+  } }
+  failure = await attemptCommit(handle, editRating(2))
+  other.exec('ROLLBACK')
+  other.close()
+  assert.deepEqual([failure.code, failure.outcome], ['E_STORE_BUSY', 'not_committed'])
+  unchanged(1)
+  // COMMIT fails after the transaction already ended: unknown, even though it did commit here.
+  inject = { phase: 'before-commit', run: (db) => db.exec('COMMIT') }
+  edit = editRating(3)
+  failure = await attemptCommit(handle, edit)
+  assert.deepEqual([failure.code, failure.outcome], ['E_OUTCOME_UNKNOWN', 'unknown'])
+  assert.match(failure.error.message, /lookup\(requestId\).*same requestId/)
+  inject = undefined
+  const found = handle.lookup(edit.requestId)
+  assert.equal(found.found, true)
+  const retried = await handle.commit(edit)
+  assert.deepEqual([retried.status, retried.revision], ['duplicate', 2])
+  assert.deepEqual(retried.receipt, found.receipt)
+  // ...and when it had been rolled back instead, the same request id commits on retry.
+  inject = { phase: 'before-commit', run: (db) => db.exec('ROLLBACK') }
+  edit = editRating(4)
+  failure = await attemptCommit(handle, edit)
+  assert.deepEqual([failure.code, failure.outcome], ['E_OUTCOME_UNKNOWN', 'unknown'])
+  inject = undefined
+  assert.deepEqual(handle.lookup(edit.requestId), { found: false })
+  assert.deepEqual([(await handle.commit(edit)).status, handle.meta().revision], ['committed', 3])
+  // A full disk during the writes (SQLITE_FULL via max_page_count): COMMIT never issued, confirmed.
+  inject = { phase: 'begun', run: (db) => db.exec(`PRAGMA max_page_count = ${pragmaValue(db, 'page_count')}`) }
+  const big = { ...seed.entities[0], id: '01900000-0000-7000-8000-0000000fff01', source: { ...seed.entities[0].source, recordId: 'big' },
+    fields: { author: 'x'.repeat(200_000) } }
+  failure = await attemptCommit(handle, request(3, [{ op: 'create', table: 'entities', value: big }]))
+  assert.deepEqual([failure.code, failure.outcome], ['E_STORE_FULL', 'not_committed'])
+  inject = undefined
+  unchanged(3)
+})
+
+test('the outcome rule depends on isTransaction, not on the error code', () => {
+  const sqliteError = (errcode) => Object.assign(new Error('x'), { code: 'ERR_SQLITE_ERROR', errcode, errstr: 'synthetic' })
+  const connection = (state, { rollbackFails = false } = {}) => ({
+    get isTransaction() { if (state === 'closed') throw new Error('closed'); return state },
+    exec(sql) { if (sql === 'ROLLBACK') { if (rollbackFails) throw sqliteError(10); state = false } },
+  })
+  const full = sqliteError(13), io = sqliteError(10 + 4 * 256)
+  const settled = (...args) => { const error = settleFailure(...args); return [error.code, error.outcome] }
+  assert.deepEqual(settled(connection(true), full, true), ['E_STORE_FULL', 'not_committed'])
+  assert.deepEqual(settled(connection(false), full, true), ['E_OUTCOME_UNKNOWN', 'unknown'])
+  assert.deepEqual(settled(connection(false), io, true), ['E_OUTCOME_UNKNOWN', 'unknown'])
+  assert.deepEqual(settled(connection('closed'), io, true), ['E_OUTCOME_UNKNOWN', 'unknown'])
+  assert.deepEqual(settled(connection(false), full, false), ['E_STORE_FULL', 'not_committed'])
+  assert.deepEqual(settled(connection('closed'), io, false), ['E_STORE_IO', 'not_committed'])
+  let discarded = false
+  assert.deepEqual(settled(connection(true, { rollbackFails: true }), io, true, () => { discarded = true }), ['E_STORE_IO', 'not_committed'])
+  assert.equal(discarded, true, 'a transaction that cannot be rolled back is discarded by closing the connection')
+})
+
+test('commits take one lease each and queue in the process; a lease held elsewhere refuses without writing', async (t) => {
+  const root = await tempRoot(t)
+  const file = storePathFor(root)
+  await mkdir(path.dirname(file), { recursive: true })
+  const seed = startState()
+  const handle = track(t, await createStore(file, { libraryId: LIBRARY_ID, now: clock, privatePaths: { root },
+    initial: { requestId: nextRequestId(), actor: 'test', commands: createCommands(seed) } }))
+  const before = (await inspectLibraryOperation({ root })).generation
+  const results = await Promise.all([
+    handle.commit(request(1, [update('entries', seed.entries[0], { fields: { rating: 1 } })])),
+    handle.commit(request(2, [update('entries', seed.entries[1], { fields: { rating: 2 } })])),
+  ])
+  assert.deepEqual(results.map((result) => [result.status, result.revision]), [['committed', 2], ['committed', 3]])
+  const after = await inspectLibraryOperation({ root })
+  assert.equal(after.state, 'idle')
+  assert.notEqual(after.generation, before)
+  await withLibraryOperation({ root }, async () => {
+    const refused = await attemptCommit(handle, request(3, [update('entries', seed.entries[2], { fields: { rating: 3 } })]))
+    assert.deepEqual([refused.code, refused.outcome], ['E_LIBRARY_BUSY', 'not_committed'])
+  })
+  assert.equal(handle.meta().revision, 3)
+})
+
+test('a read-only store refuses every write with its diagnostic code and stays byte-identical', async (t) => {
+  const { file, handle } = await seededStore(t)
+  await handle.close()
+  rawEdit(file, 'PRAGMA user_version = 2')
+  const before = sha256(file)
+  const opened = track(t, openStore(file, { lock: withoutLibraryLock }))
+  for (const write of [
+    () => opened.commit(request(1, [])),
+    () => opened.pruneLogs({ now: NOW }),
+    () => opened.putIdMappings([{ kind: 'k', sourceId: 's', recordId: 'r', id: 'i' }]),
+  ]) await assert.rejects(write(), (error) => error.code === 'E_STORE_TOO_NEW' && error.outcome === 'not_committed')
+  await opened.close()
+  assert.equal(sha256(file), before)
+})
+
+test('pruneLogs keeps receipts and op_log by age or by count, whichever keeps more, in small write steps', async (t) => {
+  let now = '2026-01-01T00:00:00.000Z'
+  const { handle, seed } = await seededStore(t, { now: () => now })
+  const ids = []
+  for (let day = 2; day <= 10; day++) {
+    now = `2026-01-${String(day).padStart(2, '0')}T00:00:00.000Z`
+    const entity = handle.read((reader) => reader.get('entities', seed.entities[0].id))
+    const edit = request(handle.meta().revision, [update('entities', entity, { title: { names: { en: `Day ${day}` } } })])
+    await handle.commit(edit)
+    ids.push(edit.requestId)
+  }
+  const state = normalized(handle.readFormalState())
+  assert.deepEqual(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z' }), { receipts: 0, opLog: 0, steps: 1, done: true }, 'defaults keep 10,000 / 50,000')
+  // Receipts: age keeps Jan 8-10, count keeps the newest four (Jan 7-10). op_log: age keeps Jan 6-10, count the newest two.
+  const retention = { receipts: { days: 2.5, count: 4 }, opLog: { days: 4.5, count: 2 } }
+  assert.deepEqual(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', batchSize: 2, retention }), { receipts: 6, opLog: 5, steps: 4, done: true })
+  assert.deepEqual(ids.map((id) => handle.lookup(id).found), [false, false, false, false, false, true, true, true, true])
+  assert.equal(countRows(handle.file, 'op_log'), 5)
+  assert.equal(normalized(handle.readFormalState()), state, 'pruning never touches the data')
+  assert.deepEqual(handle.check(), { ok: true, problems: [] })
+  const entity = handle.read((reader) => reader.get('entities', seed.entities[0].id))
+  assert.equal((await handle.commit(request(10, [update('entities', entity, { title: { names: { en: 'After' } } })]))).revision, 11)
+  // The newer receipt pushes Jan 7 out of the newest four; op_log keeps Jan 6 by age.
+  assert.deepEqual(await handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', retention }), { receipts: 1, opLog: 0, steps: 1, done: true })
+  await rejectsWith(handle.pruneLogs({ now: '2026-01-10T12:00:00.000Z', retention: { receipts: { days: 1, count: 0 }, opLog: retention.opLog } }), 'E_STORE_OPTIONS')
+})
+
+test('id_map stores identity mappings for 3C-1b; a conflicting remap rejects the whole batch', async (t) => {
+  const { handle } = await freshStore(t)
+  const a = { kind: 'place', sourceId: 'v2', recordId: 'a', id: 'id-a' }
+  assert.equal(handle.getIdMapping('place', 'v2', 'a'), undefined)
+  assert.deepEqual(await handle.putIdMappings([a, { ...a, recordId: 'b', id: 'id-b' }]), { added: 2 })
+  assert.deepEqual(await handle.putIdMappings([a]), { added: 0 })
+  await rejectsWith(handle.putIdMappings([{ ...a, recordId: 'c', id: 'id-c' }, { ...a, id: 'other' }]), 'E_ID_MAP_CONFLICT')
+  assert.equal(handle.getIdMapping('place', 'v2', 'c'), undefined, 'the whole batch was rolled back')
+  assert.equal(handle.getIdMapping('place', 'v2', 'b'), 'id-b')
+  await rejectsWith(handle.putIdMappings([]), 'E_ID_MAP')
+  await rejectsWith(handle.putIdMappings([{ kind: 'place' }]), 'E_SHAPE')
 })
