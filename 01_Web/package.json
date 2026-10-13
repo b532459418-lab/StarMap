@@ -21,6 +21,7 @@
     "baseline": "node scripts/baseline.mjs",
     "backup": "node scripts/backup.mjs",
     "library:rebind": "node scripts/library-rebind.mjs",
+    "library:recover": "node scripts/store-recover.mjs",
     "media:check": "node scripts/import-media.mjs",
     "media:import": "node scripts/import-media.mjs --apply",
     "privacy:check": "git -C .. ls-files --cached --others --exclude-standard -z | node scripts/privacy-audit.mjs --manifest-stdin",

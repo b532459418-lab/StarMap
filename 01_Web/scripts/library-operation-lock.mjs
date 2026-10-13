@@ -223,6 +223,83 @@ export async function rebindLibraryRoot(privatePaths, { confirm = false, log = c
   return 0
 }
 
+/**
+ * `npm run library:recover` (3C-2, design 3B §5.2): a lock left by a holder that ended during its lease. Never decided by
+ * age or PID — the person running the command confirms the holder is gone. Without `confirm` it only prints the holder,
+ * the lock's creation time and the root bindings, and changes nothing. With `confirm` it runs `checkData` (the caller's
+ * data check for the library's mode); only when that reports no problems does it advance the generation and then remove
+ * exactly the lock it inspected. Otherwise the lock stays and the problems are printed.
+ * Returns an exit code (same as library:rebind): 0 done / nothing to do / dry run, 1 refused.
+ */
+export async function recoverLibraryOperation(privatePaths, { confirm = false, checkData, modeLabel, log = console.log, logError = console.error } = {}) {
+  let root
+  try { root = await realpath(path.resolve(privatePaths.root)) } catch (error) {
+    if (!missing(error)) throw error
+    logError('[library:recover] 私人根不存在，没有可以恢复的库。')
+    return 1
+  }
+  const { lockPath, statePath, rootBinding } = await locations(privatePaths, false)
+  log(`StarMap library:recover\n私人根：${root}\n当前私人根的 binding：${rootBinding}`)
+  if (modeLabel) log(`数据模式：${modeLabel}`)
+  let metadata
+  try { metadata = await lstat(lockPath) } catch (error) {
+    if (!missing(error)) throw error
+    log('没有库操作锁（operations/library-operation.lock），不需要恢复。')
+    return 0
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 4096) {
+    logError('[library:recover] 库操作锁不是普通文件，拒绝执行。请人工核对 operations/library-operation.lock。')
+    return 1
+  }
+  const lockBytes = await readFile(lockPath)
+  let record
+  try { record = JSON.parse(lockBytes.toString('utf8')) } catch { record = undefined }
+  if (!valid(record)) record = undefined
+  const created = metadata.birthtimeMs > 0 ? metadata.birthtime : metadata.mtime
+  log('库操作锁：operations/library-operation.lock')
+  log(record ? `  持有者：${record.owner}` : '  持有者：无法解析（锁可能是在写入时中断的）')
+  log(`  创建时间：${created.toISOString()}`)
+  if (record) log(`  锁记录的 binding：${record.rootBinding}（${record.rootBinding === rootBinding ? '与当前私人根一致' : '与当前私人根不一致'}）`)
+  let generation
+  try { generation = await readGenerationRecord(statePath) } catch {
+    logError('[library:recover] 库操作记录（operations/library-operation-state.json）损坏或无法读取，拒绝执行。锁保留。')
+    return 1
+  }
+  log(generation
+    ? `库操作记录：generation ${generation.generation}，binding ${generation.rootBinding === rootBinding ? '与当前私人根一致' : `${generation.rootBinding}（与当前私人根不一致）`}`
+    : '库操作记录：不存在')
+  if (!confirm) {
+    log('\n未加 --confirm，没有修改任何文件。确认持有这个锁的进程已经不在了（编辑器、导入或其他写入已经关闭或崩溃）之后运行：npm run library:recover -- --confirm')
+    return 0
+  }
+  if ((record && record.rootBinding !== rootBinding) || (generation && generation.rootBinding !== rootBinding)) {
+    logError('[library:recover] 锁或库操作记录绑定的不是当前私人根（私人根可能被移动过），拒绝执行。锁保留。')
+    return 1
+  }
+  log('\n请确认持有这个锁的进程已经不在了：锁不会因为存在时间长、或进程号不存在而被自动清除，--confirm 表示你已经确认。')
+  log('正在检查数据……')
+  let problems
+  try { problems = [...(await checkData()).problems] } catch (error) { problems = [error?.code ?? '数据检查本身失败'] }
+  if (problems.length > 0) {
+    logError(`[library:recover] 数据检查没有通过（${problems.length} 项），锁保留。请先处理这些问题或从备份恢复：`)
+    for (const problem of problems.slice(0, 20)) logError(`  - ${problem}`)
+    if (problems.length > 20) logError(`  ……另有 ${problems.length - 20} 项`)
+    return 1
+  }
+  log('数据检查通过。')
+  // Exactly the lock inspected above: a changed lock is someone else's and stays.
+  let current
+  try { current = await readFile(lockPath) } catch { current = undefined }
+  if (!current || !current.equals(lockBytes)) {
+    logError('[library:recover] 库操作锁在检查期间发生了变化，拒绝执行。')
+    return 1
+  }
+  await writeGenerationRecord(statePath, rootBinding)
+  await unlink(lockPath)
+  log('已推进库操作记录的 generation，并清除了残留的库操作锁。现在可以正常写入。')
+  return 0
+}
+
 /** Explicit trusted parent leases allow child importers to join, never to release the lock. */
 export async function withLibraryOperation(privatePaths, callback, { leaseToken } = {}) {
   if (leaseToken !== undefined) {
