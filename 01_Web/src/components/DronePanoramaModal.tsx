@@ -8,6 +8,7 @@ import { useUiLocale } from '../i18n/useUiLocale'
 import { DEFAULT_UI_LOCALE } from '../data/uiLocale'
 import { panoramaCaption, panoramaLanguageKeys } from '../i18n/mediaViewerOptions.ts'
 import { panoramaLoadUrl } from './panoramaLoadUrl.ts'
+import { useDialogFocus } from './useDialogFocus'
 
 type DronePanoramaModalProps = {
   item?: DroneMediaItem
@@ -33,6 +34,7 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
   const viewerOptionsRef = useRef(viewerOptions)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<Viewer | null>(null)
+  const { dialogRef, trapFocus } = useDialogFocus<HTMLDivElement>({ open: Boolean(item) })
   const [loadResult, setLoadResult] = useState<PanoramaLoadResult>({ state: 'loading' })
 
   useEffect(() => {
@@ -124,10 +126,13 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
 
   return (
     <div
+      ref={dialogRef}
       aria-modal="true"
       aria-labelledby="drone-panorama-title"
       className="drone-panorama-modal fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4 text-white backdrop-blur-sm sm:p-6"
       role="dialog"
+      tabIndex={-1}
+      onKeyDown={trapFocus}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { getMediaSource } from '../data/mediaCatalog'
 import type { ImportedMediaCatalogItem } from '../data/mediaCatalog'
+import { useDialogFocus } from './useDialogFocus'
 
 export type CityPhotoGalleryRequest = {
   photos: ImportedMediaCatalogItem[]
@@ -33,6 +34,7 @@ export function CityPhotoGalleryModal({
   const [activeIndex, setActiveIndex] = useState(initialIndex)
   const activePhoto = photos[activeIndex]
   const activeThumbRef = useRef<HTMLButtonElement | null>(null)
+  const { dialogRef, trapFocus } = useDialogFocus<HTMLDivElement>()
   const dialogTitleId = 'city-photo-gallery-title'
 
   const gridPhotos = useMemo(() => photos.map((photo, index) => ({ photo, index })), [photos])
@@ -76,10 +78,13 @@ export function CityPhotoGalleryModal({
 
   return (
     <div
+      ref={dialogRef}
       className="city-photo-gallery-modal"
       role="dialog"
       aria-modal="true"
       aria-labelledby={dialogTitleId}
+      tabIndex={-1}
+      onKeyDown={trapFocus}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}

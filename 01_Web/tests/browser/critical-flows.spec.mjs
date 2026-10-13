@@ -30,6 +30,7 @@ async function seedSampleMedia(page, changeEditorState = () => {}) {
   const image = await sharp({ create: { width: 64, height: 32, channels: 3, background: { r: 60, g: 120, b: 180 } } }).png().toBuffer()
   await page.route('**/media/user/sample/*', (route) => route.fulfill({ contentType: 'image/png', body: image }))
 }
+const focusInDialog = (page) => page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"][aria-modal="true"]')))
 
 test('Journey mapped visit count stays unchanged when map footprints are hidden', async ({ page }) => {
   await openMap(page)
@@ -164,7 +165,7 @@ test('forced sample view renders a real city without write controls', async ({ p
   await expect(page.getByRole('button', { name: 'Edit note for Akureyri', exact: true })).toHaveCount(0)
 })
 
-test('an unconfirmed conversion keeps every write on the page blocked until a reload, even after reopening', async ({ page }) => {
+test('an unconfirmed conversion keeps every write on the page blocked until a reload; the dialog keeps and returns focus', async ({ page }) => {
   const writes = []
   page.on('request', (request) => { if (request.url().includes('/__travelatlas/editor/') && request.method() !== 'GET') writes.push(new URL(request.url()).pathname) })
   await openMap(page)
@@ -172,6 +173,19 @@ test('an unconfirmed conversion keeps every write on the page blocked until a re
   const opener = page.getByRole('button', { name: 'Mark as visited: Bergen', exact: true })
   await opener.click()
   const dialog = page.getByRole('dialog')
+  const close = dialog.getByRole('button', { name: 'Close mark as visited dialog', exact: true })
+  // Tab and Shift+Tab wrap inside the dialog; closing gives focus back to the button that opened it.
+  await expect(dialog.getByLabel('Visit date', { exact: true })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(close).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(dialog.getByLabel('End date (optional)', { exact: true })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(close).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
+  await opener.click()
   await dialog.getByLabel('Visit date', { exact: true }).fill('2026-02-03')
   // An unreadable response leaves the write result unknown; nothing reaches the data files.
   await page.route('**/editor/wanttogo/convert', (route) => route.fulfill({ status: 502, contentType: 'text/html', body: '<p>Bad gateway</p>' }))
@@ -184,7 +198,8 @@ test('an unconfirmed conversion keeps every write on the page blocked until a re
   await expect(dialog.getByText('The operation may have saved data. Reload to check before deciding whether to retry.', { exact: true })).toBeVisible()
   await expect(dialog.getByLabel('Visit date', { exact: true })).toBeDisabled()
   await expect(dialog.getByRole('button', { name: 'Mark as visited', exact: true })).toHaveCount(0)
-  await dialog.getByRole('button', { name: 'Close mark as visited dialog', exact: true }).click()
+  expect(await focusInDialog(page)).toBe(true)
+  await close.click()
   // Another write entry on the page is refused before any request.
   await page.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
   await page.locator('.collection-card textarea').fill('Blocked until reload')
@@ -193,7 +208,7 @@ test('an unconfirmed conversion keeps every write on the page blocked until a re
   expect(writes).toEqual(['/__travelatlas/editor/wanttogo/convert'])
 })
 
-test('keyboard: a drone card opens its viewer from View, and the globe scale slider keeps focus while stepping', async ({ page }) => {
+test('keyboard: a drone card opens its viewer from View, the viewer keeps and returns focus, and the globe scale slider keeps focus while stepping', async ({ page }) => {
   await seedSampleMedia(page)
   const droneLoads = []
   page.on('request', (request) => { if (request.url().includes('/media/user/sample/drone-1.jpg')) droneLoads.push(new URL(request.url()).search) })
@@ -208,8 +223,13 @@ test('keyboard: a drone card opens its viewer from View, and the globe scale sli
   // The first load uses the plain URL, so the HTTP cache can answer it; only a retry would add starmapLoad.
   expect(droneLoads).toContain('')
   expect(droneLoads.filter((search) => search.includes('starmapLoad'))).toEqual([])
+  for (const key of ['Tab', 'Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab']) {
+    await page.keyboard.press(key)
+    expect(await focusInDialog(page)).toBe(true)
+  }
   await page.keyboard.press('Escape')
   await expect(viewer).toHaveCount(0)
+  await expect(view).toBeFocused()
   const scale = page.getByRole('slider', { name: 'Globe scale', exact: true })
   await scale.focus()
   const start = Number(await scale.inputValue())

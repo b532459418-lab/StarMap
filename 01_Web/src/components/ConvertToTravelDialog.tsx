@@ -17,6 +17,7 @@ import type { LocalConvertToTravelInput, LocalConvertToTravelResult } from '../d
 import { travelAtlasCountryCodes } from '../data/travelAtlas'
 import { plannedRecordById, wantToGoItemById } from '../data/wantToGo'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
+import { useDialogFocus } from './useDialogFocus'
 import { JourneyChoiceList } from './JourneyChoiceList'
 
 /**
@@ -75,6 +76,7 @@ function ConvertToTravelDialogContent({
   const titleId = useId()
   const summaryId = useId()
   const formRef = useRef<HTMLFormElement>(null)
+  const { dialogRef, trapFocus } = useDialogFocus<HTMLElement>()
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [tripTitle, setTripTitle] = useState('')
@@ -193,11 +195,14 @@ function ConvertToTravelDialogContent({
       }}
     >
       <section
+        ref={dialogRef}
         className="atlas-wtg-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={summaryId}
+        tabIndex={-1}
+        onKeyDown={trapFocus}
       >
         <header className="atlas-wtg-dialog-header">
           <div className="min-w-0">

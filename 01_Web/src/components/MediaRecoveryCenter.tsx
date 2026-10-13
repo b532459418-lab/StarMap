@@ -11,6 +11,7 @@ import { formatEditorError, LocalEditorError } from '../i18n/editorErrors.ts'
 import { domainErrorResources } from '../i18n/domainErrorResources.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useMediaJobs } from './useMediaJobs'
+import { useDialogFocus } from './useDialogFocus'
 
 const places = new Map(worldGraphSnapshot.entities.map((place) => [place.id, place]))
 const mediaById = new Map(allImportedMediaItems.map((item) => [item.id, item]))
@@ -253,8 +254,8 @@ export function MediaRecoveryCenter({ onOpenTarget }: { onOpenTarget?: (countryI
   const [open, setOpen] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState<string>()
   const [localError, setLocalError] = useState<unknown>()
-  const dialog = useRef<HTMLDivElement>(null)
   const returnFocus = useRef<HTMLElement | null>(null)
+  const { dialogRef, trapFocus } = useDialogFocus<HTMLDivElement>({ open, returnFocus })
   const jobs = state.jobs.filter((job) => job.phase !== 'closed' && job.phase !== 'abandoned')
   const error = state.error ?? localError
   const diagnostic = error instanceof LocalEditorError && error.code && Object.hasOwn(domainErrorResources.en, error.code)
@@ -275,14 +276,13 @@ export function MediaRecoveryCenter({ onOpenTarget }: { onOpenTarget?: (countryI
     return () => window.removeEventListener(MEDIA_RECOVERY_OPEN_EVENT, openPanel)
   }, [refresh])
 
+  // Focus moves into the panel on open and back to the opener on close through useDialogFocus.
   useEffect(() => {
     if (!open) return
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    dialog.current?.focus()
     return () => {
       document.body.style.overflow = previousOverflow
-      returnFocus.current?.focus()
     }
   }, [open])
 
@@ -295,16 +295,9 @@ export function MediaRecoveryCenter({ onOpenTarget }: { onOpenTarget?: (countryI
   return <>
     {hasEntry ? <button className="atlas-media-recovery-entry" type="button" data-testid="media-recovery-entry" onClick={() => requestMediaRecovery()}>{t('title')}</button> : null}
     {open ? createPortal(<div className="atlas-media-recovery-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false) }}>
-      <div className="atlas-media-recovery-center" ref={dialog} role="dialog" aria-modal="true" aria-label={t('title')} data-testid="media-recovery-center" tabIndex={-1} onKeyDown={(event) => {
+      <div className="atlas-media-recovery-center" ref={dialogRef} role="dialog" aria-modal="true" aria-label={t('title')} data-testid="media-recovery-center" tabIndex={-1} onKeyDown={(event) => {
         if (event.key === 'Escape') { event.stopPropagation(); setOpen(false) }
-        if (event.key === 'Tab') {
-          const items = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), summary, [tabindex="0"]') ?? []).filter((item) => item.getClientRects().length > 0)
-          const first = items[0]
-          const last = items[items.length - 1]
-          if (!first) { event.preventDefault(); return }
-          if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last.focus() }
-          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
-        }
+        trapFocus(event)
       }}>
         <header className="atlas-media-recovery-header">
           <h2>{t('title')}</h2>
