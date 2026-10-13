@@ -10,7 +10,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { copyLocalizedText, originalNameSubtitle, resolveName, searchableNames, type LocalizedText } from './localizedText.ts'
+import {
+  copyLocalizedText,
+  maximizeTagCacheForTests as cache,
+  originalNameSubtitle,
+  resolveName,
+  searchableNames,
+  type LocalizedText,
+} from './localizedText.ts'
 
 /** RFC LOC-5 的例子：《千与千寻》。 */
 const spiritedAway = (): LocalizedText => ({
@@ -150,4 +157,123 @@ test('纯函数：不修改输入；copyLocalizedText 不共享引用，original
   assert.notEqual(copy, text)
   assert.notEqual(copy.names, text.names)
   assert.equal(Object.hasOwn(copyLocalizedText({ names: { en: 'x' } }), 'originalLanguage'), false)
+})
+
+// ---------------------------------------------------------------------------
+// 第 0 步的缓存（第 5A 批 P2）
+// ---------------------------------------------------------------------------
+
+/** 2fd9866 上不带缓存的第 0 步原样：用来对照缓存给出的结果。 */
+const uncachedMaximize = (tag: string) => {
+  let locale: Intl.Locale
+  try {
+    locale = new Intl.Locale(tag)
+  } catch {
+    return undefined
+  }
+  if (!locale.language || locale.language === 'und') return undefined
+  const maximized = locale.maximize()
+  return { tag, language: maximized.language, script: maximized.script, region: maximized.region }
+}
+
+/** 固定种子的伪随机数（mulberry32）：每次运行生成同一组随机标签。 */
+const seededRandom = (seed: number): (() => number) => {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let value = Math.imul(state ^ (state >>> 15), 1 | state)
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** 随机标签：合法的组合、非法的写法、大小写变体、下划线分隔。 */
+const randomTags = (random: () => number, count: number): string[] => {
+  const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]
+  const languages = ['zh', 'ja', 'ko', 'en', 'es', 'fr', 'de', 'pt', 'ru', 'ar', 'sr', 'yue', 'und', 'zz', 'x', 'e', 'abcdefghi', '1', '']
+  const scripts = ['Hans', 'Hant', 'Latn', 'Cyrl', 'Jpan', 'Kore', 'Zzzz', 'Han']
+  const regions = ['CN', 'TW', 'HK', 'SG', 'US', 'GB', 'MX', '419', 'JP', 'XX', 'C']
+  const odd = ['', ' ', 'zh--CN', 'en-', '-en', '123', 'i-klingon', 'en-US-u-ca-gregory', 'zh-Hans-CN-x-private', 'x-private', 'root', 'not a tag', 'ZH-HANS-CN', 'Zh-hAnT-tW']
+  const recase = (value: string): string => {
+    const mode = random()
+    if (mode < 0.6) return value
+    if (mode < 0.75) return value.toUpperCase()
+    if (mode < 0.9) return value.toLowerCase()
+    return Array.from(value, (char) => (random() < 0.5 ? char.toUpperCase() : char.toLowerCase())).join('')
+  }
+  return Array.from({ length: count }, () => {
+    if (random() < 0.2) return pick(odd)
+    const parts = [pick(languages)]
+    if (random() < 0.5) parts.push(pick(scripts))
+    if (random() < 0.5) parts.push(pick(regions))
+    return recase(parts.join(random() < 0.9 ? '-' : '_'))
+  })
+}
+
+test('第 0 步缓存：随机标签（合法、非法、大小写变体）的补全结果与不带缓存时相同；命中返回同一个值；解析失败也缓存', () => {
+  cache.clear()
+  const tags = randomTags(seededRandom(0x5a), 400)
+  for (const tag of tags) {
+    const first = cache.maximize(tag)
+    assert.deepEqual(first, uncachedMaximize(tag), tag)
+    assert.equal(cache.maximize(tag), first, `命中：${tag}`)
+  }
+  assert.ok(tags.some((tag) => uncachedMaximize(tag) === undefined), '随机标签里有不能解析的')
+  assert.ok(tags.some((tag) => uncachedMaximize(tag) !== undefined), '随机标签里有能解析的')
+  assert.equal(cache.size(), new Set(tags).size, '每个不同的标签一条，不能解析的也算')
+})
+
+test('resolveName / originalNameSubtitle：缓存冷（每次调用前清空）与缓存热时结果相同，覆盖随机名称与随机界面语言', () => {
+  const random = seededRandom(0x5b)
+  const pool = randomTags(random, 200)
+  const locales = [...randomTags(random, 15), 'zh-Hans', 'zh-Hant', 'zh-CN', 'zh-TW', 'ja', 'ko', 'en', 'en-US', 'es-MX', 'de', 'und', '', 'not a tag']
+  const pickFrom = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]
+  const texts: LocalizedText[] = [spiritedAway(), { names: { 'zh-Hans': '京都', 'zh-Hant': '京都（繁）', en: 'Kyoto' } }]
+  for (let index = 0; index < 100; index += 1) {
+    const names: Record<string, string> = {}
+    const count = Math.floor(random() * 5)
+    for (let item = 0; item < count; item += 1) names[pickFrom(pool)] = random() < 0.1 ? '' : `name-${index}-${item}`
+    const keys = Object.keys(names)
+    const text: LocalizedText = { names }
+    if (random() < 0.5) text.originalLanguage = keys.length > 0 && random() < 0.7 ? pickFrom(keys) : pickFrom(pool)
+    texts.push(text)
+  }
+  const run = (clearBeforeEachCall: boolean) => texts.flatMap((text) => locales.map((uiLocale) => {
+    if (clearBeforeEachCall) cache.clear()
+    const title = resolveName(text, uiLocale)
+    if (clearBeforeEachCall) cache.clear()
+    return [title, originalNameSubtitle(text, uiLocale)]
+  }))
+  const cold = run(true)
+  const warm = run(false)
+  assert.deepEqual(warm, cold)
+  assert.deepEqual(run(false), warm, '热缓存再跑一遍，结果不变')
+})
+
+test('缓存存满（上限条）后再来新标签时整体清空，之后照常补全与取名；条数从不超过上限', () => {
+  cache.clear()
+  const filler = Array.from({ length: cache.limit }, (_, index) => `en-x-p${index}`)
+  for (const tag of filler) cache.maximize(tag)
+  assert.equal(cache.size(), cache.limit)
+  cache.maximize(filler[0])
+  assert.equal(cache.size(), cache.limit, '命中不增加条数，也不触发清空')
+  assert.deepEqual(cache.maximize('zh-TW'), uncachedMaximize('zh-TW'))
+  assert.equal(cache.size(), 1, '存满后来了新标签：先整体清空，再存它')
+  assert.equal(resolveName({ names: { 'zh-Hans': '京都', en: 'Kyoto' } }, 'zh-TW'), '京都')
+  assert.deepEqual(cache.maximize(filler[0]), uncachedMaximize(filler[0]), '清空前的标签重新补全')
+  for (let index = 0; index < cache.limit * 3; index += 1) {
+    cache.maximize(`en-x-q${index}`)
+    assert.ok(cache.size() <= cache.limit)
+  }
+})
+
+test('缓存里的值是冻结的：调用方改不了，下一次拿到的仍是原来的结果', () => {
+  cache.clear()
+  const value = cache.maximize('zh-TW')
+  assert.ok(value !== undefined && Object.isFrozen(value))
+  assert.throws(() => {
+    (value as { language: string }).language = 'ja'
+  }, TypeError)
+  assert.deepEqual(cache.maximize('zh-TW'), uncachedMaximize('zh-TW'))
+  assert.equal(resolveName({ names: { 'zh-Hans': '京都', 'zh-Hant': '京都（繁）' } }, 'zh-TW'), '京都（繁）')
 })
