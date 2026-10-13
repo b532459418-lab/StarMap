@@ -124,6 +124,8 @@ The library's coordination records are bound to the private root's path. If you 
 
 If StarMap or a media command crashes or is killed while it holds the library operation lock, the lock stays behind and later writes report a busy library. A lock is never released because it is old or because its process ID is gone. Once you are sure the program that held it is no longer running, run `npm run library:recover` in `01_Web/`: it prints the lock's holder, its creation time and the private-root binding, and changes nothing. Then run `npm run library:recover -- --confirm`: it first checks the library data (the V2 files and their place references; for the coming SQLite store, `quick_check` and a full validation) and removes the lock only when the check passes. If the check fails, the lock stays and the problems are listed; restore from a backup before writing again.
 
+If the private root was also moved while the lock was left behind, `--confirm` alone refuses (the lock is bound to the old path) and `npm run library:rebind` refuses because of the lock. Run `npm run library:recover -- --confirm --rebind` instead: after the same data check it rebinds the library's coordination records to the current path, as `library:rebind` does, and then removes the lock.
+
 ## Places you want to go
 
 The Want to Go layer marks places you have not been to yet. The map layers button in the bottom dock (地图图层, a separate button from the imagery-source menu) opens the layer panel, where the Travel and Want to Go layers can be shown or hidden independently. The browser remembers the choice across sessions.

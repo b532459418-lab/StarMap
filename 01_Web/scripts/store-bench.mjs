@@ -1,16 +1,22 @@
 /**
- * `npm run store:bench` (3C-2, design 3B §6): benchmarks for the formal store host, run in
- * segments so that no single command runs long. Never part of `npm test` (store-bench.test.mjs
- * runs a small smoke scale only).
+ * `npm run store:bench` (3C-2, design 3B §6 with the two scales of v1.1 §16.2-7): benchmarks for
+ * the formal store host, run in segments so that no single command runs long. Never part of
+ * `npm test` (store-bench.test.mjs runs a small smoke scale only).
  *
- *   node scripts/store-bench.mjs --dir <work dir> --segment load            full-scale store (fresh.sqlite); resumable, rerun until done
- *   node scripts/store-bench.mjs --dir <work dir> --segment validate --db fresh
- *   node scripts/store-bench.mjs --dir <work dir> --segment copy            fresh.sqlite → aged.sqlite
- *   node scripts/store-bench.mjs --dir <work dir> --segment commit --db fresh|aged
- *   node scripts/store-bench.mjs --dir <work dir> --segment cold --db fresh|aged
- *   node scripts/store-bench.mjs --dir <work dir> --segment age --db aged --count 50000 [--offset N] [--fast]
- *   node scripts/store-bench.mjs --dir <work dir> --segment prune --db aged
- *   node scripts/store-bench.mjs --dir <work dir> --segment modes --db fresh   (journal/sync comparison, copies only)
+ * Scales (`--scale`, default real): `real` is what a person's library is expected to reach and is
+ * what the targets are accepted on (3,000 places, 10,000 entries, 10,000 media entities); `stress`
+ * is the 3C-2 scale (10,000 / 30,000 / 50,000), recorded only, to catch regressions and
+ * super-linear growth. Each scale keeps its own files: <dir>/<scale>-fresh.sqlite, -aged.sqlite.
+ *
+ *   node scripts/store-bench.mjs --dir <work dir> --scale real|stress --segment load     creates <scale>-fresh; resumable, rerun until done
+ *   ... --segment validate --db fresh       readFormalState (full validation) and check()
+ *   ... --segment copy                      <scale>-fresh → <scale>-aged
+ *   ... --segment commit --db fresh|aged    commits of 1, 2, 10 and 50 rows, with and without the library lock check
+ *   ... --segment cold --db fresh|aged [--unclean]   open + readRowsUnchecked; --unclean first marks the last
+ *                                           writer session as not closed (clean_shutdown 0), so the open runs quick_check
+ *   ... --segment age --db aged --count 20000 [--offset N] [--fast]
+ *   ... --segment prune --db aged           pruneLogs with incremental_vacuum: file size before and after
+ *   ... --segment modes --db fresh          journal/sync comparison, copies only
  *
  * Every segment prints one JSON line and appends it to <dir>/results.jsonl. The data is
  * synthetic: places with anchors and entries, media entities with asset references and
@@ -18,13 +24,17 @@
  */
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
 import { createStore, openStore, withoutLibraryLock } from './store-host.mjs'
 
-/** Design 3B §6 stress scale: 10,000 entities and 30,000 entries, plus 50,000 media entities with asset references. */
-export const FULL_SCALE = Object.freeze({ places: 10_000, entriesPerPlace: 3, media: 50_000 })
-/** The `npm test` smoke scale: 1,000 places and 200 media entities. */
-export const SMOKE_SCALE = Object.freeze({ places: 1_000, entriesPerPlace: 1, media: 200 })
+/** Design 3B v1.1 §16.2-7 real scale, where the targets are accepted: 3,000 places, 10,000 entries, 10,000 media entities with asset references. */
+export const REAL_SCALE = Object.freeze({ places: 3_000, entries: 10_000, media: 10_000 })
+/** The 3C-2 stress scale (design 3B §6), recorded only: 10,000 places, 30,000 entries, 50,000 media entities. */
+export const STRESS_SCALE = Object.freeze({ places: 10_000, entries: 30_000, media: 50_000 })
+export const SCALES = Object.freeze({ real: REAL_SCALE, stress: STRESS_SCALE })
+/** The `npm test` smoke scale: 1,000 places and entries, 200 media entities. */
+export const SMOKE_SCALE = Object.freeze({ places: 1_000, entries: 1_000, media: 200 })
 const LIBRARY_ID = '01900000-0000-7000-8000-0000000be4c1'
 const SOURCE = 'bench:source'
 const BATCH = 2_000
@@ -67,7 +77,8 @@ const placeRows = (n) => [
     precision: 'city', source: source(`anchor-${n}`) }),
 ]
 function entryRows(scale, n) {
-  const place = Math.floor(n / scale.entriesPerPlace)
+  // Entries spread evenly over the places (the stress scale: three per place, as in 3C-2).
+  const place = Math.floor((n * scale.places) / scale.entries)
   const layerId = LAYERS[n % LAYERS.length]
   const fields = layerId === 'bench:travel' ? { rating: n % 11, note: `Visit ${n}`, visitedAt: `20${10 + (n % 15)}-0${1 + (n % 9)}-1${n % 10}` } : { note: `Someday ${n}` }
   return [
@@ -93,7 +104,7 @@ export function* benchBatches(scale) {
     if (batch.length >= BATCH) { yield batch; batch = [] }
   }
   for (let n = 0; n < scale.places; n++) yield* push(placeRows(n))
-  for (let n = 0; n < scale.places * scale.entriesPerPlace; n++) yield* push(entryRows(scale, n))
+  for (let n = 0; n < scale.entries; n++) yield* push(entryRows(scale, n))
   for (let n = 0; n < scale.media; n++) yield* push(mediaRows(scale, n))
   if (batch.length) yield batch
 }
@@ -133,7 +144,7 @@ export async function loadBenchStore(file, scale) {
 
 /** One edit of `size` changed rows (1, 2, 10 or 50) against the current store. */
 export function benchEdit(handle, scale, size, n) {
-  const entries = scale.places * scale.entriesPerPlace
+  const entries = scale.entries
   return handle.read((reader) => {
     const commands = []
     const updateEntry = (index) => {
@@ -200,79 +211,100 @@ function options(argv) {
   const value = (name) => { const at = argv.indexOf(`--${name}`); return at >= 0 ? argv[at + 1] : undefined }
   const dir = value('dir')
   if (!dir || !path.isAbsolute(dir)) throw new Error('--dir <absolute work directory> is required')
-  return { dir, segment: value('segment'), db: value('db') ?? 'fresh', count: Number(value('count') ?? 25_000), offset: Number(value('offset') ?? 0), fast: argv.includes('--fast') }
+  const scaleName = value('scale') ?? 'real'
+  if (!Object.hasOwn(SCALES, scaleName)) throw new Error(`--scale must be one of ${Object.keys(SCALES).join(', ')}`)
+  return {
+    dir, scaleName, scale: SCALES[scaleName], segment: value('segment'), db: value('db') ?? 'fresh',
+    count: Number(value('count') ?? 20_000), offset: Number(value('offset') ?? 0), fast: argv.includes('--fast'), unclean: argv.includes('--unclean'),
+  }
 }
 const fileSizeMb = (file) => mb(statSync(file).size)
-const storeFile = (dir, db) => path.join(dir, `${db}.sqlite`)
+const storeFile = (dir, scaleName, db) => path.join(dir, `${scaleName}-${db}.sqlite`)
+const ms = (value) => (value === undefined ? null : Math.round(value * 10) / 10)
+const COUNTED = Object.freeze(['entities', 'entries', 'assets', 'anchors', 'relations', 'viewItems'])
+const tableCounts = (state) => Object.fromEntries(COUNTED.map((table) => [table, state[table].length]))
+const maxRssMb = () => mb(process.resourceUsage().maxRSS * 1024)
+
+/** Bench only: leave the last writer session marked as not closed, as a killed writer does (the next open runs quick_check). */
+function markUnclean(file) {
+  const db = new DatabaseSync(file)
+  try { db.exec('UPDATE store_meta SET clean_shutdown = 0') } finally { db.close() }
+}
 
 const SEGMENTS = {
-  /** Resumable: creates fresh.sqlite, then loads batches for at most six minutes per run. */
-  async load({ dir }) {
-    const file = storeFile(dir, 'fresh')
+  /** Resumable: creates <scale>-fresh.sqlite, then loads batches for at most six minutes per run. */
+  async load({ dir, scaleName, scale }) {
+    const file = storeFile(dir, scaleName, 'fresh')
     const started = performance.now()
     const handle = existsSync(file) ? openStore(file, { lock: withoutLibraryLock }) : await createBenchStore(file)
     try {
-      const result = await loadBatches(handle, FULL_SCALE, { deadline: started + 6 * 60_000 })
-      return { ...result, seconds: Math.round((performance.now() - started) / 100) / 10, fileMb: fileSizeMb(file), memory: memory() }
+      const result = await loadBatches(handle, scale, { deadline: started + 6 * 60_000 })
+      return { scale: scaleName, ...result, seconds: Math.round((performance.now() - started) / 100) / 10, fileMb: fileSizeMb(file), memory: memory() }
     } finally { await handle.close() }
   },
-  /** Full validation of the loaded store: readFormalState (Core) and the host's check. */
-  async validate({ dir, db }) {
-    const file = storeFile(dir, db)
+  /** Full validation of the loaded store: readFormalState (Core) and the host's check (quick_check included). */
+  async validate({ dir, scaleName, db }) {
+    const file = storeFile(dir, scaleName, db)
     const handle = openStore(file, { lock: withoutLibraryLock })
     try {
       let started = performance.now()
-      const state = handle.readFormalState()
+      const counts = tableCounts(handle.readFormalState())
       const readFormalStateMs = Math.round(performance.now() - started)
-      const counts = Object.fromEntries(['entities', 'entries', 'assets', 'anchors', 'relations', 'viewItems'].map((table) => [table, state[table].length]))
       started = performance.now()
       const check = handle.check()
-      return { db, counts, readFormalStateMs, checkMs: Math.round(performance.now() - started), check, fileMb: fileSizeMb(file), memory: memory(),
-        maxRssMb: mb(process.resourceUsage().maxRSS * 1024) }
+      return { scale: scaleName, db, counts, readFormalStateMs, checkMs: Math.round(performance.now() - started), check, fileMb: fileSizeMb(file),
+        memory: memory(), maxRssMb: maxRssMb() }
     } finally { await handle.close() }
   },
-  async copy({ dir }) {
-    copyFileSync(storeFile(dir, 'fresh'), storeFile(dir, 'aged'))
-    return { copied: true, fileMb: fileSizeMb(storeFile(dir, 'aged')) }
+  async copy({ dir, scaleName }) {
+    copyFileSync(storeFile(dir, scaleName, 'fresh'), storeFile(dir, scaleName, 'aged'))
+    return { scale: scaleName, copied: true, fileMb: fileSizeMb(storeFile(dir, scaleName, 'aged')) }
   },
-  async commit({ dir, db, offset }) {
-    const file = storeFile(dir, db)
-    const root = path.join(dir, `root-${db}`)
+  /**
+   * 200 commits without any library coordination, then 200 with the default check of ordinary
+   * writes (privatePaths: one lstat of the library lock before BEGIN IMMEDIATE, no lease).
+   */
+  async commit({ dir, scaleName, scale, db, offset }) {
+    const file = storeFile(dir, scaleName, db)
+    const root = path.join(dir, `root-${scaleName}-${db}`)
     mkdirSync(root, { recursive: true })
     const before = memory()
     let handle = openStore(file, { lock: withoutLibraryLock })
     const opened = memory()
-    const unlocked = await timedCommits(handle, FULL_SCALE, 200, offset)
+    const unprobed = await timedCommits(handle, scale, 200, offset)
     await handle.close()
     handle = openStore(file, { privatePaths: { root } })
-    const locked = await timedCommits(handle, FULL_SCALE, 200, offset + 200)
+    const probed = await timedCommits(handle, scale, 200, offset + 200)
     const after = memory()
     await handle.close()
     return {
-      db, unlocked, locked, lockOverheadP50Ms: Math.round((locked.all.p50 - unlocked.all.p50) * 100) / 100,
-      memory: { before, opened, after, rssIncreaseMb: Math.round((after.rssMb - before.rssMb) * 10) / 10, maxRssMb: mb(process.resourceUsage().maxRSS * 1024) },
+      scale: scaleName, db, unprobed, probed, probeOverheadP50Ms: Math.round((probed.all.p50 - unprobed.all.p50) * 100) / 100,
+      memory: { before, opened, after, rssIncreaseMb: Math.round((after.rssMb - before.rssMb) * 10) / 10, maxRssMb: maxRssMb() },
       fileMb: fileSizeMb(file),
     }
   },
-  async cold({ dir, db }) {
-    const file = storeFile(dir, db)
+  /** Cold start (design 3B v1.1 §16.2-7): open plus readRowsUnchecked, after a clean close or (--unclean) a killed writer. */
+  async cold({ dir, scaleName, db, unclean }) {
+    const file = storeFile(dir, scaleName, db)
+    if (unclean) markUnclean(file)
     const before = memory()
     const started = performance.now()
     const handle = openStore(file, { lock: withoutLibraryLock })
     const openMs = performance.now() - started
     const opened = memory()
     const readStarted = performance.now()
-    const state = handle.readFormalState()
-    const readMs = performance.now() - readStarted
-    const rows = ['entities', 'entries', 'assets', 'anchors', 'relations', 'viewItems'].reduce((sum, table) => sum + state[table].length, 0)
+    const rows = handle.readRowsUnchecked()
+    const readRowsUncheckedMs = performance.now() - readStarted
+    const totalMs = performance.now() - started
     const read = memory()
+    const counts = tableCounts(rows)
     await handle.close()
     const timings = handle.openTimings
     return {
-      db, openMs: Math.round(openMs), connectMs: Math.round(timings.connectMs), quickCheckMs: Math.round(timings.quickCheckMs),
-      readFormalStateMs: Math.round(readMs), rows, fileMb: fileSizeMb(file),
+      scale: scaleName, db, unclean, readOnly: handle.readOnly, openMs: ms(openMs), connectMs: ms(timings.connectMs), quickCheckMs: ms(timings.quickCheckMs),
+      readRowsUncheckedMs: ms(readRowsUncheckedMs), totalMs: ms(totalMs), counts, fileMb: fileSizeMb(file),
       memory: { before, opened, read, openIncreaseMb: Math.round((opened.rssMb - before.rssMb) * 10) / 10, readIncreaseMb: Math.round((read.rssMb - before.rssMb) * 10) / 10,
-        maxRssMb: mb(process.resourceUsage().maxRSS * 1024) },
+        maxRssMb: maxRssMb() },
     }
   },
   /**
@@ -282,8 +314,8 @@ const SEGMENTS = {
    * converted back to TRUNCATE on the next open, and the measurements run with TRUNCATE + EXTRA.
    * Stops after six minutes; rerun with --offset to continue.
    */
-  async age({ dir, db, count, offset, fast }) {
-    const file = storeFile(dir, db)
+  async age({ dir, scaleName, scale, db, count, offset, fast }) {
+    const file = storeFile(dir, scaleName, db)
     const relax = (name, { db: connection }) => {
       if (name === 'probed') { connection.exec('PRAGMA journal_mode = WAL'); connection.exec('PRAGMA synchronous = OFF') }
     }
@@ -293,12 +325,12 @@ const SEGMENTS = {
     let done = 0
     try {
       for (; done < count && performance.now() < deadline; done++) {
-        const edit = benchEdit(handle, FULL_SCALE, done % 2 ? 2 : 1, offset + done)
+        const edit = benchEdit(handle, scale, done % 2 ? 2 : 1, offset + done)
         const t0 = performance.now()
         await handle.commit(edit)
         samples.push(performance.now() - t0)
       }
-      return { db, fast, requested: count, done, nextOffset: offset + done, seconds: Math.round((performance.now() - started) / 1000),
+      return { scale: scaleName, db, fast, requested: count, done, nextOffset: offset + done, seconds: Math.round((performance.now() - started) / 1000),
         commits: summarize(samples), revision: handle.meta().revision }
     } finally {
       await handle.close()
@@ -311,34 +343,36 @@ const SEGMENTS = {
    * store with other journal/sync settings, set through the test hook. The host itself always
    * runs TRUNCATE + EXTRA. The copies are removed afterwards.
    */
-  async modes({ dir, db, offset }) {
+  async modes({ dir, scaleName, scale, db, offset }) {
     const results = {}
     for (const [journal, sync] of [['DELETE', 'EXTRA'], ['TRUNCATE', 'EXTRA'], ['WAL', 'FULL'], ['WAL', 'NORMAL']]) {
-      const copy = storeFile(dir, `mode-${journal}-${sync}`)
-      copyFileSync(storeFile(dir, db), copy)
+      const copy = storeFile(dir, scaleName, `mode-${journal}-${sync}`)
+      copyFileSync(storeFile(dir, scaleName, db), copy)
       const handle = openStore(copy, { lock: withoutLibraryLock, unsafeTestPhase: (name, { db: connection }) => {
         if (name === 'probed') { connection.exec(`PRAGMA journal_mode = ${journal}`); connection.exec(`PRAGMA synchronous = ${sync}`) }
       } })
-      try { results[`${journal}+${sync}`] = await timedCommits(handle, FULL_SCALE, 100, offset) } finally { await handle.close() }
+      try { results[`${journal}+${sync}`] = await timedCommits(handle, scale, 100, offset) } finally { await handle.close() }
       for (const suffix of ['', '-journal', '-wal', '-shm']) rmSync(`${copy}${suffix}`, { force: true })
     }
-    return { db, results }
+    return { scale: scaleName, db, results }
   },
-  async prune({ dir, db }) {
-    const file = storeFile(dir, db)
+  /** Retention as if the newest edits were 31 days old (as in 3C-2), then incremental_vacuum: the file size before and after. */
+  async prune({ dir, scaleName, db }) {
+    const file = storeFile(dir, scaleName, db)
+    const fileMbBefore = fileSizeMb(file)
     const handle = openStore(file, { lock: withoutLibraryLock })
     const started = performance.now()
-    let total = { receipts: 0, opLog: 0, steps: 0 }
-    // Retention as if the oldest edits were 31 days old, so receipts beyond the newest 10,000 go.
+    const total = { receipts: 0, opLog: 0, steps: 0, vacuumSteps: 0, freedPages: 0, calls: 0 }
     const now = new Date(Date.now() + 31 * 86_400_000).toISOString()
     for (;;) {
       const result = await handle.pruneLogs({ now })
-      total = { receipts: total.receipts + result.receipts, opLog: total.opLog + result.opLog, steps: total.steps + result.steps }
+      for (const key of ['receipts', 'opLog', 'steps', 'vacuumSteps', 'freedPages']) total[key] += result[key]
+      total.calls++
       if (result.done) break
     }
-    const ms = performance.now() - started
+    const prunedMs = performance.now() - started
     await handle.close()
-    return { db, ...total, ms: Math.round(ms), fileMb: fileSizeMb(file) }
+    return { scale: scaleName, db, ...total, ms: Math.round(prunedMs), fileMbBefore, fileMbAfter: fileSizeMb(file) }
   },
 }
 
@@ -347,7 +381,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const run = SEGMENTS[settings.segment]
   if (!run) throw new Error(`--segment must be one of ${Object.keys(SEGMENTS).join(', ')}`)
   mkdirSync(settings.dir, { recursive: true })
-  const result = { segment: settings.segment, node: process.versions.node, at: new Date().toISOString(), ...(await run(settings)) }
+  const result = { segment: settings.segment, node: process.versions.node, at: new Date().toISOString(), scaleRows: settings.scale, ...(await run(settings)) }
   const line = JSON.stringify(result)
   appendFileSync(path.join(settings.dir, 'results.jsonl'), `${line}\n`)
   console.log(line)
