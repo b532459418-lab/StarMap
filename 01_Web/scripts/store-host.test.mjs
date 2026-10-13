@@ -11,8 +11,16 @@ import {
   BUSY_TIMEOUT_MS, StoreHostError, classifySqliteError, nodeSupportsStore, openConnection, pragmaValue,
 } from './store-sqlite.mjs'
 import {
-  ROW_TABLES, STORE_APPLICATION_ID, STORE_FORMAT, STORE_FORMAT_VERSION, createStore, openStore, storePathFor, withoutLibraryLock,
+  ROW_TABLES, STORE_APPLICATION_ID, STORE_FORMAT, STORE_FORMAT_VERSION, checkStoreFile, createStore, encodeRow, openStore, storePathFor,
+  withoutLibraryLock,
 } from './store-host.mjs'
+import { FORMAL_TABLES, readFormalState, uniqueClaims } from '../src/worldgraph/store/formal.ts'
+import { formalFixture, formalFromWorld, worldFromFormal } from '../src/worldgraph/store/formal.fixture.ts'
+import { generator, randomBatch, withFilm } from '../src/worldgraph/store/parity.fixture.ts'
+import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts'
+import { StoreError, jsonKey } from '../src/worldgraph/store/primitives.ts'
+import { memoryReader, refKey, referencesOf } from '../src/worldgraph/store/reader.ts'
+import { NOW as FIXTURE_NOW } from '../src/worldgraph/store/store.fixture.ts'
 
 const LIBRARY_ID = '01900000-0000-7000-8000-00000000abcd'
 const NOW = '2026-10-13T00:00:00.000Z'
@@ -178,4 +186,133 @@ test('an explicit read-only open runs the same checks and never takes the writer
   assert.equal(reader.meta().revision, 0)
   await reader.close()
   assert.equal(handle.meta().revision, 0)
+})
+
+// ---------------------------------------------------------------------------
+// SqliteStoreReader against memoryReader
+// ---------------------------------------------------------------------------
+
+const normalized = (state) => jsonKey({
+  ...Object.fromEntries(FORMAL_TABLES.map((table) => [table, [...state[table]].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))])),
+  revision: state.revision,
+  tombstones: [...state.tombstones].sort((a, b) => jsonKey([a.table, a.id]) < jsonKey([b.table, b.id]) ? -1 : 1),
+})
+const sortedRefs = (refs) => refs.map(refKey).sort()
+
+/** Test-only bulk load: write a whole valid FormalState with the host's row encoding, bypassing the planner. */
+function loadState(file, state) {
+  const db = new DatabaseSync(file)
+  try {
+    db.exec('PRAGMA foreign_keys = ON; BEGIN IMMEDIATE')
+    const memory = memoryReader(state)
+    for (const table of FORMAL_TABLES) {
+      const spec = ROW_TABLES[table]
+      const insert = db.prepare(`INSERT INTO ${spec.sql} VALUES (${Array(spec.columns.length + 3).fill('?').join(', ')})`)
+      for (const row of state[table]) {
+        insert.run(...encodeRow(table, row))
+        for (const ref of referencesOf(table, row, memory)) db.prepare('INSERT INTO refs VALUES (?, ?, ?, ?, ?)').run(ref.fromTable, ref.fromId, ref.field, ref.toTable, ref.toId)
+      }
+    }
+    for (const t of state.tombstones) db.prepare('INSERT INTO tombstones VALUES (?, ?, ?)').run(t.table, t.id, t.deletedAt)
+    db.prepare('UPDATE store_meta SET revision = ?').run(state.revision)
+    db.exec('COMMIT')
+  } finally { db.close() }
+}
+
+/** Every StoreReader method answers the same on both readers: each row, reference, tombstone and unique key, and misses. */
+function assertSameReader(sqlite, memory, state, label) {
+  assert.equal(sqlite.revision, memory.revision, label)
+  let calls = 0
+  const same = (method, ...args) => {
+    calls++
+    const a = sqlite[method](...args), b = memory[method](...args)
+    if (method === 'dependents') assert.deepEqual(sortedRefs(a), sortedRefs(b), `${label}: ${method}(${args.join(', ')})`)
+    else if (method === 'get') assert.equal(a === undefined ? 'undefined' : jsonKey(a), b === undefined ? 'undefined' : jsonKey(b), `${label}: get(${args.join(', ')})`)
+    else assert.equal(a, b, `${label}: ${method}(${args.join(', ')})`)
+  }
+  for (const table of FORMAL_TABLES) {
+    same('get', table, 'absent-id'); same('dependents', table, 'absent-id'); same('isTombstoned', table, 'absent-id')
+    for (const row of state[table]) {
+      same('get', table, row.id); same('dependents', table, row.id); same('isTombstoned', table, row.id)
+      for (const claim of uniqueClaims(table, row)) {
+        const [a, b, c, d] = claim.parts
+        if (claim.kind === 'entry') { same('findEntryByIdentity', a, b, c, d); same('findEntryByIdentity', a, b, c, d + '-other') }
+        if (claim.kind === 'systemKey') { same('findLayerBySystemKey', a); same('findLayerBySystemKey', a + '-other') }
+        if (claim.kind === 'proposal') { same('findReviewByProposal', a); same('findReviewByProposal', a + '-other') }
+        if (claim.kind === 'viewItem') { same('findViewItem', a, b, c); same('findViewItem', a, b, c + '-other') }
+        if (claim.kind === 'viewSetting') { same('findViewSetting', a, b); same('findViewSetting', a + '-other', b) }
+      }
+    }
+  }
+  for (const t of state.tombstones) { same('isTombstoned', t.table, t.id); same('get', t.table, t.id); same('dependents', t.table, t.id) }
+  return calls
+}
+
+/** The 3C-1a parity start state (G1 fixture plus a film type) with the formal fixture's view rows. */
+const startState = () => readFormalState({ ...formalFromWorld(withFilm()), viewItems: formalFixture().viewItems, viewSettings: formalFixture().viewSettings })
+/** Run seeded random 3C-1a batches through the memory path (planCommands + applyChangeSet). */
+function randomState(sequence, steps = 4) {
+  let state = startState()
+  const random = generator(0x5713 + sequence), counter = { n: 300000 + sequence * 1000 }
+  for (let step = 0; step < steps; step++) {
+    const { commands, options } = randomBatch(worldFromFormal(state), random, counter)
+    if (!commands.length) continue
+    try {
+      state = applyChangeSet(state, planCommands(memoryReader(state), commands, { baseRevision: options.expected ?? state.revision, now: FIXTURE_NOW }))
+    } catch (error) { if (!(error instanceof StoreError)) throw error }
+  }
+  return state
+}
+async function storeWithState(t, root, name, state) {
+  const file = path.join(root, `${name}.sqlite`)
+  await (await createStore(file, { libraryId: LIBRARY_ID, now: clock, lock: withoutLibraryLock })).close()
+  loadState(file, state)
+  return { file, handle: track(t, openStore(file, { lock: withoutLibraryLock })) }
+}
+
+test('SqliteStoreReader answers every StoreReader method like memoryReader on random 3C-1a states', async (t) => {
+  const root = await tempRoot(t)
+  let calls = 0, rows = 0, tombstones = 0
+  for (let sequence = 0; sequence < 16; sequence++) {
+    const state = randomState(sequence, 6)
+    const { handle } = await storeWithState(t, root, `state-${sequence}`, state)
+    calls += handle.read((reader) => assertSameReader(reader, memoryReader(state), state, `sequence ${sequence}`))
+    assert.equal(normalized(handle.readFormalState()), normalized(state), `sequence ${sequence}: readFormalState`)
+    assert.deepEqual(handle.check(), { ok: true, problems: [] })
+    rows += FORMAL_TABLES.reduce((sum, table) => sum + state[table].length, 0)
+    tombstones += state.tombstones.length
+    await handle.close()
+  }
+  t.diagnostic(`16 random states, ${rows} rows, ${tombstones} tombstones, ${calls} reader calls compared`)
+  assert.ok(tombstones > 0, 'the random states include deletions')
+})
+
+test('the reader lives only inside its read transaction; reads stay synchronous', async (t) => {
+  const root = await tempRoot(t)
+  const { handle } = await storeWithState(t, root, 'fixture', startState())
+  const kept = handle.read((reader) => reader)
+  rejectsWith(() => kept.get('entities', 'anything'), 'E_STORE_READER_CLOSED')
+  rejectsWith(() => handle.read(async () => 1), 'E_STORE_ASYNC_READ')
+  assert.equal(handle.read((reader) => reader.revision), startState().revision, 'a refused read leaves no transaction behind')
+})
+
+test('readFormalState and check find damage that quick_check cannot see', async (t) => {
+  const root = await tempRoot(t)
+  const state = startState()
+  const entity = state.entities[0]
+  const damages = [
+    ['unreadable body', `UPDATE entities SET body = '{' WHERE id = '${entity.id}'`, 'E_STORE_CORRUPT: entities.body'],
+    ['body breaks a Core rule', `UPDATE entities SET body = json_set(body, '$.fields.related', 'missing-entity') WHERE id = '${entity.id}'`, 'E_REFERENCE: entities.fields'],
+    ['index column disagrees with the body', `UPDATE entries SET record_id = 'moved' WHERE id = '${state.entries[0].id}'`, 'E_STORE_COLUMNS: entries (1)'],
+    ['missing reverse reference', `DELETE FROM refs WHERE from_table = 'entries' AND from_id = '${state.entries[0].id}' AND field = 'entityId'`, 'E_STORE_REFS: 1 missing, 0 unexpected'],
+    ['dangling plain-column reference', `PRAGMA foreign_keys = OFF; UPDATE anchors SET entity_id = 'missing-entity' WHERE id = '${state.anchors[0].id}'`, 'E_REFERENCE: anchors.entityId'],
+  ]
+  for (const [name, sql, problem] of damages) {
+    const { file, handle } = await storeWithState(t, root, name.replaceAll(' ', '-'), state)
+    await handle.close()
+    rawEdit(file, sql)
+    const result = await checkStoreFile(file)
+    assert.equal(result.ok, false, name)
+    assert.ok(result.problems.includes(problem), `${name}: ${result.problems.join('; ')}`)
+  }
 })

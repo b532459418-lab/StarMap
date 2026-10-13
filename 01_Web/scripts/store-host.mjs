@@ -16,7 +16,8 @@ import { withLibraryOperation } from './library-operation-lock.mjs'
 import {
   StoreHostError, closeQuietly, openConnection, pragmaValue, scratchConnection, storeErrorFrom, transactionState,
 } from './store-sqlite.mjs'
-import { FORMAL_TABLES } from '../src/worldgraph/store/formal.ts'
+import { FORMAL_TABLES, readFormalState as readFormalStateCore } from '../src/worldgraph/store/formal.ts'
+import { memoryReader, refKey, referencesOf } from '../src/worldgraph/store/reader.ts'
 import { StoreError, utcTimestamp, uuid } from '../src/worldgraph/store/primitives.ts'
 
 export { StoreHostError } from './store-sqlite.mjs'
@@ -161,13 +162,186 @@ function expectedSchema() {
 }
 
 // ---------------------------------------------------------------------------
+// Rows and the SQLite StoreReader
+// ---------------------------------------------------------------------------
+
+const deepFreeze = (value) => {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child)
+    Object.freeze(value)
+  }
+  return value
+}
+
+/**
+ * Column values of one validated row, in table column order: id, revision, the spec's
+ * columns, body. Lifted keys leave `body`; derived columns copy a nested value that stays
+ * in `body`. Exported for tests and the benchmark loader.
+ */
+export function encodeRow(table, row) {
+  const spec = ROW_TABLES[table]
+  const { id, revision, ...body } = row
+  const values = [id, revision]
+  for (const column of spec.columns) {
+    if (!column.lifted) { values.push(column.read(row)); continue }
+    values.push(Object.hasOwn(body, column.key) ? body[column.key] : null)
+    delete body[column.key]
+  }
+  values.push(JSON.stringify(body))
+  return values
+}
+
+/** The Core row object of one SQLite record: exactly the row that was encoded (JSON values). */
+function decodeRow(table, record) {
+  const spec = ROW_TABLES[table]
+  let body
+  try { body = JSON.parse(record.body) } catch { fail('E_STORE_CORRUPT', { path: `${table}.body` }) }
+  if (body === null || typeof body !== 'object' || Array.isArray(body) || Object.hasOwn(body, 'id') || Object.hasOwn(body, 'revision')) {
+    fail('E_STORE_CORRUPT', { path: `${table}.body` })
+  }
+  const columns = {}
+  for (const column of spec.columns) {
+    if (!column.lifted) continue
+    if (Object.hasOwn(body, column.key)) fail('E_STORE_CORRUPT', { path: `${table}.body` })
+    if (record[column.name] !== null) columns[column.key] = record[column.name]
+  }
+  // Spread defines own properties, so a stored "__proto__" key can never reach a prototype.
+  return { id: record.id, revision: record.revision, ...columns, ...body }
+}
+
+const columnList = (spec) => ['id', 'revision', ...spec.columns.map((column) => column.name), 'body'].join(', ')
+const statementCache = new WeakMap()
+/** Prepared statements of one connection. */
+function statements(db) {
+  let cached = statementCache.get(db)
+  if (cached) return cached
+  const prepare = (sql) => db.prepare(sql)
+  const perTable = (make) => Object.fromEntries(FORMAL_TABLES.map((table) => [table, prepare(make(ROW_TABLES[table]))]))
+  cached = {
+    get: perTable((spec) => `SELECT ${columnList(spec)} FROM ${spec.sql} WHERE id = ?`),
+    all: perTable((spec) => `SELECT ${columnList(spec)} FROM ${spec.sql} ORDER BY id`),
+    revision: prepare('SELECT revision FROM store_meta WHERE singleton = 1'),
+    dependents: prepare('SELECT from_table, from_id, field, to_table, to_id FROM refs WHERE to_table = ? AND to_id = ?'),
+    allRefs: prepare('SELECT from_table, from_id, field, to_table, to_id FROM refs'),
+    tombstoned: prepare('SELECT 1 AS found FROM tombstones WHERE table_name = ? AND id = ?'),
+    allTombstones: prepare('SELECT table_name, id, deleted_at FROM tombstones ORDER BY table_name, id'),
+    entry: prepare('SELECT id FROM entries WHERE entity_id = ? AND layer_id = ? AND source_id = ? AND record_id = ?'),
+    systemKey: prepare('SELECT id FROM layers WHERE system_key = ?'),
+    proposal: prepare('SELECT id FROM reviews WHERE proposal_id = ?'),
+    viewItem: prepare('SELECT id FROM view_items WHERE scope = ? AND item_table = ? AND item_id = ?'),
+    viewSetting: prepare('SELECT id FROM view_settings WHERE scope = ? AND setting_key = ?'),
+  }
+  statementCache.set(db, cached)
+  return cached
+}
+
+const toRef = (row) => Object.freeze({ fromTable: row.from_table, fromId: row.from_id, field: row.field, toTable: row.to_table, toId: row.to_id })
+const NO_REFS = Object.freeze([])
+const strings = (values) => values.every((value) => typeof value === 'string')
+
+/** The store-wide revision inside the current transaction. */
+function currentRevision(db) {
+  const row = statements(db).revision.get()
+  if (!row) fail('E_STORE_SCHEMA', { path: 'store_meta' })
+  return row.revision
+}
+
+/**
+ * SqliteStoreReader: Core's StoreReader over the open transaction of `db`, synchronous, with
+ * indexed queries only (no method returns a table). It stops working when the transaction ends
+ * or `close` is called. Rows come back exactly as written (deep-frozen JSON values).
+ */
+function transactionReader(db) {
+  if (transactionState(db) !== true) fail('E_STORE_NO_TRANSACTION')
+  const sql = statements(db)
+  let open = true
+  const live = () => { if (!open || transactionState(db) !== true) fail('E_STORE_READER_CLOSED') }
+  const find = (statement, ...values) => {
+    live()
+    return strings(values) ? statement.get(...values)?.id : undefined
+  }
+  const reader = Object.freeze({
+    revision: currentRevision(db),
+    get(table, id) {
+      live()
+      if (!Object.hasOwn(ROW_TABLES, table) || typeof id !== 'string') return undefined
+      const record = sql.get[table].get(id)
+      return record ? deepFreeze(decodeRow(table, record)) : undefined
+    },
+    dependents(table, id) {
+      live()
+      if (!strings([table, id])) return NO_REFS
+      const rows = sql.dependents.all(table, id)
+      return rows.length ? Object.freeze(rows.map(toRef)) : NO_REFS
+    },
+    isTombstoned(table, id) {
+      live()
+      return strings([table, id]) && sql.tombstoned.get(table, id) !== undefined
+    },
+    findEntryByIdentity: (entityId, layerId, sourceId, recordId) => find(sql.entry, entityId, layerId, sourceId, recordId),
+    findLayerBySystemKey: (systemKey) => find(sql.systemKey, systemKey),
+    findReviewByProposal: (proposalId) => find(sql.proposal, proposalId),
+    findViewItem: (scope, itemTable, itemId) => find(sql.viewItem, scope, itemTable, itemId),
+    findViewSetting: (scope, key) => find(sql.viewSetting, scope, key),
+  })
+  return { reader, close: () => { open = false } }
+}
+
+/** Every row, tombstone and the revision as a FormalState value (not yet validated). */
+function formalStateValue(db) {
+  const sql = statements(db)
+  const value = {
+    revision: currentRevision(db),
+    tombstones: sql.allTombstones.all().map((row) => ({ table: row.table_name, id: row.id, deletedAt: row.deleted_at })),
+  }
+  for (const table of FORMAL_TABLES) value[table] = sql.all[table].all().map((record) => decodeRow(table, record))
+  return value
+}
+
+/**
+ * Full consistency check of one read transaction: quick_check, Core's full validation
+ * (readFormalState), the stored index columns against the row bodies, the refs table against
+ * referencesOf, and foreign keys. Problems carry codes, tables and counts only.
+ */
+function checkConnection(db, policy) {
+  const problems = []
+  const quick = db.prepare('PRAGMA quick_check').all().map((row) => row.quick_check)
+  if (quick.length !== 1 || quick[0] !== 'ok') problems.push(`E_STORE_CORRUPT: quick_check (${quick.length})`)
+  let state
+  try { state = readFormalStateCore(formalStateValue(db), policy) } catch (error) {
+    problems.push(error?.path ? `${error.code}: ${error.path}` : error?.code ?? 'E_STORE_CHECK')
+    return problems
+  }
+  const sql = statements(db)
+  for (const table of FORMAL_TABLES) {
+    const spec = ROW_TABLES[table]
+    let mismatched = 0
+    for (const record of sql.all[table].all()) {
+      const values = encodeRow(table, decodeRow(table, record))
+      const stored = [record.id, record.revision, ...spec.columns.map((column) => record[column.name])]
+      if (stored.some((value, i) => value !== values[i])) mismatched++
+    }
+    if (mismatched) problems.push(`E_STORE_COLUMNS: ${table} (${mismatched})`)
+  }
+  const memory = memoryReader(state)
+  const expected = new Set()
+  for (const table of FORMAL_TABLES) for (const row of state[table]) for (const ref of referencesOf(table, row, memory)) expected.add(refKey(ref))
+  let unexpected = 0
+  for (const row of sql.allRefs.all()) if (!expected.delete(refKey(toRef(row)))) unexpected++
+  if (expected.size || unexpected) problems.push(`E_STORE_REFS: ${expected.size} missing, ${unexpected} unexpected`)
+  const violations = db.prepare('PRAGMA foreign_key_check').all().length
+  if (violations) problems.push(`E_STORE_FOREIGN_KEY: ${violations}`)
+  return problems
+}
+
+// ---------------------------------------------------------------------------
 // Open checks and handles
 // ---------------------------------------------------------------------------
 
 const fail = (code, details) => { throw new StoreHostError(code, details) }
 const missing = (error) => error?.code === 'ENOENT'
 /** Core validation (StoreError) as a host error with the same code and path. */
-function core(callback, outcome = 'not_committed') {
+function core(callback, outcome) {
   try { return callback() } catch (error) {
     if (error instanceof StoreError) throw new StoreHostError(error.code, { path: error.path, outcome })
     throw error
@@ -350,6 +524,25 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
         return Object.freeze({ format: row.format, formatVersion: row.format_version, libraryId: row.library_id, revision: row.revision, createdAt: row.created_at })
       })
     },
+    /** Run `callback(reader)` with a SqliteStoreReader bound to one read transaction (synchronous). */
+    read(callback) {
+      return readTransaction((connection) => {
+        const { reader, close } = transactionReader(connection)
+        try { return callback(reader) } finally { close() }
+      })
+    },
+    /**
+     * Every row as a FormalState, through Core's full validation (readFormalState). For
+     * projections, export and tests; the write path never calls it.
+     */
+    readFormalState() {
+      return readTransaction((connection) => core(() => readFormalStateCore(formalStateValue(connection), settings.policy)))
+    },
+    /** Full consistency check (recovery, tests): { ok, problems }, codes only. */
+    check() {
+      const problems = readTransaction((connection) => checkConnection(connection, settings.policy))
+      return Object.freeze({ ok: problems.length === 0, problems: Object.freeze(problems) })
+    },
     /** Wait for queued writes, then close the connection. */
     async close() {
       if (closed) return
@@ -376,11 +569,11 @@ function makeHandle({ db, file, settings, diagnostic, writable, lock, timings, r
 export async function createStore(file, options = {}) {
   const target = absoluteFile(file)
   const settings = hostOptions(options)
-  core(() => uuid(options.libraryId, 'libraryId'))
+  core(() => uuid(options.libraryId, 'libraryId'), 'not_committed')
   const lock = resolveLock(options)
   return lock(() => {
     const createdAt = settings.now()
-    core(() => utcTimestamp(createdAt, 'now'))
+    core(() => utcTimestamp(createdAt, 'now'), 'not_committed')
     try { closeSync(openSync(target, 'wx', 0o600)) } catch (error) {
       if (error?.code === 'EEXIST') fail('E_STORE_EXISTS', { path: 'file' })
       if (missing(error)) fail('E_STORE_PATH', { path: 'file' })
@@ -409,3 +602,22 @@ export async function createStore(file, options = {}) {
   })
 }
 
+
+/**
+ * Open `file`, run the full check and close (library:recover's store check). Any open
+ * diagnostic or check problem is reported; nothing is repaired.
+ */
+export async function checkStoreFile(file, { policy } = {}) {
+  let handle
+  try { handle = openStore(file, { lock: withoutLibraryLock, policy }) } catch (error) {
+    return Object.freeze({ ok: false, problems: Object.freeze([error?.code ?? 'E_STORE_OPEN']) })
+  }
+  try {
+    if (handle.diagnostic) return Object.freeze({ ok: false, problems: Object.freeze([handle.diagnostic.code]) })
+    return handle.check()
+  } catch (error) {
+    return Object.freeze({ ok: false, problems: Object.freeze([error?.code ?? 'E_STORE_CHECK']) })
+  } finally {
+    await handle.close()
+  }
+}
