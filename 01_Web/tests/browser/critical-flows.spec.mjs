@@ -242,8 +242,12 @@ test('keyboard: a drone card opens its viewer from View, the viewer keeps and re
 })
 
 test('keyboard hiding the current cover photo clears the draft cover, and hiding a city by keyboard asks first', async ({ page }) => {
-  // No saved cover for Reykjavik, so the photo marked as cover is the current cover.
-  await seedSampleMedia(page, { media: (file) => { file.items.find((item) => item.id === 'photo-reykjavik-1').isCover = true } })
+  // No saved cover for Reykjavik and one photo marked as cover, so that photo is the current cover. Earlier tests in
+  // this group import a photo into Reykjavik, so both inputs of the cover rule are pinned here, not assumed.
+  await seedSampleMedia(page, {
+    media: (file) => { for (const item of file.items) if (item.placeId === fixtureIds.reykjavik) item.isCover = item.id === 'photo-reykjavik-1' },
+    editorState: (state) => { delete state.coverMediaByCity[fixtureIds.reykjavik] },
+  })
   await openMap(page)
   await selectReykjavik(page)
   const info = page.locator('.atlas-info-panel')
