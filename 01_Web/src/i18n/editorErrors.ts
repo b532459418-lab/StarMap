@@ -24,7 +24,7 @@ export const editorErrorNotice = (error: unknown, fallbackKey: string) =>
 /** A failed write with no confirmed outcome requires a refresh before another submission. */
 export function requiresEditorReload(error: unknown, { afterWrite = false }: { afterWrite?: boolean } = {}): boolean {
   if (error instanceof LocalEditorError) {
-    if (error.code === 'E_PARTIAL_WRITE' || error.code === 'E_EDITOR_RESPONSE_INVALID') return true
+    if (error.code === 'E_PARTIAL_WRITE' || error.code === 'E_EDITOR_RESPONSE_INVALID' || error.code === 'E_EDITOR_RELOAD_REQUIRED') return true
     if (error.code === 'E_WRITE_FAILED') return Array.isArray(error.params.written) && error.params.written.length > 0
     if (error.code && Object.hasOwn(domainErrorResources.en, error.code)) return false
   }

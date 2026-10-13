@@ -3,22 +3,27 @@ import { Heart } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { localEditorAvailable } from '../data/editorState'
 import { addLocalWantToGo, reloadAfterLocalSave } from '../data/localEditorApi'
+import { requireLocalEditorReload } from '../data/localEditorCoordination.ts'
 import { wantToGoDataSource } from '../data/wantToGo'
 import { wantToGoSnapshot } from '../data/worldGraph'
 import { LocalEditorError, editorErrorNotice, requiresEditorReload } from '../i18n/editorErrors.ts'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 
-/** Save the selected place by identity, including entries hidden from the map. */
+/**
+ * Save the selected place by identity, including entries hidden from the map. A write whose result is unconfirmed, or a
+ * save the page could not reload after, marks the whole page as needing a reload (localEditorCoordination), so the
+ * button stays off after remounting and every other write on the page is refused too.
+ */
 export function CityWantToGoAction({ cityId, disabled = false }: { cityId: string; disabled?: boolean }) {
   const { t } = useTranslation(['details', 'editor'])
   const coordination = useLocalEditorCoordination()
   const existing = wantToGoSnapshot.memberships.find((membership) => membership.entityId === cityId)
   const [saved, setSaved] = useState(Boolean(existing))
   const [busy, setBusy] = useState(false)
-  const [reloadRequired, setReloadRequired] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
   const submitting = useRef(false)
+  const reloadRequired = coordination.reloadRequired
 
   if (!localEditorAvailable || wantToGoDataSource !== 'local') return null
 
@@ -35,7 +40,7 @@ export function CityWantToGoAction({ cityId, disabled = false }: { cityId: strin
       reloadAfterLocalSave()
     } catch (error) {
       if (error instanceof LocalEditorError && error.code === 'E_WTG_EXISTS') setSaved(true)
-      setReloadRequired(written || requiresEditorReload(error, { afterWrite: true }))
+      if (written || requiresEditorReload(error, { afterWrite: true })) requireLocalEditorReload()
       setNotice(editorErrorNotice(error, 'editor:addFailed'))
     } finally {
       submitting.current = false

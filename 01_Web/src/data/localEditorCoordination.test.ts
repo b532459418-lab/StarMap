@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { LocalEditorError } from '../i18n/editorErrors.ts'
+import { LocalEditorError, requiresEditorReload } from '../i18n/editorErrors.ts'
 import { createLocalEditorCoordination } from './localEditorCoordination.ts'
 
 const deferred = <T>() => {
@@ -109,4 +109,53 @@ test('coordination snapshots are frozen, stable between changes and delivered to
   unsubscribe()
   await coordination.withLocalEditorWrite(async () => undefined)
   assert.equal(snapshots.length, 4)
+})
+
+const reloadRequired = (error: unknown) => error instanceof LocalEditorError && error.code === 'E_EDITOR_RELOAD_REQUIRED'
+
+test('an unconfirmed write result blocks every later write and media session on the page, and only a reload clears it', async () => {
+  const coordination = createLocalEditorCoordination()
+  const snapshots: ReturnType<typeof coordination.getSnapshot>[] = []
+  coordination.subscribe(() => snapshots.push(coordination.getSnapshot()))
+  coordination.requireReload()
+  assert.deepEqual(coordination.getSnapshot(), { writes: 0, reloadRequired: true })
+  assert.ok(Object.isFrozen(coordination.getSnapshot()))
+  let requests = 0
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(coordination.withLocalEditorWrite(async () => { requests += 1 }), reloadRequired)
+    assert.throws(() => coordination.beginMedia('city-a-photos'), reloadRequired)
+  }
+  assert.equal(requests, 0)
+  // Setting it again changes nothing; the reload itself stays allowed.
+  const snapshot = coordination.getSnapshot()
+  coordination.requireReload()
+  assert.equal(coordination.getSnapshot(), snapshot)
+  assert.equal(snapshots.length, 1)
+  assert.doesNotThrow(coordination.assertReloadAllowed)
+  assert.ok(requiresEditorReload(new LocalEditorError({ code: 'E_EDITOR_RELOAD_REQUIRED' })))
+  // Nothing on the interface clears it: a reloaded page builds a new coordination, which starts clean.
+  assert.deepEqual(Object.keys(coordination).sort(), ['assertReloadAllowed', 'beginMedia', 'getSnapshot', 'releaseMedia', 'requireReload', 'subscribe', 'withLocalEditorWrite'])
+  assert.deepEqual(createLocalEditorCoordination().getSnapshot(), { writes: 0 })
+})
+
+test('the reload requirement outlives running writes and a media session, and refuses even the media owner', async () => {
+  const coordination = createLocalEditorCoordination()
+  const running = deferred<void>()
+  const write = coordination.withLocalEditorWrite(() => running.promise)
+  coordination.requireReload()
+  assert.deepEqual(coordination.getSnapshot(), { writes: 1, reloadRequired: true })
+  assert.throws(coordination.assertReloadAllowed, busy)
+  running.resolve(undefined)
+  await write
+  assert.deepEqual(coordination.getSnapshot(), { writes: 0, reloadRequired: true })
+
+  const owner = createLocalEditorCoordination()
+  const permit = owner.beginMedia('city-a-photos')
+  owner.requireReload()
+  assert.deepEqual(owner.getSnapshot(), { target: 'city-a-photos', writes: 0, reloadRequired: true })
+  let requests = 0
+  await assert.rejects(owner.withLocalEditorWrite(async () => { requests += 1 }, permit), reloadRequired)
+  assert.equal(requests, 0)
+  owner.releaseMedia(permit)
+  assert.deepEqual(owner.getSnapshot(), { writes: 0, reloadRequired: true })
 })

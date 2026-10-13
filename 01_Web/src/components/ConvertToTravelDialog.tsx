@@ -11,6 +11,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { convertLocalWantToGoToTravel, journeyChoiceCandidatesOf, reloadAfterLocalSave } from '../data/localEditorApi'
+import { requireLocalEditorReload } from '../data/localEditorCoordination.ts'
 import { journeyChoiceInput, journeyChoiceKey, journeyChoiceStateOf, type JourneyChoiceState } from '../data/journeyChoice.ts'
 import type { LocalConvertToTravelInput, LocalConvertToTravelResult } from '../data/localEditorApi'
 import { travelAtlasCountryCodes } from '../data/travelAtlas'
@@ -43,7 +44,9 @@ type ConvertToTravelDialogProps = {
  *
  * 日期一律由用户填写，不预填今天。关闭时整个内容卸载，下次打开是一张干净的表单；
  * 成功后整页刷新，失败把服务端的 error 留在对话框里，不关闭（与 WantToGoAddDialog 相同）。
- * 部分写入或请求结果未知时，提交按钮换成「刷新页面」，避免再次提交可能已经写入的转换。
+ * 部分写入或请求结果未知时，提交按钮换成「刷新页面」，避免再次提交可能已经写入的转换。这个状态是整页的
+ * （localEditorCoordination 的 requireReload）：关闭再打开对话框，仍然只有说明与「刷新页面」，字段保持禁用；
+ * 本页其他写入入口也都被拦住，直到整页刷新。
  *
  * 行程标题与已有行程相同时（第 2C 批），服务端返回 409 `E_JOURNEY_CHOICE_REQUIRED`：对话框里内联列出候选行程与「新建行程」，
  * 不预选；选定后同一个按钮再次提交，带上 `journeyId` 或 `newJourney: true`。修改标题会清空候选。planned 条目用记录自己的标题，
@@ -78,8 +81,8 @@ function ConvertToTravelDialogContent({
   const [keepWantToGo, setKeepWantToGo] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
-  const [needsReload, setNeedsReload] = useState(false)
-  const [showWriteResultWarning, setShowWriteResultWarning] = useState(false)
+  // 服务端的错误本身已经说明要刷新时，不再重复「结果未确认」的提示。重新打开时没有这条错误，提示照常显示。
+  const [noticeExplainsReload, setNoticeExplainsReload] = useState(false)
   // 第 2C 批：服务端返回的同名候选行程与用户的选择（属于提交时的行程标题）。
   const [journeyChoice, setJourneyChoice] = useState<JourneyChoiceState>()
 
@@ -124,6 +127,8 @@ function ConvertToTravelDialogContent({
       ? t('editor:convertKeep')
       : t('editor:convertRemove')
     : t('editor:convertPlanned')
+  const needsReload = coordination.reloadRequired
+  const showWriteResultWarning = needsReload && !noticeExplainsReload
   const fieldsDisabled = busy || needsReload
   // 候选属于提交时的标题：标题变了，原来的候选就作废（输入时也会直接清空）。planned 条目的标题来自记录本身。
   const currentJourneyKey = journeyChoiceKey([target.source, target.recordId, item ? tripTitle.trim() : planned?.trip_title ?? ''])
@@ -173,11 +178,9 @@ function ConvertToTravelDialogContent({
       // 例如城市已在足迹里时服务端返回「这个城市已经在足迹里了……」，不写任何文件（规格 §2 第 3 条）。
       setNotice(editorErrorNotice(error, 'editor:convertFailed'))
       // 部分写入或响应结果无法确认时，先刷新核对，避免重复写入。
-      const reloadRequired = requiresEditorReload(error, { afterWrite: true })
-      setNeedsReload(reloadRequired)
-      const noticeExplainsReload = error instanceof LocalEditorError
-        && (error.code === 'E_PARTIAL_WRITE' || error.code === 'E_EDITOR_RESPONSE_INVALID')
-      setShowWriteResultWarning(reloadRequired && !noticeExplainsReload)
+      if (requiresEditorReload(error, { afterWrite: true })) requireLocalEditorReload()
+      setNoticeExplainsReload(error instanceof LocalEditorError
+        && (error.code === 'E_PARTIAL_WRITE' || error.code === 'E_EDITOR_RESPONSE_INVALID'))
       setBusy(false)
     }
   }
