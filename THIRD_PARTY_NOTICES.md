@@ -16,6 +16,7 @@ summary alone.
 | [i18next](https://www.i18next.com/), [react-i18next](https://react.i18next.com/) | MIT | App interface translations and language preferences |
 | [Photo Sphere Viewer](https://photo-sphere-viewer.js.org/) (`@photo-sphere-viewer/core`) | MIT | 360° panorama viewer. Brings in [three](https://threejs.org/) (MIT) as its own dependency; both are bundled into the panorama viewer chunk. |
 | [exifr](https://mutiny.cz/exifr/) | MIT | EXIF / XMP metadata extraction |
+| [flag-icons](https://github.com/lipis/flag-icons) | MIT | Country flags: the 4×3 SVG of every two-letter code is bundled as its own file and loaded only when shown. No flag is fetched from a third-party service. |
 | [lucide-react](https://lucide.dev/) | ISC | Icons |
 | [react-markdown](https://github.com/remarkjs/react-markdown), remark-gfm | MIT | Release-note rendering |
 | [Tailwind CSS](https://tailwindcss.com/), `@tailwindcss/vite` | MIT | |

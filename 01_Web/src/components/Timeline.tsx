@@ -5,6 +5,7 @@ import { ArrowUpRight, Clock3, MapPin, Sparkles } from 'lucide-react'
 import { cityById, countryById, journeyDays } from '../data/travelAtlas'
 import type { JourneyDay } from '../types/travel'
 import { buildBrowseTimeProjection, journeyTimeContext, type BrowseTimeProjection } from '../data/derive/browseTimeProjection'
+import { countryFlagUrl } from './countryFlagUrl'
 
 type TimelineProps = {
   selectedDayId: string
@@ -51,6 +52,7 @@ export function Timeline({ selectedDayId, onSelectDay, projection }: TimelinePro
           if (!city || !country) return null
 
           const isSelected = day.id === selectedDayId
+          const flagUrl = countryFlagUrl(country.flagCode)
           const match = browse.travelMatchesById.get(day.id)
           const year = knownYear(day)
           const showYear = index === 0 || knownYear(orderedDays[index - 1]) !== year
@@ -76,11 +78,11 @@ export function Timeline({ selectedDayId, onSelectDay, projection }: TimelinePro
               >
                 <span className="journey-timeline-date">
                   <span>{dateLabel}{match?.record.date.precision === 'year' ? ` · ${yearOnly}` : ''}{match?.result.match === 'uncertain' ? ` · ${uncertainDate}` : ''}</span>
-                  {country.flagCode ? (
+                  {flagUrl ? (
                     <span className="journey-timeline-flag" aria-hidden="true">
                       <img
                         alt=""
-                        src={`https://flagcdn.com/w80/${country.flagCode}.png`}
+                        src={flagUrl}
                       />
                     </span>
                   ) : (

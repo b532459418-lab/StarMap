@@ -70,8 +70,9 @@ map credentials. Its jobs run in parallel:
   the time-filter group in three shards, each on its own runner with isolated
   synthetic data (see `01_Web/README.md`). A shard that receives no case fails
   instead of passing.
-- **Public build smoke** builds the public bundle, refuses server-only code and
-  the local editor client (any `/__travelatlas/editor` path) in it, and checks
+- **Public build smoke** builds the public bundle, refuses server-only code,
+  the local editor client (any `/__travelatlas/editor` path) and the former
+  third-party flag host in it, and checks
   the result through `vite preview`: the neutral sample loads, no local
   editor endpoint answers, and Cesium loads from its content-hashed chunk and
   its versioned static files.

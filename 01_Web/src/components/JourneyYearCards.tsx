@@ -6,6 +6,7 @@ import { cityById, countryById, journeyDays, shouldHideCityFromNavigation } from
 import type { City, Country } from '../types/travel'
 import { buildBrowseTimeProjection, journeyTimeContext, type BrowseTimeProjection } from '../data/derive/browseTimeProjection'
 import type { MatchedTimeRecord } from '../worldgraph/timeQuery'
+import { countryFlagUrl } from './countryFlagUrl'
 
 type CountryYearGroup = {
   country: Country
@@ -81,6 +82,7 @@ export function JourneyYearCards({ projection }: { projection?: BrowseTimeProjec
             <div className="selector-scrollbar flex snap-x gap-4 overflow-x-auto pb-3">
               {yearGroup.countries.map((countryGroup) => {
                 const { country } = countryGroup
+                const flagUrl = countryFlagUrl(country.flagCode)
                 const dateRange = yearGroup.year === undefined ? unknownDate : countryGroup.startDate === countryGroup.endDate
                   ? countryGroup.startDate
                   : `${countryGroup.startDate} - ${countryGroup.endDate}`
@@ -93,10 +95,10 @@ export function JourneyYearCards({ projection }: { projection?: BrowseTimeProjec
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <span className="journey-year-card-flag" aria-hidden="true">
-                          {country.flagCode ? (
+                          {flagUrl ? (
                             <img
                               alt=""
-                              src={`https://flagcdn.com/w80/${country.flagCode}.png`}
+                              src={flagUrl}
                             />
                           ) : (
                             <span>{country.flag ?? '\u2022'}</span>
