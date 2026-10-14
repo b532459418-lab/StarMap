@@ -1,6 +1,6 @@
 /**
- * Country flags (batch 7, review S4): flag-icons' 4×3 SVGs (MIT) ship with the project instead of loading
- * flagcdn.com, so no country code and no Referer leave the page.
+ * Country flags (batch 7, review S4): flag-icons' 4×3 SVGs (MIT) ship with the project instead of being loaded from a
+ * third-party flag service, so no country code and no Referer leave the page.
  *
  * This module is the pure part, loadable by Node tests. The Vite-only `import.meta.glob` that lists the files lives in
  * ../components/countryFlagUrl.ts.
