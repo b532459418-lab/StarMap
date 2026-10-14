@@ -41,6 +41,16 @@
  * Outcomes: 409 E_STALE, E_OPERATION_CONFLICT, E_LIBRARY_BUSY, E_STORE_BUSY (confirmed not committed); 500
  * E_OUTCOME_UNKNOWN (the client retries once with the same request id); 500 E_STORE_FAILED for any other failure
  * (E_VIEW_MISMATCH also drops the cache).
+ *
+ * Record retention (3C-4b; design 3B §4.6 with v1.1 §16.2-5 and -6): the host's pruneLogs (receipts by the rule that
+ * keeps more, op_log by the rule that keeps fewer, then incremental_vacuum) runs in this process, on this connection,
+ * when the session opens and after every PRUNE_EVERY_COMMITS committed writes. Each run is one small step
+ * (PRUNE_STEP: one pruning transaction of at most `batchSize` rows per table and one vacuum transaction of at most
+ * `vacuumPages` pages). It is queued behind the writes of this process and starts only after the response of the write
+ * that triggered it (setImmediate), so it never runs inside a write nor delays its response; a write that arrives
+ * meanwhile waits for that one step. While a run reports work left (`done: false`), every following commit runs the
+ * next step. A failed run (another process holds the library lock or the store's write lock) is logged and tried again
+ * at the next trigger. Read-only sessions never prune.
  */
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
@@ -61,6 +71,13 @@ export const OPEN_RETRIES = 5
 export const OPEN_RETRY_DELAY_MS = 200
 /** Responses of committed requests kept for replays in this process. */
 export const REMEMBERED_RESPONSES = 64
+/** Committed writes between two record pruning runs (a run also follows the open, and every commit while work is left). */
+export const PRUNE_EVERY_COMMITS = 200
+/**
+ * One pruning run: one transaction deleting at most `batchSize` rows per table, one incremental_vacuum of `vacuumPages`
+ * (1 MiB at 4 KiB pages). Smaller than the host's defaults: a run is two small write transactions, about two commits.
+ */
+export const PRUNE_STEP = Object.freeze({ batchSize: 200, vacuumPages: 256 })
 
 const ms = (started) => Math.round((performance.now() - started) * 10) / 10
 
@@ -184,10 +201,13 @@ export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES
  * host time and the time of the V2 writes (tests); `log` receives the timing lines; `retry` overrides the open retries
  * ({ retries, retryDelayMs, sleep }); `countryCatalog` is the plugin's country catalog (the V2 write context when a
  * caller gives none); `verify` compares every commit with a fresh projection (default: STARMAP_STORE_VERIFY=1);
- * `newId` gives the ids of new store rows (default UUIDv7).
+ * `newId` gives the ids of new store rows (default UUIDv7); `prune` sets the record pruning schedule
+ * ({ every, batchSize, vacuumPages, retention }, defaults PRUNE_EVERY_COMMITS and PRUNE_STEP, retention the host's) or
+ * turns it off (false).
  */
 export function createStoreSession(privatePaths, {
   log = console.log, now, retry, countryCatalog = new Map(), verify = process.env.STARMAP_STORE_VERIFY === '1', newId = () => uuidv7(),
+  prune = {},
 } = {}) {
   const file = storeFileOf(privatePaths)
   const hostOptions = { privatePaths, policy: OFFICIAL_POLICY, ...(now ? { now } : {}) }
@@ -197,6 +217,14 @@ export function createStoreSession(privatePaths, {
   let cache
   /** requestId → the response of a request this process committed (insertion order: oldest first). */
   const remembered = new Map()
+  const pruning = prune === false ? undefined : Object.freeze({
+    every: prune.every ?? PRUNE_EVERY_COMMITS, batchSize: prune.batchSize ?? PRUNE_STEP.batchSize,
+    vacuumPages: prune.vacuumPages ?? PRUNE_STEP.vacuumPages, ...(prune.retention ? { retention: prune.retention } : {}),
+  })
+  /** Pruning state: commits since the last run, whether the last run left work, runs so far, the last run's outcome. */
+  const pruneState = { commits: 0, backlog: false, runs: 0, last: undefined }
+  /** The scheduled run: { timer, done (promise), resolve } until it has finished. */
+  let scheduledPrune
 
   /** The open handle, opening it on first use (concurrent callers share one open). */
   async function open() {
@@ -206,10 +234,59 @@ export function createStoreSession(privatePaths, {
       try {
         handle = await openStoreWithRetry(file, hostOptions, retry)
         openMs = ms(started)
+        schedulePrune('open')
         return handle
       } finally { opening = undefined }
     })()
     return opening
+  }
+
+  /** One small pruning run on the open handle (queued behind this process's writes; see the file header). */
+  async function pruneOnce(reason) {
+    const current = handle
+    if (!current || current.readOnly) return
+    const started = performance.now()
+    pruneState.runs++
+    try {
+      const result = await current.pruneLogs({
+        now: now ? now() : new Date().toISOString(), batchSize: pruning.batchSize, maxSteps: 1, vacuumPages: pruning.vacuumPages,
+        ...(pruning.retention ? { retention: pruning.retention } : {}),
+      })
+      pruneState.commits = 0
+      pruneState.backlog = !result.done
+      pruneState.last = Object.freeze({ reason, ...result, ms: ms(started) })
+      if (result.receipts || result.opLog || result.freedPages) {
+        log(`[StarMap store] 清理记录（${reason}）：回执 ${result.receipts} 条，op_log ${result.opLog} 条，`
+          + `归还 ${result.freedPages} 页，${ms(started)} ms${result.done ? '' : '；还有剩余，下一次提交后继续'}`)
+      }
+    } catch (error) {
+      const code = typeof error?.code === 'string' ? error.code : 'E_STORE_PRUNE'
+      pruneState.last = Object.freeze({ reason, code, ms: ms(started) })
+      log(`[StarMap store] 清理记录（${reason}）没有完成（${code}），下一次提交后再试。`)
+      pruneState.backlog = true
+      if (REOPEN_CODES.has(code)) await dropHandle()
+    }
+  }
+
+  /**
+   * Run pruneOnce after the current work has answered (setImmediate), queued behind this process's writes. At most one
+   * run is scheduled at a time.
+   */
+  function schedulePrune(reason) {
+    if (!pruning || scheduledPrune) return
+    let resolve
+    const done = new Promise((settle) => { resolve = settle })
+    const timer = setImmediate(() => {
+      scheduledPrune.timer = undefined
+      serialized(() => pruneOnce(reason)).catch(() => {}).finally(() => { scheduledPrune = undefined; resolve() })
+    })
+    scheduledPrune = { timer, done, resolve }
+  }
+  /** After a committed write: count it, and schedule a run every `every` commits, or while the last run left work. */
+  function countCommit() {
+    if (!pruning) return
+    pruneState.commits++
+    if (pruneState.backlog || pruneState.commits >= pruning.every) schedulePrune('commits')
   }
 
   /** Project the store: { revision, files, projection, timings }. */
@@ -323,6 +400,7 @@ export function createStoreSession(privatePaths, {
           else cache = undefined
           const response = { status: route.status, body: { ok: true, ...outcome.result, revision: result.revision, duplicate: result.status === 'duplicate', receipt: result.receipt } }
           remember(protocol.requestId, response)
+          if (result.status === 'committed') countCommit()
           if (verify) verifyCache(opened)
           log(`[StarMap store] ${label}：V2 写入 ${runMs} ms，差异 ${diffMs} ms（${plan.diff.commands.length} 条命令`
             + `${plan.diff.renumbered.length ? `，重新编号 ${plan.diff.renumbered.length} 个 scope` : ''}），提交 ${commitMs} ms（修订号 ${result.revision}），共 ${ms(started)} ms`)
@@ -359,10 +437,22 @@ export function createStoreSession(privatePaths, {
     },
     /** Whether a connection is open. */
     get isOpen() { return handle !== undefined },
-    /** Close the connection (clean shutdown) after queued writes; a later use opens it again. */
+    /** Record pruning so far: { commits (since the last run), backlog (the last run left work), runs, last (its outcome) }. */
+    get pruneState() { return Object.freeze({ ...pruneState }) },
+    /** Resolves when no pruning run is scheduled and no write is queued (tests, benchmarks). */
+    async idle() {
+      while (scheduledPrune) await scheduledPrune.done
+      await writeTail
+    },
+    /** Close the connection (clean shutdown) after queued writes; a later use opens it again. A run not started yet is dropped. */
     async close() {
       const pending = opening
       if (pending) await pending.catch(() => {})
+      if (scheduledPrune?.timer) {
+        clearImmediate(scheduledPrune.timer)
+        scheduledPrune.resolve()
+        scheduledPrune = undefined
+      }
       await writeTail
       const current = handle
       handle = undefined
