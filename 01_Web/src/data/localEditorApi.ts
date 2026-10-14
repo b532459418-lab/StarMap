@@ -7,7 +7,8 @@ import type { WantToGoItem } from './derive/wantToGo.ts'
 import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
 import { parseMediaImportResponse, parseMediaUploadResponse } from './localMediaResponse.ts'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
-import { withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
+import { requireLocalEditorReload, withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
+import { sendStoreWrite, type StoreWriteHeaders } from './storeWriteProtocol.ts'
 import { assertMediaJob, assertMediaJobsRead, assertMediaJobPreview, type MediaJob, type MediaJobsRead, type MediaJobPreview, type MediaJobIntent, type MediaJobVersion } from './mediaJobs.ts'
 
 /** 第 2A 批：409 `E_PLACE_CHOICE_REQUIRED` 的候选列表交给界面（./placeChoice.ts）。 */
@@ -287,17 +288,30 @@ export const addLocalWantToGo = (input: LocalWantToGoInput | ExistingPlaceWantTo
   return result
 })
 
-export const updateLocalWantToGo = (
-  id: string,
-  patch: { hidden?: boolean; note?: string },
-) => withLocalEditorWrite(async () => {
+// 新库模式（3C-3，实验性）：页面加载时的全库修订号。./localEditorClient.ts 加载本模块时设一次；V2 模式为 undefined。
+let storeBaseRevision: number | undefined
+export const setStoreBaseRevision = (revision: number | undefined) => {
+  storeBaseRevision = Number.isSafeInteger(revision) ? revision : undefined
+}
+
+const postWantToGoUpdate = (id: string, patch: { hidden?: boolean; note?: string }, protocol: StoreWriteHeaders = {}) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/wanttogo/update', {
     method: 'POST',
-    headers: editorHeaders,
+    headers: { ...editorHeaders, ...protocol },
     body: JSON.stringify({ id, ...patch }),
   })
   return parseResponse<{ item: WantToGoItem }>(response)
 })
+
+/**
+ * 修改想去。V2 模式与原来完全相同。新库模式下（3C-3）带上请求编号与修订号（./storeWriteProtocol.ts）：结果不明时
+ * 用同一个请求编号重试一次，仍然不明就要求整页刷新。新库模式只开放这一个写入。
+ */
+export const updateLocalWantToGo = (id: string, patch: { hidden?: boolean; note?: string }) => {
+  const baseRevision = storeBaseRevision
+  if (baseRevision === undefined) return postWantToGoUpdate(id, patch)
+  return sendStoreWrite((protocol) => postWantToGoUpdate(id, patch, protocol), { baseRevision, onUnconfirmed: requireLocalEditorReload })
+}
 
 export const deleteHiddenLocalWantToGo = (ids: string[]) => withLocalEditorWrite(async () => {
   const response = await fetch('/__travelatlas/editor/wanttogo/delete', {

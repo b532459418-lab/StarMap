@@ -1,5 +1,6 @@
 import type * as LocalEditorApiModule from './localEditorApi.ts'
 import { localEditorAvailable } from './editorState'
+import { storeRevision } from './rawInputs'
 import { createMediaJobs, type MediaJobsApi } from './mediaJobs.ts'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 
@@ -17,6 +18,9 @@ import { LocalEditorError } from '../i18n/editorErrors.ts'
  *   这些入口本来也只在 `localEditorAvailable` 为真时才渲染。
  *
  * 类型仍从 ./localEditorApi.ts 用 `import type` 取，编译后不留下任何导入。
+ *
+ * 新库模式（3C-3）：API 加载时把页面的全库修订号（./rawInputs.ts 的 `storeRevision`）交给它，「修改想去」据此带上
+ * 新库的请求协议。这一句也在门后的分支里，构建产物里没有它。
  */
 type LocalEditorApi = typeof LocalEditorApiModule
 
@@ -25,7 +29,10 @@ let loadingApi: Promise<LocalEditorApi> | undefined
 
 export const loadLocalEditorApi = (): Promise<LocalEditorApi> => import.meta.env.DEV && localEditorAvailable
   ? (loadingApi ??= import('./localEditorApi.ts').then(
-    (api) => (loadedApi = api),
+    (api) => {
+      api.setStoreBaseRevision(storeRevision)
+      return (loadedApi = api)
+    },
     (error: unknown) => {
       // 加载失败（例如开发服务器重启）不缓存，下一次调用重新加载。
       loadingApi = undefined

@@ -122,7 +122,7 @@ Media recovery is connected to the photo and drone panels and discovers durable 
 
 The library's coordination records are bound to the private root's path. If you move or rename the private root, or its drive letter changes, every write stops with `E_LIBRARY_ROOT_MOVED` instead of reporting a busy library. Stop the personal preview, then run `npm run library:rebind` in `01_Web/`: it prints the old and new bindings and changes nothing. If this is the same library, run `npm run library:rebind -- --confirm` to rebind it to the current path. The command refuses while an operation lock exists.
 
-If StarMap or a media command crashes or is killed while it holds the library operation lock, the lock stays behind and later writes report a busy library. A lock is never released because it is old or because its process ID is gone. Once you are sure the program that held it is no longer running, run `npm run library:recover` in `01_Web/`: it prints the lock's holder, its creation time and the private-root binding, and changes nothing. Then run `npm run library:recover -- --confirm`: it first checks the library data (the V2 files and their place references; for the coming SQLite store, `quick_check` and a full validation) and removes the lock only when the check passes. If the check fails, the lock stays and the problems are listed; restore from a backup before writing again.
+If StarMap or a media command crashes or is killed while it holds the library operation lock, the lock stays behind and later writes report a busy library. A lock is never released because it is old or because its process ID is gone. Once you are sure the program that held it is no longer running, run `npm run library:recover` in `01_Web/`: it prints the lock's holder, its creation time and the private-root binding, and changes nothing. Then run `npm run library:recover -- --confirm`: it first checks the library data (the V2 files and their place references; in the new-library mode, `quick_check` and a full validation of the store) and removes the lock only when the check passes. If the check fails, the lock stays and the problems are listed; restore from a backup before writing again.
 
 If the private root was also moved while the lock was left behind, `--confirm` alone refuses (the lock is bound to the old path) and `npm run library:rebind` refuses because of the lock. Run `npm run library:recover -- --confirm --rebind` instead: after the same data check it rebinds the library's coordination records to the current path, as `library:rebind` does, and then removes the lock.
 
@@ -164,6 +164,37 @@ npm ci                                  # back on the latest version, then refre
 ```
 
 Resolve everything the dry run asks you to decide before applying. After the migration the legacy files, and the `data/data-mode.local.json` marker of earlier versions, are leftovers that StarMap ignores; keep or delete them. If you do not need the old data at all, move the four legacy files out of `data/` instead. The full steps, the decisions file, and what the migration means for media are in [01_Web/README.md](01_Web/README.md#migrate-legacy-format-data) (Private Data Format).
+
+## New-library mode (experimental)
+
+The personal profile can keep its library in one SQLite file, `<private-root>/data/store/world.sqlite` (the new library), instead of the five V2 files. This mode is experimental. It is on exactly when that file exists; without it StarMap works with `data/v2/` as before. Nothing switches it on by itself.
+
+In this version the new library saves only one kind of edit: a Want to Go item's note and its hidden state (Collection cards, the map detail card and the hidden list in the layer panel). Every other edit, including adding places, marking as visited, ordering and hiding countries, cities or photos, covers, and media uploads, imports, deletion and media tasks, shows "The new library mode (experimental) only edits Want to Go items for now" and saves nothing. Those controls stay visible. A page that was opened before another change was saved asks you to reload before editing; a save whose result cannot be confirmed is retried once with the same request and then blocks the page until a reload, so nothing is written twice. If the new library cannot be opened (another process is writing it, a failed check, a damaged file), the page shows the error; it never falls back to the V2 files.
+
+Migrate from `01_Web/`, with the personal preview stopped:
+
+```powershell
+npm run store:migrate                 # dry run: counts, kept V2 keys, unresolved list elements, comparison; writes nothing
+npm run store:migrate -- --apply      # creates data/store/world.sqlite; the V2 files stay exactly as they are
+```
+
+The dry run builds the new library in memory and compares what the App would read with the V2 files. `--apply` creates the file under the library lock, checks it the same way after reopening it, and deletes it again if anything differs. Start the personal preview afterwards.
+
+Go back to V2 mode:
+
+- **Before any edit in the new-library mode**: stop the preview and move `data/store/` out of the private root. The V2 files are still the current data.
+- **After edits**: run `npm run store:export-v2 -- --out <new folder>`. It writes the new library as the five V2 files and lists anything V2 cannot express. Stop the preview, put the five files into `data/v2/`, then move `data/store/` out of the private root. Keep the new library and its backups: the export never deletes anything.
+
+Back up and restore the new library (the database only; media, `MediaInbox/`, `config/`, `data/v2/` and `operations/` are not included in this version):
+
+```powershell
+npm run store:backup -- --out <new folder>
+npm run store:restore -- --from <backup folder> --to <new private root>
+```
+
+A backup runs an integrity check, takes a consistent snapshot under the library lock, and writes a manifest with hashes and its completion mark last. A restore checks those hashes, creates a new private root with only `data/store/world.sqlite`, runs `integrity_check` and the full check, and never overwrites anything; copy `config/` and media yourself and point `STARMAP_PRIVATE_ROOT` at it. `npm run backup` (below) copies the V2 files and media but not the new library. Every output folder must be inside the private root or outside this repository.
+
+Run one personal preview per private root: the dev server keeps the new library open. Do not keep a library that is in use in a synced folder such as OneDrive; sync only finished backups. If the preview is killed instead of stopped, the next start runs SQLite's `quick_check` first.
 
 ## Build and verify
 

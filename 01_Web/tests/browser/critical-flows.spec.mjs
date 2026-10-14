@@ -1,5 +1,8 @@
 import { test, expect, openMap, selectReykjavik, openCollection, readFixture, saveAndWaitForReload } from './helpers.mjs'
-import { fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
+import { enterStoreMode, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
+import { storeFileOf } from '../../scripts/private-data-source.mjs'
+import { getPrivatePaths } from '../../scripts/private-profile.mjs'
+import { openStore } from '../../scripts/store-host.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -274,4 +277,70 @@ test('keyboard hiding the current cover photo clears the draft cover, and hiding
   await page.keyboard.press(' ')
   await expect.poll(() => question).toBe('Hide “Reykjavik” from this view? Your travel records will be kept.')
   await expect(info.getByRole('button', { name: 'Hide Reykjavik', exact: true })).toBeVisible()
+})
+
+// 3C-3: the experimental new-library mode. These cases switch the shared fixture into the mode (its V2 files reset to the
+// fixture's own content and migrated into data/store/world.sqlite) and put everything back afterwards
+// (scripts/browser-fixture.mjs enterStoreMode). They run last in this file.
+test.describe('new-library mode (experimental)', () => {
+  const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
+  const moduleUrl = '/@id/__x00__virtual:starmap-private-data'
+  /** The revision the dev server's virtual module carries ('undefined' in V2 mode). */
+  const servedRevision = async (page) => /privateStoreRevision = (\w+)/.exec(await (await page.request.get(moduleUrl)).text())?.[1]
+  /** The store revision, read in this process through a read-only connection. */
+  async function storeRevision() {
+    const handle = openStore(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() })), { readOnly: true })
+    try { return handle.meta().revision } finally { await handle.close() }
+  }
+  const v2Bytes = async () => Promise.all(Object.values(fixtureFileNames).map((name) => readFile(path.join(root(), 'data', 'v2', name), 'utf8')))
+  let leave
+  test.beforeAll(async () => { leave = await enterStoreMode(root()) })
+  test.afterAll(async () => { await leave?.() })
+
+  test('new-library mode: a Want to Go note edited in Collection is still there after a reload', async ({ page }) => {
+    const v2Before = await v2Bytes()
+    // The dev server notices the new store file and invalidates its module; wait until it serves the store.
+    await expect.poll(() => servedRevision(page)).toBe('1')
+    await openMap(page)
+    await openCollection(page)
+    const sent = []
+    page.on('request', (request) => { if (request.url().endsWith('/editor/wanttogo/update')) sent.push(request.headers()) })
+    await page.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
+    await page.locator('.collection-card textarea').fill('Synthetic new-library note')
+    await saveAndWaitForReload(page, async () => {
+      const saved = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo/update'))
+      await page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click()
+      expect((await saved).status()).toBe(200)
+    })
+    expect(sent).toHaveLength(1)
+    expect(sent[0]['x-starmap-request-id']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(sent[0]['x-starmap-base-revision']).toBe('1')
+    expect(await storeRevision()).toBe(2)
+    const note = page.locator('.collection-card').filter({ hasText: 'Nuuk' }).locator('.collection-card-note')
+    for (let reload = 0; reload < 2; reload++) {
+      if (reload) await page.reload({ waitUntil: 'domcontentloaded' })
+      await openCollection(page)
+      await expect(note).toHaveText('“Synthetic new-library note”')
+    }
+    // The V2 files are not the data source any more: not a byte of them changed.
+    expect(await v2Bytes()).toEqual(v2Before)
+  })
+
+  test('new-library mode: an edit it does not support yet shows E_STORE_MODE_LIMITED and changes nothing', async ({ page }) => {
+    const v2Before = await v2Bytes()
+    const revision = await storeRevision()
+    await expect.poll(() => servedRevision(page)).toBe(String(revision))
+    await openMap(page)
+    await selectReykjavik(page)
+    const refused = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo') && response.request().method() === 'POST')
+    await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+    const response = await refused
+    expect(response.status()).toBe(409)
+    expect((await response.json()).code).toBe('E_STORE_MODE_LIMITED')
+    await expect(page.locator('.atlas-local-editor-notice')).toHaveText('The new library mode (experimental) only edits Want to Go items for now; other edits will follow later. Nothing was saved.')
+    // A confirmed refusal: the page is not blocked, nothing was written.
+    await expect(page.getByRole('button', { name: 'Mark as Want to Go', exact: true })).toBeEnabled()
+    expect(await storeRevision()).toBe(revision)
+    expect(await v2Bytes()).toEqual(v2Before)
+  })
 })

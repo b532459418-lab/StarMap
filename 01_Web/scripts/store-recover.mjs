@@ -11,19 +11,21 @@
  *   通过后把库操作记录与媒体待办身份重新绑定到当前私人根（同 library:rebind），再删除锁。
  * - 绝不按锁存在的时长或 PID 自动清理。退出码同 library:rebind：0 完成、不需要处理或只是预览；1 拒绝。
  *
- * 新库模式只在 3C-3 之后出现；本批只按正式路径判断模式，不接入私人根的读写。
+ * 模式的判定与插件、store:* 工具共用 ./private-data-source.mjs（3C-3）。新库的全量校验用 App 的官方策略
+ * （OFFICIAL_POLICY：两个官方图层的 systemKey），否则迁移来的库会因 E_SYSTEM_KEY 而检查不通过。
  */
-import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readJson } from './json-file.mjs'
 import { recoverLibraryOperation } from './library-operation-lock.mjs'
 import { V2_PRIVATE_FILE_KEYS, getPrivatePaths } from './private-profile.mjs'
-import { checkStoreFile, storePathFor } from './store-host.mjs'
+import { privateDataSource, storeFileOf } from './private-data-source.mjs'
+import { checkStoreFile } from './store-host.mjs'
+import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { completeForWrite, integrityProblems } from '../src/data/v2write/transaction.ts'
 
-/** 'store' when the formal store file exists at its planned path, otherwise 'v2'. */
-export const libraryMode = (privatePaths) => (existsSync(storePathFor(privatePaths.root)) ? 'store' : 'v2')
+/** 'store' when `data/store/world.sqlite` exists, otherwise 'v2' (./private-data-source.mjs, shared with the plugin and the store tools). */
+export const libraryMode = privateDataSource
 
 /** V2 mode: the five files (missing ones count as empty) pass validateV2Files and have no dangling place reference. */
 async function checkV2Files(privatePaths) {
@@ -41,7 +43,7 @@ async function checkV2Files(privatePaths) {
 /** The data check of `npm run library:recover --confirm` for the library's mode: { mode, problems }. */
 export async function checkLibraryData(privatePaths, { policy } = {}) {
   const mode = libraryMode(privatePaths)
-  if (mode === 'store') return { mode, problems: (await checkStoreFile(storePathFor(privatePaths.root), { policy })).problems }
+  if (mode === 'store') return { mode, problems: (await checkStoreFile(storeFileOf(privatePaths), { policy })).problems }
   return { mode, ...(await checkV2Files(privatePaths)) }
 }
 
@@ -58,7 +60,9 @@ export function recoverLibrary(privatePaths, { confirm = false, rebind = false, 
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
-    process.exitCode = await recoverLibrary(getPrivatePaths(), { confirm: process.argv.includes('--confirm'), rebind: process.argv.includes('--rebind') })
+    process.exitCode = await recoverLibrary(getPrivatePaths(), {
+      confirm: process.argv.includes('--confirm'), rebind: process.argv.includes('--rebind'), policy: OFFICIAL_POLICY,
+    })
   } catch (error) {
     console.error(error)
     process.exitCode = 1

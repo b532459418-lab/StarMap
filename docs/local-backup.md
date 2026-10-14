@@ -1,6 +1,6 @@
 # Local library backup and recovery
 
-Status: first offline implementation. A backup preserves the active V2 library and local media. Recovery creates a **new private directory**; it does not replace or automatically activate the existing library. This format is an application backup, not the future World Graph Core interchange format.
+Status: first offline implementation. A backup preserves the active V2 library and local media. It does not include the experimental new library (`data/store/world.sqlite`); back that up with `npm run store:backup` (see the root README). Recovery creates a **new private directory**; it does not replace or automatically activate the existing library. This format is an application backup, not the future World Graph Core interchange format.
 
 ## Scope
 

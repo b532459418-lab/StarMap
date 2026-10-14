@@ -63,8 +63,8 @@ test('getPrivatePaths：V2 文件在 data/v2/ 下，文件名与 v2Schema.ts 的
 // 虚拟模块
 // ---------------------------------------------------------------------------
 
-test('虚拟模块只有两个导出：privateV2Files 与 privateLegacyUnmigrated；旧格式的四个导出与 privateDataMode 已删除', () => {
-  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateV2Files', 'privateLegacyUnmigrated'])
+test('虚拟模块有三个导出：privateV2Files、privateLegacyUnmigrated 与 privateStoreRevision（3C-3）；旧格式的四个导出与 privateDataMode 已删除', () => {
+  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision'])
   for (const profile of ['public', 'personal']) {
     const exports = privateDataModuleExports({ profile, v2Values: V2_VALUES, legacyUnmigrated: true })
     assert.deepEqual(Object.keys(exports), PRIVATE_DATA_MODULE_EXPORTS, profile)
@@ -72,12 +72,12 @@ test('虚拟模块只有两个导出：privateV2Files 与 privateLegacyUnmigrate
   }
 })
 
-test('虚拟模块 · 公开模式：privateV2Files 为 undefined，privateLegacyUnmigrated 恒为 false；忽略传入的值', async () => {
-  const expected = { privateV2Files: undefined, privateLegacyUnmigrated: false }
+test('虚拟模块 · 公开模式：privateV2Files 与 privateStoreRevision 为 undefined，privateLegacyUnmigrated 恒为 false；忽略传入的值', async () => {
+  const expected = { privateV2Files: undefined, privateLegacyUnmigrated: false, privateStoreRevision: undefined }
   assert.deepEqual(privateDataModuleExports({ profile: 'public' }), expected)
-  assert.deepEqual(privateDataModuleExports({ profile: 'public', v2Values: V2_VALUES, legacyUnmigrated: true }), expected)
+  assert.deepEqual(privateDataModuleExports({ profile: 'public', v2Values: V2_VALUES, legacyUnmigrated: true, storeRevision: 7 }), expected)
   const source = renderPrivateDataModule(expected)
-  assert.equal(source, 'export const privateV2Files = undefined;\nexport const privateLegacyUnmigrated = false;')
+  assert.equal(source, 'export const privateV2Files = undefined;\nexport const privateLegacyUnmigrated = false;\nexport const privateStoreRevision = undefined;')
   assert.deepEqual({ ...(await evaluateModule(source)) }, expected)
 })
 
@@ -98,6 +98,19 @@ test('虚拟模块 · 个人模式：privateV2Files 是五个 V2 文件（缺的
   assert.equal(unmigrated.privateLegacyUnmigrated, true)
   // 只接受 true：别的真值不算。
   assert.equal(privateDataModuleExports({ profile: 'personal', legacyUnmigrated: 'yes' }).privateLegacyUnmigrated, false)
+  // V2 模式没有修订号。
+  assert.equal(exports.privateStoreRevision, undefined)
+  assert.equal(module.privateStoreRevision, undefined)
+})
+
+test('虚拟模块 · 新库模式（3C-3）：privateStoreRevision 是全库修订号；只接受非负的安全整数', async () => {
+  const exports = privateDataModuleExports({ profile: 'personal', v2Values: V2_VALUES, storeRevision: 42 })
+  assert.deepEqual(exports.privateV2Files, V2_VALUES)
+  assert.equal((await evaluateModule(renderPrivateDataModule(exports))).privateStoreRevision, 42)
+  assert.equal(privateDataModuleExports({ profile: 'personal', storeRevision: 0 }).privateStoreRevision, 0)
+  for (const invalid of [-1, 1.5, '3', null, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(privateDataModuleExports({ profile: 'personal', storeRevision: invalid }).privateStoreRevision, undefined, String(invalid))
+  }
 })
 
 // ---------------------------------------------------------------------------
@@ -125,6 +138,16 @@ test('文件事件：四个旧数据文件只处理新建与删除（它们的�
     assert.equal(shouldHandlePrivateDataChange('add', filePath, paths), true, `add ${filePath}`)
     assert.equal(shouldHandlePrivateDataChange('unlink', filePath, paths), true, `unlink ${filePath}`)
     assert.equal(shouldHandlePrivateDataChange('change', filePath, paths), false, `change ${filePath}`)
+  }
+})
+
+test('文件事件：新库文件 data/store/world.sqlite 只处理新建与删除（它的有无决定数据模式）；它的修改与日志文件不处理（3C-3）', () => {
+  const storeFile = path.join(paths.dataRoot, 'store', 'world.sqlite')
+  assert.equal(shouldHandlePrivateDataChange('add', storeFile, paths), true)
+  assert.equal(shouldHandlePrivateDataChange('unlink', storeFile, paths), true)
+  assert.equal(shouldHandlePrivateDataChange('change', storeFile, paths), false)
+  for (const other of [`${storeFile}-journal`, path.join(paths.dataRoot, 'store'), path.join(paths.dataRoot, 'store', 'world.sqlite.bak')]) {
+    for (const event of ['add', 'change', 'unlink']) assert.equal(shouldHandlePrivateDataChange(event, other, paths), false, `${event} ${other}`)
   }
 })
 
@@ -260,7 +283,7 @@ test('插件只走 V2：不再 import 数据模式与旧格式的写入模块，
   }
 })
 
-test('写入：先过本机会话检查，再判「未迁移」（未迁移时按 legacyWriteRefusal 回 409，不进写入层），然后无条件交给 V2 写入', () => {
+test('写入：先过本机会话检查，再判「未迁移」（未迁移时按 legacyWriteRefusal 回 409，不进写入层），然后按数据模式交给新库（3C-3）或 V2 写入', () => {
   const source = pluginSource()
   const writeSection = sourceBetween(source, "if (!authorizeWrite(request)) return sendJson(response, 403", '} catch (error) {', false)
   const refusal = writeSection.indexOf('const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))\n          if (refusal) return sendJson(response, refusal.status, refusal.body)')
@@ -268,12 +291,14 @@ test('写入：先过本机会话检查，再判「未迁移」（未迁移时�
   const dispatch = writeSection.indexOf('return handleV2Write(request,url,leaseToken,input)')
   assert.ok(refusal > 0, '有未迁移的拒绝')
   assert.ok(mutation > refusal, '拒绝在进入写入之前（不算编辑器写入，也不抑制刷新）')
-  assert.ok(dispatch > mutation, '之后无条件走 V2 写入')
+  assert.ok(dispatch > mutation, '之后走 V2 写入')
+  const store = writeSection.indexOf('if (storeMode()) {')
+  assert.ok(store > refusal && store < mutation, '新库模式在「未迁移」之后、V2 写入之前分流')
   assert.equal((source.match(/legacyWriteRefusal\(/g) ?? []).length, 1)
   assert.match(source, /const route = v2EditorRoute\(request\.method, url\.pathname\)\n {2}if \(!route\) return \{ status: 404, body: v2ErrorBody\('E_UNKNOWN_ENDPOINT'\) \}/)
 })
 
-test('只读端点照旧：GET /editor/state 读 V2 文件；目录搜索不判「未迁移」', () => {
+test('只读端点照旧：GET /editor/state 在 V2 模式读 V2 文件（新库模式读新库的投影）；目录搜索不判「未迁移」', () => {
   const source = pluginSource()
   const getState = sourceBetween(source, "if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {", "if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/catalog/countries')", false)
   assert.match(getState, /const result = await readV2EditorState\(\{ privatePaths \}\)/)
