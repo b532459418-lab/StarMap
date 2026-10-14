@@ -82,3 +82,13 @@ export const getLocalEditorCoordinationSnapshot = localEditorCoordination.getSna
 export const subscribeLocalEditorCoordination = localEditorCoordination.subscribe
 export const assertLocalEditorReloadAllowed = localEditorCoordination.assertReloadAllowed
 export const requireLocalEditorReload = localEditorCoordination.requireReload
+
+/**
+ * Reloads the page after a confirmed save, unless another write or a media session is still running.
+ * It lives here rather than in ./localEditorApi.ts (which re-exports it) so components can call it synchronously
+ * without loading the editor API (batch 5B).
+ */
+export const reloadAfterLocalSave = () => {
+  assertLocalEditorReloadAllowed()
+  window.location.reload()
+}

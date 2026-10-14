@@ -137,16 +137,17 @@ jobs:
       - name: Build the public bundle
         run: npm run build:public
 
-      # These markers exist only in server-side code: the private-root variable, the
-      # default private directory and the media task store. The editor client's own
-      # request paths still ship until the editing components are lazy-loaded (5B),
-      # so the endpoint itself is checked at runtime by the smoke cases below.
-      - name: Refuse server-only code in the public bundle
+      # The first three markers exist only in server-side code: the private-root variable,
+      # the default private directory and the media task store. /__travelatlas/editor is
+      # the local editor's request prefix: the editor client is loaded only behind
+      # `import.meta.env.DEV && localEditorAvailable`, so no build, and no chunk of it,
+      # may contain it (5B). The smoke cases below also check the endpoint at runtime.
+      - name: Refuse server-only and local editor code in the public bundle
         run: |
           found=0
-          for marker in STARMAP_PRIVATE_ROOT 06_private operations/media-import; do
+          for marker in STARMAP_PRIVATE_ROOT 06_private operations/media-import /__travelatlas/editor; do
             if grep -rlF --include='*.js' -e "$marker" dist; then
-              echo "::error::The public bundle contains the server-only marker $marker"
+              echo "::error::The public bundle contains the forbidden marker $marker"
               found=1
             fi
           done

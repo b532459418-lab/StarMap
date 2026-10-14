@@ -69,9 +69,10 @@ map credentials. Its jobs run in parallel:
 - **Browser checks** run the critical-flow and media-recovery groups whole and
   the time-filter group in three shards, each on its own runner with isolated
   synthetic data (see `01_Web/README.md`).
-- **Public build smoke** builds the public bundle, refuses server-only code in
-  it, and checks the result through `vite preview`: the neutral sample loads
-  and no local editor endpoint answers.
+- **Public build smoke** builds the public bundle, refuses server-only code and
+  the local editor client (any `/__travelatlas/editor` path) in it, and checks
+  the result through `vite preview`: the neutral sample loads and no local
+  editor endpoint answers.
 - **Public checks** succeed only when every job above, and every shard,
   succeeded.
 

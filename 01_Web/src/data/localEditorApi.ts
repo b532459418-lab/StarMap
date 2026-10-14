@@ -1,9 +1,13 @@
+/**
+ * 本地编辑器的全部请求（`/__travelatlas/editor/*`）。浏览器里只由 ./localEditorClient.ts 在 `localEditorAvailable`
+ * 为真时动态加载，构建产物里没有本模块（第 5B 批）。组件不直接导入它（`import type` 除外）；单元测试直接导入。
+ */
 import type { TravelAtlasEditorState } from './editorState'
 import type { WantToGoItem } from './derive/wantToGo.ts'
 import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
 import { parseMediaImportResponse, parseMediaUploadResponse } from './localMediaResponse.ts'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
-import { assertLocalEditorReloadAllowed, withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
+import { withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
 import { assertMediaJob, assertMediaJobsRead, assertMediaJobPreview, type MediaJob, type MediaJobsRead, type MediaJobPreview, type MediaJobIntent, type MediaJobVersion } from './mediaJobs.ts'
 
 /** 第 2A 批：409 `E_PLACE_CHOICE_REQUIRED` 的候选列表交给界面（./placeChoice.ts）。 */
@@ -335,7 +339,5 @@ export const convertLocalWantToGoToTravel = (input: LocalConvertToTravelInput) =
   return parseResponse<LocalConvertToTravelResult>(response)
 })
 
-export const reloadAfterLocalSave = () => {
-  assertLocalEditorReloadAllowed()
-  window.location.reload()
-}
+/** 定义在 ./localEditorCoordination.ts（第 5B 批）：组件经 ./localEditorClient.ts 同步调用它，不必先加载本模块。 */
+export { reloadAfterLocalSave } from './localEditorCoordination.ts'

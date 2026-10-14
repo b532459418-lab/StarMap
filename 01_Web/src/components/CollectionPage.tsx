@@ -3,7 +3,7 @@ import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useId, useMemo, useState } from 'react'
 import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
-import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorApi'
+import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorClient'
 import { travelAtlasDataSource } from '../data/travelAtlas'
 import {
   plannedConvertBlockReason,

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { mediaJobs } from '../data/mediaJobs.ts'
+import { mediaJobs } from '../data/localEditorClient.ts'
 
 /** Observe the same server-backed task queue from every panel. Observation does not write. */
 export function useMediaJobs() {

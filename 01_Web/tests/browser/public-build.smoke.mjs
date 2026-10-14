@@ -1,7 +1,8 @@
 // Public build smoke (batch 4, E4). Runs only with `npm run test:browser -- --public-smoke`, which serves the existing
-// dist/ through `vite preview` instead of the development server. The bundle still carries the editor's client-side
-// paths until the editing components are lazy-loaded (5B), so these checks are about runtime behaviour: the public
-// page shows the neutral sample, never calls the local editor, and the preview has no editor endpoint.
+// dist/ through `vite preview` instead of the development server. Since 5B no build contains the editor client: CI's
+// Public build smoke job refuses any `/__travelatlas/editor` in dist/**/*.js before these cases run. The cases check
+// the runtime side: the public page shows the neutral sample, never calls the local editor, and the preview has no
+// editor endpoint.
 import { test, expect, openCollection, selectReykjavik } from './helpers.mjs'
 
 const editorPrefix = '/__travelatlas/editor/'

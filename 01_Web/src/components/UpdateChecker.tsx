@@ -6,30 +6,7 @@ import { useUiLocale } from '../i18n/useUiLocale'
 
 const ReleaseMarkdown = lazy(() => import('./ReleaseMarkdown'))
 
-type ReleaseUpdateButtonProps = {
-  active: boolean
-  state: ReleaseUpdateState
-  onToggle: () => void
-}
-
-export function ReleaseUpdateButton({ active, state, onToggle }: ReleaseUpdateButtonProps) {
-  const { t } = useTranslation('appShell')
-  return (
-    <button
-      type="button"
-      className="atlas-dock-button atlas-release-button pointer-events-auto"
-      aria-label={t(active ? 'returnPrevious' : 'updates')}
-      aria-current={active ? 'page' : undefined}
-      title={t(active ? 'returnPrevious' : state.hasUnseenUpdate ? 'unseenUpdate' : 'updates')}
-      data-update-available={state.hasUnseenUpdate ? 'true' : 'false'}
-      onClick={onToggle}
-    >
-      <RefreshCw aria-hidden="true" className={state.status === 'checking' ? 'is-spinning' : ''} />
-      {state.hasUnseenUpdate ? <span className="atlas-release-signal" aria-hidden="true" /> : null}
-    </button>
-  )
-}
-
+// The dock button is in ./ReleaseUpdateButton.tsx; App loads this page only when it is first opened (batch 5B).
 type ReleaseUpdatePageProps = {
   state: ReleaseUpdateState
 }
