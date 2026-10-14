@@ -1,0 +1,64 @@
+/**
+ * Test helpers for the new-library mode (3C-3): temporary private roots under the OS temp directory with V2 files
+ * written into `data/v2/`. Only tracked neutral data: the public sample (src/data/v2-sample/) and the 3C-1b edge-case
+ * fixture (src/data/store/v2Store.fixture.ts). Not a test file itself; not imported by the App.
+ */
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
+import { readV2SampleFiles } from './v2-sample.mjs'
+import { edgeCaseFixture } from '../src/data/store/v2Store.fixture.ts'
+
+/** A temporary directory `<tmp>/<prefix>…` holding `private/` (the private root), removed after the test. */
+export async function tempPrivateRoot(t, prefix = 'starmap-store-mode-') {
+  const directory = await mkdtemp(path.join(os.tmpdir(), prefix))
+  t.after(async () => {
+    assert.equal(path.dirname(directory), os.tmpdir())
+    assert.ok(path.basename(directory).startsWith(prefix))
+    await rm(directory, { recursive: true, force: true, maxRetries: 3 })
+  })
+  const root = path.join(directory, 'private')
+  await mkdir(root)
+  return { directory, root, paths: getPrivatePaths({ STARMAP_PRIVATE_ROOT: root }) }
+}
+
+/** Write V2 file values into `data/v2/` (keys that are undefined are left out), as the V2 editor writes them. */
+export async function writeV2Files(paths, files) {
+  await mkdir(paths.v2DataRoot, { recursive: true })
+  for (const key of V2_PRIVATE_FILE_KEYS) {
+    if (files[key] !== undefined) await writeFile(paths.v2FilePaths[key], `${JSON.stringify(files[key], null, 2)}\n`)
+  }
+}
+
+/** The public sample's five V2 files (fresh copy). */
+export const sampleV2Files = () => readV2SampleFiles()
+/** The 3C-1b edge cases (hidden items, unresolved list elements, kept titles, …) as five V2 files (fresh copy). */
+export const edgeV2Files = () => edgeCaseFixture()
+
+/** SHA-256 of every file under `root`, by relative path (directories implied). */
+export async function treeDigest(root) {
+  const files = {}
+  async function walk(directory) {
+    let items
+    try { items = await readdir(directory, { withFileTypes: true }) } catch (error) {
+      if (error?.code === 'ENOENT') return
+      throw error
+    }
+    for (const item of items) {
+      const target = path.join(directory, item.name)
+      if (item.isDirectory()) await walk(target)
+      else files[path.relative(root, target).split(path.sep).join('/')] = createHash('sha256').update(await readFile(target)).digest('hex')
+    }
+  }
+  await walk(root)
+  return files
+}
+
+/** Lines collected from a tool's `log` / `logError`. */
+export const quietly = () => {
+  const lines = []
+  return { lines, log: (line) => lines.push(String(line)), logError: (line) => lines.push(String(line)) }
+}
