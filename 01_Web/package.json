@@ -23,6 +23,7 @@
     "library:rebind": "node scripts/library-rebind.mjs",
     "library:recover": "node scripts/store-recover.mjs",
     "store:bench": "node scripts/store-bench.mjs",
+    "store:bench:mode": "node scripts/store-mode-bench.mjs",
     "store:migrate": "node scripts/store-migrate.mjs",
     "store:backup": "node scripts/store-backup.mjs backup",
     "store:restore": "node scripts/store-backup.mjs restore",

@@ -5,10 +5,11 @@
  * - SQLite access goes through the thin adapter ./store-sqlite.mjs (`node:sqlite`).
  * - Domain rules stay in Core (`src/worldgraph/store/`, loaded by Node 24 directly as `.ts`):
  *   the host plans with `planCommands` inside `BEGIN IMMEDIATE` and executes the change set.
- * - No Vite, no App: the App is wired in 3C-3/3C-4.
+ * - No Vite, no App: the experimental new-library mode (3C-3) wires it through
+ *   ./store-session.mjs (the plugin) and the store:* tools; more writes follow in 3C-4.
  *
- * The production location is planned as `<private-root>/data/store/world.sqlite`
- * (STORE_RELATIVE_PATH). 3C-2 does not wire the private root: callers pass the file path.
+ * The production location is `<private-root>/data/store/world.sqlite` (STORE_RELATIVE_PATH,
+ * ./private-data-source.mjs decides the mode by it). Callers pass the file path.
  */
 import { createHash } from 'node:crypto'
 import { closeSync, lstatSync, openSync, realpathSync, unlinkSync } from 'node:fs'
@@ -37,7 +38,7 @@ export const STORE_APPLICATION_ID = 0x534d4631
  * first; pruning then returns freed pages to the file system with `incremental_vacuum`.
  */
 export const STORE_AUTO_VACUUM = 2
-/** Planned production location under the private root (not wired in 3C-2). */
+/** Production location under the private root (./private-data-source.mjs STORE_FILE_SEGMENTS). */
 export const STORE_RELATIVE_PATH = Object.freeze(['data', 'store', 'world.sqlite'])
 export const storePathFor = (privateRoot) => path.join(privateRoot, ...STORE_RELATIVE_PATH)
 
