@@ -205,12 +205,13 @@ npm run store:restore -- --from <备份目录> --to <新私人根>
 
 ```powershell
 npm run lint
+npm test
 npm run build:public
 npm run privacy:check
 npm run media:check
 ```
 
-`npm run build:public` 会在 `01_Web/dist/` 生成不带本地编辑器的静态公开站点：任何构建都不含编辑器的客户端代码，公开构建里一旦出现，CI 就会拒绝。`npm run release:check` 还会要求工作区干净，只把 Git 已跟踪文件归档到系统临时目录，在这个“无私有层”的洁净环境里重新安装依赖，并运行 Lint、测试和公开构建。这些命令只继承净化过的环境变量（搜索路径、主目录与临时目录、区域设置、代理设置），不带上 `STARMAP_PRIVATE_ROOT`、`VITE_*` 和各类 token；某一步失败时会打印它已经输出的内容。这样从机制上证明私人内容无法混入公开发布。`build:personal` 只用于你自己控制的私人部署。隐藏的内容不会进入个人构建：被隐藏的国家、城市、想去条目、照片和航拍，连同只能经由它们到达的内容，都不进入构建的数据，也只复制显示得到的媒体文件。开发服务器仍有全部数据，因为编辑器要靠隐藏的条目做「恢复」和「彻底删除」。
+`npm test` 运行全部单元测试与脚本测试（`src/**/*.test.ts` 与 `scripts/**/*.test.mjs`，纯 `node --test`，需要几分钟）。`npm run build:public` 会在 `01_Web/dist/` 生成不带本地编辑器的静态公开站点：任何构建都不含编辑器的客户端代码，公开构建里一旦出现，CI 就会拒绝。`npm run release:check` 还会要求工作区干净，只把 Git 已跟踪文件归档到系统临时目录，在这个“无私有层”的洁净环境里重新安装依赖，并运行 Lint、测试和公开构建。这些命令只继承净化过的环境变量（搜索路径、主目录与临时目录、区域设置、代理设置），不带上 `STARMAP_PRIVATE_ROOT`、`VITE_*` 和各类 token；某一步失败时会打印它已经输出的内容。这样从机制上证明私人内容无法混入公开发布。`build:personal` 只用于你自己控制的私人部署。隐藏的内容不会进入个人构建：被隐藏的国家、城市、想去条目、照片和航拍，连同只能经由它们到达的内容，都不进入构建的数据，也只复制显示得到的媒体文件。开发服务器仍有全部数据，因为编辑器要靠隐藏的条目做「恢复」和「彻底删除」。
 
 ### 公开构建的缓存
 
@@ -224,7 +225,7 @@ npm run media:check
 
 Cesium 单独成一个文件，所以只要应用的改动没有用到新的 Cesium 接口，这个文件的名字不变，已缓存的副本可以继续使用。
 
-研发时可在 `01_Web/` 运行 `npx playwright install chromium`、`npm run test:browser`，自动检查语言草稿、城市选择、想去快捷入口、媒体重试、转足迹和手机面板。测试使用新建的临时合成数据目录，不访问真实私人数据；端口 5173 已占用时会拒绝启动。`npm run perf:browser` 单独测量 1,000 条合成条目的界面与滚动表现，数据只作为本地研发基线，不作为发布验收或 CI 性能阈值。配置与报告位置见 `01_Web/README.md`。
+研发时可在 `01_Web/` 运行 `npx playwright install chromium`、`npm run test:browser`，自动检查语言草稿、城市选择、想去快捷入口、媒体重试、转足迹和手机面板。测试使用新建的临时合成数据目录，不访问真实私人数据；端口 5173 已占用时会拒绝启动。检查分为关键流程、媒体恢复和时间筛选三组，可以用 `--critical-flows`、`--media-recovery`、`--time-filters` 单独运行，再加 `--shard=<序号>/<总数>` 重跑 CI 的某一片；`npm run build:public` 之后，`npm run test:browser -- --public-smoke` 检查公开构建本身。`npm run perf:browser` 单独测量 1,000 条合成条目的界面与滚动表现，数据只作为本地研发基线，不作为发布验收或 CI 性能阈值。配置与报告位置见 `01_Web/README.md`。
 
 ## 后续更新
 

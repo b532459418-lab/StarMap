@@ -48,7 +48,7 @@ npm run privacy:check
 npm run release:check
 ```
 
-`npm test` runs the World Graph Core unit tests with plain `node --test`; no bundler is involved. See [`src/worldgraph/README.md`](src/worldgraph/README.md).
+`npm test` runs every unit and script test with plain `node --test`, no bundler involved: `src/**/*.test.ts` (World Graph Core, see [`src/worldgraph/README.md`](src/worldgraph/README.md), the data layer, the derivation and its frozen baseline locks) and `scripts/**/*.test.mjs` (the local editor plugin, the media pipeline, backups, the privacy and release checks, the SQLite store host). The whole run takes a few minutes, most of it in the store tests; `node --test "src/**/*.test.ts"` or `node --test <file>` runs a part. When a derivation lock fails, `src/data/canonical/baselineLock.fixture.ts` explains how to get a readable difference. `npm run build:public` also type-checks (`tsc -b`).
 The runner uses at most two file workers to bound memory while synthetic image
 and process-exit checks run. This is a test-resource limit, not an application
 memory requirement.

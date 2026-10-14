@@ -62,7 +62,7 @@ When a user mentions uploading, importing, organizing, or adding travel photos o
 
 1. Read the current README and, when present, the private workspace Handoff; choose one bounded task.
 2. Inspect only relevant files; do not recursively scan `node_modules`, `dist`, `.git`, or large media folders.
-3. Make surgical changes and verify them with `npm run lint` and `npm run build:public` from `01_Web/`.
+3. Make surgical changes and verify them from `01_Web/` with `npm run lint`, `npm test` (every unit and script test; `node --test <file>` runs one file) and `npm run build:public` (it also type-checks with `tsc -b`). Run `npm run privacy:check` after changing tracked files, and `npm run test:browser` (or one of its groups, see `01_Web/README.md`) after changing an interface flow.
 4. Keep visual checks focused. Do not leave unbounded browser, terminal, or watcher sessions running.
 5. In a private workspace that contains `TravelAtlas_Handoff.md`, update it after substantive work. Do not create one in a clean public clone unless the user asks.
 
