@@ -212,7 +212,7 @@ async function migratedWithMedia(t) {
 
 test('store:backup copies the media with the rules of npm run backup and records each file\'s size and SHA-256; restore puts it back byte for byte', async (t) => {
   const { root, paths, at } = await migratedWithMedia(t)
-  // Generated sentinels only: excluded by the rules (config/, an ignored README, a .bak).
+  // Generated sentinels only: excluded by the rules (config/, and a README in the Inbox, which is skipped).
   await writeFile(path.join(root, 'config', '.env.local'), 'SYNTHETIC_EXCLUDED_SENTINEL')
   await writeFile(path.join(paths.inboxRoot, 'README.md'), 'Synthetic ignored readme')
   const before = await readProjection(paths)
