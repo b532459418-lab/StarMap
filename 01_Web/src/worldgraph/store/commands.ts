@@ -1,5 +1,6 @@
 import type { AnyStoreRow, ReviewReceipt, StoreCommand, StorePolicy, SourceRef, WorldStore } from './types.ts'
 import { freezeCopy, jsonKey, readWorldStore, reject, revision, validateCommands, validateWorldStore } from './schema.ts'
+import { plain } from './primitives.ts'
 
 interface CommandContext {
   readonly policy?: StorePolicy
@@ -7,9 +8,11 @@ interface CommandContext {
   readonly acceptedReview?: ReviewReceipt
 }
 const immutableDefinitions = new Set(['sources','evidence','reviews','entityTypes','layers','relationTypes'])
+/** As in the planner: a `source` that is not an object (null in an update, say) has no identity, so changing a row's
+ * source to it is E_SOURCE_IDENTITY instead of a TypeError (batch 7). */
 const sourceIdentity = (r: AnyStoreRow): string | undefined => {
-  if (!('source' in r)) return undefined
-  return JSON.stringify([r.source.sourceId,r.source.recordId])
+  const source: unknown = 'source' in r ? r.source : undefined
+  return plain(source) ? JSON.stringify([source.sourceId,source.recordId]) : undefined
 }
 /** No IO or durable transaction claim. All validation precedes returning a new world.
  * Reference implementation: every call validates and clones the whole world, so it

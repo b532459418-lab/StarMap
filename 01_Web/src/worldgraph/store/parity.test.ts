@@ -61,6 +61,7 @@ test('hand-written scenarios: both paths agree on result or error code',()=>{
     ['create with nonzero revision', w, [create('entities',{...book(50),revision:1})], 'E_REVISION'],
     ['update that skips a revision', w, [update('entries',{...e10,revision:2},0)], 'E_REVISION'],
     ['source identity is immutable', w, [update('entries',{...e10,revision:1,source:source('moved')})], 'E_SOURCE_IDENTITY'],
+    ['a null source is a source move, not a crash', w, [update('entries',{...e10,revision:1,source:null as unknown as LayerEntry['source']})], 'E_SOURCE_IDENTITY'],
     ['entry layer is immutable', w, [update('entries',{...e10,revision:1,layerId:'user:favorites'})], 'E_IDENTITY'],
     ['entry createdAt is immutable', w, [update('entries',{...e10,revision:1,createdAt:'2026-10-01T00:00:00.000Z'})], 'E_IDENTITY'],
     ['entity type is immutable', withFilm(), [update('entities',{...e1,revision:1,typeId:'custom:film'})], 'E_IDENTITY'],
