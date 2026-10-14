@@ -6,11 +6,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createBrowserFixture } from './browser-fixture.mjs'
-import { parseBrowserTestArgs } from './browser-test-options.mjs'
+import { assertShardListed, listingArgs, parseBrowserTestArgs } from './browser-test-options.mjs'
 
 const webRoot = fileURLToPath(new URL('../', import.meta.url))
+const playwrightCli = fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url))
 // Option rules (one group, optional --shard, nothing else) live in ./browser-test-options.mjs.
-const { group, playwrightArgs } = parseBrowserTestArgs(process.argv.slice(2))
+const { group, shard, playwrightArgs } = parseBrowserTestArgs(process.argv.slice(2))
 const large = group === '--performance'
 const mediaRecovery = group === '--media-recovery'
 const mediaLifecycle = group === '--media-lifecycle'
@@ -41,13 +42,24 @@ async function cleanupOwnedRoot() {
 try {
   // The public preview reads no private root, so the smoke leaves its temporary root empty.
   if (!publicSmoke) await createBrowserFixture(root, { large })
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url)), 'test', '--config', 'playwright.config.mjs', ...playwrightArgs], {
-    cwd: webRoot,
-    stdio: 'inherit',
-    env: { ...process.env, STARMAP_BROWSER_TEST_ROOT: root, STARMAP_BROWSER_PERFORMANCE: large ? '1' : '0', STARMAP_BROWSER_MEDIA_DIAGNOSTIC: mediaLifecycle ? '1' : '0', STARMAP_BROWSER_MEDIA_SUITE: mediaRecovery ? '1' : '0', STARMAP_BROWSER_PUBLIC_SMOKE: publicSmoke ? '1' : '0', STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '' },
-  })
-  const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('exit', (code) => resolve(code ?? 1)) })
-  process.exitCode = code
+  const env = { ...process.env, STARMAP_BROWSER_TEST_ROOT: root, STARMAP_BROWSER_PERFORMANCE: large ? '1' : '0', STARMAP_BROWSER_MEDIA_DIAGNOSTIC: mediaLifecycle ? '1' : '0', STARMAP_BROWSER_MEDIA_SUITE: mediaRecovery ? '1' : '0', STARMAP_BROWSER_PUBLIC_SMOKE: publicSmoke ? '1' : '0', STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '' }
+  const run = (args, stdout) => {
+    const child = spawn(process.execPath, [playwrightCli, 'test', '--config', 'playwright.config.mjs', ...args], { cwd: webRoot, stdio: ['inherit', stdout, 'inherit'], env })
+    let output = ''
+    child.stdout?.setEncoding('utf8').on('data', (chunk) => { output += chunk })
+    return new Promise((resolve, reject) => { child.on('error', reject); child.on('close', (code) => resolve({ code: code ?? 1, output })) })
+  }
+  // Playwright passes a shard that received no case. List the shard first (same selection, same environment; it
+  // starts no server) and refuse it when it is empty (batch 4B).
+  if (shard) {
+    const listing = await run(listingArgs(playwrightArgs), 'pipe')
+    if (listing.code !== 0) {
+      process.stdout.write(listing.output)
+      throw new Error(`Listing the cases of ${shard} failed with exit code ${listing.code}.`)
+    }
+    console.log(`${shard}: ${assertShardListed(shard, listing.output)} cases listed.`)
+  }
+  process.exitCode = (await run(playwrightArgs, 'inherit')).code
 } finally {
   await cleanupOwnedRoot()
 }

@@ -3,6 +3,7 @@
 // Public build smoke job refuses any `/__travelatlas/editor` in dist/**/*.js before these cases run. The cases check
 // the runtime side: the public page shows the neutral sample, never calls the local editor, and the preview has no
 // editor endpoint.
+import { readFile } from 'node:fs/promises'
 import { test, expect, openCollection, selectReykjavik } from './helpers.mjs'
 
 const editorPrefix = '/__travelatlas/editor/'
@@ -41,4 +42,26 @@ test('the public preview has no local editor endpoint', async ({ page }) => {
   }, `${editorPrefix}state`)
   expect(fromPage.type).not.toContain('json')
   expect(fromPage.body).not.toBe('{')
+})
+
+// Batch 4B (E8): Cesium is bundled into a content-hashed chunk, and the files it loads at run time come from the
+// directory named after the installed Cesium version (vite.config.ts). A missing copy would only show as absent globe
+// detail, so the smoke checks the requests themselves.
+test('Cesium code is content-hashed and its workers and assets load from the versioned static directory', async ({ page }) => {
+  const { version } = JSON.parse(await readFile(new URL('../../node_modules/cesium/package.json', import.meta.url), 'utf8'))
+  const staticPrefix = `/cesium/${version}/`
+  const scripts = [], cesiumResponses = [], workers = []
+  page.on('worker', (worker) => workers.push(new URL(worker.url()).pathname))
+  page.on('response', (response) => {
+    const { pathname } = new URL(response.url())
+    if (response.request().resourceType() === 'script') scripts.push(pathname)
+    if (pathname.startsWith('/cesium/')) cesiumResponses.push(`${response.status()} ${pathname}`)
+  })
+  await page.goto('/')
+  await expect(page.locator('.cesium-widget canvas')).toBeVisible()
+  await selectReykjavik(page)
+  await expect.poll(() => workers.filter((pathname) => pathname.startsWith(`${staticPrefix}Workers/`)).length).toBeGreaterThan(0)
+  expect(scripts.filter((pathname) => /^\/assets\/cesium-[\w-]{8}\.js$/.test(pathname))).toHaveLength(1)
+  expect(cesiumResponses.some((entry) => entry.startsWith(`200 ${staticPrefix}Assets/`))).toBe(true)
+  expect(cesiumResponses.filter((entry) => !entry.startsWith(`200 ${staticPrefix}`))).toEqual([])
 })

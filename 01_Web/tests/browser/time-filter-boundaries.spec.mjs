@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure, saveAndWaitForReload } from './helpers.mjs'
 import { createBrowserFixture, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -92,10 +92,13 @@ test('conversion preserves the selected result outside the active travel range a
   await dialog.locator('input[type=date]').nth(1).fill('2026-01-13')
   await dialog.locator('input[type=checkbox]').check()
   recordReloadCheckpoint(page, 'before converting Nuuk')
-  const saved = page.waitForResponse(response => response.url().endsWith('/wanttogo/convert'))
-  await dialog.locator('button[type=submit]').click()
-  expect((await saved).ok()).toBe(true)
-  recordReloadCheckpoint(page, 'conversion response accepted')
+  // A confirmed conversion reloads the whole page; the checks below start after that reload (batch 4B).
+  await saveAndWaitForReload(page, async () => {
+    const saved = page.waitForResponse(response => response.url().endsWith('/wanttogo/convert'))
+    await dialog.locator('button[type=submit]').click()
+    expect((await saved).ok()).toBe(true)
+    recordReloadCheckpoint(page, 'conversion response accepted')
+  })
   const info = page.locator('.atlas-info-panel')
   await expect(info.locator('h2')).toHaveText('Nuuk')
   await expect(info.locator('[data-time-filter-outside]')).toBeVisible()

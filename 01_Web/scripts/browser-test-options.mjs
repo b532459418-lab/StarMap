@@ -5,6 +5,8 @@
  * - At most one `--shard=<current>/<total>`, alone or with a group. It is passed to Playwright unchanged; which cases
  *   a shard receives is Playwright's decision (see the group's spec files for how they are grouped).
  * - Anything else is refused, so a mistyped flag never silently widens or narrows a run.
+ * - A shard that receives no case fails (batch 4B). Playwright itself reports such a shard as a pass, so the runner
+ *   first lists the shard's cases with `listingArgs` and checks the listing with `assertShardListed`.
  */
 
 // Playwright arguments for each group, after `test --config playwright.config.mjs`.
@@ -44,4 +46,37 @@ export function parseBrowserTestArgs(args) {
     }
   }
   return { group, shard, playwrightArgs: [...(group ? GROUP_ARGS[group] : []), ...(shard ? [shard] : [])] }
+}
+
+/**
+ * Playwright arguments that only list the cases the same run would execute: the identical selection, plus `--list`
+ * and the plain list reporter (which, in list mode, prints the names and one summary line and writes no report).
+ * @param {readonly string[]} playwrightArgs from `parseBrowserTestArgs`
+ */
+export function listingArgs(playwrightArgs) {
+  return ['--list', '--reporter=list', ...playwrightArgs]
+}
+
+const LISTED_TOTAL = /^Total: (\d+) tests? in \d+ files?\r?$/gm
+
+/**
+ * The number of cases in a `listingArgs` listing. Fails closed: output without exactly one summary line is an error,
+ * never "no cases".
+ * @param {string} output standard output of `playwright test` with `listingArgs`
+ */
+export function listedTestCount(output) {
+  const totals = [...String(output).matchAll(LISTED_TOTAL)]
+  if (totals.length !== 1) throw new Error(`Expected one "Total: <n> tests in <m> files" line in the Playwright listing, found ${totals.length}.`)
+  return Number(totals[0][1])
+}
+
+/**
+ * Refuses a shard whose listing has no case; otherwise returns the number of listed cases.
+ * @param {string} shard the `--shard=<i>/<n>` argument
+ * @param {string} output standard output of `playwright test` with `listingArgs`
+ */
+export function assertShardListed(shard, output) {
+  const count = listedTestCount(output)
+  if (count === 0) throw new Error(`${shard} received no test cases. Use fewer shards for this group: an empty shard would pass without running anything.`)
+  return count
 }
