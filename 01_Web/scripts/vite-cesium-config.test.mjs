@@ -1,12 +1,14 @@
 /**
- * Cesium build setup (batch 4B, E8): Cesium's own Vite recipe replaces the unmaintained vite-plugin-cesium. Evaluates
- * vite.config.ts itself, against an owned empty private root, like vite-preview-config.test.mjs.
+ * Cesium build setup (batch 4B, E8): Cesium's own Vite recipe replaces the unmaintained vite-plugin-cesium; the dev
+ * server loads Cesium's minified build (E1). Evaluates vite.config.ts itself, against an owned empty private root, like
+ * vite-preview-config.test.mjs.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const cesiumVersion = JSON.parse(await readFile(new URL('../node_modules/cesium/package.json', import.meta.url), 'utf8')).version
 const MODES = [['public', 'build'], ['public', 'serve'], ['personal', 'serve'], ['personal', 'build']]
@@ -56,4 +58,17 @@ test('Cesium and only Cesium gets its own chunk, which opens with the license he
   assert.ok(header.includes(` * Version ${cesiumVersion}\n`))
   assert.ok(header.includes('Licensed under the Apache License, Version 2.0') && header.endsWith('*/'))
   for (const name of ['index', 'jsx-runtime', 'CollectionPage']) assert.equal(await output.postBanner({ name }), '', name)
+}))
+
+// Batch 4B (E1): Cesium's minified build on the dev server only.
+test('only the dev server loads Cesium from its minified build; builds bundle the sources', async () => withConfig(async (configFor) => {
+  const minified = path.join(path.dirname(fileURLToPath(new URL('../node_modules/cesium/package.json', import.meta.url))), 'Build', 'Cesium', 'index.js')
+  for (const mode of ['public', 'personal']) {
+    const [alias, ...others] = (await configFor({ mode, command: 'serve', isPreview: false })).resolve.alias
+    assert.deepEqual(others, [], mode)
+    assert.equal(path.resolve(alias.replacement), path.resolve(minified), mode)
+    assert.ok(alias.find.test('cesium'), mode)
+    for (const id of ['cesium/Build/Cesium/Widgets/widgets.css', 'cesium/package.json', '@cesium/engine', 'resium']) assert.equal(alias.find.test(id), false, id)
+    assert.equal((await configFor({ mode, command: 'build', isPreview: false })).resolve, undefined, mode)
+  }
 }))

@@ -15,6 +15,8 @@ import { viteStaticCopy } from 'vite-plugin-static-copy'
 const cesiumPackageJson = createRequire(import.meta.url).resolve('cesium/package.json')
 const cesiumVersion: string = JSON.parse(readFileSync(cesiumPackageJson, 'utf8')).version
 const cesiumBaseUrl = `cesium/${cesiumVersion}`
+// Cesium's own minified ESM build of the same version (one file, the same 1352 exports as the sources).
+const cesiumMinifiedEntry = path.join(path.dirname(cesiumPackageJson), 'Build', 'Cesium', 'index.js')
 // The copy plugin keeps each file's path below Vite's root (the working directory); `stripBase` removes the leading
 // `node_modules/cesium/Build/Cesium`, so Build/Cesium/Workers/x.js is served and built as cesium/<version>/Workers/x.js.
 const cesiumBuildFromRoot = normalizePath(path.relative(process.cwd(), path.join(path.dirname(cesiumPackageJson), 'Build', 'Cesium')))
@@ -26,7 +28,7 @@ const cesiumStaticCopyTargets = ['Workers', 'ThirdParty', 'Assets', 'Widgets'].m
 // Cesium's prebuilt files, including the copied workers, open with its Apache-2.0 license header. Bundling from the
 // sources drops it, so the Cesium chunk gets the same header back, read from the installed package.
 const readCesiumLicenseHeader = () => {
-  const head = readFileSync(path.join(path.dirname(cesiumPackageJson), 'Build', 'Cesium', 'index.js'), 'utf8').slice(0, 4096)
+  const head = readFileSync(cesiumMinifiedEntry, 'utf8').slice(0, 4096)
   const end = head.indexOf('*/')
   if (!head.startsWith('/**') || end < 0 || !head.includes('@license')) throw new Error('Cesium license header not found in Build/Cesium/index.js')
   return head.slice(0, end + 2)
@@ -51,7 +53,7 @@ const previewHardening = async (isPreview: boolean | undefined): Promise<{ previ
 }
 
 // https://vite.dev/config/
-export default defineConfig(async ({ mode, isPreview }): Promise<UserConfig> => {
+export default defineConfig(async ({ mode, command, isPreview }): Promise<UserConfig> => {
   const hardening = await previewHardening(isPreview)
   // @ts-expect-error Node-only Vite plugin is outside the browser TypeScript project.
   const { travelAtlasLocalEditor } = await import('./scripts/local-editor-plugin.mjs')
@@ -93,6 +95,10 @@ export default defineConfig(async ({ mode, isPreview }): Promise<UserConfig> => 
         },
       },
     },
+    // Development only (batch 4B, E1): `cesium` imports, the app's and resium's, load Cesium's minified build (4.7 MB)
+    // instead of the 12.5 MB bundle and 20 MB source map that dependency optimisation makes from the sources. Builds still
+    // bundle the sources, as above.
+    ...(command === 'serve' ? { resolve: { alias: [{ find: /^cesium$/, replacement: cesiumMinifiedEntry }] } } : {}),
     server: {
       // The personal profile serves private data, so no other origin gets a CORS grant (Vite 8 otherwise allows any
       // localhost, 127.0.0.1 or [::1] origin). The local editor's cross-site guard covers what CORS cannot.
