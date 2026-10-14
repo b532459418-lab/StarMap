@@ -211,7 +211,7 @@ npm run privacy:check
 npm run media:check
 ```
 
-`npm run build:public` creates a static public-display build in `01_Web/dist/` without the local editor: no build contains the editor's client code, and CI refuses a public bundle that does. `npm run release:check` goes further: it requires a clean worktree, archives only Git-tracked files into a temporary clean room, installs dependencies, and runs lint, the tests, and the public build there. This proves an external private layer cannot leak into a public release. Use `build:personal` only for a private deployment you control.
+`npm run build:public` creates a static public-display build in `01_Web/dist/` without the local editor: no build contains the editor's client code, and CI refuses a public bundle that does. `npm run release:check` goes further: it requires a clean worktree, archives only Git-tracked files into a temporary clean room, installs dependencies, and runs lint, the tests, and the public build there. Those commands inherit only a sanitized environment (search path, home and temporary directories, locale, proxy settings): `STARMAP_PRIVATE_ROOT`, `VITE_*` values and tokens are not passed on, and a failing step prints the output it captured. This proves an external private layer cannot leak into a public release. Use `build:personal` only for a private deployment you control.
 
 ### Caching the public build
 

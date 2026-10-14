@@ -21,7 +21,7 @@ import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 import { allowedOrigins, authorizeRead, crossSiteRequestGuard, isLoopbackRequest } from './local-editor-request-guard.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
-import { isPathInside } from './path-containment.mjs'
+import { firstUnsafeComponent, isPathInside } from './path-containment.mjs'
 import { createLocalEditorImporter } from './local-editor-importer.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { assertMediaJobsClear } from './media-job-store.mjs'
@@ -388,7 +388,9 @@ const serveUserMedia = async (request, response, pathname) => {
     return
   }
   const target = path.resolve(userMediaRoot, relativePath)
-  if (!isPathInside(userMediaRoot, target)) {
+  // A link or junction anywhere from the private root down to the file is refused, as the media tasks and the import
+  // plan refuse it (./path-containment.mjs): nothing inside the library may serve a file from somewhere else.
+  if (!isPathInside(userMediaRoot, target) || await firstUnsafeComponent(privateRoot, target) !== undefined) {
     response.statusCode = 403
     response.end('Forbidden')
     return

@@ -98,7 +98,7 @@ GitHub 不包含个人照片和旅行数据。若个人网站本身部署到公�
 npm run release:check
 ```
 
-`release:check` 要求源码工作区干净，检查 Git 跟踪清单与关键 `.gitignore` 防线，并在只含 Git 跟踪文件的系统临时目录中执行 `npm ci`、Lint、`npm test` 与 `build:public`。它不能清洗旧历史，也不替代发布授权。
+`release:check` 要求源码工作区干净，检查 Git 跟踪清单与关键 `.gitignore` 防线，并在只含 Git 跟踪文件的系统临时目录中执行 `npm ci`、Lint、`npm test` 与 `build:public`；这些命令只继承净化过的环境变量（不带 `STARMAP_PRIVATE_ROOT`、`VITE_*` 与各类 token），失败时打印已捕获的输出。它不能清洗旧历史，也不替代发布授权。
 
 ## 相关文档
 

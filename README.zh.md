@@ -210,7 +210,7 @@ npm run privacy:check
 npm run media:check
 ```
 
-`npm run build:public` 会在 `01_Web/dist/` 生成不带本地编辑器的静态公开站点：任何构建都不含编辑器的客户端代码，公开构建里一旦出现，CI 就会拒绝。`npm run release:check` 还会要求工作区干净，只把 Git 已跟踪文件归档到系统临时目录，在这个“无私有层”的洁净环境里重新安装依赖，并运行 Lint、测试和公开构建，从机制上证明私人内容无法混入公开发布。`build:personal` 只用于你自己控制的私人部署。
+`npm run build:public` 会在 `01_Web/dist/` 生成不带本地编辑器的静态公开站点：任何构建都不含编辑器的客户端代码，公开构建里一旦出现，CI 就会拒绝。`npm run release:check` 还会要求工作区干净，只把 Git 已跟踪文件归档到系统临时目录，在这个“无私有层”的洁净环境里重新安装依赖，并运行 Lint、测试和公开构建。这些命令只继承净化过的环境变量（搜索路径、主目录与临时目录、区域设置、代理设置），不带上 `STARMAP_PRIVATE_ROOT`、`VITE_*` 和各类 token；某一步失败时会打印它已经输出的内容。这样从机制上证明私人内容无法混入公开发布。`build:personal` 只用于你自己控制的私人部署。
 
 ### 公开构建的缓存
 

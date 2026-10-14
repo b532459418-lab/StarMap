@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import fsPromises, { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import fsPromises, { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -467,6 +467,35 @@ test('Local editor middleware preserves authorization, error codes and private f
         assert.equal(result.text, 'Forbidden')
         assert.equal(result.headers.has('content-type'), false)
       }
+    })
+
+    await t.test('Private media refuses a link or junction anywhere on the way to the file (batch 7, review S5)', async () => {
+      const mediaRoot = path.join(root, 'media-links')
+      const outside = path.join(root, 'media-links-outside')
+      const userMedia = path.join(mediaRoot, 'media', 'user')
+      await mkdir(path.join(userMedia, 'plain'), { recursive: true })
+      await mkdir(outside, { recursive: true })
+      await writeFile(path.join(userMedia, 'plain', 'thumb.webp'), Buffer.from('inside'))
+      await writeFile(path.join(outside, 'thumb.webp'), Buffer.from('outside'))
+      const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+      await symlink(outside, path.join(userMedia, 'linked'), linkType)
+      const fresh = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: mediaRoot }))
+      const get = async (url, privateHandler = fresh.handlers[1]) => {
+        const response = { statusCode: 200, headersSent: false, text: '', setHeader: () => {}, end(body = '') { this.text += body } }
+        await privateHandler({ url, method: 'HEAD', headers: { host: '127.0.0.1:5173' }, socket: { remoteAddress: '127.0.0.1' } }, response, () => {})
+        return { status: response.statusCode, text: response.text }
+      }
+      assert.equal((await get('/media/user/plain/thumb.webp')).status, 200)
+      assert.deepEqual(await get('/media/user/linked/thumb.webp'), { status: 403, text: 'Forbidden' })
+      assert.deepEqual(await get('/media/user/plain/thumb.webp/below'), { status: 403, text: 'Forbidden' }, 'a file used as a directory')
+      assert.deepEqual(await get('/media/user/plain/missing.webp'), { status: 404, text: 'Not Found' })
+
+      // The media directory itself as a junction to another place: refused as well.
+      const linkedRoot = path.join(root, 'media-linked-root')
+      await mkdir(path.join(linkedRoot, 'media'), { recursive: true })
+      await symlink(userMedia, path.join(linkedRoot, 'media', 'user'), linkType)
+      const linked = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: linkedRoot }))
+      assert.deepEqual(await get('/media/user/plain/thumb.webp', linked.handlers[1]), { status: 403, text: 'Forbidden' })
     })
 
     // Batch 7 (review E6): the following three replace tests that matched the plugin's source text.
