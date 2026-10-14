@@ -30,12 +30,12 @@
  * (media paths name places: they are never printed). Exit codes: 0 done, 1 refused or failed.
  */
 import { createHash } from 'node:crypto'
-import { constants, lstatSync } from 'node:fs'
+import { constants, createReadStream, lstatSync } from 'node:fs'
 import { copyFile, lstat, mkdir, open, readFile, readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
-  checkMediaReferences, copyEntries, fileDigest, isMediaBackupPath, mediaFilePaths, uniquePaths,
+  checkMediaReferences, isMediaBackupPath, mediaFilePaths, uniquePaths,
 } from './library-backup.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { assertMediaJobsClear } from './media-job-store.mjs'
@@ -149,6 +149,44 @@ function mediaFailure(error) {
   const code = typeof error?.message === 'string' && Object.hasOwn(MEDIA_PROBLEMS, error.message) ? error.message : undefined
   return code ? new StoreToolError(code, [MEDIA_PROBLEMS[code]]) : error
 }
+/** `{ bytes, sha256 }` of a file, streamed. */
+async function fileHash(file) {
+  const hash = createHash('sha256')
+  let bytes = 0
+  for await (const chunk of createReadStream(file)) { hash.update(chunk); bytes += chunk.length }
+  return { bytes, sha256: hash.digest('hex') }
+}
+
+/**
+ * Copy one listed media file (`relative`, a portable path) from `sourceRoot` into `targetRoot`, exclusively, and
+ * return { path, bytes, sha256 } of the copy: the hashing of `npm run backup` (SHA-256 of the file, and of the copy,
+ * which must match) without its per-file path walk, because mediaFilePaths has just checked the tree (no link, no
+ * junction). The source is lstat'ed once more: a link that appeared since is E_BACKUP_LINK. With `expected` (restore:
+ * the manifest's entry) the copy must match it instead of the source's own hash. Failures are E_BACKUP_* errors as in
+ * ./library-backup.mjs. `made` remembers the directories already created.
+ */
+async function copyMediaFile(sourceRoot, targetRoot, relative, made, expected) {
+  const segments = relative.split('/')
+  const source = path.join(sourceRoot, ...segments)
+  const target = path.join(targetRoot, ...segments)
+  let info
+  try { info = await lstat(source) } catch (error) {
+    if (missing(error)) throw new Error('E_BACKUP_MISSING', { cause: error })
+    throw error
+  }
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error('E_BACKUP_LINK')
+  const wanted = expected ?? await fileHash(source)
+  const directory = path.dirname(target)
+  if (!made.has(directory)) {
+    await mkdir(directory, { recursive: true })
+    made.add(directory)
+  }
+  await copyFile(source, target, constants.COPYFILE_EXCL)
+  const copied = await fileHash(target)
+  if (copied.bytes !== wanted.bytes || copied.sha256 !== wanted.sha256) throw new Error('E_BACKUP_CHANGED')
+  return { path: relative, ...copied }
+}
+
 /** Run a media step of ./library-backup.mjs with its failures as StoreToolError. */
 async function media(step) {
   try { return await step() } catch (error) { throw mediaFailure(error) }
@@ -207,8 +245,8 @@ export async function backupStore(privatePaths, { out, now = new Date().toISOStr
   let created = false
   let unmark
   try {
-    // 1. Under the lease: media tasks, quick_check, the snapshot, the media list, the mark.
-    const { meta, tables, mediaPaths } = await withLibraryOperation(privatePaths, async () => {
+    // 1. Under the lease: media tasks, quick_check, the snapshot, the mark.
+    const { meta, tables } = await withLibraryOperation(privatePaths, async () => {
       try { await assertMediaJobsClear(privatePaths) } catch (error) {
         if (error?.code === 'E_MEDIA_JOB_PENDING') throw new StoreToolError('E_MEDIA_JOB_PENDING', ['这个私人库还有没有完成的媒体任务。请先完成或放弃它，再备份。'])
         throw error
@@ -229,21 +267,19 @@ export async function backupStore(privatePaths, { out, now = new Date().toISOStr
         snapshotMeta = copy.meta()
         snapshotTables = copy.tableCounts()
       } finally { await copy.close() }
-      const paths = await media(() => mediaFilePaths(privatePaths.root))
-      if (paths.length > MEDIA_FILE_LIMIT) throw new StoreToolError('E_BACKUP_LIMIT', [`媒体文件超过 ${MEDIA_FILE_LIMIT} 个。`])
       unmark = await markMediaCopy(privatePaths, backupId, now)
-      return { meta: snapshotMeta, tables: snapshotTables, mediaPaths: paths }
+      return { meta: snapshotMeta, tables: snapshotTables }
     })
-    // 2.–3. The lease is released (ordinary edits go on); deletions wait for the mark. Copy and check every media file.
+    // 2.–3. The lease is released (ordinary edits go on); deletions wait for the mark, so every file the snapshot
+    // refers to stays. List the media (files added since the snapshot are harmless extras), copy and check every file.
     await onMediaCopy?.()
+    const mediaPaths = await media(() => mediaFilePaths(privatePaths.root))
+    if (mediaPaths.length > MEDIA_FILE_LIMIT) throw new StoreToolError('E_BACKUP_LIMIT', [`媒体文件超过 ${MEDIA_FILE_LIMIT} 个。`])
     const payload = path.join(target, BACKUP_FILES.media)
     await mkdir(payload)
     const entries = []
-    for (const relative of mediaPaths) {
-      const entry = await media(() => fileDigest(privatePaths.root, relative))
-      await media(() => copyEntries(privatePaths.root, payload, [entry]))
-      entries.push(entry)
-    }
+    const made = new Set()
+    for (const relative of mediaPaths) entries.push(await media(() => copyMediaFile(privatePaths.root, payload, relative, made)))
     const files = await projectedFiles(path.join(target, BACKUP_FILES.store))
     const warnings = await media(() => checkMediaReferences(payload, new Set(mediaPaths), files, { outsideUserMedia: 'warn' }))
     await unmark()
@@ -379,7 +415,10 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
     if (await hashFile(file) !== manifest.files[BACKUP_FILES.store].sha256) throw new StoreToolError('E_BACKUP_HASH', ['复制后的文件与清单的 SHA-256 不一致。'])
     // Every media file, each copy checked against its SHA-256 in the manifest: one mismatch fails the whole restore.
     if (entries) {
-      try { await copyEntries(path.join(path.resolve(from), BACKUP_FILES.media), root, entries) } catch (error) {
+      const made = new Set()
+      try {
+        for (const entry of entries) await copyMediaFile(path.join(path.resolve(from), BACKUP_FILES.media), root, entry.path, made, entry)
+      } catch (error) {
         if (['E_BACKUP_CHANGED', 'E_BACKUP_MISSING'].includes(error?.message)) {
           throw new StoreToolError('E_BACKUP_HASH', ['有媒体文件的大小或 SHA-256 与清单不一致（或者缺失）。恢复没有完成。'])
         }

@@ -459,12 +459,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const arg = (name) => { const at = process.argv.indexOf(name); return at > 0 ? process.argv[at + 1] : undefined }
   const dir = arg('--dir'), segment = arg('--segment'), scaleName = arg('--scale') ?? 'real'
   if (!dir || !Object.hasOwn(SEGMENTS, segment) || !Object.hasOwn(MODE_BENCH_SCALES, scaleName)) {
-    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline|editors|media|backup|restore [--scale real|tiny]')
+    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline|editors|media|backup|restore [--scale real|tiny] [--derivative-kb N --original-kb N]')
     process.exitCode = 1
   } else {
     mkdirSync(dir, { recursive: true })
     const started = performance.now()
-    const result = await SEGMENTS[segment](path.resolve(dir), MODE_BENCH_SCALES[scaleName])
+    // --derivative-kb / --original-kb: other media file sizes for the media segment (a smaller run that fits a time budget).
+    const sizes = Object.fromEntries([['derivativeKb', '--derivative-kb'], ['originalKb', '--original-kb']].filter(([, flag]) => arg(flag)).map(([key, flag]) => [key, Number(arg(flag))]))
+    const result = await SEGMENTS[segment](path.resolve(dir), { ...MODE_BENCH_SCALES[scaleName], ...sizes })
     const line = JSON.stringify({ segment, scale: scaleName, at: new Date().toISOString(), node: process.versions.node, totalMs: ms(started), result })
     appendFileSync(path.join(dir, 'results.jsonl'), `${line}\n`)
     console.log(line)

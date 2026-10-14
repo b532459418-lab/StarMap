@@ -1,9 +1,9 @@
 /**
  * Offline, allowlisted directory snapshots. Never overwrite or activate a private root.
  *
- * The media part (the allowlist, the ignore rules, portablePath, the SHA-256 per file, the copy check and the reference
- * checks) is shared with the new library's backup (./store-backup.mjs, 3C-4b): mediaFilePaths, fileDigest, copyEntries
- * and checkMediaReferences. A V2 backup behaves exactly as before.
+ * The media rules (the allowlist, the ignore rules, portablePath, the reference checks) are shared with the new
+ * library's backup (./store-backup.mjs, 3C-4b): mediaFilePaths, isMediaBackupPath, uniquePaths and
+ * checkMediaReferences. A V2 backup behaves exactly as before.
  */
 import { createHash } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
@@ -55,12 +55,29 @@ async function safeStat(root, relative = '') {
   return lstat(target)
 }
 
+/**
+ * Every file under `relative`, sorted by name per directory. The starting point is checked with safeStat (every
+ * segment from the root); below it the walk only descends into directories it listed itself, so each entry needs no
+ * more than its own type from readdir: a link, junction or special file is E_BACKUP_LINK, a name that is not portable
+ * E_BACKUP_PATH (3C-4b: one safeStat per file made listing a real-scale library take minutes).
+ */
 async function walk(root, relative) {
   const info = await safeStat(root, relative)
   if (!info) return []
   if (info.isFile()) return [portablePath(relative)]
   const found = []
-  for (const name of (await readdir(path.join(root, relative))).sort()) found.push(...await walk(root, relative ? `${relative}/${name}` : name))
+  const descend = async current => {
+    let entries
+    try { entries = await readdir(path.join(root, ...current.split('/').filter(Boolean)), { withFileTypes: true }) } catch { fail('E_BACKUP_READ') }
+    for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      const next = current ? `${current}/${entry.name}` : entry.name
+      portablePath(next)
+      if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) fail('E_BACKUP_LINK')
+      if (entry.isDirectory()) await descend(next)
+      else found.push(next)
+    }
+  }
+  await descend(relative)
   return found
 }
 
@@ -85,11 +102,6 @@ async function json(root, relative) {
   const info = await safeStat(root, relative)
   if (!info?.isFile() || info.size > 32 * 1024 * 1024) fail('E_BACKUP_JSON')
   try { return JSON.parse(await readFile(path.join(root, relative), 'utf8')) } catch { fail('E_BACKUP_JSON') }
-}
-
-/** { path, bytes, sha256 } of one file under `root` (streamed). */
-export async function fileDigest(root, relative) {
-  return digest(root, relative)
 }
 
 async function digest(root, relative) {
@@ -201,8 +213,7 @@ async function claim(target) {
   try { await mkdir(target) } catch (error) { fail(error.code === 'EEXIST' ? 'E_BACKUP_TARGET_EXISTS' : 'E_BACKUP_TARGET_PARENT') }
 }
 
-/** Copy `entries` ({ path, bytes, sha256 }) from `source` to `target` exclusively; each copy must hash to its entry. */
-export async function copyEntries(source, target, entries) {
+async function copyEntries(source, target, entries) {
   for (const entry of entries) {
     await safeStat(source, entry.path)
     const output = path.join(target, entry.path)
