@@ -502,9 +502,12 @@ export function travelAtlasLocalEditor(options = {}) {
   let command
   let outputRoot
   // 新库模式（3C-3）：这个插件实例的新库会话，第一次用到时才加载 ./store-session.mjs。整个进程只保留一个连接。
+  // 3C-4b：构建（build:personal）以只读方式打开新库：不写正常关闭标记、不取写锁，开发服务器开着新库时也能构建。
   const storePaths = privatePaths
   let storeSessionLoading
-  const storeSession = () => (storeSessionLoading ??= import('./store-session.mjs').then((module) => module.createStoreSession(storePaths, { countryCatalog: countryCatalogByCode })))
+  const storeSession = () => (storeSessionLoading ??= import('./store-session.mjs').then((module) => module.createStoreSession(storePaths, {
+    countryCatalog: countryCatalogByCode, readOnly: command === 'build',
+  })))
   const releaseStore = async () => { if (storeSessionLoading) await (await storeSessionLoading).close() }
   const storeMode = () => options.forceSample !== true && privateDataSource(storePaths) === 'store'
 

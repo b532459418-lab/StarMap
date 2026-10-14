@@ -21,6 +21,11 @@
  *   E_STORE_VERIFY (500 E_STORE_FAILED), the fresh projection replaces the cache, and the log says so.
  * - Writes (`writeRoute`): the eight editor endpoints of ./v2-editor-store.mjs (STORE_WRITE_ROUTES). Media uploads,
  *   imports, deletions and media tasks are refused by the plugin with 409 E_STORE_MODE_LIMITED (3C-4c).
+ * - Read-only sessions (`readOnly: true`, 3C-4b): `build:personal` reads the store while a dev server may have it open
+ *   for writing. The store is opened read-only (openStore `readOnly`): no writer session, so the clean-shutdown mark is
+ *   neither read nor written, no SQLite write lock is taken, the library lock is not probed and quick_check does not
+ *   run. A read that meets a writer's commit (E_STORE_BUSY) is retried like a busy open. Such a session never writes
+ *   and never prunes.
  *
  * One write (design 3B §4.4 and §4.5; the rules are V2's, the storage is the store):
  * 1. The request carries `x-starmap-request-id` (UUIDv7, one per user action, kept on retries) and
@@ -178,8 +183,9 @@ export class StoreSessionError extends Error {
 const cacheKeyOf = (meta) => JSON.stringify([meta.libraryId, meta.revision, meta.restoredFrom?.restoredAt ?? null])
 
 /**
- * Open `file` writable, retrying while it is busy. A handle with an open diagnostic (read-only) is closed and reported
- * as StoreSessionError with the diagnostic's code; so is every other failure.
+ * Open `file` (writable, or read-only with `options.readOnly`), retrying while it is busy. A handle with an open
+ * diagnostic (read-only) is closed and reported as StoreSessionError with the diagnostic's code; so is every other
+ * failure. A read-only open that met a writer's commit carries the diagnostic E_STORE_BUSY: retried the same way.
  */
 export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES, retryDelayMs = OPEN_RETRY_DELAY_MS, sleep = delay } = {}) {
   for (let attempt = 0; ; attempt++) {
@@ -192,7 +198,18 @@ export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES
     if (!handle.diagnostic) return handle
     const { code } = handle.diagnostic
     await handle.close()
+    if (code === 'E_STORE_BUSY' && attempt < retries) { await sleep(retryDelayMs); continue }
     throw new StoreSessionError(code)
+  }
+}
+
+/** `read()` again while it fails with E_STORE_BUSY (a writer in another process is committing), as openStoreWithRetry. */
+async function readWithRetry(read, { retries = OPEN_RETRIES, retryDelayMs = OPEN_RETRY_DELAY_MS, sleep = delay } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try { return read() } catch (error) {
+      if (error?.code !== 'E_STORE_BUSY' || attempt >= retries) throw error
+      await sleep(retryDelayMs)
+    }
   }
 }
 
@@ -203,21 +220,21 @@ export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES
  * caller gives none); `verify` compares every commit with a fresh projection (default: STARMAP_STORE_VERIFY=1);
  * `newId` gives the ids of new store rows (default UUIDv7); `prune` sets the record pruning schedule
  * ({ every, batchSize, vacuumPages, retention }, defaults PRUNE_EVERY_COMMITS and PRUNE_STEP, retention the host's) or
- * turns it off (false).
+ * turns it off (false); `readOnly` opens the store read-only (`build:personal`, see the file header).
  */
 export function createStoreSession(privatePaths, {
   log = console.log, now, retry, countryCatalog = new Map(), verify = process.env.STARMAP_STORE_VERIFY === '1', newId = () => uuidv7(),
-  prune = {},
+  prune = {}, readOnly = false,
 } = {}) {
   const file = storeFileOf(privatePaths)
-  const hostOptions = { privatePaths, policy: OFFICIAL_POLICY, ...(now ? { now } : {}) }
+  const hostOptions = { privatePaths, policy: OFFICIAL_POLICY, ...(now ? { now } : {}), ...(readOnly ? { readOnly: true } : {}) }
   let handle
   let opening
   let openMs
   let cache
   /** requestId → the response of a request this process committed (insertion order: oldest first). */
   const remembered = new Map()
-  const pruning = prune === false ? undefined : Object.freeze({
+  const pruning = prune === false || readOnly ? undefined : Object.freeze({
     every: prune.every ?? PRUNE_EVERY_COMMITS, batchSize: prune.batchSize ?? PRUNE_STEP.batchSize,
     vacuumPages: prune.vacuumPages ?? PRUNE_STEP.vacuumPages, ...(prune.retention ? { retention: prune.retention } : {}),
   })
@@ -302,11 +319,14 @@ export function createStoreSession(privatePaths, {
   }
 
   /** The cached read model at the store's current revision; projected again when the store is not the cached one. */
+  /** A read of a read-only session is retried while a writer in another process commits; the dev server's is not. */
+  const reading = (read) => (readOnly ? readWithRetry(read, retry) : read())
+
   async function snapshot() {
     const opened = await open()
-    const key = cacheKeyOf(opened.meta())
+    const key = cacheKeyOf(await reading(() => opened.meta()))
     if (cache?.key === key) return cache
-    const { rows, projection, files, timings } = project(opened)
+    const { rows, projection, files, timings } = await reading(() => project(opened))
     cache = Object.freeze({ key, revision: rows.revision, files, timings })
     const skipped = Object.entries(skippedCounts(projection.skipped)).map(([table, count]) => `${table} ${count}`)
     log(`[StarMap store] 读模型（修订号 ${rows.revision}）：${timings.openMs === undefined ? '' : `打开 ${timings.openMs} ms，`}`

@@ -153,6 +153,32 @@ test('while a session holds the store open for writing, a second connection open
   } finally { reader.close() }
 })
 
+test('a read-only session (build:personal) waits out a writer that holds the store exclusively, and writes nothing (3C-4b)', async (t) => {
+  const { file, paths, files } = await migratedRoot(t)
+  // Exclusive locking mode keeps the EXCLUSIVE lock after the commit, as a writer does while it commits; the writer's
+  // session mark is 0 (open), and a read-only session must leave it so.
+  const holder = rawConnection(file)
+  holder.exec('PRAGMA locking_mode = EXCLUSIVE')
+  holder.exec('BEGIN IMMEDIATE; UPDATE store_meta SET clean_shutdown = 0; COMMIT')
+  let released = false
+  let sleeps = 0
+  const session = createStoreSession(paths, {
+    log: () => {}, readOnly: true, retry: { sleep: async () => { if (++sleeps === 2) { holder.close(); released = true } } },
+  })
+  try {
+    const { revision, files: read } = await session.moduleExports()
+    assert.equal(released, true)
+    assert.equal(revision, 1)
+    assert.deepEqual(canonicalForInputs({ v2Files: read }), readV2(files))
+    assert.equal(session.pruneState.runs, 0)
+  } finally {
+    if (!released) holder.close()
+    await session.close()
+  }
+  const reader = rawConnection(file, { readOnly: true })
+  try { assert.equal(reader.prepare('SELECT clean_shutdown FROM store_meta').get().clean_shutdown, 0, 'as the writer left it') } finally { reader.close() }
+})
+
 test('an open failure is reported again on every use, and the session opens once the store is free', async (t) => {
   const { file, paths } = await migratedRoot(t)
   const holder = writeLockHolder(file)
