@@ -135,9 +135,12 @@ test('Collection conversion writes a footprint and returns to the same city', as
   await dialog.locator('input[type=date]').first().fill('2026-01-12')
   await dialog.locator('input[type=date]').nth(1).fill('2026-01-13')
   await dialog.locator('input[type=checkbox]').check()
-  const save = page.waitForResponse((response) => response.url().endsWith('/wanttogo/convert'))
-  await dialog.locator('button[type=submit]').click()
-  expect((await save).ok()).toBe(true)
+  // A confirmed conversion reloads the whole page; the heading below is checked after that reload (batch 4B).
+  await saveAndWaitForReload(page, async () => {
+    const save = page.waitForResponse((response) => response.url().endsWith('/wanttogo/convert'))
+    await dialog.locator('button[type=submit]').click()
+    expect((await save).ok()).toBe(true)
+  })
   await expect(page.locator('.atlas-info-panel h2')).toHaveText('Nuuk')
   expect((await readFixture('travel')).records.filter((record) => record.placeId === fixtureIds.nuuk && record.status !== 'planned')).toHaveLength(1)
   expect((await readFixture('wantToGo')).items.filter((item) => item.placeId === fixtureIds.nuuk)).toHaveLength(1)

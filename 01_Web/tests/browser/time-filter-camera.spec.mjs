@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure, saveAndWaitForReload } from './helpers.mjs'
 import { createBrowserFixture, fixtureIds } from '../../scripts/browser-fixture.mjs'
 import path from 'node:path'
 import os from 'node:os'
@@ -194,10 +194,14 @@ test('both layer toggles retain their conditions and Collection restores a hidde
   await expect(hiddenCard).toHaveCount(1)
   await expect(hiddenCard).toHaveAttribute('data-hidden', 'true')
   recordReloadCheckpoint(page, 'before restoring Tromsø')
-  const restored = page.waitForResponse(response => response.url().endsWith('/editor/wanttogo/update') && response.request().method() === 'POST')
-  await hiddenCard.getByRole('button', { name: 'Restore: Tromsø', exact: true }).click()
-  expect((await restored).ok()).toBe(true)
-  recordReloadCheckpoint(page, 'restore response accepted')
+  // Restoring reloads the whole page. Wait for that reload, as the other saving cases do, so the card count below
+  // does not spend its own 15 seconds on the reload (batch 4B; it failed this way once in #81 and once in #85).
+  await saveAndWaitForReload(page, async () => {
+    const restored = page.waitForResponse(response => response.url().endsWith('/editor/wanttogo/update') && response.request().method() === 'POST')
+    await hiddenCard.getByRole('button', { name: 'Restore: Tromsø', exact: true }).click()
+    expect((await restored).ok()).toBe(true)
+    recordReloadCheckpoint(page, 'restore response accepted')
+  })
   await expect.poll(async () => (await readFixture('wantToGo')).items.find(item => item.id === 'wtg_2026-08-12_tromso')?.hidden).toBe(false)
   await expect(cards).toHaveCount(4)
   recordReloadCheckpoint(page, 'four Collection cards restored after reload')

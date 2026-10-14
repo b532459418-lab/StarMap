@@ -1,7 +1,14 @@
-/** Option rules of `npm run test:browser` (batch 4, E2): one group, an optional --shard passed through, nothing else. */
+/**
+ * Option rules of `npm run test:browser` (batch 4, E2): one group, an optional --shard passed through, nothing else.
+ * Batch 4B: a shard whose listing has no case is refused.
+ */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { BROWSER_TEST_GROUPS, parseBrowserTestArgs } from './browser-test-options.mjs'
+import { spawn } from 'node:child_process'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { BROWSER_TEST_GROUPS, assertShardListed, listedTestCount, listingArgs, parseBrowserTestArgs } from './browser-test-options.mjs'
 
 test('without options every spec case runs and nothing is passed to Playwright', () => {
   assert.deepEqual(parseBrowserTestArgs([]), { group: null, shard: null, playwrightArgs: [] })
@@ -62,4 +69,56 @@ test('results are fresh arrays, so a caller cannot change later selections', () 
   const first = parseBrowserTestArgs(['--media-lifecycle'])
   first.playwrightArgs.push('--headed')
   assert.deepEqual(parseBrowserTestArgs(['--media-lifecycle']).playwrightArgs, ['media-recovery.spec.mjs', '--grep', 'lost responses, storage loss'])
+})
+
+test('a listing keeps the run selection and only adds --list with the plain list reporter', () => {
+  for (const args of [['--time-filters', '--shard=2/3'], ['--media-lifecycle', '--shard=1/1'], ['--shard=1/2'], ['--critical-flows']]) {
+    const { playwrightArgs } = parseBrowserTestArgs(args)
+    assert.deepEqual(listingArgs(playwrightArgs), ['--list', '--reporter=list', ...playwrightArgs], args.join(' '))
+  }
+})
+
+test('the listed case count is read from the single summary line, singular or plural, LF or CRLF', () => {
+  assert.equal(listedTestCount('Listing tests:\nTotal: 0 tests in 0 files\n'), 0)
+  assert.equal(listedTestCount('Listing tests:\n  a.spec.mjs:3:1 › one\nTotal: 1 test in 1 file\n'), 1)
+  assert.equal(listedTestCount('Listing tests:\r\n  a.spec.mjs:3:1 › one\r\n  b.spec.mjs:4:1 › two\r\nTotal: 12 tests in 2 files\r\n'), 12)
+})
+
+test('a listing without exactly one summary line is an error, never zero cases', () => {
+  for (const output of ['', 'Listing tests:\n', 'Total: tests in 1 file\n', '  Total: 3 tests in 1 file\n', 'Total: 1 test in 1 file\nTotal: 2 tests in 1 file\n']) {
+    assert.throws(() => listedTestCount(output), /Expected one "Total: <n> tests in <m> files" line/, JSON.stringify(output))
+    assert.throws(() => assertShardListed('--shard=1/2', output), /Expected one/, JSON.stringify(output))
+  }
+})
+
+test('an empty shard is refused; a shard with cases returns its count', () => {
+  assert.throws(() => assertShardListed('--shard=3/3', 'Listing tests:\nTotal: 0 tests in 0 files\n'), /--shard=3\/3 received no test cases/)
+  assert.equal(assertShardListed('--shard=1/3', 'Listing tests:\n  a.spec.mjs:3:1 › one\nTotal: 1 test in 1 file\n'), 1)
+})
+
+// Reads Playwright's real list output, so a reporter change in an upgrade fails here and not silently in CI. The
+// config only checks the fixture path's form; listing starts no server and creates nothing there.
+test('the real Playwright listing of an empty and a filled shard is read correctly', async () => {
+  const webRoot = fileURLToPath(new URL('../', import.meta.url))
+  const cli = fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url))
+  const list = (args) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cli, 'test', '--config', 'playwright.config.mjs', ...listingArgs(parseBrowserTestArgs(args).playwrightArgs)], {
+      cwd: webRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, STARMAP_BROWSER_TEST_ROOT: path.join(os.tmpdir(), 'starmap-browser-options-test'), STARMAP_BROWSER_PERFORMANCE: '0', STARMAP_BROWSER_PUBLIC_SMOKE: '0' },
+    })
+    let output = ''
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { output += chunk })
+    child.stderr.resume()
+    child.on('error', reject)
+    child.on('close', (code) => resolve({ code, output }))
+  })
+  // Far more shards than the group has cases, so the last one is empty however the group is split.
+  const empty = await list(['--critical-flows', '--shard=40/40'])
+  assert.equal(empty.code, 0, 'Playwright itself accepts the empty shard')
+  assert.equal(listedTestCount(empty.output), 0)
+  assert.throws(() => assertShardListed('--shard=40/40', empty.output), /received no test cases/)
+  const filled = await list(['--critical-flows', '--shard=1/1'])
+  assert.equal(filled.code, 0)
+  assert.ok(assertShardListed('--shard=1/1', filled.output) > 0)
 })
