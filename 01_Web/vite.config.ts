@@ -1,30 +1,22 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { defineConfig, loadEnv, normalizePath } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import type { Plugin, UserConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { viteStaticCopy } from 'vite-plugin-static-copy'
 
 // Cesium follows Cesium's own Vite setup (github.com/CesiumGS/cesium-vite-example; batch 4B, E8). The `cesium` package is
 // bundled like any other dependency, so its code lands in content-hashed chunks; the four directories Cesium loads at run
-// time (Workers, ThirdParty, Assets, Widgets) are copied unchanged, and CESIUM_BASE_URL tells Cesium where they are.
-// They sit under a directory named after the installed Cesium version, so their URLs change whenever Cesium does and
-// a host may cache them for good (README: "Caching the public build").
+// time (Workers, ThirdParty, Assets, Widgets) are served and copied unchanged by scripts/cesium-static-plugin.mjs, and
+// CESIUM_BASE_URL tells Cesium where they are. They sit under a directory named after the installed Cesium version, so
+// their URLs change whenever Cesium does and a host may cache them for good (README: "Caching the public build").
 const cesiumPackageJson = createRequire(import.meta.url).resolve('cesium/package.json')
 const cesiumVersion: string = JSON.parse(readFileSync(cesiumPackageJson, 'utf8')).version
 const cesiumBaseUrl = `cesium/${cesiumVersion}`
+const cesiumBuildRoot = path.join(path.dirname(cesiumPackageJson), 'Build', 'Cesium')
 // Cesium's own minified ESM build of the same version (one file, the same 1352 exports as the sources).
-const cesiumMinifiedEntry = path.join(path.dirname(cesiumPackageJson), 'Build', 'Cesium', 'index.js')
-// The copy plugin keeps each file's path below Vite's root (the working directory); `stripBase` removes the leading
-// `node_modules/cesium/Build/Cesium`, so Build/Cesium/Workers/x.js is served and built as cesium/<version>/Workers/x.js.
-const cesiumBuildFromRoot = normalizePath(path.relative(process.cwd(), path.join(path.dirname(cesiumPackageJson), 'Build', 'Cesium')))
-const cesiumStaticCopyTargets = ['Workers', 'ThirdParty', 'Assets', 'Widgets'].map((directory) => ({
-  src: `${cesiumBuildFromRoot}/${directory}`,
-  dest: cesiumBaseUrl,
-  rename: { stripBase: cesiumBuildFromRoot.split('/').filter((segment) => segment !== '..').length },
-}))
+const cesiumMinifiedEntry = path.join(cesiumBuildRoot, 'index.js')
 // Cesium's prebuilt files, including the copied workers, open with its Apache-2.0 license header. Bundling from the
 // sources drops it, so the Cesium chunk gets the same header back, read from the installed package.
 const readCesiumLicenseHeader = () => {
@@ -59,6 +51,8 @@ export default defineConfig(async ({ mode, command, isPreview }): Promise<UserCo
   const { travelAtlasLocalEditor } = await import('./scripts/local-editor-plugin.mjs')
   // @ts-expect-error Node-only profile helper is outside the browser TypeScript project.
   const { getPrivatePaths } = await import('./scripts/private-profile.mjs')
+  // @ts-expect-error Node-only Vite plugin is outside the browser TypeScript project.
+  const { cesiumStatic } = await import('./scripts/cesium-static-plugin.mjs')
   const profile = mode === 'personal' ? 'personal' : 'public'
   const privatePaths = getPrivatePaths()
   const envDir = profile === 'personal' ? privatePaths.configRoot : false
@@ -81,7 +75,7 @@ export default defineConfig(async ({ mode, command, isPreview }): Promise<UserCo
       }),
       react(),
       tailwindcss(),
-      viteStaticCopy({ targets: cesiumStaticCopyTargets }),
+      cesiumStatic({ baseUrl: cesiumBaseUrl, sourceRoot: cesiumBuildRoot }),
     ],
     build: {
       rolldownOptions: {

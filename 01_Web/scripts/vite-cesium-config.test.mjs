@@ -38,8 +38,10 @@ test('every mode points Cesium at the versioned static directory and copies its 
     const config = await configFor({ mode, command, isPreview: false })
     assert.deepEqual(config.define, { CESIUM_BASE_URL: JSON.stringify(`/cesium/${cesiumVersion}`) }, `${mode} ${command}`)
     const names = pluginNamesOf(config)
-    assert.ok(names.includes('vite-plugin-static-copy:serve') && names.includes('vite-plugin-static-copy:build'), `${mode} ${command}`)
-    assert.equal(names.some((name) => name.startsWith('vite-plugin-cesium')), false, `${mode} ${command}`)
+    // The project's own plugin (scripts/cesium-static-plugin.mjs) serves and copies Cesium's run-time files; no
+    // third-party Cesium or copy plugin is left.
+    assert.equal(names.filter((name) => name === 'starmap-cesium-static').length, 1, `${mode} ${command}`)
+    assert.equal(names.some((name) => name.startsWith('vite-plugin-cesium') || name.startsWith('vite-plugin-static-copy')), false, `${mode} ${command}`)
   }
 }))
 

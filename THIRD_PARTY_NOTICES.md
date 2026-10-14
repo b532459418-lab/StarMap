@@ -28,7 +28,7 @@ summary alone.
 
 | Package | License |
 | --- | --- |
-| [Vite](https://vite.dev/), `@vitejs/plugin-react`, [vite-plugin-static-copy](https://github.com/sapphi-red/vite-plugin-static-copy) | MIT |
+| [Vite](https://vite.dev/), `@vitejs/plugin-react` | MIT |
 | [TypeScript](https://www.typescriptlang.org/) | Apache-2.0 |
 | [ESLint](https://eslint.org/), typescript-eslint, eslint-plugin-react-hooks, eslint-plugin-react-refresh, `@eslint/js`, globals | MIT |
 | [sharp](https://sharp.pixelplumbing.com/) | Apache-2.0 |
