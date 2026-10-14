@@ -1,4 +1,10 @@
-/** Offline, allowlisted directory snapshots. Never overwrite or activate a private root. */
+/**
+ * Offline, allowlisted directory snapshots. Never overwrite or activate a private root.
+ *
+ * The media part (the allowlist, the ignore rules, portablePath, the SHA-256 per file, the copy check and the reference
+ * checks) is shared with the new library's backup (./store-backup.mjs, 3C-4b): mediaFilePaths, fileDigest, copyEntries
+ * and checkMediaReferences. A V2 backup behaves exactly as before.
+ */
 import { createHash } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
 import { copyFile, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
@@ -10,6 +16,10 @@ import { completeForWrite, integrityProblems } from '../src/data/v2write/transac
 
 const FORMAT = 'starmap-local-backup'
 const INDEX = 'data/v2/media-source-index.local.json'
+/** The media source index (portable path): a file in both modes, backed up with the media. */
+export const MEDIA_SOURCE_INDEX = INDEX
+/** The media folders of a private root (portable paths). */
+export const MEDIA_FOLDERS = Object.freeze(['MediaInbox', 'media/user'])
 const dataPaths = Object.fromEntries(Object.entries(V2_DATA_FILE_NAMES).map(([key, name]) => [key, `data/v2/${name}`]))
 const mediaExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif', '.mp4', '.webm', '.heic', '.heif', '.tif', '.tiff', '.raw', '.dng', '.cr2', '.cr3', '.nef', '.arw', '.mov'])
 const fail = (code) => { throw new Error(code) }
@@ -54,7 +64,14 @@ async function walk(root, relative) {
   return found
 }
 
-function uniquePaths(values) {
+/** A media file a backup may hold: a portable path under MediaInbox/ or media/user/ on the allowlist, or the media source index. */
+export const isMediaBackupPath = value => {
+  try { portablePath(value) } catch { return false }
+  return value === INDEX || (MEDIA_FOLDERS.some(prefix => value.startsWith(`${prefix}/`)) && allowedFile(value))
+}
+
+/** Portable paths that differ only by case or Unicode normalization are E_BACKUP_COLLISION. */
+export function uniquePaths(values) {
   const seen = new Set()
   for (const value of values) {
     portablePath(value)
@@ -70,6 +87,11 @@ async function json(root, relative) {
   try { return JSON.parse(await readFile(path.join(root, relative), 'utf8')) } catch { fail('E_BACKUP_JSON') }
 }
 
+/** { path, bytes, sha256 } of one file under `root` (streamed). */
+export async function fileDigest(root, relative) {
+  return digest(root, relative)
+}
+
 async function digest(root, relative) {
   const info = await safeStat(root, relative)
   if (!info?.isFile()) fail('E_BACKUP_MISSING')
@@ -78,10 +100,11 @@ async function digest(root, relative) {
   return { path: relative, bytes: info.size, sha256: hash.digest('hex') }
 }
 
-async function inventory(root) {
+/** Every file under `prefixes`: ignored ones left out, anything outside the allowlist refused; unique and sorted. */
+async function listFiles(root, prefixes) {
   if (!(await safeStat(root))?.isDirectory()) fail('E_BACKUP_ROOT')
   const paths = []
-  for (const prefix of ['data/v2', 'MediaInbox', 'media/user']) {
+  for (const prefix of prefixes) {
     for (const file of await walk(root, prefix)) {
       if (ignoredFile(file)) continue
       if (!allowedFile(file)) fail('E_BACKUP_UNSUPPORTED_FILE')
@@ -89,10 +112,25 @@ async function inventory(root) {
     }
   }
   uniquePaths(paths)
-  paths.sort()
+  return paths.sort()
+}
+
+async function inventory(root) {
   const entries = []
-  for (const file of paths) entries.push(await digest(root, file))
+  for (const file of await listFiles(root, ['data/v2', ...MEDIA_FOLDERS])) entries.push(await digest(root, file))
   return entries
+}
+
+/**
+ * The media files of a private root with the V2 backup's rules: MediaInbox/ and media/user/ (ignored files left out,
+ * anything outside the allowlist refused) and the media source index when it exists. Paths only (no hashing): sorted
+ * portable paths. Exported for ./store-backup.mjs.
+ */
+export async function mediaFilePaths(root) {
+  const paths = await listFiles(root, MEDIA_FOLDERS)
+  if ((await safeStat(root, INDEX))?.isFile()) paths.push(INDEX)
+  uniquePaths(paths)
+  return paths.sort()
 }
 
 async function validateLibrary(root, entries) {
@@ -101,17 +139,40 @@ async function validateLibrary(root, entries) {
   for (const [key, file] of Object.entries(dataPaths)) if (paths.has(file)) raw[key] = await json(root, file)
   const files = completeForWrite(raw, new Date('2000-01-01T00:00:00Z'))
   if (integrityProblems(files).length) fail('E_BACKUP_INTEGRITY')
+  const warnings = await checkMediaReferences(root, paths, files)
+  return {
+    places: files.places.places.length, travelRecords: files.travel.records.length,
+    wantToGo: files.wantToGo.items.length, mediaItems: files.media.items.length,
+    files: entries.length, bytes: entries.reduce((sum, entry) => sum + entry.bytes, 0), warnings,
+  }
+}
+
+/**
+ * The media references of a library against the files of a backup (`paths`, a Set of portable paths under `root`):
+ * every original and variant of `files.media` (V2 files, or the new library's projection), every source of the media
+ * source index, and every folder pin (`place.json`) naming a place of `files.places`. Returns the warnings; a broken
+ * reference fails with its E_BACKUP_* code. Exported for ./store-backup.mjs.
+ *
+ * A media path outside /media/user/ is E_BACKUP_MEDIA_PATH (the V2 backup). With `outsideUserMedia: 'warn'` (the new
+ * library's backup) it is not a file of the private root, so it is counted in a warning instead.
+ */
+export async function checkMediaReferences(root, paths, files, { outsideUserMedia = 'refuse' } = {}) {
   const requireFile = value => {
     portablePath(value)
     if (!allowedFile(value) || !paths.has(value)) fail('E_BACKUP_MEDIA_MISSING')
   }
+  let outside = 0
   for (const item of files.media.items) {
     for (const src of [item.src, ...Object.values(item.variants ?? {}).map(variant => variant.src)]) {
-      if (typeof src !== 'string' || !src.startsWith('/media/user/')) fail('E_BACKUP_MEDIA_PATH')
+      if (typeof src !== 'string' || !src.startsWith('/media/user/')) {
+        if (outsideUserMedia !== 'warn' || typeof src !== 'string') fail('E_BACKUP_MEDIA_PATH')
+        outside++
+        continue
+      }
       requireFile(src.slice(1))
     }
   }
-  const warnings = []
+  const warnings = outside ? [`MEDIA_OUTSIDE_USER_MEDIA: ${outside} media paths are outside /media/user/ and are not files of the private root.`] : []
   if (paths.has(INDEX)) {
     const index = await json(root, INDEX)
     if (!isObject(index) || index.schemaVersion !== 1 || !isObject(index.sourcesById) || typeof index.generatedAt !== 'string') fail('E_BACKUP_SOURCE_INDEX')
@@ -126,11 +187,7 @@ async function validateLibrary(root, entries) {
     const pin = await json(root, file)
     if (!isObject(pin) || !ids.has(pin.placeId)) fail('E_BACKUP_PIN')
   }
-  return {
-    places: files.places.places.length, travelRecords: files.travel.records.length,
-    wantToGo: files.wantToGo.items.length, mediaItems: files.media.items.length,
-    files: entries.length, bytes: entries.reduce((sum, entry) => sum + entry.bytes, 0), warnings,
-  }
+  return warnings
 }
 
 function destination(root, target) {
@@ -144,7 +201,8 @@ async function claim(target) {
   try { await mkdir(target) } catch (error) { fail(error.code === 'EEXIST' ? 'E_BACKUP_TARGET_EXISTS' : 'E_BACKUP_TARGET_PARENT') }
 }
 
-async function copyEntries(source, target, entries) {
+/** Copy `entries` ({ path, bytes, sha256 }) from `source` to `target` exclusively; each copy must hash to its entry. */
+export async function copyEntries(source, target, entries) {
   for (const entry of entries) {
     await safeStat(source, entry.path)
     const output = path.join(target, entry.path)

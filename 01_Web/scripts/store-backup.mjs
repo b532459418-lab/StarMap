@@ -1,29 +1,45 @@
 /**
- * Backup, restore and "export as V2" of the new library (3C-3, design 3B §5.2, §7 and §8). This batch covers the
- * database only; backups with media come in 3C-4.
+ * Backup, restore and "export as V2" of the new library (3C-3, design 3B §5.2, §7 and §8). Since 3C-4b a backup holds
+ * the media too.
  *
- * - `npm run store:backup -- --out <new directory>`: under the library lease, quick_check (checkIntegrity), a
- *   `VACUUM INTO` snapshot `world.sqlite`, then `manifest.json` (format, library id, revision, row counts, the file's
- *   size and SHA-256) and finally `COMPLETE.json` (the manifest's SHA-256). The directory is created exclusively: an
- *   existing one is refused.
- * - `npm run store:restore -- --from <backup> --to <new private root>`: checks the completion mark and both hashes,
- *   creates `<new root>/data/store/world.sqlite`, records in store_meta which backup it came from (one layer, replacing
- *   any earlier one), then runs `PRAGMA integrity_check` and the full check (readFormalState and the host's own tables).
- *   The new root must not exist: a restore never overwrites anything. Any failure removes the new root again.
+ * - `npm run store:backup -- --out <new directory>`:
+ *   1. under the library lease: no unfinished media task (assertMediaJobsClear), quick_check (checkIntegrity), a
+ *      `VACUUM INTO` snapshot `world.sqlite`, and the list of media files: `MediaInbox/`, `media/user/` and the media
+ *      source index `data/v2/media-source-index.local.json`, with the rules of `npm run backup` (./library-backup.mjs:
+ *      the allowlist, the ignored files, portablePath; a file outside the allowlist refuses the backup);
+ *   2. the lease is released, so ordinary edits go on; deletions queued in `pending_file_ops` wait meanwhile (design
+ *      §5.2 step 3: the mark under `operations/store-backup/`, see mediaCopyInProgress; the deletion arrives in 3C-4c);
+ *   3. every media file is hashed (SHA-256), copied into `payload/` and the copy hashed again (the copy check of
+ *      `npm run backup`); then the snapshot's media references are checked against the copies (every original and
+ *      variant of the projection, every source of the index, every folder pin names a place);
+ *   4. `manifest.json` (format, library id, revision, row counts, the snapshot's size and SHA-256, and the size and
+ *      SHA-256 of every media file) and finally `COMPLETE.json` (the manifest's SHA-256).
+ *   The directory is created exclusively: an existing one is refused. Any failure removes it again.
+ * - `npm run store:restore -- --from <backup> --to <new private root>`: checks the completion mark, both hashes and the
+ *   media list (no file outside it, no path outside the media folders), creates `<new root>/data/store/world.sqlite`
+ *   and copies every media file, checking each copy against its SHA-256 in the manifest; records in store_meta which
+ *   backup it came from (one layer, replacing any earlier one), then runs `PRAGMA integrity_check`, the full check
+ *   (readFormalState and the host's own tables) and the media references. The new root must not exist: a restore never
+ *   overwrites anything. Any failure, a single media file included, removes the new root again. A backup of 3C-3
+ *   (format version 1, database only) is still restored, without media.
  * - `npm run store:export-v2 -- --out <new directory>`: the store's projection written as the five V2 files (the way
  *   back to V2 mode after edits). Rows V2 cannot express are listed. The directory must not exist.
  *
  * Every output is private data: it may only go inside the private root or outside this repository
- * (./private-output.mjs, the gate of the baseline tool). Messages carry codes, counts, ids and paths, never values.
- * Exit codes: 0 done, 1 refused or failed.
+ * (./private-output.mjs, the gate of the baseline tool). Messages carry codes, counts, ids and output paths, never values
+ * (media paths name places: they are never printed). Exit codes: 0 done, 1 refused or failed.
  */
 import { createHash } from 'node:crypto'
 import { constants, lstatSync } from 'node:fs'
-import { copyFile, mkdir, open, readFile, rm, stat } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, open, readFile, readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import {
+  checkMediaReferences, copyEntries, fileDigest, isMediaBackupPath, mediaFilePaths, uniquePaths,
+} from './library-backup.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
-import { isAllowedPrivateOutput } from './private-output.mjs'
+import { assertMediaJobsClear } from './media-job-store.mjs'
+import { isAllowedPrivateOutput, isInsideDirectory } from './private-output.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { STORE_FILE_SEGMENTS, privateDataSource, storeFileOf } from './private-data-source.mjs'
 import { StoreToolError } from './store-migrate.mjs'
@@ -35,14 +51,22 @@ import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files } from '../src/data/canoni
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 export const BACKUP_FORMAT = 'starmap.store-backup'
-export const BACKUP_FORMAT_VERSION = 1
-export const BACKUP_FILES = Object.freeze({ store: 'world.sqlite', manifest: 'manifest.json', complete: 'COMPLETE.json' })
-/** What a backup of this batch leaves out (written into the manifest and the documentation). */
-export const BACKUP_EXCLUDES = Object.freeze(['media', 'MediaInbox', 'config', 'data/v2', 'operations'])
+/** 2 since 3C-4b (with media). Restore also reads version 1 (3C-3: the database only). */
+export const BACKUP_FORMAT_VERSION = 2
+const READABLE_VERSIONS = Object.freeze([1, 2])
+/** The entries of a backup directory: the snapshot, the manifest, the completion mark and the media copies (`payload/`). */
+export const BACKUP_FILES = Object.freeze({ store: 'world.sqlite', manifest: 'manifest.json', complete: 'COMPLETE.json', media: 'payload' })
+/** What a backup leaves out (written into the manifest and the documentation). */
+export const BACKUP_EXCLUDES = Object.freeze(['config', 'data/v2 (the V2 files; the media source index is included)', 'operations'])
+/** At most this many media files in one backup (the limit of `npm run backup`). */
+export const MEDIA_FILE_LIMIT = 100_000
+/** Where a backup marks that it is copying media (design 3B §5.2 step 3): `<private root>/operations/store-backup/<backup id>.json`. */
+export const MEDIA_COPY_MARK_SEGMENTS = Object.freeze(['operations', 'store-backup'])
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const hashFile = async (file) => sha256(await readFile(file))
 const missing = (error) => error?.code === 'ENOENT'
+const SHA256 = /^[a-f0-9]{64}$/
 
 /** The privacy gate and "must not exist" for an output path; returns the absolute path. */
 function newOutput(target, label) {
@@ -99,20 +123,98 @@ function openReadOnly(file) {
   return handle
 }
 
+/** The V2 files of a store's projection (the media references are checked against them). */
+async function projectedFiles(file) {
+  const handle = openReadOnly(file)
+  try { return projectToV2Files(handle.readRowsUnchecked()).files } finally { await handle.close() }
+}
+
+/** What a media failure of ./library-backup.mjs (an Error whose message is its code) means here. Never names a file. */
+const MEDIA_PROBLEMS = Object.freeze({
+  E_BACKUP_UNSUPPORTED_FILE: 'MediaInbox/ 或 media/user/ 里有白名单之外的文件（与 npm run backup 相同的规则）。',
+  E_BACKUP_LINK: '媒体目录里有符号链接、目录联接或特殊文件。',
+  E_BACKUP_PATH: '媒体目录里有不可移植的文件名或路径。',
+  E_BACKUP_COLLISION: '媒体目录里有只差大小写或 Unicode 规范化的同名文件。',
+  E_BACKUP_ROOT: '私人根不是一个目录。',
+  E_BACKUP_READ: '媒体目录读取失败。',
+  E_BACKUP_JSON: '媒体源索引或投递箱的 place.json 不是有效的 JSON。',
+  E_BACKUP_MEDIA_MISSING: '新库引用的媒体文件（或媒体源索引列出的原图）不在媒体目录里。',
+  E_BACKUP_MEDIA_PATH: '新库里有不在 /media/user/ 之下的媒体路径。',
+  E_BACKUP_SOURCE_INDEX: '媒体源索引的格式无效。',
+  E_BACKUP_PIN: '投递箱里有 place.json 指向新库里没有的地点。',
+  E_BACKUP_MISSING: '媒体文件在复制时不见了。',
+  E_BACKUP_CHANGED: '媒体文件的复制与原文件的大小或 SHA-256 不一致。',
+})
+function mediaFailure(error) {
+  const code = typeof error?.message === 'string' && Object.hasOwn(MEDIA_PROBLEMS, error.message) ? error.message : undefined
+  return code ? new StoreToolError(code, [MEDIA_PROBLEMS[code]]) : error
+}
+/** Run a media step of ./library-backup.mjs with its failures as StoreToolError. */
+async function media(step) {
+  try { return await step() } catch (error) { throw mediaFailure(error) }
+}
+
+// ---------------------------------------------------------------------------
+// Pausing pending_file_ops deletions while media is copied (design 3B §5.2 step 3)
+// ---------------------------------------------------------------------------
+
+const markDirectory = (privatePaths) => path.join(privatePaths.root, ...MEDIA_COPY_MARK_SEGMENTS)
+
+/**
+ * Whether a backup is copying media out of this private root right now: a mark exists under
+ * `operations/store-backup/`. This is the checkpoint for the deletions queued in `pending_file_ops` (design 3B §5.1 and
+ * §5.2; the table has no deletion logic yet, it arrives with 3C-4c): before deleting a file, under the library lease,
+ * that step must call this and keep every file while it is true. A mark left by a killed backup keeps deletions paused
+ * until it is removed by hand: deleting nothing is the safe side.
+ */
+export async function mediaCopyInProgress(privatePaths) {
+  try { return (await readdir(markDirectory(privatePaths))).some((name) => name.endsWith('.json')) } catch (error) {
+    if (missing(error)) return false
+    throw error
+  }
+}
+
+/** Write this backup's mark (deletions wait from now on); returns its removal. */
+async function markMediaCopy(privatePaths, backupId, now) {
+  await mkdir(markDirectory(privatePaths), { recursive: true })
+  const mark = path.join(markDirectory(privatePaths), `${backupId}.json`)
+  await writeJsonExclusive(mark, { format: `${BACKUP_FORMAT}.media-copy`, backupId, startedAt: now, pid: process.pid })
+  return () => rm(mark, { force: true })
+}
+
 // ---------------------------------------------------------------------------
 // Backup
 // ---------------------------------------------------------------------------
 
+/** A backup inside the folders it copies (or the data folder) would copy itself. */
+function refuseOverlap(privatePaths, target) {
+  for (const directory of [privatePaths.inboxRoot, privatePaths.userMediaRoot, privatePaths.dataRoot]) {
+    if (isInsideDirectory(target, directory)) {
+      throw new StoreToolError('E_TARGET_OVERLAP', [`${target} 在私人根的 ${path.relative(privatePaths.root, directory).split(path.sep).join('/')}/ 之内，备份会复制到自己。请换一个位置。`])
+    }
+  }
+}
+
 /**
- * `store:backup`: returns { out, manifest, lines }. `now` (ISO time) and `backupId` are injectable (tests).
+ * `store:backup`: returns { out, manifest, lines }. `now` (ISO time) and `backupId` are injectable (tests);
+ * `onMediaCopy` is called after the lease is released, before the first media file is copied (tests).
  * A failure removes the backup directory this call created.
  */
-export async function backupStore(privatePaths, { out, now = new Date().toISOString(), backupId = uuidv7() } = {}) {
+export async function backupStore(privatePaths, { out, now = new Date().toISOString(), backupId = uuidv7(), onMediaCopy } = {}) {
   const target = newOutput(out, '--out <新目录>')
   requireStoreMode(privatePaths)
-  return withLibraryOperation(privatePaths, async () => {
-    await createExclusive(target)
-    try {
+  refuseOverlap(privatePaths, target)
+  let created = false
+  let unmark
+  try {
+    // 1. Under the lease: media tasks, quick_check, the snapshot, the media list, the mark.
+    const { meta, tables, mediaPaths } = await withLibraryOperation(privatePaths, async () => {
+      try { await assertMediaJobsClear(privatePaths) } catch (error) {
+        if (error?.code === 'E_MEDIA_JOB_PENDING') throw new StoreToolError('E_MEDIA_JOB_PENDING', ['这个私人库还有没有完成的媒体任务。请先完成或放弃它，再备份。'])
+        throw error
+      }
+      await createExclusive(target)
+      created = true
       const snapshot = path.join(target, BACKUP_FILES.store)
       const source = openReadOnly(storeFileOf(privatePaths))
       try {
@@ -122,35 +224,60 @@ export async function backupStore(privatePaths, { out, now = new Date().toISOStr
       } finally { await source.close() }
       await syncFile(snapshot)
       const copy = openReadOnly(snapshot)
-      let meta, tables
+      let snapshotMeta, snapshotTables
       try {
-        meta = copy.meta()
-        tables = copy.tableCounts()
+        snapshotMeta = copy.meta()
+        snapshotTables = copy.tableCounts()
       } finally { await copy.close() }
-      const manifest = {
-        format: BACKUP_FORMAT, formatVersion: BACKUP_FORMAT_VERSION, backupId, createdAt: now,
-        store: { format: meta.format, formatVersion: meta.formatVersion, libraryId: meta.libraryId, revision: meta.revision },
-        tables,
-        files: { [BACKUP_FILES.store]: { bytes: (await stat(snapshot)).size, sha256: await hashFile(snapshot) } },
-        excludes: BACKUP_EXCLUDES,
-      }
-      await writeJsonExclusive(path.join(target, BACKUP_FILES.manifest), manifest)
-      // The completion mark comes last: a backup without it is unfinished and restore refuses it.
-      const manifestSha256 = await hashFile(path.join(target, BACKUP_FILES.manifest))
-      await writeJsonExclusive(path.join(target, BACKUP_FILES.complete), { format: `${BACKUP_FORMAT}.complete`, backupId, manifestSha256 })
-      return {
-        out: target, manifest,
-        lines: [
-          `已备份到 ${target}`,
-          `库 id ${meta.libraryId}，修订号 ${meta.revision}，${manifest.files[BACKUP_FILES.store].bytes} 字节，SHA-256 ${manifest.files[BACKUP_FILES.store].sha256}`,
-          `不包含：${BACKUP_EXCLUDES.join('、')}（媒体备份在后续批次接入）。`,
-        ],
-      }
-    } catch (error) {
-      await rm(target, { recursive: true, force: true, maxRetries: 3 }).catch(() => {})
-      throw error
+      const paths = await media(() => mediaFilePaths(privatePaths.root))
+      if (paths.length > MEDIA_FILE_LIMIT) throw new StoreToolError('E_BACKUP_LIMIT', [`媒体文件超过 ${MEDIA_FILE_LIMIT} 个。`])
+      unmark = await markMediaCopy(privatePaths, backupId, now)
+      return { meta: snapshotMeta, tables: snapshotTables, mediaPaths: paths }
+    })
+    // 2.–3. The lease is released (ordinary edits go on); deletions wait for the mark. Copy and check every media file.
+    await onMediaCopy?.()
+    const payload = path.join(target, BACKUP_FILES.media)
+    await mkdir(payload)
+    const entries = []
+    for (const relative of mediaPaths) {
+      const entry = await media(() => fileDigest(privatePaths.root, relative))
+      await media(() => copyEntries(privatePaths.root, payload, [entry]))
+      entries.push(entry)
     }
-  })
+    const files = await projectedFiles(path.join(target, BACKUP_FILES.store))
+    const warnings = await media(() => checkMediaReferences(payload, new Set(mediaPaths), files, { outsideUserMedia: 'warn' }))
+    await unmark()
+    unmark = undefined
+    // 4. The manifest, then the completion mark.
+    const snapshotFile = path.join(target, BACKUP_FILES.store)
+    const mediaBytes = entries.reduce((sum, entry) => sum + entry.bytes, 0)
+    const manifest = {
+      format: BACKUP_FORMAT, formatVersion: BACKUP_FORMAT_VERSION, backupId, createdAt: now,
+      store: { format: meta.format, formatVersion: meta.formatVersion, libraryId: meta.libraryId, revision: meta.revision },
+      tables,
+      files: { [BACKUP_FILES.store]: { bytes: (await stat(snapshotFile)).size, sha256: await hashFile(snapshotFile) } },
+      media: { directory: BACKUP_FILES.media, count: entries.length, bytes: mediaBytes, warnings, entries },
+      excludes: BACKUP_EXCLUDES,
+    }
+    await writeJsonExclusive(path.join(target, BACKUP_FILES.manifest), manifest)
+    // The completion mark comes last: a backup without it is unfinished and restore refuses it.
+    const manifestSha256 = await hashFile(path.join(target, BACKUP_FILES.manifest))
+    await writeJsonExclusive(path.join(target, BACKUP_FILES.complete), { format: `${BACKUP_FORMAT}.complete`, backupId, manifestSha256 })
+    return {
+      out: target, manifest,
+      lines: [
+        `已备份到 ${target}`,
+        `库 id ${meta.libraryId}，修订号 ${meta.revision}，${manifest.files[BACKUP_FILES.store].bytes} 字节，SHA-256 ${manifest.files[BACKUP_FILES.store].sha256}`,
+        `媒体：${entries.length} 个文件，${mediaBytes} 字节（MediaInbox/、media/user/ 与媒体源索引），每个文件的 SHA-256 记在清单里。`,
+        ...(warnings.length ? [`提醒：${warnings.join('；')}`] : []),
+        `不包含：${BACKUP_EXCLUDES.join('、')}。`,
+      ],
+    }
+  } catch (error) {
+    if (unmark) await unmark().catch(() => {})
+    if (created) await rm(target, { recursive: true, force: true, maxRetries: 3 }).catch(() => {})
+    throw error
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +286,44 @@ export async function backupStore(privatePaths, { out, now = new Date().toISOStr
 
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
-/** The completion mark, the manifest and the snapshot hash of a backup directory; returns the manifest. */
+/** Every file under `directory` as sorted portable paths; a link or special file is refused. */
+async function payloadFiles(directory) {
+  const found = []
+  async function walk(relative) {
+    for (const item of await readdir(path.join(directory, ...relative.split('/').filter(Boolean)), { withFileTypes: true })) {
+      const next = relative ? `${relative}/${item.name}` : item.name
+      if (item.isDirectory()) await walk(next)
+      else if (item.isFile()) found.push(next)
+      else throw new StoreToolError('E_BACKUP_MEDIA_FILES', ['备份的 payload/ 里有符号链接或特殊文件。'])
+    }
+  }
+  const info = await lstat(directory).catch((error) => (missing(error) ? undefined : Promise.reject(error)))
+  if (info === undefined) return undefined
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new StoreToolError('E_BACKUP_MEDIA_FILES', ['备份的 payload 不是目录。'])
+  await walk('')
+  return found.sort()
+}
+
+/** The media section of a version 2 manifest, checked: entries with portable media paths, sizes and SHA-256, unique. */
+function mediaEntriesOf(manifest) {
+  const section = manifest.media
+  const entries = section?.entries
+  if (!plain(section) || section.directory !== BACKUP_FILES.media || !Array.isArray(entries) || entries.length > MEDIA_FILE_LIMIT
+    || entries.some((entry) => !plain(entry) || !isMediaBackupPath(entry.path) || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0
+      || typeof entry.sha256 !== 'string' || !SHA256.test(entry.sha256))) {
+    throw new StoreToolError('E_BACKUP_MANIFEST', ['清单的媒体列表无效：路径不在媒体目录的白名单之内，或者大小、SHA-256 的格式不对。'])
+  }
+  try { uniquePaths(entries.map((entry) => entry.path)) } catch {
+    throw new StoreToolError('E_BACKUP_MANIFEST', ['清单的媒体列表有重复的路径（只差大小写也算）。'])
+  }
+  return entries
+}
+
+/**
+ * The completion mark, the manifest, the snapshot hash and (version 2) the media list of a backup directory: no file
+ * in `payload/` outside the list, none missing. Returns the manifest. The media bytes are checked while they are
+ * copied (restoreStore).
+ */
 export async function verifyBackup(from) {
   const directory = path.resolve(from)
   const read = async (name) => {
@@ -178,7 +342,7 @@ export async function verifyBackup(from) {
   }
   try { manifest = JSON.parse(manifestBytes.toString('utf8')) } catch { manifest = undefined }
   const entry = manifest?.files?.[BACKUP_FILES.store]
-  if (!plain(manifest) || manifest.format !== BACKUP_FORMAT || manifest.formatVersion !== BACKUP_FORMAT_VERSION || manifest.backupId !== complete.backupId
+  if (!plain(manifest) || manifest.format !== BACKUP_FORMAT || !READABLE_VERSIONS.includes(manifest.formatVersion) || manifest.backupId !== complete.backupId
     || !plain(manifest.store) || !plain(entry) || typeof entry.sha256 !== 'string') {
     throw new StoreToolError('E_BACKUP_MANIFEST', ['清单的格式不是这个版本认识的新库备份。'])
   }
@@ -186,17 +350,25 @@ export async function verifyBackup(from) {
   if (snapshot === undefined || snapshot.length !== entry.bytes || sha256(snapshot) !== entry.sha256) {
     throw new StoreToolError('E_BACKUP_HASH', [`${BACKUP_FILES.store} 缺失，或者大小、SHA-256 与清单不一致。`])
   }
+  if (manifest.formatVersion >= 2) {
+    const listed = mediaEntriesOf(manifest).map((item) => item.path).sort()
+    const present = await payloadFiles(path.join(directory, BACKUP_FILES.media)) ?? []
+    if (present.length !== listed.length || present.some((file, index) => file !== listed[index])) {
+      throw new StoreToolError('E_BACKUP_MEDIA_FILES', [`payload/ 的文件与清单的媒体列表不一致（清单 ${listed.length} 个，实际 ${present.length} 个）。`])
+    }
+  }
   return manifest
 }
 
 /**
- * `store:restore`: returns { to, restoredFrom, lines }. The new root gets `data/store/world.sqlite` only (no V2 files,
- * media or config). `now` is injectable (tests).
+ * `store:restore`: returns { to, restoredFrom, lines }. The new root gets `data/store/world.sqlite` and the media of the
+ * backup (MediaInbox/, media/user/ and the media source index), nothing else. `now` is injectable (tests).
  */
 export async function restoreStore({ from, to, now = new Date().toISOString() } = {}) {
   if (typeof from !== 'string' || !from.trim()) throw new StoreToolError('E_ARGUMENT', ['缺少 --from <备份目录>。'])
   const root = newOutput(to, '--to <新私人根>')
   const manifest = await verifyBackup(from)
+  const entries = manifest.formatVersion >= 2 ? manifest.media.entries : undefined
   await createExclusive(root)
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
   const file = storeFileOf(paths)
@@ -205,12 +377,22 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
     await copyFile(path.join(path.resolve(from), BACKUP_FILES.store), file, constants.COPYFILE_EXCL)
     await syncFile(file)
     if (await hashFile(file) !== manifest.files[BACKUP_FILES.store].sha256) throw new StoreToolError('E_BACKUP_HASH', ['复制后的文件与清单的 SHA-256 不一致。'])
+    // Every media file, each copy checked against its SHA-256 in the manifest: one mismatch fails the whole restore.
+    if (entries) {
+      try { await copyEntries(path.join(path.resolve(from), BACKUP_FILES.media), root, entries) } catch (error) {
+        if (['E_BACKUP_CHANGED', 'E_BACKUP_MISSING'].includes(error?.message)) {
+          throw new StoreToolError('E_BACKUP_HASH', ['有媒体文件的大小或 SHA-256 与清单不一致（或者缺失）。恢复没有完成。'])
+        }
+        throw mediaFailure(error)
+      }
+    }
     const restoredFrom = {
       backupId: manifest.backupId, backupCreatedAt: manifest.createdAt, libraryId: manifest.store.libraryId,
       revision: manifest.store.revision, sha256: manifest.files[BACKUP_FILES.store].sha256, restoredAt: now,
     }
     const handle = openStore(file, { privatePaths: paths, policy: OFFICIAL_POLICY, now: () => now })
     let problems = []
+    let files
     try {
       if (handle.diagnostic) throw new StoreToolError(handle.diagnostic.code, [`恢复出来的库没有通过打开检查（${handle.diagnostic.code}）。`])
       if (handle.meta().libraryId !== manifest.store.libraryId || handle.meta().revision !== manifest.store.revision) {
@@ -219,14 +401,20 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
       await handle.setRestoredFrom(restoredFrom)
       const integrity = handle.checkIntegrity({ full: true })
       problems = integrity.ok ? [...handle.check().problems] : [...integrity.problems]
+      if (!problems.length && entries) files = projectToV2Files(handle.readRowsUnchecked()).files
     } finally { await handle.close() }
     if (problems.length) throw new StoreToolError('E_RESTORE_CHECK', problems)
+    if (entries) await media(() => checkMediaReferences(root, new Set(entries.map((entry) => entry.path)), files, { outsideUserMedia: 'warn' }))
+    const mediaBytes = entries?.reduce((sum, entry) => sum + entry.bytes, 0) ?? 0
     return {
       to: root, restoredFrom,
       lines: [
         `已恢复到新私人根 ${root}`,
         `data/store/world.sqlite：库 id ${restoredFrom.libraryId}，修订号 ${restoredFrom.revision}；integrity_check 与全量校验通过。`,
-        '新私人根里只有新库：config/、媒体与 data/v2/ 不在这个备份里，需要时自己复制。用 STARMAP_PRIVATE_ROOT 指向它即可启用。',
+        entries
+          ? `媒体：${entries.length} 个文件，${mediaBytes} 字节，逐个核对了 SHA-256；新库引用的媒体都在。`
+          : '这是只含数据库的旧格式备份（3C-3），没有媒体：需要时自己复制 MediaInbox/ 与 media/user/。',
+        '新私人根里没有 config/ 与 data/v2/ 的 V2 文件，需要时自己复制。用 STARMAP_PRIVATE_ROOT 指向它即可启用。',
       ],
     }
   } catch (error) {

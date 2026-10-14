@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { MODE_BENCH_SCALES, editorsSegment, generateRoots, httpSegment, pipelineSegment, readSegment, syntheticV2Files } from './store-mode-bench.mjs'
+import {
+  MODE_BENCH_SCALES, backupSegment, editorsSegment, generateRoots, httpSegment, mediaSegment, pipelineSegment, readSegment, restoreSegment,
+  syntheticV2Files,
+} from './store-mode-bench.mjs'
 import { tempPrivateRoot } from './store-mode.fixture.mjs'
 import { validateV2Files } from '../src/data/canonical/v2Schema.ts'
 
@@ -36,4 +39,19 @@ test('smoke: every segment of the new-library benchmark runs at the tiny scale',
     if (mode === 'store') for (const endpoint of endpoints) assert.equal(editors.store[endpoint].commit.n, count(endpoint), endpoint)
   }
   assert.equal(editors.v2.state.commit, undefined, 'V2 mode has no host commit')
+})
+
+test('smoke: the media, backup and restore segments (3C-4b) run at the tiny scale', async (t) => {
+  const { directory } = await tempPrivateRoot(t, 'starmap-store-mode-bench-')
+  const scale = MODE_BENCH_SCALES.tiny
+  await generateRoots(directory, scale)
+  const media = await mediaSegment(directory, scale)
+  assert.equal(media.files, scale.media * 2 + scale.cities + 1)
+  const backup = await backupSegment(directory)
+  assert.equal(backup.mediaFiles, media.files)
+  assert.ok(backup.mediaBytes > media.mediaBytes, 'the pins and the index are counted too')
+  assert.ok(backup.leaseMs > 0 && backup.mediaCopyMs >= 0)
+  const restore = await restoreSegment(directory)
+  assert.equal(restore.revision, backup.revision)
+  assert.ok(restore.restored.files >= backup.mediaFiles + 1)
 })
