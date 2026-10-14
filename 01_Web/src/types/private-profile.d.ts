@@ -11,4 +11,9 @@ declare module 'virtual:starmap-private-data' {
    * 公开模式恒为 false。
    */
   export const privateLegacyUnmigrated: boolean
+  /**
+   * 新库模式（3C-3，私人根下有 data/store/world.sqlite）下是全库修订号：页面加载时的读取版本，「修改想去」的请求把它
+   * 作为 x-starmap-base-revision 带上。V2 模式与公开模式为 undefined。
+   */
+  export const privateStoreRevision: number | undefined
 }

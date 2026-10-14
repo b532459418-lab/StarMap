@@ -21,7 +21,7 @@ import v2SampleMedia from './v2-sample/user-media.json'
 import v2SamplePlaces from './v2-sample/places.json'
 import v2SampleTravel from './v2-sample/travel-map.json'
 import v2SampleWantToGo from './v2-sample/want-to-go.json'
-import { privateLegacyUnmigrated, privateV2Files } from 'virtual:starmap-private-data'
+import { privateLegacyUnmigrated, privateStoreRevision, privateV2Files } from 'virtual:starmap-private-data'
 import type { AppInputs, V2FileInputs } from './canonical/canonicalForInputs.ts'
 
 /** 原 worldGraph.ts 的 worldGraphSessionNow：模块加载时固定一次，适配器要求 now 必填且不读时钟。 */
@@ -58,3 +58,10 @@ export const appInputs: AppInputs = useSampleData
  * 读公开样例时（公开模式、强制样例）恒为 false：页面与公开版一致，不显示迁移提示。
  */
 export const legacyUnmigrated: boolean = !useSampleData && privateLegacyUnmigrated === true
+
+/**
+ * 新库模式（3C-3，实验性）的全库修订号：私人根下有 data/store/world.sqlite 时，插件把新库投影成上面同样的五个 V2 文件，
+ * 另外给出这个修订号；V2 模式、公开模式与强制样例下为 undefined。只有本地编辑器（经 ./localEditorClient.ts 的门）用它：
+ * 「修改想去」的请求带上它作为 x-starmap-base-revision。
+ */
+export const storeRevision: number | undefined = useSampleData ? undefined : privateStoreRevision

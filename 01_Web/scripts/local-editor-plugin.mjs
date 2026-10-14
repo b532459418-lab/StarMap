@@ -14,6 +14,7 @@ import {
   shouldHandlePrivateDataChange,
 } from './private-data-module.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
+import { privateDataSource } from './private-data-source.mjs'
 import { createV2WriteContext, readV2EditorState, runV2Write, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
 import { handleV2Import, handleV2MediaDelete, handleV2Upload, v2MediaRoute } from './v2-media-store.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
@@ -27,6 +28,9 @@ import { mediaJobRoute, handleMediaJobRead, handleMediaJobPreview, handleMediaJo
 
 // RFC-LOC-1 PR5a：本地编辑器只读写 data/v2/（V2 写入层：v2-editor-store.mjs 与 v2-media-store.mjs）。旧格式的写入逻辑、
 // 数据模式与回滚开关都已删除。私人目录有没迁移的旧数据时（./legacy-data.mjs），全部写入端点返回 409 E_LEGACY_UNMIGRATED。
+// 3C-3：私人根下有 data/store/world.sqlite 时是实验性的新库模式（./private-data-source.mjs，每次读写现判）。这时 App 读
+// 新库的投影（./store-session.mjs，按需加载，公开模式与 V2 模式不加载 node:sqlite），写入只开放「修改想去」，
+// 其余写入端点一律 409 E_STORE_MODE_LIMITED，同一个私人根任何时候只有一个写入源。
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const virtualPrivateDataId = 'virtual:starmap-private-data'
 const resolvedPrivateDataId = `\0${virtualPrivateDataId}`
@@ -497,6 +501,12 @@ export function travelAtlasLocalEditor(options = {}) {
   // Filled by configResolved. Until then closeBundle treats the run as "not a build" and copies nothing.
   let command
   let outputRoot
+  // 新库模式（3C-3）：这个插件实例的新库会话，第一次用到时才加载 ./store-session.mjs。整个进程只保留一个连接。
+  const storePaths = privatePaths
+  let storeSessionLoading
+  const storeSession = () => (storeSessionLoading ??= import('./store-session.mjs').then((module) => module.createStoreSession(storePaths)))
+  const releaseStore = async () => { if (storeSessionLoading) await (await storeSessionLoading).close() }
+  const storeMode = () => options.forceSample !== true && privateDataSource(storePaths) === 'store'
 
   return {
     name: 'travelatlas-local-editor',
@@ -510,6 +520,14 @@ export function travelAtlasLocalEditor(options = {}) {
     async load(id) {
       if (id !== resolvedPrivateDataId) return undefined
       if (profile !== 'personal') return renderPrivateDataModule(privateDataModuleExports({ profile }))
+      if (storeMode()) {
+        // 3C-3 新库模式：新库的投影经 serializeV2 得到的五个文件与全库修订号。打不开就抛错（App 显示），绝不回落到 V2 文件。
+        const { files, revision } = await (await storeSession()).moduleExports()
+        const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
+        return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: files, legacyUnmigrated, storeRevision: revision }))
+      }
+      // V2 模式：早先新库模式留下的连接（新库文件被移走）正常关闭。
+      await releaseStore()
       // RFC-LOC-1 PR5a：只读 data/v2/ 的五个 V2 文件（缺的为 undefined），外加「未迁移」的判定（只看旧文件在不在，不读内容）。
       const v2Values = {}
       for (const key of V2_PRIVATE_FILE_KEYS) v2Values[key] = await readJson(privatePaths.v2FilePaths[key], undefined)
@@ -523,6 +541,10 @@ export function travelAtlasLocalEditor(options = {}) {
       // so it keeps the guard too. Vite's own CORS is off in this profile (vite.config.ts).
       server.middlewares.use(crossSiteRequestGuard)
       if (options.forceSample === true) return
+      // 3C-3：新库模式下启动时就打开新库（失败只记日志；页面加载虚拟模块时会再试一次并显示错误）。
+      if (storeMode()) {
+        void storeSession().then((session) => session.open()).catch((error) => console.error(error?.message ?? error))
+      }
       let editorMutationDepth = 0
       let ignoreWatcherUntil = 0
       server.watcher.add(dataRoot)
@@ -569,6 +591,11 @@ export function travelAtlasLocalEditor(options = {}) {
           }
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
             if (!authorizeRead(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
+            // 3C-3 新库模式：读新库的投影，不读 V2 文件。
+            if (storeMode()) {
+              const stored = await (await storeSession()).readEditorState()
+              return sendJson(response, stored.status, stored.body)
+            }
             // RFC-LOC-1 PR3b-2：读 data/v2/ 的 editor-state，转成 V1 形状返回。
             const result = await readV2EditorState({ privatePaths })
             return sendJson(response, result.status, result.body)
@@ -597,6 +624,19 @@ export function travelAtlasLocalEditor(options = {}) {
           // 否则 data/v2/ 被写出后，迁移工具的 --apply 会因为输出目录非空而拒绝运行。每个请求现判（只看文件在不在）。
           const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
           if (refusal) return sendJson(response, refusal.status, refusal.body)
+          // 3C-3 新库模式：只有「修改想去」写新库，其余写入端点 409 E_STORE_MODE_LIMITED（不读请求体）。
+          if (storeMode()) {
+            const session = await storeSession()
+            const write = session.writeRoute(request.method, url.pathname)
+            if (!write) {
+              const known = jobRoute || v2MediaRoute(request.method, url.pathname) || v2EditorRoute(request.method, url.pathname)
+              return sendJson(response, known ? 409 : 404, v2ErrorBody(known ? 'E_STORE_MODE_LIMITED' : 'E_UNKNOWN_ENDPOINT'))
+            }
+            const result = await write({ headers: request.headers, input: await readJsonBody(request) })
+            // 提交之后（以及结果不明时）让虚拟模块失效；客户端照旧整页刷新。
+            invalidatePrivateDataModule()
+            return sendJson(response, result.status, result.body)
+          }
           if (!jobRoute && !v2MediaRoute(request.method,url.pathname) && !v2EditorRoute(request.method,url.pathname)) {
             return sendJson(response,404,v2ErrorBody('E_UNKNOWN_ENDPOINT'))
           }
@@ -628,6 +668,10 @@ export function travelAtlasLocalEditor(options = {}) {
           return sendJson(response, ['E_LIBRARY_BUSY', 'E_LIBRARY_ROOT_MOVED'].includes(error?.code) ? 409 : 400, normalizeLocalEditorError(error))
         }
       })
+    },
+    // 3C-3：开发服务器关闭时正常关闭新库（写入「正常关闭」标记）。构建时没有打开过，什么都不做。
+    async buildEnd() {
+      await releaseStore()
     },
     async closeBundle() {
       // The copy is for `build:personal` only. Vite's dev server also calls closeBundle when it shuts down (after
