@@ -121,10 +121,10 @@ test('an open failure is reported again on every use, and the session opens once
   const session = createStoreSession(paths, { log: () => {}, retry: { sleep: async () => {} } })
   try {
     await assert.rejects(session.moduleExports(), { code: 'E_STORE_BUSY' })
+    // A busy store is the busy notice the client knows; other open failures are E_STORE_FAILED with the code.
     const state = await session.readEditorState()
-    assert.equal(state.status, 500)
-    assert.equal(state.body.code, 'E_STORE_FAILED')
-    assert.deepEqual(state.body.params, { code: 'E_STORE_BUSY' })
+    assert.equal(state.status, 409)
+    assert.equal(state.body.code, 'E_STORE_BUSY')
     holder.release()
     assert.equal((await session.moduleExports()).revision, 1)
   } finally { await session.close() }

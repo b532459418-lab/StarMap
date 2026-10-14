@@ -12,17 +12,22 @@ import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { readV2SampleFiles } from './v2-sample.mjs'
 import { edgeCaseFixture } from '../src/data/store/v2Store.fixture.ts'
 
-/** A temporary directory `<tmp>/<prefix>…` holding `private/` (the private root), removed after the test. */
+/**
+ * A temporary directory `<tmp>/<prefix>…` holding `private/` (the private root), removed after the test. `closeAfter`
+ * registers a store handle or session to close first (Windows cannot delete a file SQLite holds open).
+ */
 export async function tempPrivateRoot(t, prefix = 'starmap-store-mode-') {
   const directory = await mkdtemp(path.join(os.tmpdir(), prefix))
+  const closers = []
   t.after(async () => {
+    for (const closable of closers.reverse()) await closable.close()
     assert.equal(path.dirname(directory), os.tmpdir())
     assert.ok(path.basename(directory).startsWith(prefix))
     await rm(directory, { recursive: true, force: true, maxRetries: 3 })
   })
   const root = path.join(directory, 'private')
   await mkdir(root)
-  return { directory, root, paths: getPrivatePaths({ STARMAP_PRIVATE_ROOT: root }) }
+  return { directory, root, paths: getPrivatePaths({ STARMAP_PRIVATE_ROOT: root }), closeAfter: (closable) => { closers.push(closable); return closable } }
 }
 
 /** Write V2 file values into `data/v2/` (keys that are undefined are left out), as the V2 editor writes them. */

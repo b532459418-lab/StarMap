@@ -1,7 +1,8 @@
 /**
  * The local editor plugin in the new-library mode (3C-3): the virtual module reads the store's projection and its
- * revision, GET /editor/state reads the same model, write endpoints the store does not accept are refused with 409
- * E_STORE_MODE_LIMITED before their body is read, and an unopenable store is an error, never a fallback to V2.
+ * revision, GET /editor/state reads the same model, the want-to-go update is written to the store (and invalidates the
+ * module), write endpoints the store does not accept are refused with 409 E_STORE_MODE_LIMITED before their body is
+ * read, and an unopenable store is an error, never a fallback to V2.
  * The harness is the one of local-editor-plugin.test.mjs (no real server).
  */
 import { test } from 'node:test'
@@ -51,7 +52,7 @@ const moduleOf = async (plugin) => import(`data:text/javascript,${encodeURICompo
 /** Every write endpoint of the local editor (the 11 of V2 and the media task actions). */
 const WRITE_ENDPOINTS = [
   ['PUT', 'state'], ['POST', 'records'], ['POST', 'countries'], ['POST', 'countries/delete'], ['POST', 'wanttogo'],
-  ['POST', 'wanttogo/update'], ['POST', 'wanttogo/delete'], ['POST', 'wanttogo/convert'], ['POST', 'upload'], ['POST', 'import'], ['POST', 'media/delete'],
+  ['POST', 'wanttogo/delete'], ['POST', 'wanttogo/convert'], ['POST', 'upload'], ['POST', 'import'], ['POST', 'media/delete'],
   ['POST', 'media/jobs'], ...['preview', 'import', 'pause', 'close', 'abandon'].map((action) => ['POST', `media/jobs/018bd504-c600-7000-8000-000000000001/${action}`]),
 ]
 
@@ -73,7 +74,8 @@ test('Local editor plugin in the new-library mode', async (t) => {
 
     await applyMigration(paths, { now: NOW })
     const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: root })
-    const captured = captureMiddleware(plugin)
+    const privateModule = { id: plugin.resolveId('virtual:starmap-private-data'), transformResult: { code: 'cached' } }
+    const captured = captureMiddleware(plugin, privateModule)
     const handler = captured.handlers[1]
 
     await t.test('the virtual module carries the projected V2 files and the store revision', async () => {
@@ -88,6 +90,28 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.equal(result.status, 200)
       assert.equal(result.body.ok, true)
       assert.deepEqual(result.body.state.hiddenCountryIds, [])
+    })
+
+    await t.test('the want-to-go update is written to the store with the request protocol and invalidates the module', async () => {
+      const wish = files.wantToGo.items[0]
+      const protocol = { 'x-starmap-request-id': '01960000-0000-7000-8000-00000000e001', 'x-starmap-base-revision': '1' }
+      const update = (extra, input) => requestTo(handler, {
+        url: `${editorPrefix}wanttogo/update`, headers: { ...authorizedHeaders, ...extra }, content: Buffer.from(JSON.stringify(input)),
+      })
+      const stale = await update({}, { id: wish.id, note: 'Synthetic' })
+      assert.equal(stale.status, 409)
+      assert.equal(stale.body.code, 'E_STALE')
+      const saved = await update(protocol, { id: wish.id, note: 'Synthetic plugin note' })
+      assert.equal(saved.status, 200, JSON.stringify(saved.body))
+      assert.equal(saved.body.item.note, 'Synthetic plugin note')
+      assert.equal(privateModule.transformResult, null, 'the module is invalidated')
+      const module = await moduleOf(plugin)
+      assert.equal(module.privateStoreRevision, 2)
+      assert.equal(module.privateV2Files.wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic plugin note')
+      const replay = await update(protocol, { id: wish.id, note: 'Synthetic plugin note' })
+      assert.equal(replay.body.duplicate, true)
+      assert.equal((await moduleOf(plugin)).privateStoreRevision, 2)
+      assert.deepEqual(captured.reloads, [])
     })
 
     await t.test('write endpoints the store does not accept are 409 E_STORE_MODE_LIMITED, unread and unwritten', async () => {
