@@ -184,7 +184,7 @@ test('failed open checks open read-only with a diagnostic and never change the f
     ['unexpected schema', 'CREATE TABLE extra (x TEXT) STRICT', 'E_STORE_SCHEMA', false, 'DROP TABLE extra'],
     ['auto_vacuum other than INCREMENTAL', 'PRAGMA auto_vacuum = FULL', 'E_STORE_SCHEMA', false, 'PRAGMA auto_vacuum = INCREMENTAL'],
     ['missing store_meta row', 'DELETE FROM store_meta', 'E_STORE_SCHEMA', false,
-      `INSERT INTO store_meta VALUES (1, '${STORE_FORMAT}', 1, '${LIBRARY_ID}', 0, '${NOW}', 1)`],
+      `INSERT INTO store_meta VALUES (1, '${STORE_FORMAT}', 1, '${LIBRARY_ID}', 0, '${NOW}', 1, NULL)`],
     ['damaged page after an unclean shutdown (test-only byte overwrite)', uncleanDamagedPage, 'E_STORE_CORRUPT', true, undefined],
   ]
   for (const [name, damage, code, readable, undo] of cases) {

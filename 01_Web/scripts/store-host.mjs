@@ -152,9 +152,11 @@ function rowTableDdl(spec) {
 /** Every CREATE statement of user_version 1, in creation order. */
 export const SCHEMA_V1 = Object.freeze([
   // clean_shutdown: 0 while a writer session is open, 1 after its close() (design 3B v1.1 §16.2-3).
+  // restored_from (3C-3, design 3B §8): the backup this store was last restored from, as JSON; NULL for a store that was
+  // never restored. One layer only: a restore replaces it, so no chain of ancestors grows.
   'CREATE TABLE store_meta (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), format TEXT NOT NULL, format_version INTEGER NOT NULL, '
     + 'library_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision >= 0), created_at TEXT NOT NULL, '
-    + 'clean_shutdown INTEGER NOT NULL CHECK (clean_shutdown IN (0, 1))) STRICT',
+    + 'clean_shutdown INTEGER NOT NULL CHECK (clean_shutdown IN (0, 1)), restored_from TEXT) STRICT',
   ...FORMAL_TABLES.flatMap((table) => rowTableDdl(ROW_TABLES[table])),
   // Reverse references for StoreReader.dependents. Table names are Core names (e.g. viewItems).
   'CREATE TABLE refs (from_table TEXT NOT NULL, from_id TEXT NOT NULL, field TEXT NOT NULL, to_table TEXT NOT NULL, to_id TEXT NOT NULL, '
@@ -173,6 +175,9 @@ export const SCHEMA_V1 = Object.freeze([
   // Media file operations awaiting confirmation or deletion (design 3B §5.1). Logic arrives in 3C-4.
   'CREATE TABLE pending_file_ops (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL, request_id TEXT NOT NULL, at TEXT NOT NULL, detail TEXT NOT NULL) STRICT',
 ])
+
+/** The host's own tables besides store_meta (tableCounts). */
+const HOST_TABLES = Object.freeze(['refs', 'tombstones', 'receipts', 'op_log', 'id_map', 'pending_file_ops'])
 
 const SCHEMA_QUERY = "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_stat%' ORDER BY type, name"
 let expectedSchemaRows
@@ -338,6 +343,12 @@ function formalStateValue(db) {
 function quickCheck(db, settings) {
   settings.phase?.('quick-check', { db })
   const lines = db.prepare('PRAGMA quick_check').all().map((row) => row.quick_check)
+  return lines.length === 1 && lines[0] === 'ok' ? [] : lines
+}
+/** `PRAGMA integrity_check` (3C-3: after a restore), announced to the test hook as phase 'integrity-check'. */
+function integrityCheck(db, settings) {
+  settings.phase?.('integrity-check', { db })
+  const lines = db.prepare('PRAGMA integrity_check').all().map((row) => row.integrity_check)
   return lines.length === 1 && lines[0] === 'ok' ? [] : lines
 }
 /** A failed quick_check as a problem: a count only, never the lines (they name pages and indexes). */
@@ -983,13 +994,47 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
     get diagnostic() { return diagnostic },
     /** Open timings in milliseconds (connectMs, openMs, and quickCheckMs when the open ran quick_check), for benchmarks. */
     get openTimings() { return timings },
-    /** store_meta as an object: format, formatVersion, libraryId, revision, createdAt. */
+    /**
+     * store_meta as an object: format, formatVersion, libraryId, revision, createdAt, and restoredFrom (the JSON value
+     * setRestoredFrom wrote) when the store was restored from a backup.
+     */
     meta() {
       return readTransaction((connection) => {
-        const row = connection.prepare('SELECT format, format_version, library_id, revision, created_at FROM store_meta WHERE singleton = 1').get()
+        const row = connection.prepare('SELECT format, format_version, library_id, revision, created_at, restored_from FROM store_meta WHERE singleton = 1').get()
         if (!row) fail('E_STORE_SCHEMA', { path: 'store_meta' })
-        return Object.freeze({ format: row.format, formatVersion: row.format_version, libraryId: row.library_id, revision: row.revision, createdAt: row.created_at })
+        let restoredFrom
+        if (row.restored_from !== null) {
+          try { restoredFrom = deepFreeze(JSON.parse(row.restored_from)) } catch { fail('E_STORE_CORRUPT', { path: 'store_meta.restored_from' }) }
+        }
+        return Object.freeze({
+          format: row.format, formatVersion: row.format_version, libraryId: row.library_id, revision: row.revision, createdAt: row.created_at,
+          ...(restoredFrom === undefined ? {} : { restoredFrom }),
+        })
       })
+    },
+    /**
+     * Row counts of every table (formal tables by Core name, host tables by SQL name), in one read transaction: the
+     * backup manifest records them.
+     */
+    tableCounts() {
+      return readTransaction((connection) => {
+        const counts = {}
+        for (const table of FORMAL_TABLES) counts[table] = connection.prepare(`SELECT count(*) AS count FROM ${ROW_TABLES[table].sql}`).get().count
+        for (const table of HOST_TABLES) counts[table] = connection.prepare(`SELECT count(*) AS count FROM ${table}`).get().count
+        return Object.freeze(counts)
+      })
+    },
+    /**
+     * A consistent copy of the whole store at `target` with `VACUUM INTO` (design 3B §5.2, backups): compacted, with the
+     * same header (application_id, user_version, auto_vacuum). `target` must be an absolute path that does not exist.
+     * Read-only handles can do it too. Callers hold the library lease, so no other writer starts meanwhile.
+     */
+    snapshotInto(target) {
+      const file = absoluteFile(target)
+      const connection = usable()
+      if (transactionState(connection) !== false) fail('E_STORE_BUSY')
+      try { lstatSync(file); fail('E_STORE_EXISTS', { path: 'target' }) } catch (error) { if (!missing(error)) throw error }
+      try { connection.prepare('VACUUM INTO ?').run(file) } catch (error) { throw corruptionSeen(storeErrorFrom(error)) }
     },
     /** Run `callback(reader)` with a SqliteStoreReader bound to one read transaction (synchronous). */
     read(callback) {
@@ -1028,17 +1073,19 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
     },
     /**
      * `PRAGMA quick_check` on request (design 3B v1.1 §16.2-3): before a backup, after a restore,
-     * and for the check command; opening runs it only after an unclean shutdown. Returns
+     * and for the check command; opening runs it only after an unclean shutdown. With `{ full: true }`
+     * it runs the slower `PRAGMA integrity_check` instead (3C-3: a restored store). Returns
      * { ok, problems } (counts only); a failure turns the handle read-only with E_STORE_CORRUPT.
      */
-    checkIntegrity() {
+    checkIntegrity({ full = false } = {}) {
       let lines
-      try { lines = readTransaction((connection) => quickCheck(connection, settings)) } catch (error) {
+      try { lines = readTransaction((connection) => (full ? integrityCheck : quickCheck)(connection, settings)) } catch (error) {
         if (!isSqliteCorruption(error)) throw error
         lines = ['unreadable']
       }
       if (lines.length) becomeCorrupt()
-      return Object.freeze({ ok: lines.length === 0, problems: Object.freeze(lines.length ? [quickCheckProblem(lines)] : []) })
+      const problem = full ? `E_STORE_CORRUPT: integrity_check (${lines.length})` : quickCheckProblem(lines)
+      return Object.freeze({ ok: lines.length === 0, problems: Object.freeze(lines.length ? [problem] : []) })
     },
     /**
      * Commit one request `{ requestId, baseRevision, kind, actor, commands }` (design 3B §4.4).
@@ -1130,6 +1177,26 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
           added++
         }
         return Object.freeze({ added })
+      }, leaseToken))
+    },
+    /**
+     * Record the backup this store was restored from (3C-3, design 3B §8): `restoredFrom` (a JSON object of at most 4 KiB)
+     * replaces whatever was recorded before, so store_meta keeps one layer and never a chain. Not a data change: the
+     * revision stays. An ordinary small write (the library lock check first, `{ leaseToken }` when the caller holds the
+     * lease). Resolves undefined.
+     */
+    async setRestoredFrom(restoredFrom, options) {
+      writer()
+      const leaseToken = writeOptions(options)
+      const text = core(() => {
+        validateJson(restoredFrom, 'restoredFrom')
+        if (restoredFrom === null || typeof restoredFrom !== 'object' || Array.isArray(restoredFrom)) reject('E_STORE_OPTIONS', 'restoredFrom')
+        const encoded = JSON.stringify(restoredFrom)
+        if (encoded.length > 4096) reject('E_STORE_OPTIONS', 'restoredFrom')
+        return encoded
+      }, 'not_committed')
+      return enqueue(() => smallWrite((connection) => {
+        if (connection.prepare('UPDATE store_meta SET restored_from = ? WHERE singleton = 1').run(text).changes !== 1) inconsistent('store_meta')
       }, leaseToken))
     },
     /**
