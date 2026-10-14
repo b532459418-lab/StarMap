@@ -10,7 +10,8 @@
  * - `v2SpaceCanonical(name)`：同一批数据直接搬进 V2 的 id 空间（UUIDv7、`legacyKeys` 带命名空间前缀），不合并地点；
  *   原来由 `toV2Space(legacyAdapter(原始数据)).data` 得到。`countryOfCityUuidOf()` 是其中 `countryOfCity` 的「旧 id → UUID」。
  * - `migratedCanonical(name)`：迁移规划合并之后的 Canonical（M）与写文件用的文件级元数据。
- * - `canonicalForInputsFixture()`：一份迁移后的五个 V2 文件与它的 M。
+ * 第 7 批删除了 `canonicalForInputsFixture()`（`canonical-for-inputs.json`）：它的 M 就是 `migratedCanonical('personal').canonical`，
+ * 五个文件与 `../v2write/fixtures/migrated-files.json` 只差 `places.generated_at`。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
@@ -20,7 +21,6 @@
 import { readFileSync } from 'node:fs'
 
 import type { CanonicalData } from './types.ts'
-import type { V2Files } from './v2Schema.ts'
 import type { V2FileMeta } from './v2Serializer.ts'
 
 const readFixture = <T,>(name: string): T => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')) as T
@@ -69,6 +69,3 @@ export const MIGRATED_CANONICAL_NAMES: readonly MigratedCanonicalName[] = Object
 
 export const migratedCanonical = (name: MigratedCanonicalName): { canonical: CanonicalData; fileMeta: Omit<V2FileMeta, 'placesGeneratedAt'> } =>
   entryOf('migrated-canonical.json', name)
-
-export const canonicalForInputsFixture = (): { files: V2Files; migrated: CanonicalData } =>
-  readFixture('canonical-for-inputs.json')

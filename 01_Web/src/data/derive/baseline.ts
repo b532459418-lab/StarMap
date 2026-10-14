@@ -351,3 +351,49 @@ const serialize = (value: unknown, indent: string): string | undefined => {
 export function stableStringify(value: unknown): string {
   return serialize(value, '') ?? 'null'
 }
+
+const kindOf = (value: unknown) => (value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value)
+
+const formatKey = (key: string) => (/^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`)
+
+/**
+ * 两份已解析的 JSON（例如两份基线）的差异路径，形如 `$.modules.travelAtlas.cities[3]`：前 `limit` 处与总数。
+ * 只收集路径，不带值（基线可能含私人地名与坐标）。`scripts/baseline.mjs --compare` 与派生基线的锁定测试共用（第 7 批）。
+ */
+export function baselineDifferences(first: unknown, second: unknown, limit = 50): { paths: string[]; total: number } {
+  const paths: string[] = []
+  let total = 0
+  const report = (where: string) => {
+    total += 1
+    if (paths.length < limit) paths.push(where)
+  }
+  const walk = (left: unknown, right: unknown, where: string): void => {
+    const kind = kindOf(left)
+    if (kind !== kindOf(right)) return report(where)
+    if (kind === 'array') {
+      const leftItems = left as unknown[]
+      const rightItems = right as unknown[]
+      const length = Math.max(leftItems.length, rightItems.length)
+      for (let index = 0; index < length; index += 1) {
+        const child = `${where}[${index}]`
+        if (index >= leftItems.length || index >= rightItems.length) report(child)
+        else walk(leftItems[index], rightItems[index], child)
+      }
+      return
+    }
+    if (kind === 'object') {
+      const leftRecord = left as Record<string, unknown>
+      const rightRecord = right as Record<string, unknown>
+      const keys = [...new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)])].sort()
+      for (const key of keys) {
+        const child = `${where}${formatKey(key)}`
+        if (!Object.hasOwn(leftRecord, key) || !Object.hasOwn(rightRecord, key)) report(child)
+        else walk(leftRecord[key], rightRecord[key], child)
+      }
+      return
+    }
+    if (!Object.is(left, right)) report(where)
+  }
+  walk(first, second, '$')
+  return { paths, total }
+}

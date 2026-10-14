@@ -16,8 +16,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 
 import { PLANNED_SOURCE } from '../../worldgraph/adapters/plannedRecords.ts'
 import { BASELINE_FORMAT, buildBaseline, stableStringify } from '../derive/baseline.ts'
@@ -27,7 +27,6 @@ import {
   LEGACY_ID_CANONICAL_NAMES,
   MIGRATED_CANONICAL_NAMES,
   V2_SPACE_CANONICAL_NAMES,
-  canonicalForInputsFixture,
   countryOfCityUuidOf,
   legacyIdCanonical,
   migratedCanonical,
@@ -35,10 +34,9 @@ import {
   type LegacyIdCanonicalName,
 } from './frozen.fixture.ts'
 import type { CanonicalData } from './types.ts'
+import { assertBaselineLock } from './baselineLock.fixture.ts'
 
 const NOW = '2000-01-01T00:00:00.000Z'
-
-const sha256 = (text: string) => createHash('sha256').update(`${text}\n`).digest('hex')
 
 /** 冻结的 Canonical → 派生（与 App 相同的 now 注入方式）。 */
 const derive = (name: LegacyIdCanonicalName) => deriveAppDataFromCanonical(legacyIdCanonical(name), { now: NOW })
@@ -104,11 +102,11 @@ test('基线：World Graph 以外的部分与 Core-A A2 之前逐字节相同（
     ['faroe-islands__torshavn', 'faroe-islands'],
     ['faroe-islands__gjogv', 'faroe-islands'],
   ])
-  assert.equal(sha256(stableStringify(outsideWorldGraph(baseline))), OUTSIDE_WORLD_GRAPH_SHA256.legacySample)
+  assertBaselineLock('outside-world-graph-legacy-sample', stableStringify(outsideWorldGraph(baseline)), OUTSIDE_WORLD_GRAPH_SHA256.legacySample)
 
   const v2Files = Object.fromEntries(Object.entries(V2_SAMPLE_FILE_NAMES).map(([key, name]) => [key, readJsonFile(`../v2-sample/${name}`)]))
   const v2Baseline = buildBaseline(deriveAppDataFromCanonical(canonicalForInputs({ v2Files, source: 'sample' }), { now: NOW }), { now: NOW })
-  assert.equal(sha256(stableStringify(outsideWorldGraph(v2Baseline as BaselineShape))), OUTSIDE_WORLD_GRAPH_SHA256.v2Sample)
+  assertBaselineLock('outside-world-graph-v2-sample', stableStringify(outsideWorldGraph(v2Baseline as BaselineShape)), OUTSIDE_WORLD_GRAPH_SHA256.v2Sample)
 })
 
 // ---------------------------------------------------------------------------
@@ -285,21 +283,22 @@ test('媒体：城市照片、封面、无人机、隐藏、悬空引用', () =>
  * 派生基线的 sha256：`stableStringify(buildBaseline(deriveAppDataFromCanonical(…)))` 加末尾换行，与 scripts 的基线工具
  * 写出的文件相同。冻结时（PR5b 第一个提交）旧 id 空间的每一份都等于旧路径 B（`deriveAppData(normalizeLegacy(原始数据))`），
  * 公开样例（旧 id）同时等于 PR1 起公布的 @2 基线 8caf2cfb…。RFC-LOC-1 Core-A A1 只给基线做了加法；Core-A A2 改了 World Graph
- * （地点实体 id、按身份合并，见文件开头），下面的值是 A2 之后的。派生代码改变了任何一处结果，这里就会变红。
+ * （地点实体 id、按身份合并，见文件开头），下面的值是 A2 之后的。派生代码改变了任何一处结果，这里就会变红；
+ * 变红时 ./baselineLock.fixture.ts 写出实际的基线，并在有预期的那一份时列出差异的 JSON 路径（用法见该文件，第 7 批）。
  *
  * 审查 C2（「标记为去过」与写入端点共用 ./convertRules.ts）改了含已隐藏想去条目的六个值：personal、personalDanglingMedia、
  * combined（旧 id 空间）、personal（V2 id 空间）、PERSONAL_V2_LOCK、editor-store-v2。基线里唯一的差别是已隐藏的特罗姆瑟条目
  * `wtg_2026-08-12_tromso` 的 `wantToGoConvertBlockReason` 从 null 变成「已隐藏的想去条目不能转为足迹。」——端点一直拒绝隐藏条目，
  * 界面原来漏了这一条。其余夹具没有已隐藏的想去条目，也没有「城市被隐藏或只有 planned 记录」的想去条目，基线不变。
  */
-const baselineSha256 = (canonical: CanonicalData) =>
-  sha256(stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW })))
+const baselineText = (canonical: CanonicalData) =>
+  stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW }))
 
 const readJsonFile = (relative: string): unknown => JSON.parse(readFileSync(new URL(relative, import.meta.url), 'utf8'))
 
 /** 五个 V2 文件经 canonicalForInputs（V2 Reader）→ 派生 → 基线，与 App、基线工具的管线相同。 */
-const v2FilesSha256 = (v2Files: V2FileInputs, source: 'local' | 'sample' = 'local') =>
-  baselineSha256(canonicalForInputs({ v2Files, source }))
+const v2FilesBaselineText = (v2Files: V2FileInputs, source: 'local' | 'sample' = 'local') =>
+  baselineText(canonicalForInputs({ v2Files, source }))
 
 const LEGACY_ID_LOCKS: Record<LegacyIdCanonicalName, string> = {
   sample: 'aa0b5531ec3a71b329c2c2772144f2d06e04b19aeb1febcecd065d54641f9f42',
@@ -367,24 +366,21 @@ const V2_SAMPLE_FILE_NAMES = { places: 'places.json', travel: 'travel-map.json',
 
 test('锁定：旧 id 空间的冻结 Canonical（本文件、placeResolver 与 derive/baseline 测试的输入）的派生基线', () => {
   assert.deepEqual(Object.keys(LEGACY_ID_LOCKS), [...LEGACY_ID_CANONICAL_NAMES])
-  for (const name of LEGACY_ID_CANONICAL_NAMES) assert.equal(baselineSha256(legacyIdCanonical(name)), LEGACY_ID_LOCKS[name], name)
+  for (const name of LEGACY_ID_CANONICAL_NAMES) assertBaselineLock(`legacy-id-${name}`, baselineText(legacyIdCanonical(name)), LEGACY_ID_LOCKS[name])
 })
 
 test('锁定：V2 id 空间的冻结 Canonical 与迁移后的 M（v2Reader / v2Schema / v2Serializer 与本文件的输入）的派生基线', () => {
   assert.deepEqual(Object.keys(V2_SPACE_LOCKS), [...V2_SPACE_CANONICAL_NAMES])
-  for (const name of V2_SPACE_CANONICAL_NAMES) assert.equal(baselineSha256(v2SpaceCanonical(name)), V2_SPACE_LOCKS[name], name)
+  for (const name of V2_SPACE_CANONICAL_NAMES) assertBaselineLock(`v2-space-${name}`, baselineText(v2SpaceCanonical(name)), V2_SPACE_LOCKS[name])
   assert.deepEqual(Object.keys(MIGRATED_LOCKS), [...MIGRATED_CANONICAL_NAMES])
-  for (const name of MIGRATED_CANONICAL_NAMES) assert.equal(baselineSha256(migratedCanonical(name).canonical), MIGRATED_LOCKS[name], name)
+  for (const name of MIGRATED_CANONICAL_NAMES) assertBaselineLock(`migrated-${name}`, baselineText(migratedCanonical(name).canonical), MIGRATED_LOCKS[name])
 })
 
 test('锁定：冻结的五个 V2 文件（canonicalForInputs、V2 写入与三个脚本测试的输入）经 canonicalForInputs 的派生基线', () => {
-  const { files, migrated } = canonicalForInputsFixture()
-  assert.equal(v2FilesSha256(files), PERSONAL_V2_LOCK, 'canonical-for-inputs.json 的文件')
-  assert.equal(baselineSha256(migrated), PERSONAL_V2_LOCK, 'canonical-for-inputs.json 的 M')
-  for (const [relative, lock] of V2_FILES_LOCKS) assert.equal(v2FilesSha256(readJsonFile(relative) as V2FileInputs), lock, relative)
+  for (const [relative, lock] of V2_FILES_LOCKS) assertBaselineLock(`v2-files-${path.basename(relative, '.json')}`, v2FilesBaselineText(readJsonFile(relative) as V2FileInputs), lock)
 })
 
 test('锁定：公开 V2 样例（src/data/v2-sample/，来源 sample）的派生基线为 9b68b8ad…', () => {
   const v2Files = Object.fromEntries(Object.entries(V2_SAMPLE_FILE_NAMES).map(([key, name]) => [key, readJsonFile(`../v2-sample/${name}`)]))
-  assert.equal(v2FilesSha256(v2Files, 'sample'), V2_SAMPLE_BASELINE_SHA256)
+  assertBaselineLock('v2-sample', v2FilesBaselineText(v2Files, 'sample'), V2_SAMPLE_BASELINE_SHA256)
 })
