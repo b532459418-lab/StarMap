@@ -3,6 +3,7 @@ import { enterStoreMode, fixtureFileNames, fixtureIds } from '../../scripts/brow
 import { storeFileOf } from '../../scripts/private-data-source.mjs'
 import { getPrivatePaths } from '../../scripts/private-profile.mjs'
 import { openStore } from '../../scripts/store-host.mjs'
+import { projectToV2Files } from '../../scripts/store-projection.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -279,9 +280,10 @@ test('keyboard hiding the current cover photo clears the draft cover, and hiding
   await expect(info.getByRole('button', { name: 'Hide Reykjavik', exact: true })).toBeVisible()
 })
 
-// 3C-3: the experimental new-library mode. These cases switch the shared fixture into the mode (its V2 files reset to the
-// fixture's own content and migrated into data/store/world.sqlite) and put everything back afterwards
-// (scripts/browser-fixture.mjs enterStoreMode). They run last in this file.
+// 3C-3, 3C-4a: the experimental new-library mode. These cases switch the shared fixture into the mode (its V2 files reset
+// to the fixture's own content and migrated into data/store/world.sqlite) and put everything back afterwards
+// (scripts/browser-fixture.mjs enterStoreMode). They run last in this file, in order, on the same store: a note, a new
+// Want to Go item, a conversion with a journey choice, a city order, and a media upload that the mode refuses (3C-4c).
 test.describe('new-library mode (experimental)', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
   const moduleUrl = '/@id/__x00__virtual:starmap-private-data'
@@ -291,6 +293,11 @@ test.describe('new-library mode (experimental)', () => {
   async function storeRevision() {
     const handle = openStore(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() })), { readOnly: true })
     try { return handle.meta().revision } finally { await handle.close() }
+  }
+  /** The store's V2 view, read in this process through a read-only connection (what a new dev server would serve). */
+  async function storedFiles() {
+    const handle = openStore(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() })), { readOnly: true })
+    try { return projectToV2Files(handle.readRowsUnchecked()).files } finally { await handle.close() }
   }
   const v2Bytes = async () => Promise.all(Object.values(fixtureFileNames).map((name) => readFile(path.join(root(), 'data', 'v2', name), 'utf8')))
   let leave
@@ -326,20 +333,115 @@ test.describe('new-library mode (experimental)', () => {
     expect(await v2Bytes()).toEqual(v2Before)
   })
 
-  test('new-library mode: an edit it does not support yet shows E_STORE_MODE_LIMITED and changes nothing', async ({ page }) => {
+  test('new-library mode: a Want to Go item added on the map is still there after a reload', async ({ page }) => {
     const v2Before = await v2Bytes()
     const revision = await storeRevision()
     await expect.poll(() => servedRevision(page)).toBe(String(revision))
     await openMap(page)
     await selectReykjavik(page)
-    const refused = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo') && response.request().method() === 'POST')
-    await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+    const sent = []
+    page.on('request', (request) => { if (request.url().endsWith('/editor/wanttogo') && request.method() === 'POST') sent.push(request.headers()) })
+    await saveAndWaitForReload(page, async () => {
+      const saved = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo') && response.request().method() === 'POST')
+      await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+      expect((await saved).status()).toBe(201)
+    })
+    expect(sent).toHaveLength(1)
+    expect(sent[0]['x-starmap-base-revision']).toBe(String(revision))
+    expect(await storeRevision()).toBe(revision + 1)
+    expect((await storedFiles()).wantToGo.items.filter((item) => item.placeId === fixtureIds.reykjavik)).toHaveLength(1)
+    for (let reload = 0; reload < 2; reload++) {
+      if (reload) await page.reload({ waitUntil: 'domcontentloaded' })
+      await openCollection(page)
+      await expect(page.getByRole('button', { name: 'Edit note for Reykjavik', exact: true })).toBeVisible()
+    }
+    expect(await v2Bytes()).toEqual(v2Before)
+  })
+
+  test('new-library mode: marking a Want to Go item as visited, with a journey choice, is still there after a reload', async ({ page }) => {
+    const v2Before = await v2Bytes()
+    const revision = await storeRevision()
+    await expect.poll(() => servedRevision(page)).toBe(String(revision))
+    await openMap(page)
+    await openCollection(page)
+    await page.getByRole('button', { name: 'Mark as visited: Nuuk', exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Visit date', { exact: true }).fill('2025-06-20')
+    await dialog.getByLabel('Trip title (optional)', { exact: true }).fill('2025 North Atlantic Demo')
+    // The title is the one of an existing trip: the store asks for a choice and writes nothing.
+    const asked = page.waitForResponse((response) => response.url().endsWith('/wanttogo/convert'))
+    await dialog.getByRole('button', { name: 'Mark as visited', exact: true }).click()
+    const choice = await asked
+    expect(choice.status()).toBe(409)
+    expect((await choice.json()).code).toBe('E_JOURNEY_CHOICE_REQUIRED')
+    expect(await storeRevision()).toBe(revision)
+    await dialog.getByRole('radio', { name: /^Add to existing trip: 2025 North Atlantic Demo/ }).check()
+    await saveAndWaitForReload(page, async () => {
+      const saved = page.waitForResponse((response) => response.url().endsWith('/wanttogo/convert'))
+      await dialog.getByRole('button', { name: 'Mark as visited', exact: true }).click()
+      expect((await saved).status()).toBe(200)
+    })
+    expect(await storeRevision()).toBe(revision + 1)
+    const stored = await storedFiles()
+    const visits = stored.travel.records.filter((record) => record.placeId === fixtureIds.nuuk && record.status !== 'planned')
+    expect(visits).toHaveLength(1)
+    expect(visits[0].journeyId).toBe('2025-north-atlantic-demo')
+    expect(stored.wantToGo.items.filter((item) => item.placeId === fixtureIds.nuuk)).toHaveLength(0)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await openCollection(page)
+    await expect(page.getByRole('button', { name: 'Mark as visited: Nuuk', exact: true })).toHaveCount(0)
+    expect(await v2Bytes()).toEqual(v2Before)
+  })
+
+  test('new-library mode: a city order saved in the info panel is still there after a reload', async ({ page }) => {
+    const v2Before = await v2Bytes()
+    const revision = await storeRevision()
+    await expect.poll(() => servedRevision(page)).toBe(String(revision))
+    await openMap(page)
+    await selectReykjavik(page)
+    const info = page.locator('.atlas-info-panel')
+    // Choosing the selected city again returns to Iceland's city list.
+    await page.getByRole('button', { name: 'Reykjavik', exact: true }).click()
+    await info.getByRole('button', { name: 'Edit cities', exact: true }).click()
+    const cards = info.locator('.memory-city-card')
+    const order = () => cards.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-flip-id')))
+    const before = await order()
+    expect(before.length).toBeGreaterThan(1)
+    await cards.last().dragTo(cards.first())
+    const expected = [before.at(-1), ...before.slice(0, -1)]
+    await expect.poll(order).toEqual(expected)
+    const sent = []
+    page.on('request', (request) => { if (request.url().endsWith('/editor/state') && request.method() === 'PUT') sent.push(request.headers()) })
+    await saveAndWaitForReload(page, async () => {
+      const saved = page.waitForResponse((response) => response.url().endsWith('/editor/state') && response.request().method() === 'PUT')
+      await info.getByRole('button', { name: 'Save cities', exact: true }).click()
+      expect((await saved).status()).toBe(200)
+    })
+    expect(sent).toHaveLength(1)
+    expect(sent[0]['x-starmap-base-revision']).toBe(String(revision))
+    expect(await storeRevision()).toBe(revision + 1)
+    expect((await storedFiles()).editorState.cityOrderByCountry[fixtureIds.iceland]).toEqual(expected)
+    // The page keeps its view across reloads (sessionStorage): Iceland's city list again, in the saved order.
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
+    await expect.poll(order).toEqual(expected)
+    expect(await v2Bytes()).toEqual(v2Before)
+  })
+
+  test('new-library mode: a media upload is refused with E_STORE_MODE_LIMITED and changes nothing', async ({ page }) => {
+    const v2Before = await v2Bytes()
+    const revision = await storeRevision()
+    await expect.poll(() => servedRevision(page)).toBe(String(revision))
+    await openMap(page)
+    await selectReykjavik(page)
+    await page.getByRole('button', { name: 'Edit city photos', exact: true }).click()
+    const image = await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 80, g: 140, b: 190 } } }).png().toBuffer()
+    const refused = page.waitForResponse((response) => response.url().endsWith('/editor/media/jobs') && response.request().method() === 'POST')
+    await page.locator('.atlas-info-panel input[type=file]').setInputFiles({ name: 'browser-neutral.png', mimeType: 'image/png', buffer: image })
     const response = await refused
     expect(response.status()).toBe(409)
     expect((await response.json()).code).toBe('E_STORE_MODE_LIMITED')
-    await expect(page.locator('.atlas-local-editor-notice')).toHaveText('The new library mode (experimental) only edits Want to Go items for now; other edits will follow later. Nothing was saved.')
-    // A confirmed refusal: the page is not blocked, nothing was written.
-    await expect(page.getByRole('button', { name: 'Mark as Want to Go', exact: true })).toBeEnabled()
+    // A confirmed refusal: nothing was written to the store or the V2 files.
     expect(await storeRevision()).toBe(revision)
     expect(await v2Bytes()).toEqual(v2Before)
   })
