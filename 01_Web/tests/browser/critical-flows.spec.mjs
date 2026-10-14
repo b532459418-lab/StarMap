@@ -4,6 +4,7 @@ import { storeFileOf } from '../../scripts/private-data-source.mjs'
 import { getPrivatePaths } from '../../scripts/private-profile.mjs'
 import { openStore } from '../../scripts/store-host.mjs'
 import { projectToV2Files } from '../../scripts/store-projection.mjs'
+import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -454,7 +455,8 @@ test.describe('new-library mode (experimental)', () => {
 // (scripts/browser-fixture.mjs enterDamagedStoreMode): its open check fails, and the App shows the data read-only with a
 // persistent notice; a write is refused with E_STORE_READ_ONLY. It runs after the cases above: the module is first
 // loaded in V2 mode, which closes the store they used, so the damaged one is opened afresh. On Windows the dev server
-// keeps the store of the cases above open and it cannot be removed: run this case on its own there.
+// keeps the store of the cases above open and it cannot be removed, so the case skips itself when that store is still
+// there: run it on its own on Windows (CI runs it with the group on Linux).
 test.describe('new-library mode: a damaged store', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
   const moduleUrl = '/@id/__x00__virtual:starmap-private-data'
@@ -464,6 +466,8 @@ test.describe('new-library mode: a damaged store', () => {
   test.afterAll(async () => { await leave?.() })
 
   test('a damaged new library is shown read-only with a notice, and a note save is refused with E_STORE_READ_ONLY', async ({ page }) => {
+    test.skip(process.platform === 'win32' && existsSync(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() }))),
+      'The dev server still holds the store of the cases above open (Windows); run this case on its own.')
     await expect.poll(() => served(page, 'privateStoreRevision')).toBe('undefined')
     leave = await enterDamagedStoreMode(root())
     await expect.poll(() => served(page, 'privateStoreReadOnly')).toBe('true')
