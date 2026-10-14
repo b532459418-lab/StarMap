@@ -18,19 +18,16 @@
  * identity ledger (`BridgeManifest`), so a rerun with the previous ledger yields
  * the same commands. Every other id is derived from the V2 ids.
  *
+ * The mapping of one V2 record to its rows lives in ./v2RecordRows.ts (3C-4a), shared with the incremental write path
+ * (./diffV2.ts); this module keeps the order of the batch, the identity ledger, the list positions and the report.
+ *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative
  * imports with `.ts`, `import type` for types).
  */
-import type { FormalCommand, FormalTable, ViewItem, ViewItemTable, ViewSetting } from '../../worldgraph/store/formal.ts'
+import type { FormalCommand, FormalTable } from '../../worldgraph/store/formal.ts'
 import { FORMAL_TABLES } from '../../worldgraph/store/formal.ts'
-import type {
-  AssetReference, EntrySequence, Evidence, JsonObject, JsonValue, LayerEntry, ReadonlyTitle, SourceRef, StoreAnchor, StoreEntity, StoreRelation,
-} from '../../worldgraph/store/types.ts'
+import type { JsonObject, JsonValue } from '../../worldgraph/store/types.ts'
 import { StoreError, freezeCopy, utcTimestamp, validateJson } from '../../worldgraph/store/schema.ts'
-import { validateRow } from '../../worldgraph/store/rows.ts'
-import { positionBetween } from '../../worldgraph/store/position.ts'
-import { isCalendarDate } from '../../worldgraph/timeFilter.ts'
-import { compareJourneyRecords } from '../canonical/journeyRoutes.ts'
 import { bridgeAllocator, readBridgeManifest, type BridgeManifest } from '../canonical/storeBridgeIdentity.ts'
 import type { CanonicalData } from '../canonical/types.ts'
 import { readV2 } from '../canonical/v2Reader.ts'
@@ -38,6 +35,13 @@ import { V2_FILE_KEYS, validateV2Files, type V2FileKey, type V2Files } from '../
 import {
   DISPLAY_SETTING_KEYS, OFFICIAL, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES, mapListScope, officialDefinitionCommands, v2SourceDefinition,
 } from './officialDefinitions.ts'
+import {
+  countryEvidence, countryEvidenceId, countryVisitDate, countryVisitEntry, journeyEntity, journeyOf, journeySequence, listPositions, mediaAsset,
+  mediaEntity, orderedJourneyMembers, placeAnchor, placeEntity, placeRelation, recordPlacement, resolveListElements, travelRecordEntry,
+  unresolvedSetting, v2Headers, viewItemRow, viewSettingRow, wantToGoEntry, type ViewTarget,
+} from './v2RecordRows.ts'
+
+export { listPositions } from './v2RecordRows.ts'
 
 export interface MigrateV2Options {
   /** UTC timestamp for `createdAt` / `updatedAt` of every migrated entry. */
@@ -138,18 +142,7 @@ export const V2_FIELD_PLACEMENT = Object.freeze([
 type Problems = MigrationProblem[]
 const plain = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
 const arrayAt = (value: unknown, key: string): readonly unknown[] => (plain(value) && Array.isArray(value[key]) ? value[key] as unknown[] : [])
-const without = (value: object, keys: readonly string[]): Record<string, JsonValue> =>
-  Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key))) as Record<string, JsonValue>
-const source = (sourceId: string, recordId: string, evidenceIds: readonly string[] = []): SourceRef => ({ sourceId, recordId, evidenceIds })
 const opaque = (id: unknown): id is string => typeof id === 'string' && id.trim() !== '' && id.length <= 512
-/** True when Core accepts `title` as a row title (language tags, originalLanguage). */
-function fitsStoreTitle(title: unknown): title is ReadonlyTitle {
-  try { validateRow('sources', { id: 'title-probe', revision: 0, title, origin: 'user' }, { get: () => undefined }); return true } catch { return false }
-}
-
-/** Non-blank string journeyId of a non-planned record: the record belongs to that journey. */
-const journeyOf = (record: Record<string, unknown>): string | undefined =>
-  record.status !== 'planned' && typeof record.journeyId === 'string' && record.journeyId.trim() ? record.journeyId : undefined
 
 /** Source identities must be unique per namespace and usable as store ids (as G2's
  * sourcePreflight, but every collision is reported). Defensive about shape, so it
@@ -202,22 +195,6 @@ export function migrationProblems(files: unknown, manifest?: BridgeManifest, rea
   return freezeCopy(problems)
 }
 
-/** `count` increasing sort keys, built by bisection with Core's positionBetween: the
- * length grows with log(count) (9 characters for 100,000 keys), while appending one
- * key after another would exhaust the 64-character limit near 2,000 keys. */
-export function listPositions(count: number): readonly string[] {
-  const out: string[] = new Array<string>(count)
-  const fill = (lo: number, hi: number, before?: string, after?: string): void => {
-    if (lo > hi) return
-    const mid = (lo + hi) >>> 1, at = positionBetween(before, after)
-    out[mid] = at
-    fill(lo, mid - 1, before, at)
-    fill(mid + 1, hi, at, after)
-  }
-  fill(0, count - 1)
-  return out
-}
-
 /** V2 files -> one dependency-ordered command batch for an empty store. */
 export function migrateV2(files: V2Files, options: MigrateV2Options): MigrationResult {
   utcTimestamp(options.now, '$.now')
@@ -247,75 +224,29 @@ function build(files: V2Files, { now, allocateId, manifest }: MigrateV2Options):
 
   // 1-2. Official definitions, then the import sources with the file-level metadata.
   for (const c of officialDefinitionCommands()) if (c.op === 'create') create(c.table, c.value)
-  const headers = {
-    places: without(files.places, ['places']),
-    travel: without(files.travel, ['records', 'display']),
-    wantToGo: without(files.wantToGo, ['items']),
-    editorState: without(files.editorState, [
-      'addedCountries', 'countryOrder', 'hiddenCountryIds', 'cityOrderByCountry', 'hiddenCityIds',
-      'mediaOrderByCity', 'hiddenMediaIds', 'coverMediaByCity', 'droneOrderByCity', 'hiddenDroneMediaIds',
-    ]),
-    media: without(files.media, ['items']),
-  }
+  const headers = v2Headers(files)
   for (const id of Object.values(V2_SOURCES)) create('sources', v2SourceDefinition(id, id === V2_SOURCES.import ? { v2: headers } : undefined))
 
   // 3. Place entities (ids unchanged).
-  for (const place of files.places.places) {
-    const { id, subtype, names, originalLanguage, externalIds } = place
-    // partOf and location become a relation and an anchor; legacyKeys stays verbatim.
-    const extra = without(place, ['id', 'subtype', 'names', 'originalLanguage', 'externalIds', 'partOf', 'location'])
-    const title = { names, ...(originalLanguage !== undefined ? { originalLanguage } : {}) }
-    const fields: Record<string, JsonValue> = { subtype }
-    if (externalIds !== undefined) {
-      const { iso3166Alpha2, ...others } = externalIds as Record<string, JsonValue>
-      if (typeof iso3166Alpha2 === 'string') fields.iso3166Alpha2 = iso3166Alpha2
-      else if (iso3166Alpha2 !== undefined) others.iso3166Alpha2 = iso3166Alpha2
-      // Kept when there are other keys, or when externalIds exists without a code.
-      if (Object.keys(others).length || fields.iso3166Alpha2 === undefined) extra.externalIds = others
-    }
-    const fits = fitsStoreTitle(title)
-    if (!fits) Object.assign(extra, title)
-    const entity: StoreEntity = {
-      id, revision: 0, typeId: OFFICIAL.place, title: fits ? title : { names: {} }, fields, source: source(V2_SOURCES.place, id), visibility: 'private',
-      ...leftover('place', extra),
-    }
-    create('entities', entity)
-  }
+  for (const place of files.places.places) create('entities', placeEntity(place, leftover))
   // 4. Location anchors and part-of relations.
   for (const place of files.places.places) {
-    const anchor = place.location
-    if (anchor) create('anchors', {
-      id: `v2:place-location:${place.id}`, revision: 0, entityId: place.id, source: source(V2_SOURCES.place, place.id), kind: 'location',
-      lat: anchor.lat, lng: anchor.lng, ...(anchor.approximate !== undefined ? { approximate: anchor.approximate } : {}),
-      precision: place.subtype === 'city' ? 'city' : 'region',
-    } satisfies StoreAnchor)
+    const anchor = placeAnchor(place)
+    if (anchor) create('anchors', anchor)
   }
   for (const place of files.places.places) {
-    if (place.partOf !== undefined) create('relations', {
-      id: `v2:part-of:${place.id}`, revision: 0, typeId: OFFICIAL.partOf, fromEntityId: place.id, toEntityId: place.partOf, fields: {},
-      source: source(V2_SOURCES.place, place.id),
-    } satisfies StoreRelation)
+    const relation = placeRelation(place)
+    if (relation) create('relations', relation)
   }
 
   // 5. Media: the asset keeps the V2 media id and the metadata; the entity links place and asset.
   for (const item of files.media.items) {
-    const { id, placeId, title, ...attributes } = item
-    create('assets', { id, revision: 0, source: source(V2_SOURCES.media, id), attributes: attributes as JsonObject } satisfies AssetReference)
-    const fits = title !== undefined && fitsStoreTitle(title)
-    create('entities', {
-      id: allocator.get('media', V2_SOURCES.media, id), revision: 0, typeId: OFFICIAL.media, title: fits ? title : { names: {} },
-      fields: { place: placeId, asset: id }, source: source(V2_SOURCES.media, id), visibility: 'private',
-      ...leftover('media', title !== undefined && !fits ? { title: title as unknown as JsonValue } : {}),
-    } satisfies StoreEntity)
+    create('assets', mediaAsset(item))
+    create('entities', mediaEntity(item, allocator.get('media', V2_SOURCES.media, item.id), leftover))
   }
 
   // 6. Evidence: one per added country, even an empty container.
-  const visitDate = (c: { visitedDate?: unknown }) => (typeof c.visitedDate === 'string' && c.visitedDate !== '' ? c.visitedDate : undefined)
-  const evidenceId = (placeId: string) => `v2:country-visit:${placeId}`
-  for (const country of files.editorState.addedCountries) {
-    const attributes = without(country, visitDate(country) !== undefined ? ['placeId', 'visitedDate'] : ['placeId'])
-    create('evidence', { id: evidenceId(country.placeId), revision: 0, sourceId: V2_SOURCES.countryVisit, recordId: country.placeId, attributes } satisfies Evidence)
-  }
+  for (const country of files.editorState.addedCountries) create('evidence', countryEvidence(country))
 
   // 7. Entries: footprint and planned records, want-to-go items, country visits.
   const entryOfRecord = new Map<string, string>()
@@ -323,50 +254,24 @@ function build(files: V2Files, { now, allocateId, manifest }: MigrateV2Options):
   let footprintRecords = 0, plannedRecords = 0
   const timestamps = { createdAt: now, updatedAt: now }
   for (const record of files.travel.records) {
-    const planned = record.status === 'planned'
-    const sourceId = planned ? V2_SOURCES.planned : V2_SOURCES.travel
-    const { id, placeId, ...rest } = record as unknown as Record<string, JsonValue> & { id: string; placeId: string }
-    const entryId = allocator.get('entry', sourceId, id)
-    entryOfRecord.set(id, entryId)
-    const raw: Record<string, JsonValue> = {}
-    for (const [key, target] of [['start_date', 'startDate'], ['end_date', 'endDate'], ['year', 'year']] as const) {
-      if (Object.hasOwn(rest, key)) { raw[target] = rest[key]; delete rest[key] }
-    }
-    const fields: Record<string, JsonValue> = planned && !Object.keys(raw).length ? {} : { date: { raw } }
-    if (typeof rest.notes === 'string') { fields.note = rest.notes; delete rest.notes }
-    if (typeof rest.trip_title === 'string') { fields.tripTitle = rest.trip_title; delete rest.trip_title }
-    if (typeof rest.hiddenFromHome === 'boolean') { hiddenFromHome.push({ entryId, hidden: rest.hiddenFromHome }); delete rest.hiddenFromHome }
-    if (journeyOf(record as unknown as Record<string, unknown>) !== undefined) delete rest.journeyId
-    if (planned) plannedRecords++; else footprintRecords++
-    create('entries', {
-      id: entryId, revision: 0, layerId: planned ? OFFICIAL.wantToGo : OFFICIAL.travel, entityId: placeId, fields,
-      source: source(sourceId, id), ...timestamps, ...leftover(planned ? 'plannedRecord' : 'footprintRecord', rest),
-    } satisfies LayerEntry)
+    const entryId = allocator.get('entry', recordPlacement(record).sourceId, record.id)
+    entryOfRecord.set(record.id, entryId)
+    const mapped = travelRecordEntry(record, entryId, timestamps, leftover)
+    if (mapped.hiddenFromHome !== undefined) hiddenFromHome.push({ entryId, hidden: mapped.hiddenFromHome })
+    if (mapped.planned) plannedRecords++; else footprintRecords++
+    create('entries', mapped.entry)
   }
   const entryOfWish = new Map<string, string>()
   for (const item of files.wantToGo.items) {
-    const { id, placeId, note, addedAt } = item
-    const entryId = allocator.get('entry', V2_SOURCES.wantToGo, id)
-    entryOfWish.set(id, entryId)
-    const fields: Record<string, JsonValue> = {}
-    // `hidden` is view state (wantToGoHidden), not a field.
-    const extra = without(item, ['id', 'placeId', 'note', 'addedAt', 'hidden'])
-    if (typeof note === 'string') fields.note = note; else if (note !== undefined) extra.note = note
-    if (isCalendarDate(addedAt)) fields.addedAt = addedAt; else extra.addedAt = addedAt
-    create('entries', {
-      id: entryId, revision: 0, layerId: OFFICIAL.wantToGo, entityId: placeId, fields, source: source(V2_SOURCES.wantToGo, id), ...timestamps,
-      ...leftover('wantToGoItem', extra),
-    } satisfies LayerEntry)
+    const entryId = allocator.get('entry', V2_SOURCES.wantToGo, item.id)
+    entryOfWish.set(item.id, entryId)
+    create('entries', wantToGoEntry(item, entryId, timestamps, leftover).entry)
   }
   let countryVisits = 0
   for (const country of files.editorState.addedCountries) {
-    const date = visitDate(country)
-    if (date === undefined) continue
+    if (countryVisitDate(country) === undefined) continue
     countryVisits++
-    create('entries', {
-      id: allocator.get('entry', V2_SOURCES.countryVisit, country.placeId), revision: 0, layerId: OFFICIAL.travel, entityId: country.placeId,
-      fields: { date: { raw: { startDate: date } } }, source: source(V2_SOURCES.countryVisit, country.placeId, [evidenceId(country.placeId)]), ...timestamps,
-    } satisfies LayerEntry)
+    create('entries', countryVisitEntry(country, allocator.get('entry', V2_SOURCES.countryVisit, country.placeId), countryEvidenceId(country.placeId), timestamps)!)
   }
 
   // 8. Journeys: entity plus the original adjacency (the same order routes are derived in).
@@ -379,42 +284,34 @@ function build(files: V2Files, { now, allocateId, manifest }: MigrateV2Options):
   }
   for (const [journeyId, records] of journeys) {
     const entityId = allocator.get('journey', V2_SOURCES.journey, journeyId)
-    create('entities', {
-      id: entityId, revision: 0, typeId: OFFICIAL.journey, title: { names: {} }, fields: {}, source: source(V2_SOURCES.journey, journeyId), visibility: 'private',
-    } satisfies StoreEntity)
-    const ordered = [...records].sort((a, b) => compareJourneyRecords(a as { id: string; start_date?: string }, b as { id: string; start_date?: string }))
-    create('sequences', {
-      id: `v2:journey-sequence:${entityId}`, revision: 0, entityId, entryIds: ordered.map(r => entryOfRecord.get(r.id)!), source: source(V2_SOURCES.journey, journeyId),
-    } satisfies EntrySequence)
+    create('entities', journeyEntity(journeyId, entityId))
+    create('sequences', journeySequence(journeyId, entityId, orderedJourneyMembers(records).map(r => entryOfRecord.get(r.id)!)))
   }
 
   // 9. View rows: one scope per semantic.
-  type Target = { readonly table: ViewItemTable; readonly id: string }
-  const placeTarget = (id: unknown): Target | undefined => (typeof id === 'string' && placeIds.has(id) ? { table: 'entities', id } : undefined)
-  const mediaTarget = (id: unknown): Target | undefined => (typeof id === 'string' && mediaIds.has(id) ? { table: 'assets', id } : undefined)
-  const item = (scope: string, index: number, target: Target, position: string, hidden: boolean, layerId?: string) => create('viewItems', {
-    id: `${scope}#${index}`, revision: 0, scope, itemTable: target.table, itemId: target.id, ...(layerId !== undefined ? { layerId } : {}), position, hidden,
-  } satisfies ViewItem)
-  const setting = (scope: string, key: string, rest: { value?: JsonValue; ref?: Target }) =>
-    create('viewSettings', { id: `${scope}#${key}`, revision: 0, scope, key, ...rest } satisfies ViewSetting)
+  const placeTarget = (id: unknown): ViewTarget | undefined => (typeof id === 'string' && placeIds.has(id) ? { table: 'entities', id } : undefined)
+  const mediaTarget = (id: unknown): ViewTarget | undefined => (typeof id === 'string' && mediaIds.has(id) ? { table: 'assets', id } : undefined)
+  const item = (scope: string, index: number, target: ViewTarget, position: string, hidden: boolean, layerId?: string) =>
+    create('viewItems', viewItemRow(scope, `${scope}#${index}`, target, position, hidden, layerId))
+  const setting = (scope: string, key: string, rest: { value?: JsonValue; ref?: ViewTarget }) => create('viewSettings', viewSettingRow(scope, `${scope}#${key}`, key, rest))
   /** An ordered list; elements that are no row (or repeat one) become unresolved settings. */
-  const list = (scope: string, values: readonly unknown[], resolve: (value: unknown) => Target | undefined, hidden: boolean, layerId?: string) => {
-    const positions = listPositions(values.length), used = new Set<string>()
-    values.forEach((value, index) => {
-      const target = resolve(value), key = target && JSON.stringify([target.table, target.id])
-      if (target && !used.has(key!)) { used.add(key!); item(scope, index, target, positions[index], hidden, layerId); return }
+  const list = (scope: string, values: readonly unknown[], resolve: (value: unknown) => ViewTarget | undefined, hidden: boolean, layerId?: string) => {
+    const positions = listPositions(values.length)
+    resolveListElements(values, resolve).forEach(({ value, target }, index) => {
+      if (target) { item(scope, index, target, positions[index], hidden, layerId); return }
       unresolved[scope] = (unresolved[scope] ?? 0) + 1
-      setting(scope, UNRESOLVED_KEY_PREFIX + positions[index], { value: { position: positions[index], id: value as JsonValue } })
+      const position = positions[index]
+      create('viewSettings', unresolvedSetting(scope, `${scope}#${UNRESOLVED_KEY_PREFIX}${position}`, position, value))
     })
   }
   /** A map of lists keyed by place id: a key setting per key, its list in mapListScope. */
-  const map = (scope: string, value: Readonly<Record<string, readonly unknown[]>>, resolve: (value: unknown) => Target | undefined, hidden: boolean) => {
+  const map = (scope: string, value: Readonly<Record<string, readonly unknown[]>>, resolve: (value: unknown) => ViewTarget | undefined, hidden: boolean) => {
     for (const [key, values] of Object.entries(value)) {
       setting(scope, key, { ref: { table: 'entities', id: key } })
       list(mapListScope(scope, key), values, resolve, hidden)
     }
   }
-  const entry = (table: Map<string, string>) => (id: unknown): Target | undefined => {
+  const entry = (table: Map<string, string>) => (id: unknown): ViewTarget | undefined => {
     const entryId = typeof id === 'string' ? table.get(id) : undefined
     return entryId === undefined ? undefined : { table: 'entries', id: entryId }
   }

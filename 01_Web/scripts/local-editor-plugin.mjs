@@ -29,8 +29,8 @@ import { mediaJobRoute, handleMediaJobRead, handleMediaJobPreview, handleMediaJo
 // RFC-LOC-1 PR5a：本地编辑器只读写 data/v2/（V2 写入层：v2-editor-store.mjs 与 v2-media-store.mjs）。旧格式的写入逻辑、
 // 数据模式与回滚开关都已删除。私人目录有没迁移的旧数据时（./legacy-data.mjs），全部写入端点返回 409 E_LEGACY_UNMIGRATED。
 // 3C-3：私人根下有 data/store/world.sqlite 时是实验性的新库模式（./private-data-source.mjs，每次读写现判）。这时 App 读
-// 新库的投影（./store-session.mjs，按需加载，公开模式与 V2 模式不加载 node:sqlite），写入只开放「修改想去」，
-// 其余写入端点一律 409 E_STORE_MODE_LIMITED，同一个私人根任何时候只有一个写入源。
+// 新库的投影（./store-session.mjs，按需加载，公开模式与 V2 模式不加载 node:sqlite）。3C-4a 起 8 个编辑端点都写新库（同样的
+// V2 写入规则，只换存储）；媒体的 3 个端点与媒体任务仍然 409 E_STORE_MODE_LIMITED，同一个私人根任何时候只有一个写入源。
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const virtualPrivateDataId = 'virtual:starmap-private-data'
 const resolvedPrivateDataId = `\0${virtualPrivateDataId}`
@@ -504,7 +504,7 @@ export function travelAtlasLocalEditor(options = {}) {
   // 新库模式（3C-3）：这个插件实例的新库会话，第一次用到时才加载 ./store-session.mjs。整个进程只保留一个连接。
   const storePaths = privatePaths
   let storeSessionLoading
-  const storeSession = () => (storeSessionLoading ??= import('./store-session.mjs').then((module) => module.createStoreSession(storePaths)))
+  const storeSession = () => (storeSessionLoading ??= import('./store-session.mjs').then((module) => module.createStoreSession(storePaths, { countryCatalog: countryCatalogByCode })))
   const releaseStore = async () => { if (storeSessionLoading) await (await storeSessionLoading).close() }
   const storeMode = () => options.forceSample !== true && privateDataSource(storePaths) === 'store'
 
@@ -624,7 +624,7 @@ export function travelAtlasLocalEditor(options = {}) {
           // 否则 data/v2/ 被写出后，迁移工具的 --apply 会因为输出目录非空而拒绝运行。每个请求现判（只看文件在不在）。
           const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
           if (refusal) return sendJson(response, refusal.status, refusal.body)
-          // 3C-3 新库模式：只有「修改想去」写新库，其余写入端点 409 E_STORE_MODE_LIMITED（不读请求体）。
+          // 新库模式：8 个编辑端点写新库（3C-4a）；媒体端点与媒体任务 409 E_STORE_MODE_LIMITED（不读请求体）。
           if (storeMode()) {
             const session = await storeSession()
             const write = session.writeRoute(request.method, url.pathname)
@@ -632,7 +632,9 @@ export function travelAtlasLocalEditor(options = {}) {
               const known = jobRoute || v2MediaRoute(request.method, url.pathname) || v2EditorRoute(request.method, url.pathname)
               return sendJson(response, known ? 409 : 404, v2ErrorBody(known ? 'E_STORE_MODE_LIMITED' : 'E_UNKNOWN_ENDPOINT'))
             }
-            const result = await write({ headers: request.headers, input: await readJsonBody(request) })
+            const result = await write({
+              headers: request.headers, input: await readJsonBody(request), ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }),
+            })
             // 提交之后（以及结果不明时）让虚拟模块失效；客户端照旧整页刷新。
             invalidatePrivateDataModule()
             return sendJson(response, result.status, result.body)

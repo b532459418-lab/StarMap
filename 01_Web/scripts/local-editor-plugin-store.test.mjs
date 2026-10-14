@@ -1,8 +1,8 @@
 /**
- * The local editor plugin in the new-library mode (3C-3): the virtual module reads the store's projection and its
- * revision, GET /editor/state reads the same model, the want-to-go update is written to the store (and invalidates the
- * module), write endpoints the store does not accept are refused with 409 E_STORE_MODE_LIMITED before their body is
- * read, and an unopenable store is an error, never a fallback to V2.
+ * The local editor plugin in the new-library mode (3C-3, 3C-4a): the virtual module reads the store's projection and
+ * its revision, GET /editor/state reads the same model, the editor writes are written to the store (and invalidate the
+ * module), the media endpoints and media tasks are refused with 409 E_STORE_MODE_LIMITED before their body is read,
+ * and an unopenable store is an error, never a fallback to V2.
  * The harness (store-mode.fixture.mjs) is the one of local-editor-plugin.test.mjs (no real server).
  */
 import { test } from 'node:test'
@@ -20,10 +20,9 @@ import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
 
-/** Every write endpoint of the local editor (the 11 of V2 and the media task actions). */
-const WRITE_ENDPOINTS = [
-  ['PUT', 'state'], ['POST', 'records'], ['POST', 'countries'], ['POST', 'countries/delete'], ['POST', 'wanttogo'],
-  ['POST', 'wanttogo/delete'], ['POST', 'wanttogo/convert'], ['POST', 'upload'], ['POST', 'import'], ['POST', 'media/delete'],
+/** The write endpoints the store does not accept yet (3C-4c): the three media endpoints and the media task actions. */
+const MEDIA_ENDPOINTS = [
+  ['POST', 'upload'], ['POST', 'import'], ['POST', 'media/delete'],
   ['POST', 'media/jobs'], ...['preview', 'import', 'pause', 'close', 'abandon'].map((action) => ['POST', `media/jobs/018bd504-c600-7000-8000-000000000001/${action}`]),
 ]
 
@@ -85,13 +84,27 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.deepEqual(captured.reloads, [])
     })
 
-    await t.test('write endpoints the store does not accept are 409 E_STORE_MODE_LIMITED, unread and unwritten', async () => {
+    await t.test('the other editor writes go to the store too, with the plugin country catalog (3C-4a)', async () => {
+      const country = await requestTo(handler, {
+        url: `${editorPrefix}countries`, content: Buffer.from(JSON.stringify({ countryCode: 'JP', visitedDate: '2026-04-01' })),
+        headers: { ...authorizedHeaders, 'x-starmap-request-id': '01960000-0000-7000-8000-00000000e002', 'x-starmap-base-revision': '2' },
+      })
+      assert.equal(country.status, 201, JSON.stringify(country.body))
+      assert.equal(country.body.revision, 3)
+      const module = await moduleOf(plugin)
+      assert.equal(module.privateStoreRevision, 3)
+      const added = module.privateV2Files.editorState.addedCountries.find((entry) => entry.placeId === country.body.countryId)
+      assert.deepEqual(added, { placeId: country.body.countryId, region: 'Asia', visitedDate: '2026-04-01' })
+      assert.equal(module.privateV2Files.places.places.find((place) => place.id === country.body.countryId).externalIds.iso3166Alpha2, 'JP')
+    })
+
+    await t.test('media endpoints and media tasks are 409 E_STORE_MODE_LIMITED, unread and unwritten', async () => {
       const before = await treeDigest(root)
-      for (const [method, route] of WRITE_ENDPOINTS) {
+      for (const [method, route] of MEDIA_ENDPOINTS) {
         const result = await requestTo(handler, { url: editorPrefix + route, method, content: Buffer.from('{') })
         assert.equal(result.status, 409, `${method} ${route}`)
         assert.equal(result.body.code, 'E_STORE_MODE_LIMITED', `${method} ${route}`)
-        assert.equal(result.body.error, '新库模式（实验性）目前只开放修改想去，其他编辑会在后续接入。本次没有保存。')
+        assert.equal(result.body.error, '新库模式（实验性）目前还不能编辑媒体（上传、导入、删除和媒体任务），会在后续接入。本次没有保存。')
         assert.equal(result.bodyReads, 0, `${method} ${route}`)
       }
       const unknown = await requestTo(handler, { url: `${editorPrefix}something-new` })

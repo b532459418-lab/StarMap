@@ -14,12 +14,15 @@
  *   ... --segment http       want-to-go note updates over real HTTP through the plugin middleware, in each mode: the
  *                            client's end to end, the host commit, and the module load that the page reload triggers
  *   ... --segment pipeline   the App side of the compatibility path (validateV2Files, readV2, derive) and sizes
+ *   ... --segment editors    (3C-4a) the eight editor writes over HTTP in each mode, on freshly generated roots: per
+ *                            endpoint the client's end to end and, in the store mode, the host's V2 write, diff, commit
+ *                            and total
  *
  * Each segment prints one JSON line and appends it to <dir>/results.jsonl. Run every segment in its own process (the
  * store's open is measured cold). `--scale tiny` is the smoke scale.
  */
 import { appendFileSync, mkdirSync } from 'node:fs'
-import { cp, mkdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, rm, writeFile } from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -191,9 +194,13 @@ async function serve(handlers) {
 const directAgent = new http.Agent({ keepAlive: false })
 
 /** POST JSON to the local server with node:http and the direct agent; resolves the parsed body. */
-function postJson(url, headers, body) {
+const postJson = (url, headers, body) => requestJson('POST', url, headers, body)
+
+/** One request to the local server (body: JSON text, or undefined); resolves the parsed body. */
+function requestJson(method, url, headers, body) {
   return new Promise((resolve, reject) => {
-    const request = http.request(url, { method: 'POST', agent: directAgent, headers: { ...headers, 'content-length': Buffer.byteLength(body) } }, (response) => {
+    const length = body === undefined ? {} : { 'content-length': Buffer.byteLength(body) }
+    const request = http.request(url, { method, agent: directAgent, headers: { ...headers, ...length } }, (response) => {
       let text = ''
       response.setEncoding('utf8')
       response.on('data', (chunk) => { text += chunk })
@@ -244,6 +251,108 @@ export async function httpSegment(dir, scale) {
   return result
 }
 
+/** Real ISO codes outside the synthetic countries (AA–DV): the countries the `editors` segment adds. */
+const BENCH_COUNTRY_CODES = Object.freeze([
+  'FR', 'GB', 'IT', 'JP', 'KR', 'NL', 'NO', 'PL', 'PT', 'SE', 'ES', 'FI', 'GR', 'HU', 'IE', 'IS', 'MX', 'NZ', 'PE', 'RO',
+  'SG', 'TH', 'TR', 'UA', 'US', 'VN', 'ZA', 'EG', 'KE', 'MA', 'LT', 'LV',
+])
+
+/** The host's line of one store write (store-session.mjs): V2 write, diff, commit and total milliseconds. */
+const HOST_LINE = /：V2 写入 ([\d.]+) ms，差异 ([\d.]+) ms（(\d+) 条命令(?:，重新编号 \d+ 个 scope)?），提交 ([\d.]+) ms（修订号 \d+），共 ([\d.]+) ms$/
+
+/**
+ * `editors` (3C-4a spec §2.5): the eight editor writes over HTTP through the plugin, in each mode, on freshly generated
+ * roots (<dir>/editors), `scale.updates` times each in this order: countries, records, wanttogo, wanttogo/update,
+ * wanttogo/convert (the items just added, then planned records), state (a country swap), state (hiding the added
+ * countries), wanttogo/delete (hidden items), countries/delete (the added countries). Per endpoint: the client's
+ * end-to-end milliseconds and, in the store mode, the host's (V2 write, diff, commit, total) from its log line.
+ */
+export async function editorsSegment(dir, scale) {
+  // Fresh roots of their own (a copied root would be a moved library: V2 writes refuse it with E_LIBRARY_ROOT_MOVED).
+  const base = path.join(dir, 'editors')
+  await rm(base, { recursive: true, force: true })
+  await generateRoots(base, scale)
+  const copies = rootsOf(base)
+  const result = {}
+  for (const mode of ['v2', 'store']) {
+    const lines = []
+    const { plugin, handlers, load, restoreConsole } = await pluginFor(copies[mode], (line) => lines.push(line))
+    const { server, url } = await serve(handlers)
+    const timings = {}
+    let requestCount = 0
+    try {
+      const read = await import(`data:text/javascript,${encodeURIComponent((await plugin.load(plugin.resolveId('virtual:starmap-private-data'))))}`)
+      let revision = read.privateStoreRevision
+      // The hidden want-to-go items to delete, from the first read (no write before the deletions touches them). The module
+      // is not imported again: every data: import stays in the module map for the life of the process.
+      const hidden = read.privateV2Files.wantToGo.items.filter((item) => item.hidden).map((item) => item.id).slice(0, scale.updates)
+      const send = async (label, method, route, input) => {
+        const headers = { 'content-type': 'application/json', 'x-travelatlas-local-editor': '1' }
+        if (mode === 'store') {
+          headers['x-starmap-request-id'] = `01970000-0000-7000-8000-${hex(++requestCount)}`
+          headers['x-starmap-base-revision'] = String(revision)
+        }
+        const before = lines.length
+        const started = performance.now()
+        const body = await requestJson(method, `${url}/__travelatlas/editor/${route}`, headers, JSON.stringify(input))
+        const endToEnd = ms(started)
+        if (!body.ok) throw new Error(`${mode} ${label} failed: ${body.code}`)
+        if (mode === 'store') revision = body.revision
+        const entry = timings[label] ??= { endToEnd: [], v2Write: [], diff: [], commands: [], commit: [], host: [] }
+        entry.endToEnd.push(endToEnd)
+        const host = lines.slice(before).map((line) => HOST_LINE.exec(line)).find(Boolean)
+        if (host) {
+          entry.v2Write.push(Number(host[1])); entry.diff.push(Number(host[2])); entry.commands.push(Number(host[3]))
+          entry.commit.push(Number(host[4])); entry.host.push(Number(host[5]))
+        }
+        await load()
+        return body
+      }
+      const codes = BENCH_COUNTRY_CODES.slice(0, scale.updates)
+      if (codes.length < scale.updates) throw new Error('not enough bench country codes')
+      const countryIds = []
+      for (const [n, code] of codes.entries()) countryIds.push((await send('countries', 'POST', 'countries', { countryCode: code, visitedDate: `2024-0${1 + (n % 9)}-1${n % 10}` })).countryId)
+      for (const [n, code] of codes.entries()) {
+        await send('records', 'POST', 'records', {
+          country: code, country_en: code, city: `测试城市 ${n}`, city_en: `Bench city ${n}`, start_date: `2025-0${1 + (n % 9)}-1${n % 10}`,
+          lat: 10 + n, lng: 20 + n, country_code: code, createNew: true,
+        })
+      }
+      const wishIds = []
+      for (const [n, code] of codes.entries()) {
+        wishIds.push((await send('wanttogo', 'POST', 'wanttogo', {
+          place: { kind: 'city', nameZh: `想去城市 ${n}`, nameEn: `Bench wish ${n}`, countryCode: code, lat: 30 + n, lng: 40 + n }, createNew: true,
+        })).id)
+      }
+      for (let n = 0; n < scale.updates; n++) await send('wanttogo/update', 'POST', 'wanttogo/update', { id: `wish-${(n * 97) % scale.wishes}`, note: `Synthetic bench note ${n}` })
+      for (let n = 0; n < scale.updates; n++) {
+        const input = n % 2 === 0
+          ? { source: 'want-to-go', id: wishIds[n], startDate: '2026-03-01', tripTitle: `Bench trip ${n}` }
+          : { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' }
+        await send('wanttogo/convert', 'POST', 'wanttogo/convert', input)
+      }
+      const editorState = async () => (await requestJson('GET', `${url}/__travelatlas/editor/state`, {}, undefined)).state
+      for (let n = 0; n < scale.updates; n++) {
+        const state = await editorState()
+        const order = [...state.countryOrder]
+        ;[order[0], order[1]] = [order[1], order[0]]
+        await send('state', 'PUT', 'state', { ...state, countryOrder: order })
+      }
+      await send('state (hide countries)', 'PUT', 'state', { ...(await editorState()), hiddenCountryIds: countryIds })
+      for (const id of hidden) await send('wanttogo/delete', 'POST', 'wanttogo/delete', { ids: [id] })
+      for (const id of countryIds) await send('countries/delete', 'POST', 'countries/delete', { ids: [id] })
+      result[mode] = Object.fromEntries(Object.entries(timings).map(([label, entry]) => [label, Object.fromEntries(
+        Object.entries(entry).filter(([, values]) => values.length).map(([key, values]) => [key, stats(values)]),
+      )]))
+    } finally {
+      await new Promise((resolve) => server.close(resolve))
+      await plugin.buildEnd()
+      restoreConsole()
+    }
+  }
+  return result
+}
+
 /** `pipeline`: what the App does with the module, and what the direct-Canonical alternative would skip. */
 export async function pipelineSegment(dir) {
   const roots = rootsOf(dir)
@@ -265,13 +374,13 @@ export async function pipelineSegment(dir) {
   }
 }
 
-const SEGMENTS = { generate: generateRoots, read: readSegment, http: httpSegment, pipeline: pipelineSegment }
+const SEGMENTS = { generate: generateRoots, read: readSegment, http: httpSegment, pipeline: pipelineSegment, editors: editorsSegment }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const arg = (name) => { const at = process.argv.indexOf(name); return at > 0 ? process.argv[at + 1] : undefined }
   const dir = arg('--dir'), segment = arg('--segment'), scaleName = arg('--scale') ?? 'real'
   if (!dir || !Object.hasOwn(SEGMENTS, segment) || !Object.hasOwn(MODE_BENCH_SCALES, scaleName)) {
-    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline [--scale real|tiny]')
+    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline|editors [--scale real|tiny]')
     process.exitCode = 1
   } else {
     mkdirSync(dir, { recursive: true })
