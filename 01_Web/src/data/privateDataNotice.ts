@@ -6,6 +6,8 @@
  * - 私人目录有没迁移的旧数据（判定在 scripts/legacy-data.mjs，经虚拟模块注入）时，显示迁移提示：旧数据还没有迁移，
  *   怎么迁移，不需要旧数据时怎么办。它优先于下面的空状态（未迁移时 data/v2/ 没有文件，地图一定是空的）。
  *   只是说明，不渲染可操作的按钮。
+ * - 新库模式下新库没有通过打开检查、只能读取时（3C-4b，`storeReadOnly`），显示只读提示：可能已损坏，当前只读，请从备份恢复。
+ *   它优先于其余两种提示（数据照常显示，所以不会是空状态）。调用方只在本地编辑器可用时传入 true。
  * - 否则没有任何足迹记录（visited 与 planned），也没有想去条目（含隐藏的）时，显示决定 E 的空状态
  *   「还没有足迹，从添加第一个城市开始。」；有数据时什么都不显示。
  *
@@ -24,11 +26,16 @@ export const LEGACY_UNMIGRATED_NOTICE: readonly string[] = Object.freeze([
   '不需要这些旧数据的话，把私人目录 data/ 下的四个旧文件（travel-map、want-to-go、editor-state、user-media 的 .local.json）移到别处，然后刷新页面。',
 ])
 
+/** 只读提示（3C-4b）：新库可能已损坏，当前只读，请从备份恢复。 */
+export const STORE_READ_ONLY_NOTICE = '新库可能已损坏，当前只读。请从备份恢复：npm run store:restore'
+
 export interface PrivateDataNoticeInput {
   /** 个人模式（`import.meta.env.MODE === 'personal'`）。 */
   personal: boolean
   /** 私人目录有没迁移的旧数据（`../data/rawInputs.ts` 的 `legacyUnmigrated`；读公开样例时恒为 false）。 */
   legacyUnmigrated: boolean
+  /** 新库没有通过打开检查、只能读取（`../data/rawInputs.ts` 的 `storeReadOnly`，且本地编辑器可用）。缺省为 false。 */
+  storeReadOnly?: boolean
   /** 足迹记录总数：visited（含不上首页、被 editor 隐藏的）+ planned。 */
   travelRecordCount: number
   /** 想去条目总数（含隐藏的）。 */
@@ -36,7 +43,7 @@ export interface PrivateDataNoticeInput {
 }
 
 export interface PrivateDataNoticeContent {
-  kind: 'legacy-unmigrated' | 'empty'
+  kind: 'store-read-only' | 'legacy-unmigrated' | 'empty'
   /** 要显示的段落，按顺序。 */
   lines: readonly string[]
 }
@@ -44,6 +51,7 @@ export interface PrivateDataNoticeContent {
 /** 要显示的内容；不显示时为 undefined。 */
 export const privateDataNotice = (input: PrivateDataNoticeInput): PrivateDataNoticeContent | undefined => {
   if (!input.personal) return undefined
+  if (input.storeReadOnly === true) return { kind: 'store-read-only', lines: [STORE_READ_ONLY_NOTICE] }
   if (input.legacyUnmigrated) return { kind: 'legacy-unmigrated', lines: LEGACY_UNMIGRATED_NOTICE }
   if (input.travelRecordCount > 0 || input.wantToGoItemCount > 0) return undefined
   return { kind: 'empty', lines: [V2_EMPTY_NOTICE] }

@@ -1,7 +1,7 @@
 /**
  * 本地编辑器插件里与私人数据有关的两件事，抽成纯函数以便单测（RFC-LOC-1 PR3b-1 规格 §2.2、§2.3；PR5a 规格 §4.1；3C-3）：
  *
- * 1. 虚拟模块 `virtual:starmap-private-data` 的内容（三个导出）：
+ * 1. 虚拟模块 `virtual:starmap-private-data` 的内容（四个导出）：
  *    - `privateV2Files`：个人模式下是五个 V2 文件（缺的为 undefined）；公开模式为 undefined。V2 模式下是 `data/v2/`
  *      的文件；新库模式（3C-3，./private-data-source.mjs）下是新库经投影与 serializeV2 得到的五个文件
  *      （./store-session.mjs）。App 只读这五个文件，从不读旧格式的文件。
@@ -9,6 +9,8 @@
  *      为 true 时 App 显示迁移提示（src/data/privateDataNotice.ts）。新库模式下恒为 false。
  *    - `privateStoreRevision`（3C-3）：新库模式下是全库修订号（写入时作为 `x-starmap-base-revision`）；
  *      V2 模式与公开模式为 undefined。
+ *    - `privateStoreReadOnly`（3C-4b）：新库模式下新库没有通过打开检查（可能已损坏）、只能读取时为 true，页面显示只读提示
+ *      （src/data/privateDataNotice.ts）；其余情况恒为 false。
  * 2. 私人数据目录的文件变化要不要处理（让虚拟模块失效、按原有条件整页刷新）：`data/v2/` 之内的新建、修改、删除，
  *    以及四个旧数据文件的新建与删除（它们的有无决定「未迁移」），以及新库文件 `data/store/world.sqlite` 的新建与删除
  *    （它的有无决定数据模式；它的修改是新库自己的提交，不处理）。这样迁移工具写出 V2 文件或新库、导入器更新媒体目录、
@@ -26,14 +28,14 @@ import { storeFileOf } from './private-data-source.mjs'
 import { V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 
 /** 虚拟模块的导出名（顺序即源码里的顺序）。 */
-export const PRIVATE_DATA_MODULE_EXPORTS = Object.freeze(['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision'])
+export const PRIVATE_DATA_MODULE_EXPORTS = Object.freeze(['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly'])
 
 /**
  * 虚拟模块的全部导出。`v2Values` 是五个 V2 文件的值（键同 V2_PRIVATE_FILE_KEYS；文件不存在为 undefined），
- * `legacyUnmigrated` 是 ./legacy-data.mjs 的判定，`storeRevision` 是新库模式的全库修订号（V2 模式不传）。
- * 公开模式忽略三者。
+ * `legacyUnmigrated` 是 ./legacy-data.mjs 的判定，`storeRevision` 是新库模式的全库修订号（V2 模式不传），
+ * `storeReadOnly` 是新库模式下「库损坏、只读」的判定（./store-session.mjs）。公开模式忽略它们。
  */
-export function privateDataModuleExports({ profile, v2Values = {}, legacyUnmigrated = false, storeRevision }) {
+export function privateDataModuleExports({ profile, v2Values = {}, legacyUnmigrated = false, storeRevision, storeReadOnly = false }) {
   const personal = profile === 'personal'
   return {
     privateV2Files: personal
@@ -41,6 +43,7 @@ export function privateDataModuleExports({ profile, v2Values = {}, legacyUnmigra
       : undefined,
     privateLegacyUnmigrated: personal && legacyUnmigrated === true,
     privateStoreRevision: personal && Number.isSafeInteger(storeRevision) && storeRevision >= 0 ? storeRevision : undefined,
+    privateStoreReadOnly: personal && storeReadOnly === true,
   }
 }
 

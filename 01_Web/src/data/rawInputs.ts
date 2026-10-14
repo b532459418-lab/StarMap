@@ -21,7 +21,7 @@ import v2SampleMedia from './v2-sample/user-media.json'
 import v2SamplePlaces from './v2-sample/places.json'
 import v2SampleTravel from './v2-sample/travel-map.json'
 import v2SampleWantToGo from './v2-sample/want-to-go.json'
-import { privateLegacyUnmigrated, privateStoreRevision, privateV2Files } from 'virtual:starmap-private-data'
+import { privateLegacyUnmigrated, privateStoreReadOnly, privateStoreRevision, privateV2Files } from 'virtual:starmap-private-data'
 import type { AppInputs, V2FileInputs } from './canonical/canonicalForInputs.ts'
 
 /** 原 worldGraph.ts 的 worldGraphSessionNow：模块加载时固定一次，适配器要求 now 必填且不读时钟。 */
@@ -65,3 +65,9 @@ export const legacyUnmigrated: boolean = !useSampleData && privateLegacyUnmigrat
  * 「修改想去」的请求带上它作为 x-starmap-base-revision。
  */
 export const storeRevision: number | undefined = useSampleData ? undefined : privateStoreRevision
+
+/**
+ * 新库模式（3C-4b）：新库没有通过打开检查（可能已损坏），只能读取。数据照常显示，写入一律被拒绝（E_STORE_READ_ONLY）；
+ * 地图页显示只读提示（./privateDataNotice.ts，只在本地编辑器可用时）。读公开样例时恒为 false。
+ */
+export const storeReadOnly: boolean = !useSampleData && privateStoreReadOnly === true

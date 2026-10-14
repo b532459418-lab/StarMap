@@ -16,4 +16,9 @@ declare module 'virtual:starmap-private-data' {
    * 作为 x-starmap-base-revision 带上。V2 模式与公开模式为 undefined。
    */
   export const privateStoreRevision: number | undefined
+  /**
+   * 新库模式（3C-4b）下新库没有通过打开检查（可能已损坏）、只能读取时为 true：数据照常显示，写入一律被拒绝
+   * （E_STORE_READ_ONLY），页面显示只读提示。其余情况恒为 false。
+   */
+  export const privateStoreReadOnly: boolean
 }

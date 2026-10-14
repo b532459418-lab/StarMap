@@ -63,8 +63,8 @@ test('getPrivatePaths：V2 文件在 data/v2/ 下，文件名与 v2Schema.ts 的
 // 虚拟模块
 // ---------------------------------------------------------------------------
 
-test('虚拟模块有三个导出：privateV2Files、privateLegacyUnmigrated 与 privateStoreRevision（3C-3）；旧格式的四个导出与 privateDataMode 已删除', () => {
-  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision'])
+test('虚拟模块有四个导出：privateV2Files、privateLegacyUnmigrated、privateStoreRevision（3C-3）与 privateStoreReadOnly（3C-4b）；旧格式的四个导出与 privateDataMode 已删除', () => {
+  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly'])
   for (const profile of ['public', 'personal']) {
     const exports = privateDataModuleExports({ profile, v2Values: V2_VALUES, legacyUnmigrated: true })
     assert.deepEqual(Object.keys(exports), PRIVATE_DATA_MODULE_EXPORTS, profile)
@@ -72,12 +72,12 @@ test('虚拟模块有三个导出：privateV2Files、privateLegacyUnmigrated 与
   }
 })
 
-test('虚拟模块 · 公开模式：privateV2Files 与 privateStoreRevision 为 undefined，privateLegacyUnmigrated 恒为 false；忽略传入的值', async () => {
-  const expected = { privateV2Files: undefined, privateLegacyUnmigrated: false, privateStoreRevision: undefined }
+test('虚拟模块 · 公开模式：privateV2Files 与 privateStoreRevision 为 undefined，privateLegacyUnmigrated 与 privateStoreReadOnly 恒为 false；忽略传入的值', async () => {
+  const expected = { privateV2Files: undefined, privateLegacyUnmigrated: false, privateStoreRevision: undefined, privateStoreReadOnly: false }
   assert.deepEqual(privateDataModuleExports({ profile: 'public' }), expected)
-  assert.deepEqual(privateDataModuleExports({ profile: 'public', v2Values: V2_VALUES, legacyUnmigrated: true, storeRevision: 7 }), expected)
+  assert.deepEqual(privateDataModuleExports({ profile: 'public', v2Values: V2_VALUES, legacyUnmigrated: true, storeRevision: 7, storeReadOnly: true }), expected)
   const source = renderPrivateDataModule(expected)
-  assert.equal(source, 'export const privateV2Files = undefined;\nexport const privateLegacyUnmigrated = false;\nexport const privateStoreRevision = undefined;')
+  assert.equal(source, 'export const privateV2Files = undefined;\nexport const privateLegacyUnmigrated = false;\nexport const privateStoreRevision = undefined;\nexport const privateStoreReadOnly = false;')
   assert.deepEqual({ ...(await evaluateModule(source)) }, expected)
 })
 
@@ -110,6 +110,18 @@ test('虚拟模块 · 新库模式（3C-3）：privateStoreRevision 是全库修
   assert.equal(privateDataModuleExports({ profile: 'personal', storeRevision: 0 }).privateStoreRevision, 0)
   for (const invalid of [-1, 1.5, '3', null, Number.MAX_SAFE_INTEGER + 1]) {
     assert.equal(privateDataModuleExports({ profile: 'personal', storeRevision: invalid }).privateStoreRevision, undefined, String(invalid))
+  }
+})
+
+test('虚拟模块 · 新库模式（3C-4b）：privateStoreReadOnly 只在库损坏、只读时为 true，数据照常导出；只接受 true', async () => {
+  const exports = privateDataModuleExports({ profile: 'personal', v2Values: V2_VALUES, storeRevision: 3, storeReadOnly: true })
+  const module = await evaluateModule(renderPrivateDataModule(exports))
+  assert.equal(module.privateStoreReadOnly, true)
+  assert.equal(module.privateStoreRevision, 3)
+  assert.deepEqual(Object.keys(module.privateV2Files), ['places', 'wantToGo', 'media'])
+  assert.equal(privateDataModuleExports({ profile: 'personal', storeRevision: 3 }).privateStoreReadOnly, false)
+  for (const value of [false, 'yes', 1, undefined]) {
+    assert.equal(privateDataModuleExports({ profile: 'personal', storeReadOnly: value }).privateStoreReadOnly, false, String(value))
   }
 })
 

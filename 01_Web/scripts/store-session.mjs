@@ -8,8 +8,14 @@
  *
  * - One writable connection per dev server process (`open`): opened when the server starts, kept until it closes
  *   (`close`, which writes the clean-shutdown mark). A store that another process is writing makes the open
- *   E_STORE_BUSY; it is retried a few times (OPEN_RETRIES × OPEN_RETRY_DELAY_MS) and then reported. Any open failure,
- *   including a failed open check (read-only diagnostic), is an error the App shows: the mode never falls back to V2.
+ *   E_STORE_BUSY; it is retried a few times (OPEN_RETRIES × OPEN_RETRY_DELAY_MS) and then reported. An open failure is
+ *   an error the App shows: the mode never falls back to V2.
+ * - A damaged store (3C-4b, design 3B §5 "打开检查失败 → 只读"): when the open check fails with E_STORE_CORRUPT (the
+ *   quick_check after an unclean shutdown) but the store can still be read, the session keeps the read-only handle. The
+ *   App shows the projected data as usual, the virtual module says so (`readOnly`, the App's persistent notice), and
+ *   every write is refused with 409 E_STORE_READ_ONLY (a replay of a request committed before still answers with its
+ *   receipt). The same happens when corruption is found while running (the host turns the handle read-only). Every
+ *   other open diagnostic (E_STORE_TOO_NEW, E_STORE_SCHEMA, …) and a store that cannot be read stay errors.
  * - Read model (`moduleExports`): the V2 view — the five V2 files the App reads through readV2 as before — and the
  *   store-wide revision. At start-up it is projected from the store (readRowsUnchecked → projectStoreToCanonical →
  *   serializeV2, each step timed in the log; rows the projection cannot express are counted there, never an error).
@@ -128,7 +134,7 @@ const STORE_ACTOR = 'local-editor'
 
 /** Host codes the client handles by name, with their status; every other failure is E_STORE_FAILED. */
 const CLIENT_CODES = Object.freeze({
-  E_STALE: 409, E_OPERATION_CONFLICT: 409, E_LIBRARY_BUSY: 409, E_STORE_BUSY: 409, E_OUTCOME_UNKNOWN: 500,
+  E_STALE: 409, E_OPERATION_CONFLICT: 409, E_LIBRARY_BUSY: 409, E_STORE_BUSY: 409, E_STORE_READ_ONLY: 409, E_OUTCOME_UNKNOWN: 500,
 })
 
 /** A failure of a store read or write as the local editor's response: { status, body } (codes only, never values). */
@@ -179,6 +185,9 @@ export class StoreSessionError extends Error {
   }
 }
 
+/** A handle that is read-only because the store is damaged: its open check failed with E_STORE_CORRUPT, or corruption was found since. */
+const damaged = (opened) => opened?.readOnly === true && opened.diagnostic?.code === 'E_STORE_CORRUPT'
+
 /** A cache key: the store's identity and revision (a restore records a new restore mark). */
 const cacheKeyOf = (meta) => JSON.stringify([meta.libraryId, meta.revision, meta.restoredFrom?.restoredAt ?? null])
 
@@ -186,8 +195,10 @@ const cacheKeyOf = (meta) => JSON.stringify([meta.libraryId, meta.revision, meta
  * Open `file` (writable, or read-only with `options.readOnly`), retrying while it is busy. A handle with an open
  * diagnostic (read-only) is closed and reported as StoreSessionError with the diagnostic's code; so is every other
  * failure. A read-only open that met a writer's commit carries the diagnostic E_STORE_BUSY: retried the same way.
+ * With `acceptDamaged`, a store whose open check failed with E_STORE_CORRUPT but which can still be read (store_meta
+ * reads) is returned as its read-only handle (3C-4b).
  */
-export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES, retryDelayMs = OPEN_RETRY_DELAY_MS, sleep = delay } = {}) {
+export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES, retryDelayMs = OPEN_RETRY_DELAY_MS, sleep = delay } = {}, { acceptDamaged = false } = {}) {
   for (let attempt = 0; ; attempt++) {
     let handle
     try { handle = openStore(file, options) } catch (error) {
@@ -197,6 +208,12 @@ export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES
     }
     if (!handle.diagnostic) return handle
     const { code } = handle.diagnostic
+    if (acceptDamaged && code === 'E_STORE_CORRUPT') {
+      try {
+        handle.meta()
+        return handle
+      } catch { /* Not even store_meta reads: an error like any other. */ }
+    }
     await handle.close()
     if (code === 'E_STORE_BUSY' && attempt < retries) { await sleep(retryDelayMs); continue }
     throw new StoreSessionError(code)
@@ -249,9 +266,12 @@ export function createStoreSession(privatePaths, {
     opening ??= (async () => {
       const started = performance.now()
       try {
-        handle = await openStoreWithRetry(file, hostOptions, retry)
+        handle = await openStoreWithRetry(file, hostOptions, retry, { acceptDamaged: !readOnly })
         openMs = ms(started)
-        schedulePrune('open')
+        if (damaged(handle)) {
+          log('[StarMap store] 新库没有通过打开检查（E_STORE_CORRUPT），以只读方式打开：页面照常显示数据，所有写入返回 E_STORE_READ_ONLY。'
+            + '请从备份恢复（npm run store:restore），步骤见 docs/local-backup.md。')
+        } else schedulePrune('open')
         return handle
       } finally { opening = undefined }
     })()
@@ -326,7 +346,13 @@ export function createStoreSession(privatePaths, {
     const opened = await open()
     const key = cacheKeyOf(await reading(() => opened.meta()))
     if (cache?.key === key) return cache
-    const { rows, projection, files, timings } = await reading(() => project(opened))
+    let projected
+    try { projected = await reading(() => project(opened)) } catch (error) {
+      if (error?.code !== 'E_STORE_CORRUPT') throw error
+      await dropHandle()
+      throw new StoreSessionError('E_STORE_CORRUPT', { cause: error })
+    }
+    const { rows, projection, files, timings } = projected
     cache = Object.freeze({ key, revision: rows.revision, files, timings })
     const skipped = Object.entries(skippedCounts(projection.skipped)).map(([table, count]) => `${table} ${count}`)
     log(`[StarMap store] 读模型（修订号 ${rows.revision}）：${timings.openMs === undefined ? '' : `打开 ${timings.openMs} ms，`}`
@@ -389,6 +415,8 @@ export function createStoreSession(privatePaths, {
             const body = known?.body.receipt?.requestId === protocol.requestId ? known.body : { ok: true, revision: previous.receipt.revision, receipt: previous.receipt }
             return { status: known?.status ?? route.status, body: { ...body, duplicate: true } }
           }
+          // A read-only handle (a damaged store, or a build) writes nothing: confirmed not committed.
+          if (opened.readOnly) return storeFailureResponse(new V2WriteError('E_STORE_READ_ONLY'))
           const view = await snapshot()
           if (view.revision !== protocol.baseRevision) return storeFailureResponse(new V2WriteError('E_STALE'))
           const writeContext = ctx ?? createV2WriteContext({ countryCatalog, ...(now ? { now: new Date(now()) } : {}) })
@@ -438,10 +466,17 @@ export function createStoreSession(privatePaths, {
   return {
     file,
     open,
-    /** The virtual module's data: `{ files, revision }` (the five V2 files and the store-wide revision). */
+    /**
+     * The virtual module's data: `{ files, revision, readOnly }` (the five V2 files, the store-wide revision, and whether
+     * the store is damaged and read-only).
+     */
     async moduleExports() {
       const { files, revision } = await snapshot()
-      return { files, revision }
+      return { files, revision, readOnly: damaged(handle) }
+    },
+    /** Whether the store is open read-only because it is damaged (false when it cannot be opened at all). */
+    async isDamaged() {
+      try { return damaged(await open()) } catch { return false }
     },
     /** The read model in use ({ revision, files, timings }; timings of the last projection, empty after a write), or undefined. */
     get lastSnapshot() { return cache },
