@@ -4,11 +4,11 @@
  * fixture (src/data/store/v2Store.fixture.ts). Not a test file itself; not imported by the App.
  */
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { sha256File } from './file-hash.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { readV2SampleFiles } from './v2-sample.mjs'
 import { edgeCaseFixture } from '../src/data/store/v2Store.fixture.ts'
@@ -56,7 +56,7 @@ export async function treeDigest(root) {
     for (const item of items) {
       const target = path.join(directory, item.name)
       if (item.isDirectory()) await walk(target)
-      else files[path.relative(root, target).split(path.sep).join('/')] = createHash('sha256').update(await readFile(target)).digest('hex')
+      else files[path.relative(root, target).split(path.sep).join('/')] = await sha256File(target)
     }
   }
   await walk(root)

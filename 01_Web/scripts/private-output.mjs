@@ -14,6 +14,7 @@
 import { existsSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 
+import { isPathInside } from './path-containment.mjs'
 import { resolvePrivateRoot, sourceRoot } from './private-profile.mjs'
 
 /** 最深的已存在祖先取真实路径，再接上不存在的部分。 */
@@ -33,11 +34,9 @@ export const canonicalPath = (target) => {
   }
 }
 
-/** `target` 是 `directory` 本身或在它之内（两边都先规范化）。 */
-export const isInsideDirectory = (target, directory) => {
-  const relative = path.relative(canonicalPath(directory), canonicalPath(target))
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-}
+/** `target` 是 `directory` 本身或在它之内（两边都先规范化，再按 ./path-containment.mjs 判断）。 */
+export const isInsideDirectory = (target, directory) =>
+  isPathInside(canonicalPath(directory), canonicalPath(target), { allowRoot: true })
 
 /** 仓库根就是 private-profile.mjs 的 sourceRoot（01_Web 的上一级，Git 的根）。 */
 export const isInsideRepository = (target) => isInsideDirectory(target, sourceRoot)

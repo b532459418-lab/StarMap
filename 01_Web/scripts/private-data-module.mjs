@@ -24,6 +24,7 @@
 import path from 'node:path'
 
 import { legacyDataPaths } from './legacy-data.mjs'
+import { isPathInside } from './path-containment.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 
@@ -57,12 +58,6 @@ export function renderPrivateDataModule(exports) {
 /** 插件监听的文件事件：新建、修改、删除（chokidar 的事件名）。目录事件不单独处理，目录里的文件各自有事件。 */
 export const PRIVATE_DATA_WATCH_EVENTS = Object.freeze(['add', 'change', 'unlink'])
 
-/** `target` 是否在 `directory` 之内（含 directory 本身）。按路径层级判断：只是前缀相同的兄弟目录不算。 */
-const isWithin = (directory, target) => {
-  const relative = path.relative(path.resolve(directory), path.resolve(target))
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-}
-
 /**
  * 私人数据目录里这个文件事件要不要处理（`privatePaths` 是 `getPrivatePaths()` 的结果）：
  * - `data/v2/` 之内（含它本身）的新建、修改、删除：V2 数据变了；
@@ -72,7 +67,8 @@ const isWithin = (directory, target) => {
  */
 export function shouldHandlePrivateDataChange(event, changedPath, privatePaths) {
   if (!PRIVATE_DATA_WATCH_EVENTS.includes(event)) return false
-  if (isWithin(privatePaths.v2DataRoot, changedPath)) return true
+  // 含 data/v2 本身；只按路径层级判断（./path-containment.mjs），只是前缀相同的兄弟目录不算。删除事件的文件已不在，不读磁盘。
+  if (isPathInside(privatePaths.v2DataRoot, changedPath, { allowRoot: true })) return true
   if (event === 'change') return false
   const same = (target) => path.relative(path.resolve(target), path.resolve(changedPath)) === ''
   return same(storeFileOf(privatePaths)) || legacyDataPaths(privatePaths).some(same)

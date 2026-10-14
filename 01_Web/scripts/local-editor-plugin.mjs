@@ -21,6 +21,7 @@ import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 import { allowedOrigins, authorizeRead, crossSiteRequestGuard, isLoopbackRequest } from './local-editor-request-guard.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
+import { isPathInside } from './path-containment.mjs'
 import { createLocalEditorImporter } from './local-editor-importer.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { assertMediaJobsClear } from './media-job-store.mjs'
@@ -354,11 +355,6 @@ const updateDroneSidecar = async (cityRoot, destination, metadata, imageMetadata
 
 // Resolve the active private root per invocation, after configurePrivatePaths.
 const runImporter = (options) => createLocalEditorImporter({ webRoot, privateRoot })(options)
-
-const isPathInside = (root, target) => {
-  const relative = path.relative(root, target)
-  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative)
-}
 
 const normalizeInboxRelativePath = (value) => {
   if (typeof value !== 'string' || !value.trim()) return undefined

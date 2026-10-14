@@ -1,6 +1,6 @@
 /** Local-editor upload validation and byte-preserving delivery, without private-profile state. */
 import { createWriteStream } from 'node:fs'
-import { mkdir, unlink, link, lstat, open } from 'node:fs/promises'
+import { mkdir, unlink, link, open } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import sharp from 'sharp'
 import { exists } from './json-file.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { firstUnsafeComponent, relativeInside } from './path-containment.mjs'
 import { toSafePathSegment } from './media-path-segment.mjs'
 
 export const MAX_UPLOAD_BYTES = 250 * 1024 * 1024
@@ -51,17 +52,10 @@ export const isLikelyEquirectangularPanorama = (dimensions) => {
 
 const tooLarge = () => new V2WriteError('E_MEDIA_UPLOAD_TOO_LARGE', { limitMiB: 250, limitBytes: MAX_UPLOAD_BYTES })
 
-/** Reject links and non-directory ancestors before touching a bounded private path. */
+/** Reject links and non-directory ancestors before touching a bounded private path (./path-containment.mjs). */
 export const assertUploadPath = async (root, target) => {
-  const relative = path.relative(path.resolve(root), path.resolve(target))
-  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new V2WriteError('E_MEDIA_JOB_REVIEW')
-  let current = path.resolve(root)
-  for (const part of ['', ...relative.split(path.sep)]) {
-    if (part) current = path.join(current, part)
-    try {
-      const info = await lstat(current)
-      if (info.isSymbolicLink() || (current !== path.resolve(target) && !info.isDirectory())) throw new V2WriteError('E_MEDIA_JOB_REVIEW')
-    } catch (error) { if (error.code !== 'ENOENT') throw error }
+  if (relativeInside(root, target) === undefined || await firstUnsafeComponent(root, target) !== undefined) {
+    throw new V2WriteError('E_MEDIA_JOB_REVIEW')
   }
 }
 

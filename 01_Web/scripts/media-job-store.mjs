@@ -15,6 +15,7 @@ import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from 
 import path from 'node:path'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { isSafePathSegment } from './media-path-segment.mjs'
+import { relativeInside } from './path-containment.mjs'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHA = /^[0-9a-f]{64}$/
@@ -178,9 +179,7 @@ async function checked(root, segments, { create = false, file = false } = {}) {
     if (stats.isSymbolicLink() || (lastFile ? !stats.isFile() || stats.nlink !== 1 || stats.size > RECORD_LIMIT : !stats.isDirectory())) {
       fail('E_MEDIA_JOB_REVIEW', 'Unsafe control path')
     }
-    const resolved = await realpath(target)
-    const relative = path.relative(root, resolved)
-    if (!relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) fail('E_MEDIA_JOB_REVIEW', 'Control path outside library')
+    if (relativeInside(root, await realpath(target)) === undefined) fail('E_MEDIA_JOB_REVIEW', 'Control path outside library')
   }
   return { path: target, missing: false }
 }
