@@ -53,6 +53,24 @@ The runner uses at most two file workers to bound memory while synthetic image
 and process-exit checks run. This is a test-resource limit, not an application
 memory requirement.
 
+The formal store host (`scripts/store-host.mjs`, SQLite through `node:sqlite`,
+Node 24.15 or newer) is not used by the App yet. It runs the rollback journal in
+TRUNCATE mode with `synchronous=EXTRA` and `auto_vacuum=INCREMENTAL`. Opening
+checks the header, versions, schema and `store_meta` only; `quick_check` runs at
+open only when the last writer did not close the store (its `clean_shutdown`
+flag), and otherwise on request (`checkIntegrity()`). Ordinary writes take no
+library lease: they are refused while another operation holds the library
+operation lock, and SQLite keeps concurrent writers apart. `npm test` covers it,
+including real writer processes killed at each write phase, and runs its
+benchmark at a 1,000-entity smoke scale only. The full benchmark runs separately,
+in segments that are each a separate command, at two scales: `real` (3,000
+places, 10,000 entries and 10,000 media entities, where the targets apply) and
+`stress` (the earlier 10,000 / 30,000 / 50,000 scale, recorded only):
+`npm run store:bench -- --dir <absolute work directory> --scale real|stress --segment load|validate|copy|commit|cold|age|prune|modes`
+(see the header of `scripts/store-bench.mjs`). `npm run library:recover` clears a
+library operation lock left by a crashed writer after checking the data; see the
+root README.
+
 ### Browser regression and performance baseline
 
 ```powershell
