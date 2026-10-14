@@ -98,15 +98,17 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
     [entries, locale, sort, status, text],
   )
 
+  // 没有编辑器时（公开构建、个人构建、强制样例）数据里没有隐藏项：个人构建不带隐藏内容（第 7 批，S3），
+  // 所以不显示「已隐藏」的计数，也不给按隐藏状态筛选的选项。
   const stats = useMemo(() => [
     { value: entries.length, label: t('total') },
     { value: entries.filter((entry) => entry.location && !entry.hidden).length, label: t('onMap') },
-    { value: entries.filter((entry) => entry.hidden).length, label: t('hidden') },
+    ...(localEditorAvailable ? [{ value: entries.filter((entry) => entry.hidden).length, label: t('hidden') }] : []),
     { value: entries.filter((entry) => !entry.location).length, label: t('noLocation') },
     { value: entries.filter(isFromTravelLog).length, label: t('fromTravelLog') },
   ], [entries, t])
 
-  // 公开样例没有隐藏项：写入不可用时只给「全部 / 显示中」。
+  // 有编辑器但想去数据不在私有文件里时，没有可写的隐藏项：只给「全部 / 显示中」。
   const availableStatusOptions = writeAvailable
     ? statusOptions
     : statusOptions.filter((option) => option.id !== 'hidden')
@@ -170,18 +172,20 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
               />
             </div>
 
-            <div className="collection-segmented" role="group" aria-label={t('status')}>
-              {availableStatusOptions.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  aria-pressed={status === option.id}
-                  onClick={() => setStatus(option.id)}
-                >
-                  {t(option.id)}
-                </button>
-              ))}
-            </div>
+            {localEditorAvailable ? (
+              <div className="collection-segmented" role="group" aria-label={t('status')}>
+                {availableStatusOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-pressed={status === option.id}
+                    onClick={() => setStatus(option.id)}
+                  >
+                    {t(option.id)}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             <div className="collection-sort">
               <label htmlFor={sortId}>{t('sort')}</label>

@@ -17,7 +17,7 @@ StarMap is one codebase, not separate public and editor editions:
 
 - `npm run dev:personal` starts the **personal editing profile**. It loads only the external private layer, enables the loopback editor, and writes changes there with backups and atomic replacement.
 - `npm run dev:public` starts the **public preview profile**. It loads only tracked neutral sample data and exposes no editor.
-- `npm run build:public` creates the public static build. `npm run build:personal` creates a private build for an owner-controlled deployment and copies the external personal media into that build only.
+- `npm run build:public` creates the public static build. `npm run build:personal` creates a private build for an owner-controlled deployment. Its data leaves out hidden content and everything only hidden content leads to (`scripts/personal-build-filter.mjs`), and only the personal media files that the kept media refer to are copied into that build. The development server keeps everything for the editor.
 
 Every person who clones the open-source project receives the same local editing capability. No DeepSeek Harness, chat-command relay, or AI service is required for deterministic edits. An Agent remains useful when a country, city, date, coordinate, media type, or privacy decision is uncertain, but the editor never guesses those values.
 

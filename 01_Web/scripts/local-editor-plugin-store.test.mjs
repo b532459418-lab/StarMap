@@ -179,3 +179,30 @@ test('Local editor plugin in the new-library mode', async (t) => {
     process.env = originalEnvironment
   }
 })
+
+test('a personal build in the new-library mode filters the store projection like the V2 files (batch 7, S3)', async (t) => {
+  const { root, paths } = await tempPrivateRoot(t, 'starmap-plugin-store-build-')
+  const { hiddenContentFixture, REMOVED } = await import('./personal-build-filter.fixture.mjs')
+  const { filterForPersonalBuild } = await import('./personal-build-filter.mjs')
+  const files = hiddenContentFixture()
+  await writeV2Files(paths, files)
+  await applyMigration(paths, { now: NOW })
+  const originalEnvironment = process.env
+  process.env = { STARMAP_PRIVATE_ROOT: root }
+  try {
+    const { travelAtlasLocalEditor } = await import('./local-editor-plugin.mjs')
+    const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: root })
+    plugin.configResolved({ command: 'build', root, build: { outDir: 'dist' } })
+    try {
+      const code = await plugin.load(plugin.resolveId('virtual:starmap-private-data'))
+      for (const id of [...REMOVED.records, ...REMOVED.wantToGo, ...REMOVED.media, ...REMOVED.places]) assert.ok(!code.includes(id), id)
+      const module = await import(`data:text/javascript,${encodeURIComponent(code)}`)
+      assert.equal(module.privateStoreRevision, 1)
+      assert.deepEqual(canonicalForInputs({ v2Files: module.privateV2Files }), canonicalForInputs({ v2Files: filterForPersonalBuild(files).files }))
+    } finally {
+      await plugin.buildEnd()
+    }
+  } finally {
+    process.env = originalEnvironment
+  }
+})
