@@ -18,7 +18,9 @@ export function resolveCesiumStaticFile(pathname, { baseUrl, sourceRoot }) {
   let relative
   try { relative = decodeURIComponent(pathname.slice(prefix.length)) } catch { return null }
   const directory = relative.split('/')[0]
-  if (relative.includes('\0') || !CESIUM_STATIC_DIRECTORIES.includes(directory)) return null
+  // A backslash separates paths on Windows only, so refuse it outright: the same request then gets the same answer on
+  // every platform (Cesium's run-time paths never contain one).
+  if (relative.includes('\0') || relative.includes('\\') || !CESIUM_STATIC_DIRECTORIES.includes(directory)) return null
   // `..`, an encoded `/` or `\` and similar tricks all end up outside the named directory after resolving.
   const allowed = path.resolve(sourceRoot, directory)
   const file = path.resolve(sourceRoot, relative)
