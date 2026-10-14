@@ -40,7 +40,7 @@ import {
 import { sha256File } from './file-hash.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { assertMediaJobsClear } from './media-job-store.mjs'
-import { isAllowedPrivateOutput, isInsideDirectory } from './private-output.mjs'
+import { isAllowedPrivateOutput, mayBeInsideDirectory } from './private-output.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { STORE_FILE_SEGMENTS, privateDataSource, storeFileOf } from './private-data-source.mjs'
 import { StoreToolError } from './store-migrate.mjs'
@@ -224,10 +224,13 @@ async function markMediaCopy(privatePaths, backupId, now) {
 // Backup
 // ---------------------------------------------------------------------------
 
-/** A backup inside the folders it copies (or the data folder) would copy itself. */
+/**
+ * A backup inside the folders it copies (or the data folder) would copy itself. A refusal, so a name that merely begins
+ * with `..` counts as inside (./path-containment.mjs `mayBeInside`).
+ */
 function refuseOverlap(privatePaths, target) {
   for (const directory of [privatePaths.inboxRoot, privatePaths.userMediaRoot, privatePaths.dataRoot]) {
-    if (isInsideDirectory(target, directory)) {
+    if (mayBeInsideDirectory(target, directory)) {
       throw new StoreToolError('E_TARGET_OVERLAP', [`${target} 在私人根的 ${path.relative(privatePaths.root, directory).split(path.sep).join('/')}/ 之内，备份会复制到自己。请换一个位置。`])
     }
   }
