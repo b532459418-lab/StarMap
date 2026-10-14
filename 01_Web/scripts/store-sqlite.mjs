@@ -6,6 +6,13 @@
  * classification of SQLite errors into store codes. The host (store-host.mjs) never touches
  * `DatabaseSync` directly, so a later runtime change stays inside this file.
  *
+ * Every connection to a store file is opened here, with the store's journal mode (3C-4b): the host's
+ * (openConnection: the App, the store:* commands, library:recover, migration and restore all go
+ * through store-host.mjs) and the raw ones of tests and the benchmark (rawConnection). On Windows a
+ * connection in SQLite's default DELETE mode cannot commit while another connection has the store
+ * open in TRUNCATE mode: it fails with "disk I/O error" (SQLITE_IOERR_DELETE) when it removes the
+ * journal, and leaves that journal hot. Nothing outside this file calls `new DatabaseSync` on a store.
+ *
  * Node version: `node:sqlite` is a release candidate from Node 24.15.0 on (design 3B §4.1,
  * 0.1 #11), which is the minimum this adapter accepts. Developed and tested on Node 24.19.0
  * with its bundled SQLite 3.53.3.
@@ -130,6 +137,24 @@ export function openConnection(file, { readOnly = false } = {}) {
   } catch (error) {
     try { db?.close() } catch { /* The open failure is what matters. */ }
     throw storeErrorFrom(error)
+  }
+}
+
+/**
+ * A connection below the host, for tests and the benchmark only: set-up, damage and bulk history written straight into
+ * the file, a second connection that holds a lock, a read-back. It has the store's journal mode (TRUNCATE, read back)
+ * and busy timeout, so it can write while a host connection has the store open (see the file header); everything else
+ * is node:sqlite's default, so a test can still write what the host would refuse. Never used by the App or the tools.
+ */
+export function rawConnection(file, { readOnly = false } = {}) {
+  const db = new DatabaseSync(file, { readOnly, allowExtension: false, timeout: BUSY_TIMEOUT_MS })
+  try {
+    db.exec('PRAGMA journal_mode = TRUNCATE')
+    if (pragmaValue(db, 'journal_mode') !== 'truncate') throw new StoreHostError('E_STORE_SETTINGS', { path: 'journal_mode' })
+    return db
+  } catch (error) {
+    closeQuietly(db)
+    throw error
   }
 }
 

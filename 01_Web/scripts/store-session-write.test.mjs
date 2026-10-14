@@ -5,12 +5,12 @@
  * store-session-editor.test.mjs.
  */
 import assert from 'node:assert/strict'
-import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { applyMigration } from './store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, STORE_WRITE_ROUTES, createStoreSession, storeProtocolOf } from './store-session.mjs'
+import { rawConnection } from './store-sqlite.mjs'
 import { sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files } from './store-mode.fixture.mjs'
 import { V2_EDITOR_ROUTES } from './v2-editor-store.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
@@ -120,7 +120,7 @@ test('while somebody holds the library lock, or another process writes, the upda
     assert.equal(busy.status, 409)
     assert.equal(busy.body.code, 'E_LIBRARY_BUSY')
   })
-  const other = new DatabaseSync(storeFileOf(paths))
+  const other = rawConnection(storeFileOf(paths))
   other.exec('BEGIN IMMEDIATE')
   try {
     const locked = await update({ headers: headers(requestId(), 1), input: { id: wish.id, note: 'Synthetic locked' } })

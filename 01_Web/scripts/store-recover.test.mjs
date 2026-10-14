@@ -6,13 +6,13 @@ import { closeSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { atomicJsonWrite } from './json-file.mjs'
 import { inspectLibraryOperation, libraryRootBinding, rebindLibraryRoot, withLibraryOperation } from './library-operation-lock.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { createStore, openStore, storePathFor } from './store-host.mjs'
+import { rawConnection } from './store-sqlite.mjs'
 import { recoverLibrary } from './store-recover.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, runV2Write } from './v2-editor-store.mjs'
 import { V2_FILE_KEYS } from '../src/data/canonical/v2Schema.ts'
@@ -263,7 +263,7 @@ test('library:recover (new-store mode) keeps the lock when quick_check or Core v
   for (const damage of ['page', 'body']) {
     const { directory, root, paths, file, seed } = await storeLibrary(t)
     if (damage === 'page') {
-      const db = new DatabaseSync(file, { readOnly: true })
+      const db = rawConnection(file, { readOnly: true })
       const pageSize = db.prepare('PRAGMA page_size').get().page_size
       const rootPage = db.prepare("SELECT rootpage FROM sqlite_schema WHERE name = 'anchors'").get().rootpage
       db.close()
@@ -271,7 +271,7 @@ test('library:recover (new-store mode) keeps the lock when quick_check or Core v
       try { writeSync(fd, Buffer.alloc(16, 0xff), 0, 16, (rootPage - 1) * pageSize) } finally { closeSync(fd) }
     } else {
       // quick_check cannot see a row that breaks a Core rule.
-      const db = new DatabaseSync(file)
+      const db = rawConnection(file)
       db.prepare("UPDATE entities SET body = json_set(body, '$.fields.related', 'missing-entity') WHERE id = ?").run(seed.entities[0].id)
       db.close()
     }
@@ -395,12 +395,12 @@ function journalState(file) {
   return bytes[0] === 0 ? 'unsynced' : 'hot'
 }
 function countRows(file, table) {
-  const db = new DatabaseSync(file, { readOnly: true })
+  const db = rawConnection(file, { readOnly: true })
   try { return db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n } finally { db.close() }
 }
 /** Raw SQL for test setup only. */
 function rawSql(file, sql) {
-  const db = new DatabaseSync(file)
+  const db = rawConnection(file)
   try { db.exec(sql) } finally { db.close() }
 }
 /** One request with work in every phase: a delete, an update, and a create large enough (3 MB) to spill
