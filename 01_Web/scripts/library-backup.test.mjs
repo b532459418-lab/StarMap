@@ -228,6 +228,11 @@ test('directory symlinks/junctions are refused without copying the outside file'
 test('unsafe output overlap and non-migrated legacy data are refused', async t => {
   const { root, directory, bundle } = await fixture(t)
   await assert.rejects(createBackup(root, path.join(root, 'backups')), /E_BACKUP_OVERLAP/)
+  // A name that only begins with .. is inside the library for this refusing check (review of batch 7); nothing is written.
+  for (const name of ['..x', '.. ', '...']) {
+    await assert.rejects(createBackup(root, path.join(root, name)), /E_BACKUP_OVERLAP/, JSON.stringify(name))
+    await assert.rejects(readdir(path.join(root, name)), { code: 'ENOENT' }, JSON.stringify(name))
+  }
   const legacy = path.join(directory, 'legacy')
   await writeJson(path.join(legacy, 'data', 'travel-map.local.json'), { schema_version: 1, records: [] })
   await assert.rejects(createBackup(legacy, bundle), /E_BACKUP_LEGACY/)

@@ -8,11 +8,11 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-import { firstUnsafeComponent, isPathInside, relativeInside } from './path-containment.mjs'
+import { firstUnsafeComponent, isPathInside, mayBeInside, relativeInside } from './path-containment.mjs'
 import { assertUploadPath } from './local-editor-upload.mjs'
 import { shouldHandlePrivateDataChange } from './private-data-module.mjs'
-import { isInsideDirectory } from './private-output.mjs'
-import { getPrivatePaths } from './private-profile.mjs'
+import { isAllowedPrivateOutput, isInsideDirectory, isInsideRepository, mayBeInsideDirectory } from './private-output.mjs'
+import { getPrivatePaths, sourceRoot } from './private-profile.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
 
 const root = path.join(tmpdir(), 'starmap-containment-root')
@@ -97,17 +97,75 @@ test('assertUploadPath (upload staging and media tasks) now also refuses a first
   await refused(path.join(directory, '..', 'a.jpg'))
 }))
 
-test('the private data watcher (data/v2 and below) now ignores a first segment under data/v2 that begins with ..', () => {
+// ---------------------------------------------------------------------------
+// Refusal checks (review of batch 7): a name that starts with `..` counts as inside
+// ---------------------------------------------------------------------------
+
+/** Names inside a root that only begin with `..`; Windows may drop a segment's trailing dots and spaces. */
+const DOUBTFUL = ['..x', '.. ', '...']
+
+test('mayBeInside: only .., ..<sep> and absolute paths are outside; names that begin with .. count as inside', () => {
+  for (const name of DOUBTFUL) {
+    assert.equal(mayBeInside(root, path.join(root, name, 'x.json')), true, JSON.stringify(name))
+    assert.equal(mayBeInside(root, path.join(root, name)), true, JSON.stringify(name))
+  }
+  for (const target of [path.dirname(root), path.join(root, '..', 'other'), `${root}2`, `${root}-other${path.sep}x`]) {
+    assert.equal(mayBeInside(root, target), false, target)
+    assert.equal(mayBeInside(root, target, { allowRoot: true }), false, target)
+  }
+  assert.equal(mayBeInside(root, root), false)
+  assert.equal(mayBeInside(root, root, { allowRoot: true }), true)
+  assert.equal(mayBeInside(root, path.join(root, 'a', 'b.txt')), true)
+  if (process.platform === 'win32') {
+    const other = path.parse(root).root.slice(0, 1).toUpperCase() === 'Z' ? 'Y' : 'Z'
+    assert.equal(mayBeInside(root, `${other}:\\x\\y`), false)
+  }
+})
+
+test('allowing checks are unchanged: names that begin with .. stay outside', async () => withDirectory(async (directory) => {
+  for (const name of DOUBTFUL) {
+    assert.equal(isPathInside(root, path.join(root, name, 'x.json')), false, JSON.stringify(name))
+    assert.equal(isInsideDirectory(path.join(root, name, 'baseline.json'), root), false, JSON.stringify(name))
+    await assert.rejects(assertUploadPath(directory, path.join(directory, name, 'a.jpg')), (error) => error instanceof V2WriteError && error.code === 'E_MEDIA_JOB_REVIEW', JSON.stringify(name))
+  }
+  assert.equal(isInsideDirectory(root, root), true)
+  assert.equal(isInsideDirectory(path.join(root, 'baseline.json'), root), true)
+  assert.equal(isInsideDirectory(`${root}2`, root), false)
+  // Inside the private root by the allowing rule only: `<privateRoot>/..x` does not get the private-root allowance.
+  const privateRoot = path.join(sourceRoot, '06_private')
+  assert.equal(isAllowedPrivateOutput(path.join(privateRoot, 'baseline.json'), { STARMAP_PRIVATE_ROOT: privateRoot }), true)
+  for (const name of DOUBTFUL) {
+    assert.equal(isAllowedPrivateOutput(path.join(privateRoot, name, 'baseline.json'), { STARMAP_PRIVATE_ROOT: privateRoot }), false, JSON.stringify(name))
+  }
+}))
+
+test('the private output gate refuses <repository>/..x, <repository>/.. and <repository>/... as inside the repository', () => {
+  const environment = { STARMAP_PRIVATE_ROOT: path.join(tmpdir(), 'starmap-containment-private-root') }
+  for (const name of DOUBTFUL) {
+    const target = path.join(sourceRoot, name, 'out.json')
+    assert.equal(isInsideRepository(target), true, JSON.stringify(name))
+    assert.equal(mayBeInsideDirectory(target, sourceRoot), true, JSON.stringify(name))
+    assert.equal(isAllowedPrivateOutput(target, environment), false, JSON.stringify(name))
+  }
+  assert.equal(isAllowedPrivateOutput(path.join(tmpdir(), 'starmap-containment-out.json'), environment), true)
+  // `privateRootCoversRepository` asks the refusing question: a repository folder whose name starts with .. might lie
+  // inside the private root, so that root gets no private-root allowance (sourceRoot is fixed, so the rule is shown here).
+  const parent = path.join(tmpdir(), 'starmap-containment-parent')
+  for (const name of DOUBTFUL) {
+    assert.equal(mayBeInsideDirectory(path.join(parent, `${name}repo`), parent), true, JSON.stringify(name))
+    assert.equal(isInsideDirectory(path.join(parent, `${name}repo`), parent), false, JSON.stringify(name))
+  }
+})
+
+test('the private data watcher handles events under data/v2 whose name starts with .. (a missed event is worse than a reload)', () => {
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
   assert.equal(shouldHandlePrivateDataChange('change', paths.v2FilePaths.places, paths), true)
   assert.equal(shouldHandlePrivateDataChange('change', paths.v2DataRoot, paths), true)
-  assert.equal(shouldHandlePrivateDataChange('change', path.join(paths.v2DataRoot, 'a', '..x'), paths), true)
-  assert.equal(shouldHandlePrivateDataChange('change', path.join(paths.v2DataRoot, '..x', 'places.json'), paths), false)
-})
-
-test('the private output gate (isInsideDirectory) now treats a first segment beginning with .. as outside', () => {
-  assert.equal(isInsideDirectory(root, root), true)
-  assert.equal(isInsideDirectory(path.join(root, 'baseline.json'), root), true)
-  assert.equal(isInsideDirectory(path.join(root, '..x', 'baseline.json'), root), false)
-  assert.equal(isInsideDirectory(`${root}2`, root), false)
+  for (const name of [...DOUBTFUL, path.join('a', '..x')]) {
+    for (const event of ['add', 'change', 'unlink']) {
+      assert.equal(shouldHandlePrivateDataChange(event, path.join(paths.v2DataRoot, name, 'places.json'), paths), true, `${event} ${name}`)
+    }
+  }
+  assert.equal(shouldHandlePrivateDataChange('change', `${paths.v2DataRoot}2${path.sep}places.json`, paths), false)
+  assert.equal(shouldHandlePrivateDataChange('change', path.join(paths.dataRoot, 'v2-backup', 'places.json'), paths), false)
 })

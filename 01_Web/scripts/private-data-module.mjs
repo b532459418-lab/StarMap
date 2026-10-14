@@ -24,7 +24,7 @@
 import path from 'node:path'
 
 import { legacyDataPaths } from './legacy-data.mjs'
-import { isPathInside } from './path-containment.mjs'
+import { mayBeInside } from './path-containment.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 
@@ -67,8 +67,9 @@ export const PRIVATE_DATA_WATCH_EVENTS = Object.freeze(['add', 'change', 'unlink
  */
 export function shouldHandlePrivateDataChange(event, changedPath, privatePaths) {
   if (!PRIVATE_DATA_WATCH_EVENTS.includes(event)) return false
-  // 含 data/v2 本身；只按路径层级判断（./path-containment.mjs），只是前缀相同的兄弟目录不算。删除事件的文件已不在，不读磁盘。
-  if (isPathInside(privatePaths.v2DataRoot, changedPath, { allowRoot: true })) return true
+  // 含 data/v2 本身；只按路径层级判断（./path-containment.mjs 的 mayBeInside：漏掉事件比多刷新一次更糟，所以 `..x` 这类名字
+  // 也算在里面），只是前缀相同的兄弟目录不算。删除事件的文件已不在，不读磁盘。
+  if (mayBeInside(privatePaths.v2DataRoot, changedPath, { allowRoot: true })) return true
   if (event === 'change') return false
   const same = (target) => path.relative(path.resolve(target), path.resolve(changedPath)) === ''
   return same(storeFileOf(privatePaths)) || legacyDataPaths(privatePaths).some(same)
