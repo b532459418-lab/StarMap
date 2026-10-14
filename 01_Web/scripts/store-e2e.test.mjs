@@ -5,7 +5,7 @@
  *   1. dry run, then --apply;            2. read the plugin way = readV2;     3. edit a note, then the hidden state;
  *   4. close normally and reopen;        5. the edits and the revision are there;
  *   6. the same request id again: the original receipt, no second write;     7. a stale revision: E_STALE;
- *   8. every other write endpoint: E_STORE_MODE_LIMITED, not a byte changed;
+ *   8. the media endpoints and media tasks (3C-4c): E_STORE_MODE_LIMITED, not a byte changed;
  *   9. backup and restore to a new root: the same reading;                   10. export-v2 read back = step 5;
  *   11. ten restores in a row, each from a backup of the previous one: neither the file nor store_meta grows.
  */
@@ -30,10 +30,10 @@ import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
 const requestIdOf = (n) => `01960000-0000-7000-8000-${n.toString(16).padStart(12, '0')}`
-/** The write endpoints the store does not accept (every one but the want-to-go update). */
+/** The write endpoints the store does not accept yet (3C-4c): media and media tasks. The eight editor writes are in
+ * store-session-editor.test.mjs. */
 const OTHER_WRITES = [
-  ['PUT', 'state'], ['POST', 'records'], ['POST', 'countries'], ['POST', 'countries/delete'], ['POST', 'wanttogo'],
-  ['POST', 'wanttogo/delete'], ['POST', 'wanttogo/convert'], ['POST', 'upload'], ['POST', 'import'], ['POST', 'media/delete'],
+  ['POST', 'upload'], ['POST', 'import'], ['POST', 'media/delete'],
   ['POST', 'media/jobs'], ['POST', 'media/jobs/018bd504-c600-7000-8000-000000000001/import'],
 ]
 
@@ -139,7 +139,7 @@ for (const [name, filesOf, pickWish] of INPUTS) {
       assert.equal((await reading()).revision, 3)
     })
 
-    await t.test('8. every other write endpoint: E_STORE_MODE_LIMITED, not a byte changed', async () => {
+    await t.test('8. media endpoints and media tasks: E_STORE_MODE_LIMITED, not a byte changed', async () => {
       const before = await treeDigest(root)
       for (const [method, route] of OTHER_WRITES) {
         const refused = await requestTo(handler, { url: editorPrefix + route, method, content: Buffer.from('{"id":"x"}') })

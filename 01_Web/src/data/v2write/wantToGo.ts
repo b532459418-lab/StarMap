@@ -36,7 +36,7 @@ type WriteList = { file: V2FileKey; onFailure?: string }[]
 const itemV1Of = (files: V2Files, item: CanonicalWantToGoItem): WantToGoItem =>
   reconstructWantToGoItem(item, indexPlaces(files.places.places))
 
-/** 旧 store normalizeNote：trim 后 ≤ 200 字；空串表示「没有备注」。新库模式的「修改想去」（../store/wantToGoUpdate.ts）用同一条规则。 */
+/** 旧 store normalizeNote：trim 后 ≤ 200 字；空串表示「没有备注」。新库模式（3C-4a 起）同样运行本文件的写入函数，规则只有这一份。 */
 export const normalizeNote = (value: unknown): string | undefined => {
   if (value === undefined || value === null) return undefined
   if (typeof value !== 'string') fail('E_NOTE_NOT_TEXT')

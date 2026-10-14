@@ -265,6 +265,9 @@ function statements(db) {
     viewSetting: prepare('SELECT id FROM view_settings WHERE scope = ? AND setting_key = ?'),
     receipt: prepare('SELECT request_digest, response FROM receipts WHERE request_id = ?'),
     idMap: prepare('SELECT id FROM id_map WHERE kind = ? AND source_id = ? AND record_id = ?'),
+    // 3C-4a: every view row of one scope, from the leading column of the unique (scope, …) indexes.
+    scopeItems: prepare(`SELECT ${columnList(ROW_TABLES.viewItems)} FROM view_items WHERE scope = ? ORDER BY id`),
+    scopeSettings: prepare(`SELECT ${columnList(ROW_TABLES.viewSettings)} FROM view_settings WHERE scope = ? ORDER BY id`),
   }
   statementCache.set(db, cached)
   return cached
@@ -285,6 +288,10 @@ function currentRevision(db) {
  * SqliteStoreReader: Core's StoreReader over the open transaction of `db`, synchronous, with
  * indexed queries only (no method returns a table). It stops working when the transaction ends
  * or `close` is called. Rows come back exactly as written (deep-frozen JSON values).
+ *
+ * Two reads beyond Core's interface, for the incremental write path of the new-library mode
+ * (3C-4a, src/data/store/diffV2.ts): `viewScope(scope)` returns every view item and setting of one
+ * scope (by id, from the scope indexes), and `idMapping(kind, sourceId, recordId)` looks up id_map.
  */
 function transactionReader(db) {
   if (transactionState(db) !== true) fail('E_STORE_NO_TRANSACTION')
@@ -318,6 +325,15 @@ function transactionReader(db) {
     findReviewByProposal: (proposalId) => find(sql.proposal, proposalId),
     findViewItem: (scope, itemTable, itemId) => find(sql.viewItem, scope, itemTable, itemId),
     findViewSetting: (scope, key) => find(sql.viewSetting, scope, key),
+    viewScope(scope) {
+      live()
+      if (typeof scope !== 'string') return Object.freeze({ items: NO_REFS, settings: NO_REFS })
+      return Object.freeze({
+        items: Object.freeze(sql.scopeItems.all(scope).map((record) => deepFreeze(decodeRow('viewItems', record)))),
+        settings: Object.freeze(sql.scopeSettings.all(scope).map((record) => deepFreeze(decodeRow('viewSettings', record)))),
+      })
+    },
+    idMapping: (kind, sourceId, recordId) => find(sql.idMap, kind, sourceId, recordId),
   })
   return { reader, close: () => { open = false } }
 }

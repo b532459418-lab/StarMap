@@ -80,8 +80,8 @@ const isV2WriteError = (error) => error instanceof V2WriteError
  */
 const CHOICE_REQUIRED_CODES = new Set(['E_PLACE_CHOICE_REQUIRED', 'E_JOURNEY_CHOICE_REQUIRED'])
 
-/** 纯函数抛出的错误 → 400 响应（需要选择的为 409）。意料之外的错误（程序缺陷）也不吞掉原因。 */
-const failureResponse = (error) => ({
+/** 纯函数抛出的错误 → 400 响应（需要选择的为 409）。意料之外的错误（程序缺陷）也不吞掉原因。新库模式（./store-session.mjs）同样用它。 */
+export const v2FailureResponse = (error) => ({
   status: isV2WriteError(error) && CHOICE_REQUIRED_CODES.has(error.code) ? 409 : 400,
   body: isV2WriteError(error) ? errorBody(error) : v2ErrorBody('E_UNEXPECTED', { reason: reasonOf(error) }),
 })
@@ -96,7 +96,7 @@ export async function runV2Write({ privatePaths, route, input, ctx, write = atom
   try {
     outcome = route.run(files, input, ctx)
   } catch (error) {
-    return failureResponse(error)
+    return v2FailureResponse(error)
   }
 
   const failure = await applyV2Writes({ privatePaths, writes: outcome.writes, write })
@@ -132,6 +132,6 @@ export async function readV2EditorState({ privatePaths, now = new Date() }) {
   try {
     return { status: 200, body: { ok: true, state: readEditorStateV1(files, now) } }
   } catch (error) {
-    return failureResponse(error)
+    return v2FailureResponse(error)
   }
 }
