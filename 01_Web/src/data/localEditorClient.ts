@@ -19,7 +19,7 @@ import { LocalEditorError } from '../i18n/editorErrors.ts'
  *
  * 类型仍从 ./localEditorApi.ts 用 `import type` 取，编译后不留下任何导入。
  *
- * 新库模式（3C-3）：API 加载时把页面的全库修订号（./rawInputs.ts 的 `storeRevision`）交给它，「修改想去」据此带上
+ * 新库模式（3C-3、3C-4a）：API 加载时把页面的全库修订号（./rawInputs.ts 的 `storeRevision`）交给它，8 个编辑写入据此带上
  * 新库的请求协议。这一句也在门后的分支里，构建产物里没有它。
  */
 type LocalEditorApi = typeof LocalEditorApiModule

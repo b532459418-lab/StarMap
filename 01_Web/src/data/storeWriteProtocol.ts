@@ -1,7 +1,7 @@
 /**
- * The client side of a write to the new library (3C-3, design 3B §4.4 and §4.5). Used only by the want-to-go update
- * in ./localEditorApi.ts, so it is loaded behind the same gate (`import.meta.env.DEV && localEditorAvailable`) and is in
- * no build output.
+ * The client side of a write to the new library (3C-3, 3C-4a; design 3B §4.4 and §4.5). Used only by the eight editor
+ * writes in ./localEditorApi.ts, so it is loaded behind the same gate (`import.meta.env.DEV && localEditorAvailable`)
+ * and is in no build output.
  *
  * - One user action gets one request id (UUIDv7, `x-starmap-request-id`); the page's store revision travels as
  *   `x-starmap-base-revision`.
