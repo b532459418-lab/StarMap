@@ -3,51 +3,22 @@
  * revision, GET /editor/state reads the same model, the want-to-go update is written to the store (and invalidates the
  * module), write endpoints the store does not accept are refused with 409 E_STORE_MODE_LIMITED before their body is
  * read, and an unopenable store is an error, never a fallback to V2.
- * The harness is the one of local-editor-plugin.test.mjs (no real server).
+ * The harness (store-mode.fixture.mjs) is the one of local-editor-plugin.test.mjs (no real server).
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
-import { Readable } from 'node:stream'
 import { storeFileOf } from './private-data-source.mjs'
 import { openStore } from './store-host.mjs'
 import { applyMigration } from './store-migrate.mjs'
-import { sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files } from './store-mode.fixture.mjs'
+import {
+  authorizedHeaders, captureMiddleware, editorPrefix, moduleOf, requestTo, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files,
+} from './store-mode.fixture.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
-const editorPrefix = '/__travelatlas/editor/'
 const NOW = '2026-10-14T00:00:00.000Z'
-const authorizedHeaders = { 'x-travelatlas-local-editor': '1', origin: 'http://127.0.0.1:5173', host: '127.0.0.1:5173' }
-
-function captureMiddleware(plugin, privateModule) {
-  const handlers = [], reloads = [], invalidations = []
-  plugin.configureServer({
-    middlewares: { use: (handler) => handlers.push(handler) },
-    watcher: { add: () => {}, on: () => {} },
-    moduleGraph: {
-      getModuleById: (id) => (privateModule?.id === id ? privateModule : undefined),
-      invalidateModule: (module) => { invalidations.push(module); module.transformResult = null },
-    },
-    ws: { send: (message) => reloads.push(message) },
-  })
-  return { handlers, reloads, invalidations }
-}
-
-async function requestTo(handler, { url, method = 'POST', headers = authorizedHeaders, content = Buffer.from('{}') }) {
-  let bodyReads = 0
-  const request = Readable.from((function* () { bodyReads += 1; yield content })())
-  Object.assign(request, { url, method, headers, socket: { remoteAddress: '127.0.0.1' } })
-  let text = ''
-  const response = { statusCode: 200, setHeader: () => {}, end: (body = '') => { text += body } }
-  try {
-    await handler(request, response, () => {})
-    return { status: response.statusCode, body: text ? JSON.parse(text) : undefined, bodyReads }
-  } finally { request.destroy() }
-}
-
-const moduleOf = async (plugin) => import(`data:text/javascript,${encodeURIComponent(await plugin.load(plugin.resolveId('virtual:starmap-private-data')))}`)
 
 /** Every write endpoint of the local editor (the 11 of V2 and the media task actions). */
 const WRITE_ENDPOINTS = [

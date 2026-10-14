@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { readV2SampleFiles } from './v2-sample.mjs'
 import { edgeCaseFixture } from '../src/data/store/v2Store.fixture.ts'
@@ -67,3 +68,39 @@ export const quietly = () => {
   const lines = []
   return { lines, log: (line) => lines.push(String(line)), logError: (line) => lines.push(String(line)) }
 }
+
+// ---------------------------------------------------------------------------
+// The local editor plugin without a server (the harness of local-editor-plugin.test.mjs)
+// ---------------------------------------------------------------------------
+
+export const editorPrefix = '/__travelatlas/editor/'
+export const authorizedHeaders = { 'x-travelatlas-local-editor': '1', origin: 'http://127.0.0.1:5173', host: '127.0.0.1:5173' }
+
+export function captureMiddleware(plugin, privateModule) {
+  const handlers = [], reloads = [], invalidations = []
+  plugin.configureServer({
+    middlewares: { use: (handler) => handlers.push(handler) },
+    watcher: { add: () => {}, on: () => {} },
+    moduleGraph: {
+      getModuleById: (id) => (privateModule?.id === id ? privateModule : undefined),
+      invalidateModule: (module) => { invalidations.push(module); module.transformResult = null },
+    },
+    ws: { send: (message) => reloads.push(message) },
+  })
+  return { handlers, reloads, invalidations }
+}
+
+export async function requestTo(handler, { url, method = 'POST', headers = authorizedHeaders, content = Buffer.from('{}') }) {
+  let bodyReads = 0
+  const request = Readable.from((function* () { bodyReads += 1; yield content })())
+  Object.assign(request, { url, method, headers, socket: { remoteAddress: '127.0.0.1' } })
+  let text = ''
+  const response = { statusCode: 200, setHeader: () => {}, end: (body = '') => { text += body } }
+  try {
+    await handler(request, response, () => {})
+    return { status: response.statusCode, body: text ? JSON.parse(text) : undefined, bodyReads }
+  } finally { request.destroy() }
+}
+
+/** The plugin's virtual module, evaluated: its exports. */
+export const moduleOf = async (plugin) => import(`data:text/javascript,${encodeURIComponent(await plugin.load(plugin.resolveId('virtual:starmap-private-data')))}`)
