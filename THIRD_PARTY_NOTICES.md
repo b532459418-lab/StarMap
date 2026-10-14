@@ -14,9 +14,7 @@ summary alone.
 | [Resium](https://github.com/reearth/resium) | MIT | React bindings for Cesium |
 | [React](https://react.dev/), react-dom | MIT | |
 | [i18next](https://www.i18next.com/), [react-i18next](https://react.i18next.com/) | MIT | App interface translations and language preferences |
-| [three](https://threejs.org/) | MIT | Used by the frozen legacy globe |
-| [react-globe.gl](https://github.com/vasturiano/react-globe.gl) | MIT | Frozen legacy globe implementation |
-| [Photo Sphere Viewer](https://photo-sphere-viewer.js.org/) (`@photo-sphere-viewer/core`) | MIT | 360° panorama viewer |
+| [Photo Sphere Viewer](https://photo-sphere-viewer.js.org/) (`@photo-sphere-viewer/core`) | MIT | 360° panorama viewer. Brings in [three](https://threejs.org/) (MIT) as its own dependency; both are bundled into the panorama viewer chunk. |
 | [exifr](https://mutiny.cz/exifr/) | MIT | EXIF / XMP metadata extraction |
 | [lucide-react](https://lucide.dev/) | ISC | Icons |
 | [react-markdown](https://github.com/remarkjs/react-markdown), remark-gfm | MIT | Release-note rendering |

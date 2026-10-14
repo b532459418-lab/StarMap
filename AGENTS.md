@@ -48,8 +48,7 @@ When a user mentions uploading, importing, organizing, or adding travel photos o
 
 - Cesium is the primary Map implementation.
 - Daily map, route, marker, camera, and drone-media work targets `01_Web/src/components/CesiumAtlasGlobe.tsx` and related Cesium components.
-- `01_Web/src/components/AtlasGlobe.tsx` is legacy/frozen react-globe code. Keep it for rollback reference and change it only when explicitly requested.
-- Preserve the existing Map / Journey / About structure and shared theme state unless the user asks for a structural change.
+- Preserve the existing Map / Journey / About structure unless the user asks for a structural change.
 
 ## StarMap Core Boundary
 

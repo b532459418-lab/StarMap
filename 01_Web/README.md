@@ -239,7 +239,6 @@ For each public update, bump the package version, create a matching semantic-ver
 - `src/components/CollectionPage.tsx` is the Collection view: every Want to Go entry, including hidden and coordinate-less ones, with search, filters, sorting, note editing, hide / restore / delete, and View on map.
 - `src/worldgraph/collection.ts` is the Core list query behind it (`queryCollection` / `filterCollection`); unlike the map query it ignores layer visibility and keeps hidden entries.
 - `src/extensions/` holds the Google imagery, labels, and Photorealistic 3D Tiles integrations; see [`src/extensions/README.md`](src/extensions/README.md).
-- `src/components/AtlasGlobe.tsx` is the frozen legacy react-globe implementation.
 - `src/data/rawInputs.ts` chooses what the app reads: the tracked V2 sample in public and forced sample mode, otherwise the private V2 files injected by the profile-specific virtual module.
 - `src/data/travelAtlas.ts` exports the travel data derived from those inputs.
 - `scripts/legacy-data.mjs` decides whether a private folder still holds legacy-format data that has not been migrated (the migration itself runs on commit `4fd32a9`, see [Migrate legacy-format data](#migrate-legacy-format-data)).

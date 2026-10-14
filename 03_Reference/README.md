@@ -2,7 +2,7 @@
 
 Use this directory for durable technical, deployment, imagery-provider, and open-source release references. Licensing lives at the repository root: [`LICENSE`](../LICENSE), [`NOTICE.md`](../NOTICE.md), [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md), and the edition boundaries in [`docs/editions.md`](../docs/editions.md).
 
-Current implementation dependencies include Cesium, Resium, React, Vite, Tailwind CSS, Photo Sphere Viewer, Three.js, and the frozen react-globe implementation. Verify current licenses and imagery-provider terms before public deployment; do not rely on assumptions copied from old conversations.
+Current implementation dependencies include Cesium, Resium, React, Vite, Tailwind CSS, and Photo Sphere Viewer (which brings in Three.js). Verify current licenses and imagery-provider terms before public deployment; do not rely on assumptions copied from old conversations.
 
 ## Media Import References
 

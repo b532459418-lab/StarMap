@@ -173,17 +173,6 @@ button {
     0 0 24px rgba(125, 211, 252, 0.18);
 }
 
-.theme-night .theme-toggle {
-  border-color: rgba(148, 163, 184, 0.26);
-  background: rgba(15, 23, 42, 0.62);
-  color: rgba(203, 213, 225, 0.78);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.34);
-}
-
-.theme-night .theme-toggle:hover {
-  background: rgba(30, 41, 59, 0.8);
-}
-
 .theme-night .journey-view-toggle {
   border-color: rgba(148, 163, 184, 0.24);
   background: rgba(15, 23, 42, 0.54);
@@ -356,21 +345,6 @@ button {
   contain: strict;
 }
 
-.theme-day .atlas-cursor-glow {
-  background:
-    radial-gradient(
-      circle 88px at var(--cursor-x) var(--cursor-y),
-      rgba(255, 255, 255, 0.2),
-      rgba(125, 211, 252, 0.07) 42%,
-      transparent 76%
-    ),
-    radial-gradient(
-      circle 220px at var(--cursor-x) var(--cursor-y),
-      rgba(255, 255, 255, 0.06),
-      transparent 72%
-    );
-}
-
 @media (prefers-reduced-motion: reduce) {
   .atlas-cursor-glow {
     transition: none;
@@ -435,38 +409,10 @@ button {
     backdrop-filter 300ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.cesium-lab-page .glass-panel.atlas-panel-ghost {
-  pointer-events: none;
-  border-color: rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.025);
-  box-shadow: none;
-  backdrop-filter: blur(2px);
-}
-
-.atlas-panel-ghost .atlas-panel-body {
-  pointer-events: none;
-  opacity: 0.05;
-  filter: saturate(0.5);
-}
-
-.atlas-panel-ghost-toggle {
-  position: relative;
-  z-index: 10;
-  pointer-events: auto;
-}
-
 .cesium-lab-page {
   --atlas-overlay-top: 190px;
   --atlas-panel-top: 12px;
   --atlas-panel-bottom: clamp(24px, 2.2dvh, 32px);
-}
-
-.atlas-theme-toggle {
-  position: absolute;
-  left: 50%;
-  bottom: var(--atlas-panel-bottom);
-  z-index: 40;
-  transform: translateX(-50%);
 }
 
 @media (min-width: 768px) {
@@ -562,11 +508,6 @@ button {
 
 .theme-night .cesium-lab-page .glass-panel {
   background: rgba(8, 17, 34, 0.5);
-}
-
-.theme-night .cesium-lab-page .glass-panel.atlas-panel-ghost {
-  border-color: rgba(148, 163, 184, 0.05);
-  background: rgba(8, 17, 34, 0.025);
 }
 
 .selector-scrollbar {
@@ -1355,28 +1296,6 @@ button {
   color: rgba(186, 230, 253, 0.72);
 }
 
-.cesium-lab-page .atlas-panel-ghost-toggle {
-  border-color: rgba(100, 116, 139, 0.34);
-  border-radius: 8px;
-  background: rgba(248, 250, 252, 0.54);
-  box-shadow: none;
-  transition:
-    background-color 150ms ease,
-    border-color 150ms ease,
-    color 150ms ease,
-    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.cesium-lab-page .atlas-panel-ghost-toggle:active {
-  transform: scale(0.96);
-}
-
-.theme-night .cesium-lab-page .atlas-panel-ghost-toggle {
-  border-color: rgba(148, 163, 184, 0.24);
-  background: rgba(15, 23, 42, 0.52);
-  color: rgba(226, 232, 240, 0.82);
-}
-
 .cesium-lab-page .atlas-country-button {
   min-height: 58px;
   transform: none;
@@ -1612,25 +1531,6 @@ button {
   }
 }
 
-.cesium-lab-page .atlas-theme-toggle {
-  position: relative;
-  bottom: auto;
-  left: auto;
-  width: 188px;
-  height: 42px;
-  transform: none;
-  border-color: rgba(71, 85, 105, 0.36);
-  border-radius: 6px;
-  background: rgba(242, 247, 252, 0.76);
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
-  backdrop-filter: blur(18px);
-}
-
-.theme-night .cesium-lab-page .atlas-theme-toggle {
-  border-color: rgba(148, 163, 184, 0.34);
-  background: rgba(5, 14, 26, 0.84);
-}
-
 .atlas-map-controls {
   position: absolute;
   bottom: 12px;
@@ -1698,18 +1598,6 @@ button {
   border-color: rgba(125, 211, 252, 0.44);
   background: rgba(15, 23, 42, 0.92);
   color: #f8fafc;
-}
-
-.cesium-lab-page .atlas-theme-toggle .theme-toggle-thumb {
-  left: 4px;
-  width: calc(50% - 4px);
-  border-radius: 6px;
-  translate: 0 0;
-  transform: translateX(0);
-}
-
-.cesium-lab-page .atlas-theme-toggle[aria-pressed='true'] .theme-toggle-thumb {
-  transform: translateX(100%);
 }
 
 @media (min-width: 768px) and (max-height: 900px) {
@@ -1887,10 +1775,6 @@ button {
     width: 112px;
     gap: 5px;
   }
-
-  .cesium-lab-page .atlas-theme-toggle {
-    width: min(176px, calc(100% - 118px));
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2022,8 +1906,7 @@ button {
    The spread equals the blur so the shadow falls only downward and never
    dims the scrollbar. */
 .atlas-app-header[data-page='map'][data-scrolled]::before,
-.theme-night .atlas-app-header[data-page='map'][data-scrolled]::before,
-.theme-day .atlas-app-header[data-page='map'][data-scrolled]::before {
+.theme-night .atlas-app-header[data-page='map'][data-scrolled]::before {
   position: absolute;
   top: -24px;
   right: var(--atlas-page-scrollbar, 0px);
@@ -2046,8 +1929,7 @@ button {
 }
 
 .atlas-app-header[data-page='map'][data-scrolled='true']::before,
-.theme-night .atlas-app-header[data-page='map'][data-scrolled='true']::before,
-.theme-day .atlas-app-header[data-page='map'][data-scrolled='true']::before {
+.theme-night .atlas-app-header[data-page='map'][data-scrolled='true']::before {
   opacity: 1;
   visibility: visible;
   transition:
@@ -2055,16 +1937,9 @@ button {
     visibility 0s linear;
 }
 
-.theme-day .atlas-app-header[data-page='map'][data-scrolled]::before {
-  border-bottom-color: rgba(14, 165, 233, 0.14);
-  background: rgba(236, 247, 253, 0.78);
-  box-shadow: 0 20px 20px -20px rgba(15, 23, 42, 0.18);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .atlas-app-header[data-page='map'][data-scrolled]::before,
-  .theme-night .atlas-app-header[data-page='map'][data-scrolled]::before,
-  .theme-day .atlas-app-header[data-page='map'][data-scrolled]::before {
+  .theme-night .atlas-app-header[data-page='map'][data-scrolled]::before {
     transition: none;
   }
 }
@@ -2420,9 +2295,7 @@ button {
 }
 
 .atlas-sidebars-toggle,
-.theme-night .atlas-sidebars-toggle,
-.cesium-lab-page .atlas-theme-toggle,
-.theme-night .cesium-lab-page .atlas-theme-toggle {
+.theme-night .atlas-sidebars-toggle {
   border-color: transparent;
   background: transparent;
   color: #9ba5b3;
@@ -2441,165 +2314,8 @@ button {
   color: #dbe4ed;
 }
 
-.cesium-lab-page .atlas-theme-toggle .theme-toggle-thumb {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: #f4f7fa;
-  box-shadow: none;
-}
-
-.cesium-lab-page .atlas-theme-toggle[aria-pressed='true'] .theme-toggle-thumb {
-  border-color: rgba(125, 211, 252, 0.6);
-  background: var(--atlas-ui-accent);
-  box-shadow: none;
-}
-
-/* Day-mode liquid glass. The map remains the visual protagonist while the
-   chrome carries only enough frost and edge light to stay legible. */
-
-.theme-day .atlas-app-header[data-page='map'] {
-  isolation: isolate;
-  overflow: hidden;
-  border-bottom-color: rgba(255, 255, 255, 0.62);
-  background:
-    radial-gradient(ellipse at 50% -28%, rgba(255, 255, 255, 0.72), rgba(236, 247, 255, 0.4) 48%, rgba(188, 216, 234, 0.28) 100%),
-    rgba(228, 241, 250, 0.22);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 -1px 0 rgba(14, 165, 233, 0.14),
-    0 18px 48px rgba(15, 23, 42, 0.1);
-  color: #0b1220;
-  -webkit-backdrop-filter: blur(38px) saturate(1.6) contrast(1.04);
-  backdrop-filter: blur(38px) saturate(1.6) contrast(1.04);
-}
-
-.theme-day .atlas-app-header[data-page='map']::before {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background:
-    radial-gradient(circle at 22% -40%, rgba(255, 255, 255, 0.72), transparent 44%),
-    linear-gradient(96deg, transparent 24%, rgba(255, 255, 255, 0.18) 48%, transparent 72%);
-  content: '';
-  pointer-events: none;
-}
-
-.theme-day .atlas-app-header[data-page='map']::after {
-  background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.7) 50%, transparent);
-  box-shadow: 0 0 20px rgba(56, 189, 248, 0.22);
-}
-
-.theme-day .atlas-app-header[data-page='map'] h1 {
-  color: #07111f;
-  font-weight: 600;
-  letter-spacing: -0.05em;
-}
-
-.theme-day .atlas-app-header[data-page='map'] p {
-  color: rgba(30, 41, 59, 0.64);
-}
-
-.theme-day .atlas-app-header[data-page='map'] .atlas-tabs {
-  border-color: rgba(255, 255, 255, 0.7);
-  background: rgba(241, 248, 253, 0.32);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    inset 0 -1px 0 rgba(14, 165, 233, 0.1),
-    0 10px 24px rgba(15, 23, 42, 0.08);
-  -webkit-backdrop-filter: blur(26px) saturate(1.55);
-  backdrop-filter: blur(26px) saturate(1.55);
-}
-
-.theme-day .atlas-app-header[data-page='map'] .atlas-tabs button {
-  color: #64748b;
-}
-
-.theme-day .atlas-app-header[data-page='map'] .atlas-tabs button[aria-current='page'] {
-  border: 1px solid rgba(255, 255, 255, 0.78);
-  background: rgba(255, 255, 255, 0.58);
-  color: #0b1220;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    0 5px 14px rgba(15, 23, 42, 0.09);
-}
-
-.theme-day .atlas-app-header[data-page='map'] .atlas-tabs button:not([aria-current='page']):hover {
-  background: rgba(255, 255, 255, 0.34);
-  color: #0f172a;
-}
-
-.theme-day .cesium-lab-page {
-  --atlas-ui-canvas: rgba(228, 241, 251, 0.28);
-  --atlas-ui-surface-1: rgba(248, 252, 255, 0.34);
-  --atlas-ui-surface-2: rgba(255, 255, 255, 0.28);
-  --atlas-ui-surface-3: rgba(255, 255, 255, 0.52);
-  --atlas-ui-hairline: rgba(255, 255, 255, 0.48);
-  --atlas-ui-hairline-strong: rgba(255, 255, 255, 0.7);
-  --atlas-ui-ink: #0b1220;
-  --atlas-ui-body: #334155;
-  --atlas-ui-muted: #52657a;
-  --atlas-ui-faint: #66778a;
-  --atlas-ui-accent: #0284c7;
-  --atlas-ui-accent-soft: rgba(14, 165, 233, 0.12);
-  color: var(--atlas-ui-ink);
-  color-scheme: light;
-}
-
-.theme-day .cesium-lab-page .atlas-left-panel,
-.theme-day .cesium-lab-page .atlas-right-stack {
-  border-color: rgba(255, 255, 255, 0.54);
-  background:
-    linear-gradient(132deg, rgba(255, 255, 255, 0.7), rgba(221, 239, 251, 0.44) 48%, rgba(174, 224, 250, 0.28)),
-    rgba(224, 240, 251, 0.22);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    inset -1px 0 0 rgba(125, 211, 252, 0.28),
-    12px 0 36px rgba(15, 23, 42, 0.08);
-  -webkit-backdrop-filter: blur(32px) saturate(1.55) contrast(1.03);
-  backdrop-filter: blur(32px) saturate(1.55) contrast(1.03);
-}
-
-.theme-day .cesium-lab-page .atlas-right-stack {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    inset 1px 0 0 rgba(125, 211, 252, 0.28),
-    -12px 0 36px rgba(15, 23, 42, 0.08);
-}
-
-.theme-day .cesium-lab-page .glass-panel {
-  border-color: var(--atlas-ui-hairline);
-  background: var(--atlas-ui-surface-1);
-  color: var(--atlas-ui-ink);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
-  backdrop-filter: blur(24px) saturate(1.5);
-}
-
-.theme-day .cesium-lab-page .atlas-left-panel {
-  background:
-    linear-gradient(132deg, rgba(255, 255, 255, 0.7), rgba(221, 239, 251, 0.44) 48%, rgba(174, 224, 250, 0.28)),
-    rgba(224, 240, 251, 0.22);
-}
-
-.theme-day .cesium-lab-page .atlas-info-panel {
-  background: transparent;
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.theme-day .cesium-lab-page .atlas-info-metric,
-.theme-day .cesium-lab-page .atlas-preview-card,
-.theme-day .cesium-lab-page .atlas-memory-panel,
-.theme-day .cesium-lab-page .memory-city-card,
-.theme-day .cesium-lab-page .drone-media-item-card {
-  border-color: rgba(255, 255, 255, 0.5);
-  background: rgba(255, 255, 255, 0.26);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
-}
-
 .cesium-lab-page .atlas-country-button,
-.theme-night .cesium-lab-page .atlas-country-button,
-.theme-day .cesium-lab-page .atlas-country-button {
+.theme-night .cesium-lab-page .atlas-country-button {
   min-height: 62px;
   overflow: visible;
   border-width: 1px;
@@ -2612,37 +2328,6 @@ button {
     color 160ms ease,
     box-shadow 160ms ease,
     transform 150ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.theme-day .cesium-lab-page .atlas-country-button {
-  border-color: rgba(255, 255, 255, 0.56);
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.42), rgba(221, 237, 249, 0.2));
-  color: #334155;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.84),
-    inset 0 -1px 0 rgba(56, 189, 248, 0.08),
-    0 6px 16px rgba(15, 23, 42, 0.06);
-}
-
-.theme-day .cesium-lab-page .atlas-country-button:hover {
-  transform: translateY(-1px);
-  border-color: rgba(255, 255, 255, 0.98);
-  background: rgba(255, 255, 255, 0.52);
-  color: #0f172a;
-  box-shadow:
-    inset 0 1px 0 #ffffff,
-    0 9px 22px rgba(15, 23, 42, 0.08);
-}
-
-.theme-day .cesium-lab-page .atlas-country-button[data-selected='true'] {
-  border-color: rgba(14, 165, 233, 0.34);
-  background: rgba(255, 255, 255, 0.58);
-  color: #0b1220;
-  box-shadow:
-    inset 3px 0 0 #0ea5e9,
-    inset 0 1px 0 #ffffff,
-    0 10px 24px rgba(14, 165, 233, 0.1);
 }
 
 .theme-night .cesium-lab-page .atlas-country-button {
@@ -2693,58 +2378,6 @@ button {
 
 .cesium-lab-page .drone-media-item-card {
   min-width: 148px;
-}
-
-.theme-day .cesium-lab-page .atlas-right-stack .drone-media-card {
-  background: rgba(248, 252, 255, 0.22);
-}
-
-.theme-day .atlas-map-controls {
-  border-color: rgba(255, 255, 255, 0.58);
-  background: rgba(235, 246, 253, 0.34);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 12px 30px rgba(15, 23, 42, 0.1);
-  -webkit-backdrop-filter: blur(26px) saturate(1.55);
-  backdrop-filter: blur(26px) saturate(1.55);
-}
-
-.theme-day .atlas-sidebars-toggle,
-.theme-day .cesium-lab-page .atlas-theme-toggle {
-  color: #475569;
-}
-
-.theme-day .atlas-sidebars-toggle:hover {
-  background: rgba(255, 255, 255, 0.38);
-  color: #0f172a;
-}
-
-.theme-day .cesium-lab-page .atlas-theme-toggle .theme-toggle-thumb {
-  border-color: rgba(71, 85, 105, 0.12);
-  background: #ffffff;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
-}
-
-.theme-day .cesium-lab-page .atlas-slider::-webkit-slider-runnable-track {
-  background: linear-gradient(90deg, rgba(14, 165, 233, 0.86), rgba(71, 85, 105, 0.15));
-}
-
-.theme-day .cesium-lab-page .atlas-slider::-webkit-slider-thumb {
-  border-color: #ffffff;
-  background: #0f172a;
-  box-shadow:
-    0 0 0 1px rgba(15, 23, 42, 0.2),
-    0 4px 12px rgba(15, 23, 42, 0.16);
-}
-
-.cesium-lab-page .atlas-theme-toggle[aria-pressed='false'] > span:nth-of-type(2),
-.cesium-lab-page .atlas-theme-toggle[aria-pressed='true'] > span:nth-of-type(3) {
-  color: #070a0f;
-}
-
-.cesium-lab-page .atlas-theme-toggle[aria-pressed='false'] > span:nth-of-type(3),
-.cesium-lab-page .atlas-theme-toggle[aria-pressed='true'] > span:nth-of-type(2) {
-  color: #798492;
 }
 
 .cesium-lab-page .cesium-widget-credits {
@@ -2874,70 +2507,7 @@ button {
   background: rgba(8, 17, 28, 0.38);
 }
 
-.theme-day .atlas-app-header[data-page='map'] {
-  border-bottom-color: transparent;
-  background:
-    radial-gradient(ellipse at 50% -35%, rgba(255, 255, 255, 0.52), rgba(224, 241, 252, 0.18) 58%, rgba(191, 222, 241, 0.12)),
-    rgba(232, 245, 252, 0.18);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    0 16px 48px rgba(66, 105, 129, 0.1);
-  -webkit-backdrop-filter: blur(34px) saturate(1.55) brightness(1.04);
-  backdrop-filter: blur(34px) saturate(1.55) brightness(1.04);
-}
-
-.theme-day .atlas-app-header[data-page='map']::after {
-  display: none;
-}
-
-.theme-day .cesium-lab-page .atlas-left-panel,
-.theme-day .cesium-lab-page .atlas-right-stack {
-  background: rgba(236, 247, 253, 0.34);
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.theme-day .cesium-lab-page .atlas-right-stack {
-  background: rgba(236, 247, 253, 0.34);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.theme-day .cesium-lab-page .atlas-country-button {
-  border-color: rgba(255, 255, 255, 0.66);
-  background: rgba(255, 255, 255, 0.56);
-  -webkit-backdrop-filter: blur(20px) saturate(1.45);
-  backdrop-filter: blur(20px) saturate(1.45);
-}
-
-.theme-day .cesium-lab-page :is(.atlas-city-button, .drone-media-entry) {
-  border-color: rgba(255, 255, 255, 0.54);
-  background: rgba(255, 255, 255, 0.38);
-  color: #334155;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.58);
-}
-
-.theme-day .cesium-lab-page .atlas-right-stack :is(
-  .atlas-info-metric,
-  .atlas-preview-card,
-  .atlas-memory-panel,
-  .drone-media-card
-) {
-  background: rgba(255, 255, 255, 0.36);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.theme-day .cesium-lab-page .atlas-right-stack :is(
-  .memory-city-card,
-  .drone-media-item-card
-) {
-  background: rgba(255, 255, 255, 0.46);
-}
-
-.theme-night .cesium-lab-page .atlas-right-stack .drone-media-card,
-.theme-day .cesium-lab-page .atlas-right-stack .drone-media-card {
+.theme-night .cesium-lab-page .atlas-right-stack .drone-media-card {
   background: transparent;
   box-shadow: none;
   -webkit-backdrop-filter: none;
@@ -2948,14 +2518,9 @@ button {
   border-top-color: rgba(186, 230, 253, 0.18);
 }
 
-.theme-day .cesium-lab-page .atlas-right-stack .drone-media-card {
-  border-top-color: rgba(71, 85, 105, 0.16);
-}
-
 /* Header without a container: keep only the title, supporting copy, and tabs
    above the continuous Cesium sky. */
 .atlas-app-header[data-page='map'],
-.theme-day .atlas-app-header[data-page='map'],
 .theme-night .atlas-app-header[data-page='map'] {
   overflow: visible;
   translate: 0 24px;
@@ -2968,8 +2533,6 @@ button {
 
 .atlas-app-header[data-page='map']::before,
 .atlas-app-header[data-page='map']::after,
-.theme-day .atlas-app-header[data-page='map']::before,
-.theme-day .atlas-app-header[data-page='map']::after,
 .theme-night .atlas-app-header[data-page='map']::before,
 .theme-night .atlas-app-header[data-page='map']::after {
   display: none;
@@ -3011,13 +2574,6 @@ button {
     -10px 0 30px rgba(0, 0, 0, 0.08);
 }
 
-.theme-day .cesium-lab-page .atlas-overlay-frame::before,
-.theme-day .cesium-lab-page .atlas-overlay-frame::after {
-  border-color: rgba(255, 255, 255, 0.48);
-  background: rgba(236, 247, 253, 0.34);
-  box-shadow: none;
-}
-
 /* Selected countries use an internal glass glow instead of the former heavy
    left rail. City choices inherit the same material language at a tighter
    density so the country remains the primary disclosure level. */
@@ -3036,19 +2592,6 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
     inset 0 0 24px rgba(56, 189, 248, 0.055),
     0 12px 30px rgba(0, 0, 0, 0.2);
-}
-
-.theme-day .cesium-lab-page .atlas-country-button[data-selected='true'] {
-  border-color: rgba(255, 255, 255, 0.78);
-  background:
-    radial-gradient(circle at calc(100% - 24px) 50%, color-mix(in srgb, var(--country-color) 16%, transparent), transparent 30%),
-    linear-gradient(118deg, rgba(255, 255, 255, 0.82), rgba(204, 238, 252, 0.48) 54%, rgba(224, 215, 255, 0.28)),
-    rgba(239, 249, 255, 0.66);
-  color: #0b1728;
-  box-shadow:
-    inset 0 1px 0 #ffffff,
-    inset 0 0 22px rgba(14, 165, 233, 0.06),
-    0 10px 24px rgba(32, 93, 124, 0.1);
 }
 
 .cesium-lab-page .atlas-country-button:focus {
@@ -3156,42 +2699,6 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
     inset 0 0 18px rgba(56, 189, 248, 0.055),
     0 8px 22px rgba(14, 165, 233, 0.1);
-}
-
-.theme-day .cesium-lab-page :is(.atlas-city-button, .drone-media-entry) {
-  border-color: rgba(255, 255, 255, 0.68);
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.58), rgba(215, 235, 247, 0.32)),
-    rgba(248, 252, 255, 0.28);
-  color: #334155;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.86),
-    inset 0 -1px 0 rgba(14, 165, 233, 0.055),
-    0 6px 16px rgba(51, 88, 109, 0.06);
-}
-
-.theme-day .cesium-lab-page :is(.atlas-city-button, .drone-media-entry):hover {
-  border-color: rgba(255, 255, 255, 0.94);
-  background: rgba(255, 255, 255, 0.62);
-  color: #0f172a;
-  box-shadow:
-    inset 0 1px 0 #ffffff,
-    0 8px 20px rgba(51, 88, 109, 0.08);
-}
-
-.theme-day .cesium-lab-page :is(
-  .atlas-city-button[data-selected='true'],
-  .drone-media-entry[data-active='true']
-) {
-  border-color: rgba(125, 211, 252, 0.58);
-  background:
-    linear-gradient(125deg, rgba(255, 255, 255, 0.82), rgba(198, 236, 251, 0.66) 58%, rgba(226, 220, 255, 0.34)),
-    rgba(235, 248, 255, 0.58);
-  color: #0b1728;
-  box-shadow:
-    inset 0 1px 0 #ffffff,
-    inset 0 0 18px rgba(14, 165, 233, 0.07),
-    0 8px 20px rgba(14, 165, 233, 0.09);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -3380,45 +2887,6 @@ button {
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.02em;
-}
-
-.theme-day .cesium-lab-page .atlas-mouse-guide {
-  border-top-color: rgba(255, 255, 255, 0.56);
-  background:
-    radial-gradient(circle at 50% 0, rgba(14, 165, 233, 0.1), transparent 58%),
-    rgba(240, 249, 255, 0.32);
-  color: #334155;
-}
-
-.theme-day .cesium-lab-page .atlas-mouse-guide-heading {
-  color: rgba(3, 105, 161, 0.58);
-}
-
-.theme-day .cesium-lab-page .atlas-mouse-guide-item {
-  border-color: rgba(255, 255, 255, 0.62);
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.58), rgba(205, 235, 249, 0.24)),
-    rgba(248, 252, 255, 0.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.8),
-    0 5px 14px rgba(51, 88, 109, 0.055);
-}
-
-.theme-day .cesium-lab-page .atlas-mouse-control-shell {
-  fill: rgba(255, 255, 255, 0.38);
-  stroke: rgba(51, 65, 85, 0.58);
-}
-
-.theme-day .cesium-lab-page .atlas-mouse-control-divider {
-  stroke: rgba(71, 85, 105, 0.34);
-}
-
-.theme-day .cesium-lab-page .atlas-mouse-guide-copy > span {
-  color: rgba(71, 85, 105, 0.68);
-}
-
-.theme-day .cesium-lab-page .atlas-mouse-guide-copy > strong {
-  color: rgba(15, 23, 42, 0.88);
 }
 
 @media (min-width: 768px) and (max-height: 720px) {
@@ -6313,24 +5781,6 @@ button {
   color: #38bdf8;
 }
 
-.theme-day .atlas-map-source-menu {
-  border-color: rgba(255, 255, 255, 0.62);
-  background: rgba(235, 246, 253, 0.48);
-  color: #0f172a;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 16px 40px rgba(15, 23, 42, 0.12);
-}
-
-.theme-day .atlas-map-source-menu > button {
-  color: #334155;
-}
-
-.theme-day .atlas-map-source-menu > button:hover,
-.theme-day .atlas-map-source-menu > button[data-active='true'] {
-  color: #0f172a;
-}
-
 .atlas-map-source-button {
   height: 48px;
 }
@@ -6476,24 +5926,6 @@ button {
   height: 15px;
   justify-self: end;
   color: #38bdf8;
-}
-
-.theme-day .atlas-layer-menu {
-  border-color: rgba(255, 255, 255, 0.62);
-  background: rgba(235, 246, 253, 0.48);
-  color: #0f172a;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 16px 40px rgba(15, 23, 42, 0.12);
-}
-
-.theme-day .atlas-layer-menu-items > button {
-  color: #334155;
-}
-
-.theme-day .atlas-layer-menu-items > button:hover,
-.theme-day .atlas-layer-menu-items > button[data-active='true'] {
-  color: #0f172a;
 }
 
 .atlas-layer-button[aria-expanded='true'] {
