@@ -1,0 +1,31 @@
+# Monthly dependency updates. Minor and patch updates of one ecosystem arrive as
+# one grouped pull request; major updates stay separate so each can be reviewed.
+# Workflow actions stay pinned to full commit SHAs: Dependabot replaces the SHA
+# and the trailing version comment together.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /01_Web
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      actions-minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore
+      include: scope

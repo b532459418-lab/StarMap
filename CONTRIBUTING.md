@@ -40,7 +40,9 @@ you are unsure where something belongs, open an issue first.
 
 ## Development
 
-All npm commands run from `01_Web/`:
+StarMap needs Node.js 24 or later: `01_Web/.nvmrc` names the version and
+`01_Web/package.json` declares it in `engines`. All npm commands run from
+`01_Web/`:
 
 ```powershell
 npm ci
@@ -57,17 +59,33 @@ npm run build:public
 npm run privacy:check
 ```
 
-GitHub Actions runs the **CI / Public checks** job for every pull request to
-`main`, every push to `main`, and manual runs. It uses Node.js 24 on Ubuntu and
-executes `npm run release:check`: the privacy audit followed by a clean archive
-of the committed source, locked dependency installation, lint, the complete
-test suite, and a public build. No personal data or map credentials are needed.
-New commits cancel older runs for the same pull request or branch.
+GitHub Actions runs CI for every pull request to `main`, every push to `main`,
+and manual runs. It uses Node.js 24 on Ubuntu and needs no personal data or
+map credentials. Its jobs run in parallel:
+
+- **Source checks** execute `npm run release:check`: the privacy audit
+  followed by a clean archive of the committed source, locked dependency
+  installation, lint, the complete test suite, and a public build.
+- **Browser checks** run the critical-flow and media-recovery groups whole and
+  the time-filter group in three shards, each on its own runner with isolated
+  synthetic data (see `01_Web/README.md`).
+- **Public build smoke** builds the public bundle, refuses server-only code in
+  it, and checks the result through `vite preview`: the neutral sample loads
+  and no local editor endpoint answers.
+- **Public checks** succeed only when every job above, and every shard,
+  succeeded.
+
+A new commit cancels the older run of the same pull request. Pushes to `main`
+always run to completion, so every merged commit is checked.
 
 Before merging, check that **Public checks** passed for the latest commit.
 Maintainers can require this check through branch protection; the workflow
 alone does not enforce a merge restriction. Browser checks remain necessary
 for changes to user-visible behavior.
+
+Dependabot proposes npm and GitHub Actions updates once a month, grouping each
+ecosystem's minor and patch updates into one pull request. Actions stay pinned
+to full commit SHAs.
 
 Architecture rules that lint enforces:
 

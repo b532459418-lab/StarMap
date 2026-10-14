@@ -48,7 +48,7 @@ This repository is the **StarMap Core / Community Edition**, licensed under [MIT
 
 ## Quick start
 
-Requirements: Git and a current Node.js LTS release compatible with Vite 8.
+Requirements: Git and Node.js 24 or later (`01_Web/.nvmrc`; `package.json` declares it in `engines`).
 
 ```powershell
 git clone https://github.com/b532459418-lab/StarMap.git
