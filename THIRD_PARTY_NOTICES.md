@@ -10,7 +10,7 @@ summary alone.
 
 | Package | License | Notes |
 | --- | --- | --- |
-| [Cesium](https://cesium.com/cesiumjs/) | Apache-2.0 | 3D globe engine. Bundles Natural Earth II imagery and the moon texture used by StarMap. Cesium's own `LICENSE.md` lists further third-party components. |
+| [Cesium](https://cesium.com/cesiumjs/) | Apache-2.0 | 3D globe engine. Bundles Natural Earth II imagery and the moon texture used by StarMap. Cesium's own `LICENSE.md` lists further third-party components. The public build bundles Cesium's code into `assets/cesium-<hash>.js`, which keeps Cesium's license header, and copies its run-time files unchanged to `cesium/<version>/`. |
 | [Resium](https://github.com/reearth/resium) | MIT | React bindings for Cesium |
 | [React](https://react.dev/), react-dom | MIT | |
 | [i18next](https://www.i18next.com/), [react-i18next](https://react.i18next.com/) | MIT | App interface translations and language preferences |
@@ -28,7 +28,7 @@ summary alone.
 
 | Package | License |
 | --- | --- |
-| [Vite](https://vite.dev/), `@vitejs/plugin-react`, vite-plugin-cesium | MIT |
+| [Vite](https://vite.dev/), `@vitejs/plugin-react`, [vite-plugin-static-copy](https://github.com/sapphi-red/vite-plugin-static-copy) | MIT |
 | [TypeScript](https://www.typescriptlang.org/) | Apache-2.0 |
 | [ESLint](https://eslint.org/), typescript-eslint, eslint-plugin-react-hooks, eslint-plugin-react-refresh, `@eslint/js`, globals | MIT |
 | [sharp](https://sharp.pixelplumbing.com/) | Apache-2.0 |

@@ -209,6 +209,18 @@ npm run media:check
 
 `npm run build:public` creates a static public-display build in `01_Web/dist/` without the local editor: no build contains the editor's client code, and CI refuses a public bundle that does. `npm run release:check` goes further: it requires a clean worktree, archives only Git-tracked files into a temporary clean room, installs dependencies, and runs lint, the tests, and the public build there. This proves an external private layer cannot leak into a public release. Use `build:personal` only for a private deployment you control.
 
+### Caching the public build
+
+The build follows [Cesium's own Vite setup](https://github.com/CesiumGS/cesium-vite-example): Cesium's code is bundled into a content-hashed chunk, and the files Cesium loads at run time are copied unchanged into a directory named after the installed Cesium version. A host can therefore cache `dist/` like this:
+
+| Path | Its URL changes when | Suggested `Cache-Control` |
+| --- | --- | --- |
+| `index.html` | — (it names the current chunks) | `no-cache` |
+| `assets/*`, including `assets/cesium-<hash>.js` | the file's content changes (the hash is in the name) | `public, max-age=31536000, immutable` |
+| `cesium/<version>/*` (Cesium's `Workers`, `Assets`, `Widgets` and `ThirdParty`) | Cesium is upgraded (a new version gets a new directory) | `public, max-age=31536000, immutable` |
+
+Cesium has a chunk of its own, so an application change that uses no further Cesium API keeps that chunk's name and every cached copy of it.
+
 ## Updates
 
 The bottom-right version button checks the latest [GitHub Release](https://github.com/b532459418-lab/StarMap/releases) at most once every 12 hours. A newer unseen version activates a breathing light and shows release notes plus a guarded AI-update prompt. It never overwrites your project automatically.

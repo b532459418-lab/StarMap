@@ -1,8 +1,36 @@
-import { defineConfig, loadEnv } from 'vite'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import { defineConfig, loadEnv, normalizePath } from 'vite'
 import type { Plugin, UserConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import cesium from 'vite-plugin-cesium'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
+
+// Cesium follows Cesium's own Vite setup (github.com/CesiumGS/cesium-vite-example; batch 4B, E8). The `cesium` package is
+// bundled like any other dependency, so its code lands in content-hashed chunks; the four directories Cesium loads at run
+// time (Workers, ThirdParty, Assets, Widgets) are copied unchanged, and CESIUM_BASE_URL tells Cesium where they are.
+// They sit under a directory named after the installed Cesium version, so their URLs change whenever Cesium does and
+// a host may cache them for good (README: "Caching the public build").
+const cesiumPackageJson = createRequire(import.meta.url).resolve('cesium/package.json')
+const cesiumVersion: string = JSON.parse(readFileSync(cesiumPackageJson, 'utf8')).version
+const cesiumBaseUrl = `cesium/${cesiumVersion}`
+// The copy plugin keeps each file's path below Vite's root (the working directory); `stripBase` removes the leading
+// `node_modules/cesium/Build/Cesium`, so Build/Cesium/Workers/x.js is served and built as cesium/<version>/Workers/x.js.
+const cesiumBuildFromRoot = normalizePath(path.relative(process.cwd(), path.join(path.dirname(cesiumPackageJson), 'Build', 'Cesium')))
+const cesiumStaticCopyTargets = ['Workers', 'ThirdParty', 'Assets', 'Widgets'].map((directory) => ({
+  src: `${cesiumBuildFromRoot}/${directory}`,
+  dest: cesiumBaseUrl,
+  rename: { stripBase: cesiumBuildFromRoot.split('/').filter((segment) => segment !== '..').length },
+}))
+// Cesium's prebuilt files, including the copied workers, open with its Apache-2.0 license header. Bundling from the
+// sources drops it, so the Cesium chunk gets the same header back, read from the installed package.
+const readCesiumLicenseHeader = () => {
+  const head = readFileSync(path.join(path.dirname(cesiumPackageJson), 'Build', 'Cesium', 'index.js'), 'utf8').slice(0, 4096)
+  const end = head.indexOf('*/')
+  if (!head.startsWith('/**') || end < 0 || !head.includes('@license')) throw new Error('Cesium license header not found in Build/Cesium/index.js')
+  return head.slice(0, end + 2)
+}
 
 // `vite preview` serves dist, and dist may be a personal build carrying private data and original media. In every mode
 // the preview server therefore grants no CORS, and batch 1's cross-site guard runs ahead of its own middlewares
@@ -38,6 +66,9 @@ export default defineConfig(async ({ mode, isPreview }): Promise<UserConfig> => 
     ...(hardening.preview ? { preview: hardening.preview } : {}),
     // Public mode never reads repository-local .env files. Hosting variables from process.env still work.
     envDir,
+    define: {
+      CESIUM_BASE_URL: JSON.stringify(`/${cesiumBaseUrl}`),
+    },
     plugins: [
       ...hardening.plugins,
       travelAtlasLocalEditor({
@@ -48,8 +79,20 @@ export default defineConfig(async ({ mode, isPreview }): Promise<UserConfig> => 
       }),
       react(),
       tailwindcss(),
-      cesium(),
+      viteStaticCopy({ targets: cesiumStaticCopyTargets }),
     ],
+    build: {
+      rolldownOptions: {
+        output: {
+          // Cesium and the packages it imports get their own chunk. An application change that uses no further Cesium
+          // API leaves that chunk's file name, and every cached copy of it, unchanged.
+          codeSplitting: {
+            groups: [{ name: 'cesium', test: /[\\/]node_modules[\\/](?:cesium|@cesium)[\\/]/ }],
+          },
+          postBanner: (chunk) => chunk.name === 'cesium' ? readCesiumLicenseHeader() : '',
+        },
+      },
+    },
     server: {
       // The personal profile serves private data, so no other origin gets a CORS grant (Vite 8 otherwise allows any
       // localhost, 127.0.0.1 or [::1] origin). The local editor's cross-site guard covers what CORS cannot.
