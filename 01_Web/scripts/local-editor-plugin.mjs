@@ -494,9 +494,16 @@ export function travelAtlasLocalEditor(options = {}) {
   cesiumAccessToken = typeof options.cesiumAccessToken === 'string'
     ? options.cesiumAccessToken.trim()
     : ''
+  // Filled by configResolved. Until then closeBundle treats the run as "not a build" and copies nothing.
+  let command
+  let outputRoot
 
   return {
     name: 'travelatlas-local-editor',
+    configResolved(config) {
+      command = config.command
+      outputRoot = path.resolve(config.root, config.build.outDir)
+    },
     resolveId(id) {
       if (id === virtualPrivateDataId) return resolvedPrivateDataId
     },
@@ -623,8 +630,11 @@ export function travelAtlasLocalEditor(options = {}) {
       })
     },
     async closeBundle() {
-      if (profile !== 'personal' || !(await exists(userMediaRoot))) return
-      const outputMediaRoot = path.join(webRoot, 'dist', 'media', 'user')
+      // The copy is for `build:personal` only. Vite's dev server also calls closeBundle when it shuts down (after
+      // buildEnd), so without the command check every exit from `dev:personal` would quietly copy the private media
+      // into the build output. The target is the resolved build.outDir (dist by default), not a hard-coded path.
+      if (command !== 'build' || profile !== 'personal' || !(await exists(userMediaRoot))) return
+      const outputMediaRoot = path.join(outputRoot, 'media', 'user')
       await mkdir(path.dirname(outputMediaRoot), { recursive: true })
       await cp(userMediaRoot, outputMediaRoot, { recursive: true })
     },
