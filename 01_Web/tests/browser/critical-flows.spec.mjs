@@ -1,9 +1,10 @@
 import { test, expect, openMap, selectReykjavik, openCollection, readFixture, saveAndWaitForReload } from './helpers.mjs'
-import { enterStoreMode, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
+import { enterDamagedStoreMode, enterStoreMode, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
 import { storeFileOf } from '../../scripts/private-data-source.mjs'
 import { getPrivatePaths } from '../../scripts/private-profile.mjs'
 import { openStore } from '../../scripts/store-host.mjs'
 import { projectToV2Files } from '../../scripts/store-projection.mjs'
+import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -447,5 +448,48 @@ test.describe('new-library mode (experimental)', () => {
     // A confirmed refusal: nothing was written to the store or the V2 files.
     expect(await storeRevision()).toBe(revision)
     expect(await v2Bytes()).toEqual(v2Before)
+  })
+})
+
+// 3C-4b: a damaged new library (design 3B §5). The store is damaged before the dev server ever sees it
+// (scripts/browser-fixture.mjs enterDamagedStoreMode): its open check fails, and the App shows the data read-only with a
+// persistent notice; a write is refused with E_STORE_READ_ONLY. It runs after the cases above: the module is first
+// loaded in V2 mode, which closes the store they used, so the damaged one is opened afresh. On Windows the dev server
+// keeps the store of the cases above open and it cannot be removed, so the case skips itself when that store is still
+// there: run it on its own on Windows (CI runs it with the group on Linux).
+test.describe('new-library mode: a damaged store', () => {
+  const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
+  const moduleUrl = '/@id/__x00__virtual:starmap-private-data'
+  const served = async (page, name) => new RegExp(`${name} = ([A-Za-z0-9_]+)`).exec(await (await page.request.get(moduleUrl)).text())?.[1]
+  const storeBytes = () => readFile(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() })))
+  let leave
+  test.afterAll(async () => { await leave?.() })
+
+  test('a damaged new library is shown read-only with a notice, and a note save is refused with E_STORE_READ_ONLY', async ({ page }) => {
+    test.skip(process.platform === 'win32' && existsSync(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() }))),
+      'The dev server still holds the store of the cases above open (Windows); run this case on its own.')
+    await expect.poll(() => served(page, 'privateStoreRevision')).toBe('undefined')
+    leave = await enterDamagedStoreMode(root())
+    await expect.poll(() => served(page, 'privateStoreReadOnly')).toBe('true')
+    expect(await served(page, 'privateStoreRevision')).toBe('1')
+    const before = await storeBytes()
+    await openMap(page)
+    const notice = 'The new library may be damaged and is read-only. Restore it from a backup: npm run store:restore'
+    await expect(page.getByText(notice, { exact: true })).toBeVisible()
+    await openCollection(page)
+    // The data is there as usual.
+    await page.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
+    await page.locator('.collection-card textarea').fill('Synthetic note for a damaged store')
+    const refused = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo/update'))
+    await page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click()
+    const response = await refused
+    expect(response.status()).toBe(409)
+    expect((await response.json()).code).toBe('E_STORE_READ_ONLY')
+    await expect(page.locator('.collection-card-notice')).toContainText('The new library may be damaged and is read-only for now. Nothing was saved.')
+    // The notice stays after a reload (the page reopens on Collection: go back to the map), and not a byte of the store changed.
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
+    await expect(page.getByText(notice, { exact: true })).toBeVisible()
+    expect(Buffer.compare(await storeBytes(), before)).toBe(0)
   })
 })

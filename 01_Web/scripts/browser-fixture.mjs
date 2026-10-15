@@ -1,8 +1,9 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { privateDataSource } from './private-data-source.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { applyMigration } from './store-migrate.mjs'
+import { rawConnection } from './store-sqlite.mjs'
 import { integrityProblems } from '../src/data/v2write/transaction.ts'
 
 export const fixtureIds = Object.freeze({
@@ -62,6 +63,44 @@ export async function createBrowserFixture(root, { large = false, mode = 'v2' } 
  * store, says so and the rest of that run stays in the new-library mode (run the new-library cases on their own there).
  * Entering again while a store is left over (a new worker after a failed case on Windows) keeps that store.
  */
+/**
+ * Switch a running case's shared fixture into the new-library mode with a damaged store (3C-4b): the fixture's own V2
+ * files are migrated in a staging root under `operations/`, the store is damaged there (the b-tree page header of
+ * op_log's root page overwritten, a page the projection never reads) and its last writer session left unclosed, and only
+ * then is it moved into `data/store/world.sqlite` in one rename, so the dev server never sees a healthy store. The next
+ * open runs quick_check, fails it with E_STORE_CORRUPT and keeps the store read-only. The root's own V2 files are not
+ * touched. Returns `leave()`, which removes the store (on Windows the dev server keeps it open: see enterStoreMode).
+ *
+ * The dev server must not hold an earlier store open (it would keep serving that one): load the virtual module in V2
+ * mode first, which closes it.
+ */
+export async function enterDamagedStoreMode(root) {
+  const staging = path.join(root, 'operations', 'store-staging')
+  const stagingPaths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: path.join(staging, 'private') })
+  await rm(staging, { recursive: true, force: true, maxRetries: 3 })
+  await writeFixtureFiles(stagingPaths.root, await fixtureFiles({ large: false }))
+  await applyMigration(stagingPaths)
+  const staged = path.join(stagingPaths.root, 'data', 'store', 'world.sqlite')
+  const db = rawConnection(staged)
+  let rootPage, pageSize
+  try {
+    db.exec('UPDATE store_meta SET clean_shutdown = 0')
+    pageSize = db.prepare('PRAGMA page_size').get().page_size
+    rootPage = db.prepare("SELECT rootpage FROM sqlite_schema WHERE name = 'op_log'").get().rootpage
+  } finally { db.close() }
+  const handle = await open(staged, 'r+')
+  try { await handle.write(Buffer.alloc(16, 0xff), 0, 16, (rootPage - 1) * pageSize) } finally { await handle.close() }
+  await mkdir(path.join(root, 'data', 'store'), { recursive: true })
+  await rename(staged, path.join(root, 'data', 'store', 'world.sqlite'))
+  await rm(staging, { recursive: true, force: true, maxRetries: 3 })
+  return async function leave() {
+    try { await rm(path.join(root, 'data', 'store'), { recursive: true, force: true, maxRetries: 3 }) } catch (error) {
+      if (process.platform !== 'win32' || !['EBUSY', 'EPERM'].includes(error?.code)) throw error
+      console.warn(`The dev server keeps the damaged new library open (${error.code}); on Windows this run stays in the new-library mode.`)
+    }
+  }
+}
+
 export async function enterStoreMode(root) {
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
   const removeStore = async () => {

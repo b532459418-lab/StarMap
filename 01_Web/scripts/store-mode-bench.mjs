@@ -17,12 +17,18 @@
  *   ... --segment editors    (3C-4a) the eight editor writes over HTTP in each mode, on freshly generated roots: per
  *                            endpoint the client's end to end and, in the store mode, the host's V2 write, diff, commit
  *                            and total
+ *   ... --segment media      (3C-4b) media files for the store root's media items (derivatives, originals with folder
+ *                            pins, the media source index); run after generate
+ *   ... --segment backup     (3C-4b) store:backup of the store root with its media into <dir>/backup: the time under the
+ *                            library lease, the media copy, and the sizes
+ *   ... --segment restore    (3C-4b) store:restore of <dir>/backup into <dir>/restored, with every media hash checked
  *
  * Each segment prints one JSON line and appends it to <dir>/results.jsonl. Run every segment in its own process (the
  * store's open is measured cold). `--scale tiny` is the smoke scale.
  */
+import { randomBytes } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -36,8 +42,8 @@ import { serializeV2 } from '../src/data/canonical/v2Serializer.ts'
 import { validateV2Files } from '../src/data/canonical/v2Schema.ts'
 
 export const MODE_BENCH_SCALES = Object.freeze({
-  real: Object.freeze({ countries: 100, cities: 2_900, visited: 6_500, journeySize: 10, planned: 500, wishes: 3_000, media: 10_000, updates: 30 }),
-  tiny: Object.freeze({ countries: 4, cities: 26, visited: 40, journeySize: 5, planned: 5, wishes: 15, media: 30, updates: 4 }),
+  real: Object.freeze({ countries: 100, cities: 2_900, visited: 6_500, journeySize: 10, planned: 500, wishes: 3_000, media: 10_000, updates: 30, derivativeKb: 64, originalKb: 256 }),
+  tiny: Object.freeze({ countries: 4, cities: 26, visited: 40, journeySize: 5, planned: 5, wishes: 15, media: 30, updates: 4, derivativeKb: 1, originalKb: 4 }),
 })
 const NOW = '2026-10-14T00:00:00.000Z'
 const hex = (n) => n.toString(16).padStart(12, '0')
@@ -374,18 +380,93 @@ export async function pipelineSegment(dir) {
   }
 }
 
-const SEGMENTS = { generate: generateRoots, read: readSegment, http: httpSegment, pipeline: pipelineSegment, editors: editorsSegment }
+/**
+ * (3C-4b) `media`: media files for the store root's media items, so that a backup copies real files: one derivative
+ * per item (its `src`, media/user/synthetic/<n>.webp, scale.derivativeKb), its original under
+ * MediaInbox/<country>/<city>/photos/ (scale.originalKb) with a folder pin per city, and the media source index. Every
+ * file starts with its own number and continues with one shared block of random bytes (incompressible, distinct hashes).
+ */
+export async function mediaSegment(dir, scale) {
+  const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: rootsOf(dir).store })
+  const files = syntheticV2Files(scale)
+  const placeOf = new Map(files.places.places.map((place) => [place.id, place]))
+  const folderOf = (city) => [placeOf.get(city.partOf).names.en, city.names.en]
+  const block = randomBytes(Math.max(scale.derivativeKb, scale.originalKb) * 1024)
+  const bytesOf = (n, kb) => { const head = Buffer.from(`synthetic media ${n}\n`); return Buffer.concat([head, block.subarray(0, kb * 1024 - head.length)]) }
+  const started = performance.now()
+  await mkdir(path.join(paths.userMediaRoot, 'synthetic'), { recursive: true })
+  for (const city of files.places.places.filter((place) => place.subtype === 'city')) {
+    const folder = path.join(paths.inboxRoot, ...folderOf(city))
+    await mkdir(path.join(folder, 'photos'), { recursive: true })
+    await writeFile(path.join(folder, 'place.json'), `${JSON.stringify({ placeId: city.id })}\n`)
+  }
+  const sourcesById = {}
+  let bytes = 0
+  for (const [n, item] of files.media.items.entries()) {
+    const source = [...folderOf(placeOf.get(item.placeId)), 'photos', item.originalFileName]
+    await writeFile(path.join(paths.root, ...item.src.slice(1).split('/')), bytesOf(n, scale.derivativeKb))
+    await writeFile(path.join(paths.inboxRoot, ...source), bytesOf(n, scale.originalKb))
+    sourcesById[item.id] = [source.join('/')]
+    bytes += (scale.derivativeKb + scale.originalKb) * 1024
+  }
+  await writeFile(paths.v2MediaSourceIndexPath, `${JSON.stringify({ schemaVersion: 1, generatedAt: NOW, sourcesById })}\n`)
+  return { files: files.media.items.length * 2 + scale.cities + 1, mediaBytes: bytes, ms: ms(started) }
+}
+
+/** Bytes and files under `directory`. */
+async function treeSize(directory) {
+  let files = 0, bytes = 0
+  for (const item of await readdir(directory, { withFileTypes: true, recursive: true })) {
+    if (!item.isFile()) continue
+    files++
+    bytes += (await stat(path.join(item.parentPath, item.name))).size
+  }
+  return { files, bytes }
+}
+
+/** (3C-4b) `backup`: store:backup of the store root (after `media`) into <dir>/backup, timed: under the lease, then the media copy. */
+export async function backupSegment(dir) {
+  const { backupStore } = await import('./store-backup.mjs')
+  const out = path.join(dir, 'backup')
+  await rm(out, { recursive: true, force: true })
+  const started = performance.now()
+  let leaseMs
+  const { manifest } = await backupStore(getPrivatePaths({ STARMAP_PRIVATE_ROOT: rootsOf(dir).store }), { out, onMediaCopy: () => { leaseMs = ms(started) } })
+  const totalMs = ms(started)
+  return {
+    totalMs, leaseMs, mediaCopyMs: Math.round((totalMs - leaseMs) * 10) / 10, revision: manifest.store.revision,
+    storeBytes: manifest.files['world.sqlite'].bytes, mediaFiles: manifest.media.count, mediaBytes: manifest.media.bytes,
+    manifestBytes: (await stat(path.join(out, 'manifest.json'))).size, backup: await treeSize(out),
+  }
+}
+
+/** (3C-4b) `restore`: store:restore of <dir>/backup into <dir>/restored, timed. */
+export async function restoreSegment(dir) {
+  const { restoreStore } = await import('./store-backup.mjs')
+  const to = path.join(dir, 'restored')
+  await rm(to, { recursive: true, force: true })
+  const started = performance.now()
+  const { restoredFrom } = await restoreStore({ from: path.join(dir, 'backup'), to })
+  return { totalMs: ms(started), revision: restoredFrom.revision, restored: await treeSize(to) }
+}
+
+const SEGMENTS = {
+  generate: generateRoots, read: readSegment, http: httpSegment, pipeline: pipelineSegment, editors: editorsSegment,
+  media: mediaSegment, backup: backupSegment, restore: restoreSegment,
+}
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const arg = (name) => { const at = process.argv.indexOf(name); return at > 0 ? process.argv[at + 1] : undefined }
   const dir = arg('--dir'), segment = arg('--segment'), scaleName = arg('--scale') ?? 'real'
   if (!dir || !Object.hasOwn(SEGMENTS, segment) || !Object.hasOwn(MODE_BENCH_SCALES, scaleName)) {
-    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline|editors [--scale real|tiny]')
+    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline|editors|media|backup|restore [--scale real|tiny] [--derivative-kb N --original-kb N]')
     process.exitCode = 1
   } else {
     mkdirSync(dir, { recursive: true })
     const started = performance.now()
-    const result = await SEGMENTS[segment](path.resolve(dir), MODE_BENCH_SCALES[scaleName])
+    // --derivative-kb / --original-kb: other media file sizes for the media segment (a smaller run that fits a time budget).
+    const sizes = Object.fromEntries([['derivativeKb', '--derivative-kb'], ['originalKb', '--original-kb']].filter(([, flag]) => arg(flag)).map(([key, flag]) => [key, Number(arg(flag))]))
+    const result = await SEGMENTS[segment](path.resolve(dir), { ...MODE_BENCH_SCALES[scaleName], ...sizes })
     const line = JSON.stringify({ segment, scale: scaleName, at: new Date().toISOString(), node: process.versions.node, totalMs: ms(started), result })
     appendFileSync(path.join(dir, 'results.jsonl'), `${line}\n`)
     console.log(line)

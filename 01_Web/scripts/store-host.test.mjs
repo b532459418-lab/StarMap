@@ -4,11 +4,10 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, writ
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { inspectLibraryOperation, withLibraryOperation } from './library-operation-lock.mjs'
 import {
-  BUSY_TIMEOUT_MS, StoreHostError, classifySqliteError, nodeSupportsStore, openConnection, pragmaValue,
+  BUSY_TIMEOUT_MS, StoreHostError, classifySqliteError, nodeSupportsStore, openConnection, pragmaValue, rawConnection,
 } from './store-sqlite.mjs'
 import {
   RETENTION, ROW_TABLES, STORE_APPLICATION_ID, STORE_AUTO_VACUUM, STORE_FORMAT, STORE_FORMAT_VERSION, checkStoreFile, createStore, encodeRow, openStore, settleFailure,
@@ -55,7 +54,7 @@ const rejectsWith = (promiseOrFn, code) => {
 }
 /** Raw access for tests only: changes the file the way a damaged or foreign file would look. */
 function rawEdit(file, sql) {
-  const db = new DatabaseSync(file)
+  const db = rawConnection(file)
   try { db.exec(sql) } finally { db.close() }
 }
 /**
@@ -64,7 +63,7 @@ function rawEdit(file, sql) {
  * that an open connection drops its page cache and reads the damaged page from the file.
  */
 function damagePage(file, table) {
-  const db = new DatabaseSync(file, { readOnly: true })
+  const db = rawConnection(file, { readOnly: true })
   const pageSize = pragmaValue(db, 'page_size')
   const rootPage = db.prepare('SELECT rootpage FROM sqlite_schema WHERE name = ?').get(table).rootpage
   db.close()
@@ -80,7 +79,7 @@ function damagePage(file, table) {
 }
 /** store_meta.clean_shutdown, read through a separate read-only connection. */
 function cleanShutdown(file) {
-  const db = new DatabaseSync(file, { readOnly: true })
+  const db = rawConnection(file, { readOnly: true })
   try { return db.prepare('SELECT clean_shutdown FROM store_meta').get().clean_shutdown } finally { db.close() }
 }
 /** Options that count the host's quick_check runs (the 'quick-check' test hook). */
@@ -119,7 +118,7 @@ test('create writes the schema, store_meta, application_id and user_version in o
   assert.deepEqual(handle.meta(), { format: STORE_FORMAT, formatVersion: 1, libraryId: LIBRARY_ID, revision: 0, createdAt: NOW })
   assert.equal(handle.readOnly, false)
   await handle.close()
-  const db = new DatabaseSync(file, { readOnly: true })
+  const db = rawConnection(file, { readOnly: true })
   try {
     assert.equal(pragmaValue(db, 'application_id'), STORE_APPLICATION_ID)
     assert.equal(pragmaValue(db, 'user_version'), STORE_FORMAT_VERSION)
@@ -231,7 +230,7 @@ const sortedRefs = (refs) => refs.map(refKey).sort()
 
 /** Test-only bulk load: write a whole valid FormalState with the host's row encoding, bypassing the planner. */
 function loadState(file, state) {
-  const db = new DatabaseSync(file)
+  const db = rawConnection(file)
   try {
     db.exec('PRAGMA foreign_keys = ON; BEGIN IMMEDIATE')
     const memory = memoryReader(state)
@@ -398,7 +397,7 @@ function reference(state, commands, baseRevision = state.revision, now = NOW) {
 }
 /** Row count of a bookkeeping table, from a separate read-only connection. */
 function countRows(file, table) {
-  const db = new DatabaseSync(file, { readOnly: true })
+  const db = rawConnection(file, { readOnly: true })
   try { return db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n } finally { db.close() }
 }
 const attemptCommit = async (handle, value, options) => {
@@ -571,7 +570,7 @@ test('COMMIT failures settle into confirmed non-commits or an unknown outcome, n
   // COMMIT is busy (another connection is reading): the transaction stays open, so it is rolled back, confirmed.
   let other
   inject = { phase: 'before-commit', run: () => {
-    other = new DatabaseSync(file)
+    other = rawConnection(file)
     other.exec('BEGIN')
     other.prepare('SELECT revision FROM store_meta').get()
   } }
@@ -737,7 +736,7 @@ test('pruneLogs gives the pages of pruned records back to the file system (auto_
   const before = statSync(file).size
   const opened = track(t, openStore(file, { lock: withoutLibraryLock }))
   const pageSize = (() => {
-    const db = new DatabaseSync(file, { readOnly: true })
+    const db = rawConnection(file, { readOnly: true })
     try { return pragmaValue(db, 'page_size') } finally { db.close() }
   })()
   // Bounded: three pruning steps of 5,000 rows per table, then three vacuum steps of 1,024 pages; the rest in later calls.

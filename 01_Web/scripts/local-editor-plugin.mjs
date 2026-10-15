@@ -502,9 +502,12 @@ export function travelAtlasLocalEditor(options = {}) {
   let command
   let outputRoot
   // 新库模式（3C-3）：这个插件实例的新库会话，第一次用到时才加载 ./store-session.mjs。整个进程只保留一个连接。
+  // 3C-4b：构建（build:personal）以只读方式打开新库：不写正常关闭标记、不取写锁，开发服务器开着新库时也能构建。
   const storePaths = privatePaths
   let storeSessionLoading
-  const storeSession = () => (storeSessionLoading ??= import('./store-session.mjs').then((module) => module.createStoreSession(storePaths, { countryCatalog: countryCatalogByCode })))
+  const storeSession = () => (storeSessionLoading ??= import('./store-session.mjs').then((module) => module.createStoreSession(storePaths, {
+    countryCatalog: countryCatalogByCode, readOnly: command === 'build',
+  })))
   const releaseStore = async () => { if (storeSessionLoading) await (await storeSessionLoading).close() }
   const storeMode = () => options.forceSample !== true && privateDataSource(storePaths) === 'store'
 
@@ -522,9 +525,10 @@ export function travelAtlasLocalEditor(options = {}) {
       if (profile !== 'personal') return renderPrivateDataModule(privateDataModuleExports({ profile }))
       if (storeMode()) {
         // 3C-3 新库模式：新库的投影经 serializeV2 得到的五个文件与全库修订号。打不开就抛错（App 显示），绝不回落到 V2 文件。
-        const { files, revision } = await (await storeSession()).moduleExports()
+        // 3C-4b：库损坏但还能读（打开检查失败）时照常给出数据，另报 storeReadOnly，页面显示只读提示。
+        const { files, revision, readOnly } = await (await storeSession()).moduleExports()
         const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
-        return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: files, legacyUnmigrated, storeRevision: revision }))
+        return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: files, legacyUnmigrated, storeRevision: revision, storeReadOnly: readOnly }))
       }
       // V2 模式：早先新库模式留下的连接（新库文件被移走）正常关闭。
       await releaseStore()
@@ -625,12 +629,14 @@ export function travelAtlasLocalEditor(options = {}) {
           const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
           if (refusal) return sendJson(response, refusal.status, refusal.body)
           // 新库模式：8 个编辑端点写新库（3C-4a）；媒体端点与媒体任务 409 E_STORE_MODE_LIMITED（不读请求体）。
+          // 3C-4b：库损坏、只读时，全部写入端点 409 E_STORE_READ_ONLY（编辑端点由会话判定，已提交请求的重放照常回原回执）。
           if (storeMode()) {
             const session = await storeSession()
             const write = session.writeRoute(request.method, url.pathname)
             if (!write) {
               const known = jobRoute || v2MediaRoute(request.method, url.pathname) || v2EditorRoute(request.method, url.pathname)
-              return sendJson(response, known ? 409 : 404, v2ErrorBody(known ? 'E_STORE_MODE_LIMITED' : 'E_UNKNOWN_ENDPOINT'))
+              if (!known) return sendJson(response, 404, v2ErrorBody('E_UNKNOWN_ENDPOINT'))
+              return sendJson(response, 409, v2ErrorBody(await session.isDamaged() ? 'E_STORE_READ_ONLY' : 'E_STORE_MODE_LIMITED'))
             }
             const result = await write({
               headers: request.headers, input: await readJsonBody(request), ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }),

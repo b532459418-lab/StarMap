@@ -9,7 +9,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import * as notices from './privateDataNotice.ts'
-import { LEGACY_UNMIGRATED_NOTICE, privateDataNotice, V2_EMPTY_NOTICE } from './privateDataNotice.ts'
+import { LEGACY_UNMIGRATED_NOTICE, privateDataNotice, STORE_READ_ONLY_NOTICE, V2_EMPTY_NOTICE } from './privateDataNotice.ts'
 
 const EMPTY = { travelRecordCount: 0, wantToGoItemCount: 0 }
 
@@ -48,4 +48,19 @@ test('文案：空状态为决定 E 的完整文案；迁移提示说明旧数�
   assert.ok(text.includes('.local.json'))
   assert.doesNotMatch(text, /identity:check|数据模式|data-mode|--switch/)
   assert.ok(Object.isFrozen(LEGACY_UNMIGRATED_NOTICE))
+})
+
+test('只读提示（3C-4b）：新库损坏、只读时优先于迁移提示与空状态；文案与地图菜单的中文资源相同，英文也有', async () => {
+  const expected = { kind: 'store-read-only', lines: [STORE_READ_ONLY_NOTICE] }
+  for (const legacyUnmigrated of [false, true]) {
+    for (const counts of [EMPTY, { travelRecordCount: 3, wantToGoItemCount: 2 }]) {
+      assert.deepEqual(privateDataNotice({ personal: true, legacyUnmigrated, storeReadOnly: true, ...counts }), expected)
+    }
+  }
+  assert.equal(privateDataNotice({ personal: false, legacyUnmigrated: false, storeReadOnly: true, ...EMPTY }), undefined, '公开模式不显示')
+  assert.deepEqual(privateDataNotice({ personal: true, legacyUnmigrated: false, storeReadOnly: false, ...EMPTY }), { kind: 'empty', lines: [V2_EMPTY_NOTICE] })
+  assert.equal(STORE_READ_ONLY_NOTICE, '新库可能已损坏，当前只读。请从备份恢复：npm run store:restore')
+  const { mapMenuResources } = await import('../i18n/mapMenuResources.ts')
+  assert.equal(mapMenuResources.zh.storeReadOnly, STORE_READ_ONLY_NOTICE)
+  assert.match(mapMenuResources.en.storeReadOnly, /read-only.*npm run store:restore$/)
 })

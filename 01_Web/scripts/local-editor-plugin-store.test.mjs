@@ -7,10 +7,14 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
+import { withLibraryOperation } from './library-operation-lock.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { openStore } from './store-host.mjs'
 import { applyMigration } from './store-migrate.mjs'
+import { rawConnection } from './store-sqlite.mjs'
 import {
   authorizedHeaders, captureMiddleware, editorPrefix, moduleOf, requestTo, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files,
 } from './store-mode.fixture.mjs'
@@ -19,6 +23,12 @@ import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
+const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
+/** store_meta.clean_shutdown, read through a separate read-only connection. */
+function cleanShutdown(file) {
+  const db = rawConnection(file, { readOnly: true })
+  try { return db.prepare('SELECT clean_shutdown FROM store_meta').get().clean_shutdown } finally { db.close() }
+}
 
 /** The write endpoints the store does not accept yet (3C-4c): the three media endpoints and the media task actions. */
 const MEDIA_ENDPOINTS = [
@@ -27,7 +37,7 @@ const MEDIA_ENDPOINTS = [
 ]
 
 test('Local editor plugin in the new-library mode', async (t) => {
-  const { root, paths } = await tempPrivateRoot(t, 'starmap-plugin-store-')
+  const { directory, root, paths } = await tempPrivateRoot(t, 'starmap-plugin-store-')
   const files = sampleV2Files()
   await writeV2Files(paths, files)
   const originalEnvironment = process.env
@@ -115,6 +125,35 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.equal(forbidden.status, 403)
       assert.deepEqual(await treeDigest(root), before)
       assert.deepEqual(captured.reloads, [])
+    })
+
+    await t.test('build:personal reads the store read-only while the dev server has it open: no busy store, the clean-shutdown mark untouched (3C-4b)', async () => {
+      const file = storeFileOf(paths)
+      const served = await moduleOf(plugin)
+      assert.equal(cleanShutdown(file), 0, 'the dev server\'s writer session is open')
+      const storeBytes = sha256(file)
+      const build = travelAtlasLocalEditor({ profile: 'personal', privateRoot: root })
+      build.configResolved({ command: 'build', root: directory, build: { outDir: 'dist' } })
+      // Another connection holds SQLite's write lock (as the dev server does while it commits), and the library lock is held.
+      const holder = rawConnection(file)
+      holder.exec('BEGIN IMMEDIATE')
+      try {
+        await withLibraryOperation(paths, async () => {
+          const built = await moduleOf(build)
+          assert.equal(built.privateStoreRevision, served.privateStoreRevision)
+          assert.equal(built.privateLegacyUnmigrated, false)
+          assert.deepEqual(canonicalForInputs({ v2Files: built.privateV2Files }), canonicalForInputs({ v2Files: served.privateV2Files }))
+        })
+      } finally { holder.exec('ROLLBACK'); holder.close() }
+      await build.buildEnd()
+      assert.equal(cleanShutdown(file), 0, 'the build neither wrote nor cleared the mark')
+      assert.equal(sha256(file), storeBytes, 'the build wrote nothing')
+      // The dev server keeps writing.
+      const saved = await requestTo(handler, {
+        url: `${editorPrefix}wanttogo/update`, content: Buffer.from(JSON.stringify({ id: files.wantToGo.items[0].id, note: 'Synthetic after a build' })),
+        headers: { ...authorizedHeaders, 'x-starmap-request-id': '01960000-0000-7000-8000-00000000e003', 'x-starmap-base-revision': String(served.privateStoreRevision) },
+      })
+      assert.equal(saved.status, 200, JSON.stringify(saved.body))
     })
 
     await t.test('closing the dev server closes the store cleanly', async () => {

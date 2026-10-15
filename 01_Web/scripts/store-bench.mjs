@@ -24,9 +24,9 @@
  */
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
 import { createStore, openStore, withoutLibraryLock } from './store-host.mjs'
+import { rawConnection } from './store-sqlite.mjs'
 
 /** Design 3B v1.1 §16.2-7 real scale, where the targets are accepted: 3,000 places, 10,000 entries, 10,000 media entities with asset references. */
 export const REAL_SCALE = Object.freeze({ places: 3_000, entries: 10_000, media: 10_000 })
@@ -227,7 +227,7 @@ const maxRssMb = () => mb(process.resourceUsage().maxRSS * 1024)
 
 /** Bench only: leave the last writer session marked as not closed, as a killed writer does (the next open runs quick_check). */
 function markUnclean(file) {
-  const db = new DatabaseSync(file)
+  const db = rawConnection(file)
   try { db.exec('UPDATE store_meta SET clean_shutdown = 0') } finally { db.close() }
 }
 

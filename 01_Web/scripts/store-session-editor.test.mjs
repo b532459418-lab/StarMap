@@ -6,11 +6,11 @@
  * the store drops the cache.
  */
 import assert from 'node:assert/strict'
-import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { storeFileOf } from './private-data-source.mjs'
 import { applyMigration } from './store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, createStoreSession } from './store-session.mjs'
+import { rawConnection } from './store-sqlite.mjs'
 import { quietly, tempPrivateRoot, writeV2Files } from './store-mode.fixture.mjs'
 import { V2_EDITOR_ROUTES } from './v2-editor-store.mjs'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
@@ -135,16 +135,12 @@ test('when another writer moves the store, the cache is dropped and the store pr
   assert.equal((await session.moduleExports()).files.wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic later')
 })
 
-/** Another connection with the host's journal mode (the host keeps the journal file, so DELETE mode cannot remove it on Windows). */
-function rawConnection(paths) {
-  const db = new DatabaseSync(storeFileOf(paths))
-  db.exec('PRAGMA journal_mode = TRUNCATE')
-  return db
-}
+/** Another connection, through the adapter (the store's journal mode: TRUNCATE, so it can write while the session holds the store open). */
+const storeConnection = (paths) => rawConnection(storeFileOf(paths))
 
 /** Change a want-to-go entry's note behind the host's back (no new revision): the store and the cache now differ. */
 function tamperNote(paths, wishId, note) {
-  const db = rawConnection(paths)
+  const db = storeConnection(paths)
   try {
     const changed = db.prepare("UPDATE entries SET body = json_set(body, '$.fields.note', ?) WHERE source_id = 'v2:want-to-go' AND record_id = ?").run(note, wishId).changes
     assert.equal(changed, 1)
@@ -189,7 +185,7 @@ test('a view that does not match the store is E_VIEW_MISMATCH and drops the cach
   const { session, write, files, paths, output } = await migratedSession(t)
   await session.moduleExports()
   const wish = files.wantToGo.items[0]
-  const db = rawConnection(paths)
+  const db = storeConnection(paths)
   try {
     db.prepare("UPDATE entries SET record_id = 'synthetic-renamed', body = json_set(body, '$.source.recordId', 'synthetic-renamed') WHERE source_id = 'v2:want-to-go' AND record_id = ?").run(wish.id)
   } finally { db.close() }

@@ -164,6 +164,8 @@ export const V2_WRITE_MESSAGES = {
   E_OUTCOME_UNKNOWN: () => '无法确认这次修改有没有保存。为避免重复写入，刷新页面之前不能再保存。请先刷新页面核对。',
   /** 新（3C-3）：另一个进程正在写新库（SQLite 的写锁），确认没有提交。 */
   E_STORE_BUSY: () => '新库正在被另一个进程写入，本次没有保存。请稍后再试。',
+  /** 新（3C-4b）：新库没有通过打开检查（或运行中发现损坏），只能读取；写入一律拒绝，确认没有提交。 */
+  E_STORE_READ_ONLY: () => '新库可能已损坏，当前只读，本次没有保存。请从备份恢复：npm run store:restore（在 01_Web 下运行），步骤见 docs/local-backup.md。',
   E_MEDIA_JOB_INVALID: () => '媒体待办请求或记录格式无效。',
   E_MEDIA_JOB_PENDING: () => '这个私人库还有未结媒体待办。请先核对并完成原任务，再开始其他媒体写入。',
   E_MEDIA_JOB_CONFLICT: () => '媒体待办的版本、库身份或操作意图已经改变。请重新核对，未执行本次写入。',

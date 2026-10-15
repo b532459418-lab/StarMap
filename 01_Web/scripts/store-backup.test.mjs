@@ -1,18 +1,25 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import sharp from 'sharp'
+import { createBrowserFixture, fixtureIds } from './browser-fixture.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
+import { createMediaJobStore } from './media-job-store.mjs'
 import { getPrivatePaths, webRoot } from './private-profile.mjs'
 import { privateDataSource, storeFileOf } from './private-data-source.mjs'
-import { BACKUP_FILES, backupStore, exportStoreV2, restoreStore, runStoreBackupCli, verifyBackup } from './store-backup.mjs'
+import {
+  BACKUP_FILES, backupStore, exportStoreV2, mediaCopyInProgress, restoreStore, runStoreBackupCli, verifyBackup,
+} from './store-backup.mjs'
+import { runV2MediaImport } from './v2-media-import.mjs'
 import { openStore } from './store-host.mjs'
 import { applyMigration } from './store-migrate.mjs'
 import { projectToV2Files } from './store-projection.mjs'
-import { quietly, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files } from './store-mode.fixture.mjs'
+import { edgeV2Files, quietly, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files } from './store-mode.fixture.mjs'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
@@ -172,6 +179,208 @@ test('the three command lines: usage errors, and a real backup, restore and expo
   const exported = cli(['export-v2', '--out', at('cli-export')])
   assert.equal(exported.status, 0, exported.stderr)
   assert.match(exported.stdout, /没有 V2 表达不了的内容/)
+})
+
+// ---------------------------------------------------------------------------
+// Media (3C-4b)
+// ---------------------------------------------------------------------------
+
+const writeJson = async (target, value) => {
+  await mkdir(path.dirname(target), { recursive: true })
+  await writeFile(target, `${JSON.stringify(value)}\n`)
+}
+const fileSha256 = async (file) => createHash('sha256').update(await readFile(file)).digest('hex')
+
+/**
+ * A new-library root with media: the browser fixture, one neutral photo imported by the V2 importer (original in
+ * MediaInbox/, derivatives in media/user/, the media source index), then migrated. Only synthetic files.
+ */
+async function migratedWithMedia(t) {
+  const context = await tempPrivateRoot(t, 'starmap-store-backup-media-')
+  const { root, paths } = context
+  await createBrowserFixture(root)
+  const city = path.join(paths.inboxRoot, 'Iceland', 'Reykjavik')
+  await writeJson(path.join(paths.inboxRoot, 'Iceland', 'place.json'), { placeId: fixtureIds.iceland })
+  await writeJson(path.join(city, 'place.json'), { placeId: fixtureIds.reykjavik })
+  await mkdir(path.join(city, 'photos'), { recursive: true })
+  await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 80, g: 140, b: 190 } } }).png().toFile(path.join(city, 'photos', 'neutral.png'))
+  assert.equal(await runV2MediaImport({ privatePaths: paths, apply: true, log: () => {}, logError: () => {} }), 0)
+  await applyMigration(paths, { now: NOW })
+  assert.equal(privateDataSource(paths), 'store')
+  return { ...context, at: (name) => path.join(context.directory, name) }
+}
+
+test('store:backup copies the media with the rules of npm run backup and records each file\'s size and SHA-256; restore puts it back byte for byte', async (t) => {
+  const { root, paths, at } = await migratedWithMedia(t)
+  // Generated sentinels only: excluded by the rules (config/, and a README in the Inbox, which is skipped).
+  await writeFile(path.join(root, 'config', '.env.local'), 'SYNTHETIC_EXCLUDED_SENTINEL')
+  await writeFile(path.join(paths.inboxRoot, 'README.md'), 'Synthetic ignored readme')
+  const before = await readProjection(paths)
+  const out = at('backup')
+  let duringCopy
+  const result = await backupStore(paths, {
+    out, now: NOW, backupId: '01960000-0000-7000-8000-00000000f010',
+    onMediaCopy: async () => {
+      // The lease is released before the media is copied; queued deletions wait for the mark meanwhile.
+      duringCopy = { locked: existsSync(path.join(root, 'operations', 'library-operation.lock')), paused: await mediaCopyInProgress(paths) }
+    },
+  })
+  assert.deepEqual(duringCopy, { locked: false, paused: true })
+  assert.equal(await mediaCopyInProgress(paths), false, 'the mark is gone after the backup')
+  const { media } = result.manifest
+  assert.equal(result.manifest.formatVersion, 2)
+  assert.equal(media.count, media.entries.length)
+  const listed = media.entries.map((entry) => entry.path)
+  assert.ok(listed.includes('data/v2/media-source-index.local.json'))
+  assert.ok(listed.includes('MediaInbox/Iceland/Reykjavik/photos/neutral.png'))
+  assert.ok(listed.includes('MediaInbox/Iceland/Reykjavik/place.json'))
+  assert.ok(listed.some((file) => file.startsWith('media/user/') && file.endsWith('thumb.webp')))
+  assert.ok(listed.some((file) => file.startsWith('media/user/') && file.endsWith('preview.webp')))
+  assert.ok(listed.every((file) => !file.startsWith('config/') && !file.startsWith('operations/') && !file.endsWith('README.md')))
+  // Every listed size and SHA-256 is the file's own, and the copy is the same bytes.
+  for (const entry of media.entries) {
+    const original = path.join(root, ...entry.path.split('/'))
+    assert.equal((await stat(original)).size, entry.bytes, entry.path)
+    assert.equal(await fileSha256(original), entry.sha256, entry.path)
+    assert.deepEqual(await readFile(path.join(out, 'payload', ...entry.path.split('/'))), await readFile(original), entry.path)
+  }
+  assert.equal(media.bytes, media.entries.reduce((sum, entry) => sum + entry.bytes, 0))
+  assert.deepEqual(await verifyBackup(out), result.manifest)
+
+  const to = at('restored')
+  const restored = await restoreStore({ from: out, to, now: '2026-10-15T00:00:00.000Z' })
+  assert.match(restored.lines.join('\n'), new RegExp(`媒体：${media.count} 个文件`))
+  const restoredPaths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: to })
+  assert.equal(privateDataSource(restoredPaths), 'store')
+  for (const entry of media.entries) {
+    assert.deepEqual(await readFile(path.join(to, ...entry.path.split('/'))), await readFile(path.join(root, ...entry.path.split('/'))), entry.path)
+  }
+  // The new root holds the store and the media, nothing else.
+  const tree = Object.keys(await treeDigest(to)).filter((file) => file !== 'data/store/world.sqlite-journal').sort()
+  assert.deepEqual(tree, ['data/store/world.sqlite', ...listed].sort())
+  const after = await readProjection(restoredPaths)
+  assert.deepEqual(after.files, before.files)
+  assert.ok(after.files.media.items.length > 0)
+})
+
+test('store:restore fails on a damaged, missing or extra media file, or a media path outside the allowlist, and removes the new root', async (t) => {
+  const { paths, at } = await migratedWithMedia(t)
+  const out = at('backup')
+  const { manifest } = await backupStore(paths, { out, now: NOW })
+  const original = manifest.media.entries.find((entry) => entry.path.endsWith('neutral.png'))
+  const copy = path.join(out, 'payload', ...original.path.split('/'))
+  const bytes = await readFile(copy)
+  // Same size, one bit flipped.
+  const damaged = Buffer.from(bytes)
+  damaged[damaged.length >> 1] ^= 0x01
+  await writeFile(copy, damaged)
+  await assert.rejects(restoreStore({ from: out, to: at('r1') }), { code: 'E_BACKUP_HASH' })
+  assert.equal(existsSync(at('r1')), false, 'the new root is removed')
+  // Missing and extra files are found before anything is created.
+  await rm(copy)
+  await assert.rejects(restoreStore({ from: out, to: at('r2') }), { code: 'E_BACKUP_MEDIA_FILES' })
+  await writeFile(copy, bytes)
+  await writeFile(path.join(out, 'payload', 'MediaInbox', 'extra.png'), 'Synthetic extra')
+  await assert.rejects(restoreStore({ from: out, to: at('r3') }), { code: 'E_BACKUP_MEDIA_FILES' })
+  await rm(path.join(out, 'payload', 'MediaInbox', 'extra.png'))
+  // A manifest that names a file outside the media folders is refused even with a matching completion mark.
+  const manifestFile = path.join(out, BACKUP_FILES.manifest)
+  const completeFile = path.join(out, BACKUP_FILES.complete)
+  const manifestText = await readFile(manifestFile, 'utf8')
+  const completeText = await readFile(completeFile, 'utf8')
+  for (const bad of ['config/.env.local', 'data/store/world.sqlite', 'MediaInbox/../escape.png', 'media/user/notes.txt']) {
+    const crafted = JSON.parse(manifestText)
+    crafted.media.entries[0].path = bad
+    const text = `${JSON.stringify(crafted, null, 2)}\n`
+    await writeFile(manifestFile, text)
+    await writeFile(completeFile, JSON.stringify({ ...JSON.parse(completeText), manifestSha256: createHash('sha256').update(text).digest('hex') }))
+    await assert.rejects(restoreStore({ from: out, to: at('r4') }), { code: 'E_BACKUP_MANIFEST' }, bad)
+  }
+  await writeFile(manifestFile, manifestText)
+  await writeFile(completeFile, completeText)
+  for (const name of ['r2', 'r3', 'r4']) assert.equal(existsSync(at(name)), false, name)
+  // Untouched again: the backup restores.
+  await restoreStore({ from: out, to: at('r5') })
+})
+
+test('store:backup refuses an unfinished media task, a file outside the allowlist and an output inside the media folders', async (t) => {
+  const { root, paths, at } = await migratedWithMedia(t)
+  const task = await withLibraryOperation(paths, () => createMediaJobStore(paths).create({
+    countryId: fixtureIds.iceland, cityId: fixtureIds.reykjavik, kind: 'photo', files: [{ fileName: 'neutral-pending.png', bytes: 32 }],
+  }))
+  await assert.rejects(backupStore(paths, { out: at('pending') }), { code: 'E_MEDIA_JOB_PENDING' })
+  assert.equal(existsSync(at('pending')), false)
+  assert.equal(await mediaCopyInProgress(paths), false)
+  await withLibraryOperation(paths, () => createMediaJobStore(paths).abandon(task.jobId, task.revision))
+  const notes = path.join(paths.inboxRoot, 'Iceland', 'notes.txt')
+  await writeFile(notes, 'Synthetic unsupported file')
+  await assert.rejects(backupStore(paths, { out: at('unsupported') }), { code: 'E_BACKUP_UNSUPPORTED_FILE' })
+  assert.equal(existsSync(at('unsupported')), false)
+  assert.equal(await mediaCopyInProgress(paths), false)
+  await rm(notes)
+  await assert.rejects(backupStore(paths, { out: path.join(paths.inboxRoot, 'backup') }), { code: 'E_TARGET_OVERLAP' })
+  await assert.rejects(backupStore(paths, { out: path.join(root, 'media', 'user', 'backup') }), { code: 'E_TARGET_OVERLAP' })
+  // Inside the private root but outside its media and data folders is fine.
+  const inside = await backupStore(paths, { out: path.join(root, 'backups', 'one') })
+  assert.ok(inside.manifest.media.entries.every((entry) => !entry.path.includes('backups')))
+})
+
+test('npm run backup on a new-library root delegates to store:backup and says so; its inspect and restore point store backups to store:restore', async (t) => {
+  const { root, at } = await migratedWithMedia(t)
+  const cli = (args) => spawnSync(process.execPath, [fileURLToPath(new URL('./backup.mjs', import.meta.url)), ...args], {
+    env: { ...process.env, STARMAP_PRIVATE_ROOT: root }, encoding: 'utf8', timeout: 120_000, windowsHide: true,
+  })
+  const out = at('delegated')
+  const created = cli(['create', '--root', root, '--out', out])
+  assert.equal(created.status, 0, created.stderr)
+  const report = JSON.parse(created.stdout)
+  assert.equal(report.mode, 'store')
+  assert.equal(report.delegatedTo, 'store:backup')
+  assert.match(report.note, /npm run store:backup/)
+  assert.ok(report.mediaFiles > 0)
+  const manifest = await verifyBackup(out)
+  assert.equal(manifest.media.count, report.mediaFiles)
+  // A refusal of store:backup is printed with its code.
+  const again = cli(['create', '--root', root, '--out', out])
+  assert.equal(again.status, 1)
+  assert.match(again.stderr, /E_TARGET_EXISTS/)
+  for (const args of [['inspect', '--from', out], ['restore', '--from', out, '--to', at('v2-restore'), '--apply']]) {
+    const refused = cli(args)
+    assert.equal(refused.status, 1, args[0])
+    assert.match(refused.stderr, /E_BACKUP_STORE_FORMAT[\s\S]*npm run store:restore/, args[0])
+  }
+  assert.equal(existsSync(at('v2-restore')), false)
+})
+
+test('media paths outside /media/user/ are not files of the private root: counted in a warning, not a refusal', async (t) => {
+  const { paths, at } = await migrated(t, edgeV2Files())
+  const { manifest, lines } = await backupStore(paths, { out: at('backup'), now: NOW })
+  assert.equal(manifest.media.count, 0)
+  assert.deepEqual(manifest.media.warnings, [
+    'MEDIA_OUTSIDE_USER_MEDIA: 4 media paths are outside /media/user/ and are not files of the private root.',
+    'SOURCE_INDEX_ABSENT: runtime media is preserved; import replay cannot be guaranteed.',
+  ])
+  assert.ok(lines.some((line) => line.startsWith('提醒：MEDIA_OUTSIDE_USER_MEDIA')))
+  await restoreStore({ from: at('backup'), to: at('restored') })
+})
+
+test('store:restore still restores a 3C-3 backup (format version 1, the database only)', async (t) => {
+  const { paths, at } = await migrated(t)
+  const out = at('backup')
+  await backupStore(paths, { out, now: NOW })
+  const manifestFile = path.join(out, BACKUP_FILES.manifest)
+  const manifest = JSON.parse(await readFile(manifestFile, 'utf8'))
+  manifest.formatVersion = 1
+  delete manifest.media
+  manifest.excludes = ['media', 'MediaInbox', 'config', 'data/v2', 'operations']
+  const text = `${JSON.stringify(manifest, null, 2)}\n`
+  await writeFile(manifestFile, text)
+  const complete = JSON.parse(await readFile(path.join(out, BACKUP_FILES.complete), 'utf8'))
+  await writeFile(path.join(out, BACKUP_FILES.complete), JSON.stringify({ ...complete, manifestSha256: createHash('sha256').update(text).digest('hex') }))
+  await rm(path.join(out, BACKUP_FILES.media), { recursive: true })
+  const result = await restoreStore({ from: out, to: at('restored') })
+  assert.match(result.lines.join('\n'), /旧格式备份（3C-3），没有媒体/)
+  assert.deepEqual((await readProjection(getPrivatePaths({ STARMAP_PRIVATE_ROOT: at('restored') }))).files, (await readProjection(paths)).files)
 })
 
 test('host: restoredFrom keeps one layer and no revision; snapshots never overwrite; integrity_check runs on request', async (t) => {

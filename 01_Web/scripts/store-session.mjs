@@ -8,8 +8,14 @@
  *
  * - One writable connection per dev server process (`open`): opened when the server starts, kept until it closes
  *   (`close`, which writes the clean-shutdown mark). A store that another process is writing makes the open
- *   E_STORE_BUSY; it is retried a few times (OPEN_RETRIES × OPEN_RETRY_DELAY_MS) and then reported. Any open failure,
- *   including a failed open check (read-only diagnostic), is an error the App shows: the mode never falls back to V2.
+ *   E_STORE_BUSY; it is retried a few times (OPEN_RETRIES × OPEN_RETRY_DELAY_MS) and then reported. An open failure is
+ *   an error the App shows: the mode never falls back to V2.
+ * - A damaged store (3C-4b, design 3B §5 "打开检查失败 → 只读"): when the open check fails with E_STORE_CORRUPT (the
+ *   quick_check after an unclean shutdown) but the store can still be read, the session keeps the read-only handle. The
+ *   App shows the projected data as usual, the virtual module says so (`readOnly`, the App's persistent notice), and
+ *   every write is refused with 409 E_STORE_READ_ONLY (a replay of a request committed before still answers with its
+ *   receipt). The same happens when corruption is found while running (the host turns the handle read-only). Every
+ *   other open diagnostic (E_STORE_TOO_NEW, E_STORE_SCHEMA, …) and a store that cannot be read stay errors.
  * - Read model (`moduleExports`): the V2 view — the five V2 files the App reads through readV2 as before — and the
  *   store-wide revision. At start-up it is projected from the store (readRowsUnchecked → projectStoreToCanonical →
  *   serializeV2, each step timed in the log; rows the projection cannot express are counted there, never an error).
@@ -21,6 +27,11 @@
  *   E_STORE_VERIFY (500 E_STORE_FAILED), the fresh projection replaces the cache, and the log says so.
  * - Writes (`writeRoute`): the eight editor endpoints of ./v2-editor-store.mjs (STORE_WRITE_ROUTES). Media uploads,
  *   imports, deletions and media tasks are refused by the plugin with 409 E_STORE_MODE_LIMITED (3C-4c).
+ * - Read-only sessions (`readOnly: true`, 3C-4b): `build:personal` reads the store while a dev server may have it open
+ *   for writing. The store is opened read-only (openStore `readOnly`): no writer session, so the clean-shutdown mark is
+ *   neither read nor written, no SQLite write lock is taken, the library lock is not probed and quick_check does not
+ *   run. A read that meets a writer's commit (E_STORE_BUSY) is retried like a busy open. Such a session never writes
+ *   and never prunes.
  *
  * One write (design 3B §4.4 and §4.5; the rules are V2's, the storage is the store):
  * 1. The request carries `x-starmap-request-id` (UUIDv7, one per user action, kept on retries) and
@@ -41,6 +52,16 @@
  * Outcomes: 409 E_STALE, E_OPERATION_CONFLICT, E_LIBRARY_BUSY, E_STORE_BUSY (confirmed not committed); 500
  * E_OUTCOME_UNKNOWN (the client retries once with the same request id); 500 E_STORE_FAILED for any other failure
  * (E_VIEW_MISMATCH also drops the cache).
+ *
+ * Record retention (3C-4b; design 3B §4.6 with v1.1 §16.2-5 and -6): the host's pruneLogs (receipts by the rule that
+ * keeps more, op_log by the rule that keeps fewer, then incremental_vacuum) runs in this process, on this connection,
+ * when the session opens and after every PRUNE_EVERY_COMMITS committed writes. Each run is one small step
+ * (PRUNE_STEP: one pruning transaction of at most `batchSize` rows per table and one vacuum transaction of at most
+ * `vacuumPages` pages). It is queued behind the writes of this process and starts only after the response of the write
+ * that triggered it (setImmediate), so it never runs inside a write nor delays its response; a write that arrives
+ * meanwhile waits for that one step. While a run reports work left (`done: false`), every following commit runs the
+ * next step. A failed run (another process holds the library lock or the store's write lock) is logged and tried again
+ * at the next trigger. Read-only sessions never prune.
  */
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
@@ -61,6 +82,13 @@ export const OPEN_RETRIES = 5
 export const OPEN_RETRY_DELAY_MS = 200
 /** Responses of committed requests kept for replays in this process. */
 export const REMEMBERED_RESPONSES = 64
+/** Committed writes between two record pruning runs (a run also follows the open, and every commit while work is left). */
+export const PRUNE_EVERY_COMMITS = 200
+/**
+ * One pruning run: one transaction deleting at most `batchSize` rows per table, one incremental_vacuum of `vacuumPages`
+ * (1 MiB at 4 KiB pages). Smaller than the host's defaults: a run is two small write transactions, about two commits.
+ */
+export const PRUNE_STEP = Object.freeze({ batchSize: 200, vacuumPages: 256 })
 
 const ms = (started) => Math.round((performance.now() - started) * 10) / 10
 
@@ -106,7 +134,7 @@ const STORE_ACTOR = 'local-editor'
 
 /** Host codes the client handles by name, with their status; every other failure is E_STORE_FAILED. */
 const CLIENT_CODES = Object.freeze({
-  E_STALE: 409, E_OPERATION_CONFLICT: 409, E_LIBRARY_BUSY: 409, E_STORE_BUSY: 409, E_OUTCOME_UNKNOWN: 500,
+  E_STALE: 409, E_OPERATION_CONFLICT: 409, E_LIBRARY_BUSY: 409, E_STORE_BUSY: 409, E_STORE_READ_ONLY: 409, E_OUTCOME_UNKNOWN: 500,
 })
 
 /** A failure of a store read or write as the local editor's response: { status, body } (codes only, never values). */
@@ -157,14 +185,20 @@ export class StoreSessionError extends Error {
   }
 }
 
+/** A handle that is read-only because the store is damaged: its open check failed with E_STORE_CORRUPT, or corruption was found since. */
+const damaged = (opened) => opened?.readOnly === true && opened.diagnostic?.code === 'E_STORE_CORRUPT'
+
 /** A cache key: the store's identity and revision (a restore records a new restore mark). */
 const cacheKeyOf = (meta) => JSON.stringify([meta.libraryId, meta.revision, meta.restoredFrom?.restoredAt ?? null])
 
 /**
- * Open `file` writable, retrying while it is busy. A handle with an open diagnostic (read-only) is closed and reported
- * as StoreSessionError with the diagnostic's code; so is every other failure.
+ * Open `file` (writable, or read-only with `options.readOnly`), retrying while it is busy. A handle with an open
+ * diagnostic (read-only) is closed and reported as StoreSessionError with the diagnostic's code; so is every other
+ * failure. A read-only open that met a writer's commit carries the diagnostic E_STORE_BUSY: retried the same way.
+ * With `acceptDamaged`, a store whose open check failed with E_STORE_CORRUPT but which can still be read (store_meta
+ * reads) is returned as its read-only handle (3C-4b).
  */
-export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES, retryDelayMs = OPEN_RETRY_DELAY_MS, sleep = delay } = {}) {
+export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES, retryDelayMs = OPEN_RETRY_DELAY_MS, sleep = delay } = {}, { acceptDamaged = false } = {}) {
   for (let attempt = 0; ; attempt++) {
     let handle
     try { handle = openStore(file, options) } catch (error) {
@@ -174,8 +208,25 @@ export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES
     }
     if (!handle.diagnostic) return handle
     const { code } = handle.diagnostic
+    if (acceptDamaged && code === 'E_STORE_CORRUPT') {
+      try {
+        handle.meta()
+        return handle
+      } catch { /* Not even store_meta reads: an error like any other. */ }
+    }
     await handle.close()
+    if (code === 'E_STORE_BUSY' && attempt < retries) { await sleep(retryDelayMs); continue }
     throw new StoreSessionError(code)
+  }
+}
+
+/** `read()` again while it fails with E_STORE_BUSY (a writer in another process is committing), as openStoreWithRetry. */
+async function readWithRetry(read, { retries = OPEN_RETRIES, retryDelayMs = OPEN_RETRY_DELAY_MS, sleep = delay } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try { return read() } catch (error) {
+      if (error?.code !== 'E_STORE_BUSY' || attempt >= retries) throw error
+      await sleep(retryDelayMs)
+    }
   }
 }
 
@@ -184,19 +235,30 @@ export async function openStoreWithRetry(file, options, { retries = OPEN_RETRIES
  * host time and the time of the V2 writes (tests); `log` receives the timing lines; `retry` overrides the open retries
  * ({ retries, retryDelayMs, sleep }); `countryCatalog` is the plugin's country catalog (the V2 write context when a
  * caller gives none); `verify` compares every commit with a fresh projection (default: STARMAP_STORE_VERIFY=1);
- * `newId` gives the ids of new store rows (default UUIDv7).
+ * `newId` gives the ids of new store rows (default UUIDv7); `prune` sets the record pruning schedule
+ * ({ every, batchSize, vacuumPages, retention }, defaults PRUNE_EVERY_COMMITS and PRUNE_STEP, retention the host's) or
+ * turns it off (false); `readOnly` opens the store read-only (`build:personal`, see the file header).
  */
 export function createStoreSession(privatePaths, {
   log = console.log, now, retry, countryCatalog = new Map(), verify = process.env.STARMAP_STORE_VERIFY === '1', newId = () => uuidv7(),
+  prune = {}, readOnly = false,
 } = {}) {
   const file = storeFileOf(privatePaths)
-  const hostOptions = { privatePaths, policy: OFFICIAL_POLICY, ...(now ? { now } : {}) }
+  const hostOptions = { privatePaths, policy: OFFICIAL_POLICY, ...(now ? { now } : {}), ...(readOnly ? { readOnly: true } : {}) }
   let handle
   let opening
   let openMs
   let cache
   /** requestId → the response of a request this process committed (insertion order: oldest first). */
   const remembered = new Map()
+  const pruning = prune === false || readOnly ? undefined : Object.freeze({
+    every: prune.every ?? PRUNE_EVERY_COMMITS, batchSize: prune.batchSize ?? PRUNE_STEP.batchSize,
+    vacuumPages: prune.vacuumPages ?? PRUNE_STEP.vacuumPages, ...(prune.retention ? { retention: prune.retention } : {}),
+  })
+  /** Pruning state: commits since the last run, whether the last run left work, runs so far, the last run's outcome. */
+  const pruneState = { commits: 0, backlog: false, runs: 0, last: undefined }
+  /** The scheduled run: { timer, done (promise), resolve } until it has finished. */
+  let scheduledPrune
 
   /** The open handle, opening it on first use (concurrent callers share one open). */
   async function open() {
@@ -204,12 +266,64 @@ export function createStoreSession(privatePaths, {
     opening ??= (async () => {
       const started = performance.now()
       try {
-        handle = await openStoreWithRetry(file, hostOptions, retry)
+        handle = await openStoreWithRetry(file, hostOptions, retry, { acceptDamaged: !readOnly })
         openMs = ms(started)
+        if (damaged(handle)) {
+          log('[StarMap store] 新库没有通过打开检查（E_STORE_CORRUPT），以只读方式打开：页面照常显示数据，所有写入返回 E_STORE_READ_ONLY。'
+            + '请从备份恢复（npm run store:restore），步骤见 docs/local-backup.md。')
+        } else schedulePrune('open')
         return handle
       } finally { opening = undefined }
     })()
     return opening
+  }
+
+  /** One small pruning run on the open handle (queued behind this process's writes; see the file header). */
+  async function pruneOnce(reason) {
+    const current = handle
+    if (!current || current.readOnly) return
+    const started = performance.now()
+    pruneState.runs++
+    try {
+      const result = await current.pruneLogs({
+        now: now ? now() : new Date().toISOString(), batchSize: pruning.batchSize, maxSteps: 1, vacuumPages: pruning.vacuumPages,
+        ...(pruning.retention ? { retention: pruning.retention } : {}),
+      })
+      pruneState.commits = 0
+      pruneState.backlog = !result.done
+      pruneState.last = Object.freeze({ reason, ...result, ms: ms(started) })
+      if (result.receipts || result.opLog || result.freedPages) {
+        log(`[StarMap store] 清理记录（${reason}）：回执 ${result.receipts} 条，op_log ${result.opLog} 条，`
+          + `归还 ${result.freedPages} 页，${ms(started)} ms${result.done ? '' : '；还有剩余，下一次提交后继续'}`)
+      }
+    } catch (error) {
+      const code = typeof error?.code === 'string' ? error.code : 'E_STORE_PRUNE'
+      pruneState.last = Object.freeze({ reason, code, ms: ms(started) })
+      log(`[StarMap store] 清理记录（${reason}）没有完成（${code}），下一次提交后再试。`)
+      pruneState.backlog = true
+      if (REOPEN_CODES.has(code)) await dropHandle()
+    }
+  }
+
+  /**
+   * Run pruneOnce after the current work has answered (setImmediate), queued behind this process's writes. At most one
+   * run is scheduled at a time.
+   */
+  function schedulePrune(reason) {
+    if (!pruning || scheduledPrune) return
+    let resolve
+    const done = new Promise((settle) => { resolve = settle })
+    const timer = setImmediate(() => {
+      scheduledPrune.timer = undefined
+      serialized(() => pruneOnce(reason)).catch(() => {}).finally(() => { scheduledPrune = undefined; resolve() })
+    })
+    scheduledPrune = { timer, done, resolve }
+  }
+  /** After a committed write: count it, and schedule a run every `every` commits, or while the last run left work. */
+  function countCommit() {
+    if (!pruning) return
+    pruneState.commits++
+    if (pruneState.backlog || pruneState.commits >= pruning.every) schedulePrune('commits')
   }
 
   /** Project the store: { revision, files, projection, timings }. */
@@ -225,11 +339,20 @@ export function createStoreSession(privatePaths, {
   }
 
   /** The cached read model at the store's current revision; projected again when the store is not the cached one. */
+  /** A read of a read-only session is retried while a writer in another process commits; the dev server's is not. */
+  const reading = (read) => (readOnly ? readWithRetry(read, retry) : read())
+
   async function snapshot() {
     const opened = await open()
-    const key = cacheKeyOf(opened.meta())
+    const key = cacheKeyOf(await reading(() => opened.meta()))
     if (cache?.key === key) return cache
-    const { rows, projection, files, timings } = project(opened)
+    let projected
+    try { projected = await reading(() => project(opened)) } catch (error) {
+      if (error?.code !== 'E_STORE_CORRUPT') throw error
+      await dropHandle()
+      throw new StoreSessionError('E_STORE_CORRUPT', { cause: error })
+    }
+    const { rows, projection, files, timings } = projected
     cache = Object.freeze({ key, revision: rows.revision, files, timings })
     const skipped = Object.entries(skippedCounts(projection.skipped)).map(([table, count]) => `${table} ${count}`)
     log(`[StarMap store] 读模型（修订号 ${rows.revision}）：${timings.openMs === undefined ? '' : `打开 ${timings.openMs} ms，`}`
@@ -292,6 +415,8 @@ export function createStoreSession(privatePaths, {
             const body = known?.body.receipt?.requestId === protocol.requestId ? known.body : { ok: true, revision: previous.receipt.revision, receipt: previous.receipt }
             return { status: known?.status ?? route.status, body: { ...body, duplicate: true } }
           }
+          // A read-only handle (a damaged store, or a build) writes nothing: confirmed not committed.
+          if (opened.readOnly) return storeFailureResponse(new V2WriteError('E_STORE_READ_ONLY'))
           const view = await snapshot()
           if (view.revision !== protocol.baseRevision) return storeFailureResponse(new V2WriteError('E_STALE'))
           const writeContext = ctx ?? createV2WriteContext({ countryCatalog, ...(now ? { now: new Date(now()) } : {}) })
@@ -323,6 +448,7 @@ export function createStoreSession(privatePaths, {
           else cache = undefined
           const response = { status: route.status, body: { ok: true, ...outcome.result, revision: result.revision, duplicate: result.status === 'duplicate', receipt: result.receipt } }
           remember(protocol.requestId, response)
+          if (result.status === 'committed') countCommit()
           if (verify) verifyCache(opened)
           log(`[StarMap store] ${label}：V2 写入 ${runMs} ms，差异 ${diffMs} ms（${plan.diff.commands.length} 条命令`
             + `${plan.diff.renumbered.length ? `，重新编号 ${plan.diff.renumbered.length} 个 scope` : ''}），提交 ${commitMs} ms（修订号 ${result.revision}），共 ${ms(started)} ms`)
@@ -340,10 +466,17 @@ export function createStoreSession(privatePaths, {
   return {
     file,
     open,
-    /** The virtual module's data: `{ files, revision }` (the five V2 files and the store-wide revision). */
+    /**
+     * The virtual module's data: `{ files, revision, readOnly }` (the five V2 files, the store-wide revision, and whether
+     * the store is damaged and read-only).
+     */
     async moduleExports() {
       const { files, revision } = await snapshot()
-      return { files, revision }
+      return { files, revision, readOnly: damaged(handle) }
+    },
+    /** Whether the store is open read-only because it is damaged (false when it cannot be opened at all). */
+    async isDamaged() {
+      try { return damaged(await open()) } catch { return false }
     },
     /** The read model in use ({ revision, files, timings }; timings of the last projection, empty after a write), or undefined. */
     get lastSnapshot() { return cache },
@@ -359,10 +492,22 @@ export function createStoreSession(privatePaths, {
     },
     /** Whether a connection is open. */
     get isOpen() { return handle !== undefined },
-    /** Close the connection (clean shutdown) after queued writes; a later use opens it again. */
+    /** Record pruning so far: { commits (since the last run), backlog (the last run left work), runs, last (its outcome) }. */
+    get pruneState() { return Object.freeze({ ...pruneState }) },
+    /** Resolves when no pruning run is scheduled and no write is queued (tests, benchmarks). */
+    async idle() {
+      while (scheduledPrune) await scheduledPrune.done
+      await writeTail
+    },
+    /** Close the connection (clean shutdown) after queued writes; a later use opens it again. A run not started yet is dropped. */
     async close() {
       const pending = opening
       if (pending) await pending.catch(() => {})
+      if (scheduledPrune?.timer) {
+        clearImmediate(scheduledPrune.timer)
+        scheduledPrune.resolve()
+        scheduledPrune = undefined
+      }
       await writeTail
       const current = handle
       handle = undefined
