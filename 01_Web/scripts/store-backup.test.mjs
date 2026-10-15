@@ -320,6 +320,10 @@ test('store:backup refuses an unfinished media task, a file outside the allowlis
   await rm(notes)
   await assert.rejects(backupStore(paths, { out: path.join(paths.inboxRoot, 'backup') }), { code: 'E_TARGET_OVERLAP' })
   await assert.rejects(backupStore(paths, { out: path.join(root, 'media', 'user', 'backup') }), { code: 'E_TARGET_OVERLAP' })
+  // A name that merely begins with `..` is inside the folder all the same (batch 7: refusals count it as inside).
+  for (const name of ['..x', '...']) {
+    await assert.rejects(backupStore(paths, { out: path.join(paths.inboxRoot, name) }), { code: 'E_TARGET_OVERLAP' })
+  }
   // Inside the private root but outside its media and data folders is fine.
   const inside = await backupStore(paths, { out: path.join(root, 'backups', 'one') })
   assert.ok(inside.manifest.media.entries.every((entry) => !entry.path.includes('backups')))

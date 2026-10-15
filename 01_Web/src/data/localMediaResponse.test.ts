@@ -2,8 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 import { parseMediaImportResponse, parseMediaUploadResponse } from './localMediaResponse.ts'
-import { createMediaImportSession } from './mediaImportSession.ts'
-import { importLocalMedia, uploadLocalMedia } from './localEditorApi.ts'
 
 const responseOf = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 const uploadBody = { ok: true, fileName: 'photo.jpg', bytes: 123, sourcePath: 'Country/City/photos/photo.jpg' }
@@ -86,105 +84,5 @@ test('media parsers retain original known/unknown failures and abort identity', 
     const response = new Response('{}')
     response.json = async () => { throw abort }
     await assert.rejects(parse(response), (error) => error === abort)
-  }
-})
-
-test('real import API malformed success retains session paths and locks the unknown outcome without retry', async () => {
-  const originalFetch = globalThis.fetch
-  const session = createMediaImportSession<string>()
-  await session.upload(['a'], async () => ({ sourcePath: 'Country/City/photos/a.jpg' }))
-  let calls = 0
-  try {
-    globalThis.fetch = async (_input, init) => {
-      calls += 1
-      assert.equal(init?.method, 'POST')
-      assert.deepEqual(JSON.parse(String(init?.body)), { sourcePaths: ['Country/City/photos/a.jpg'] })
-      return responseOf({ ok: true })
-    }
-    await assert.rejects(session.importMedia(importLocalMedia), invalid(200))
-    assert.equal(session.getSnapshot().phase, 'uncertain')
-    assert.deepEqual(session.getSnapshot().sourcePaths, ['Country/City/photos/a.jpg'])
-    assert.equal(calls, 1)
-  } finally {
-    globalThis.fetch = originalFetch
-  }
-})
-
-test('real upload API malformed success locks its session before any confirmed path is recorded', async () => {
-  const originalFetch = globalThis.fetch
-  const file = new File(['neutral synthetic bytes'], 'neutral.jpg', { type: 'image/jpeg' })
-  const session = createMediaImportSession<File>()
-  let calls = 0
-  try {
-    globalThis.fetch = async (_input, init) => {
-      calls += 1
-      assert.equal(init?.body, file)
-      return responseOf({ ...uploadBody, sourcePath: '../outside.jpg' }, 201)
-    }
-    await assert.rejects(session.upload([file], (selected) => uploadLocalMedia({ countryId: 'neutral-country', cityId: 'neutral-city', kind: 'photo', file: selected })), invalid(201))
-    assert.equal(session.getSnapshot().phase, 'uncertain')
-    assert.deepEqual(session.getSnapshot().sourcePaths, [])
-    assert.equal(calls, 1)
-  } finally {
-    globalThis.fetch = originalFetch
-  }
-})
-
-test('real import API empty ids for nonempty requested paths retain session paths and lock without retry', async () => {
-  const originalFetch = globalThis.fetch
-  const session = createMediaImportSession<string>()
-  await session.upload(['a'], async () => ({ sourcePath: 'Country/City/photos/a.jpg' }))
-  let calls = 0
-  try {
-    globalThis.fetch = async (_input, init) => {
-      calls += 1
-      assert.deepEqual(JSON.parse(String(init?.body)), { sourcePaths: ['Country/City/photos/a.jpg'] })
-      return responseOf({ ok: true, output: '', restoredMediaIds: [] })
-    }
-    await assert.rejects(session.importMedia(importLocalMedia), invalid(200))
-    assert.equal(session.getSnapshot().phase, 'uncertain')
-    assert.deepEqual(session.getSnapshot().sourcePaths, ['Country/City/photos/a.jpg'])
-    assert.equal(calls, 1)
-  } finally {
-    globalThis.fetch = originalFetch
-  }
-})
-
-test('real import API permits an empty request with empty ids and deduplicated ids for multiple source paths', async () => {
-  const originalFetch = globalThis.fetch
-  let calls = 0
-  try {
-    globalThis.fetch = async (_input, init) => {
-      calls += 1
-      const { sourcePaths } = JSON.parse(String(init?.body)) as { sourcePaths: string[] }
-      return responseOf({ ok: true, output: '', restoredMediaIds: sourcePaths.length ? ['media-same-content'] : [] })
-    }
-    assert.deepEqual(await importLocalMedia(), { ok: true, output: '', restoredMediaIds: [] })
-    const session = createMediaImportSession<string>()
-    await session.upload(['a', 'b'], async (file) => ({ sourcePath: `Country/City/photos/${file}.jpg` }))
-    await session.importMedia(importLocalMedia)
-    assert.equal(session.getSnapshot().phase, 'idle')
-    assert.deepEqual(session.getSnapshot().sourcePaths, [])
-    assert.equal(calls, 2)
-  } finally {
-    globalThis.fetch = originalFetch
-  }
-})
-
-test('real media APIs preserve transport errors and make only one request', async () => {
-  const originalFetch = globalThis.fetch
-  const file = new File(['neutral'], 'neutral.jpg')
-  try {
-    for (const error of [new TypeError('Original network failure'), new DOMException('Original abort', 'AbortError')]) {
-      let calls = 0
-      globalThis.fetch = async () => { calls += 1; throw error }
-      await assert.rejects(importLocalMedia(['Country/City/photos/a.jpg']), (failure) => failure === error)
-      assert.equal(calls, 1)
-      calls = 0
-      await assert.rejects(uploadLocalMedia({ countryId: 'country', cityId: 'city', kind: 'photo', file }), (failure) => failure === error)
-      assert.equal(calls, 1)
-    }
-  } finally {
-    globalThis.fetch = originalFetch
   }
 })

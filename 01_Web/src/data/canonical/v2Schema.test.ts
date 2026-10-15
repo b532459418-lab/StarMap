@@ -17,7 +17,6 @@ import { readFileSync } from 'node:fs'
 import {
   MIGRATED_CANONICAL_NAMES,
   V2_SPACE_CANONICAL_NAMES,
-  canonicalForInputsFixture,
   migratedCanonical,
   v2SpaceCanonical,
   type V2SpaceCanonicalName,
@@ -273,7 +272,6 @@ test('id 唯一（审查 D10）：公开 V2 样例与全部冻结夹具仍然通
   ]) {
     assert.deepEqual(validateV2Files(readJson(relative) as Record<V2FileKey, unknown>), [], relative)
   }
-  assert.deepEqual(validateV2Files(canonicalForInputsFixture().files as unknown as Record<V2FileKey, unknown>), [], 'canonical-for-inputs.json')
   for (const name of V2_SPACE_CANONICAL_NAMES) {
     // countryOfCity 故意在 hiddenCityIds 里放了一个陈旧 id（见 derive.test.ts），本来就不是合法的 V2 文件；它唯一的问题仍是那一处。
     const expected = name === 'countryOfCity' ? ['editorState $.hiddenCityIds[1]'] : []

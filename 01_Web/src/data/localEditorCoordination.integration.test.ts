@@ -3,16 +3,26 @@ import assert from 'node:assert/strict'
 import {
   addLocalCountry, addLocalTravelRecord, addLocalWantToGo, convertLocalWantToGoToTravel,
   deleteHiddenLocalCountries, deleteHiddenLocalMedia, deleteHiddenLocalWantToGo,
-  importLocalMedia, readLocalEditorState, reloadAfterLocalSave, searchLocalCities,
-  searchLocalCountries, updateLocalEditorState, updateLocalWantToGo, uploadLocalMedia,
+  readLocalEditorState, reloadAfterLocalSave, searchLocalCities,
+  searchLocalCountries, updateLocalEditorState, updateLocalWantToGo,
 } from './localEditorApi.ts'
+import { withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
 import { getMediaImportSession } from './mediaImportSession.ts'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 import type { TravelAtlasEditorState } from './editorState.ts'
 
 const responseOf = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
 const file = new File(['neutral test bytes'], 'neutral.jpg', { type: 'image/jpeg' })
-const upload = { countryId: 'neutral-country', cityId: 'neutral-city', kind: 'photo' as const, file }
+// The old upload and import client calls were removed (batch 7). These stand-ins make the same requests through the
+// same write lease, so the media owner's permit is still exercised end to end.
+const uploadMedia = (cityId: string, selected: File, permit?: MediaImportPermit) => withLocalEditorWrite(async () => {
+  const response = await fetch(`/__travelatlas/editor/upload?cityId=${cityId}`, { method: 'POST', body: selected })
+  return await response.json() as { sourcePath: string }
+}, permit)
+const importMedia = (sourcePaths: string[], permit?: MediaImportPermit) => withLocalEditorWrite(async () => {
+  const response = await fetch('/__travelatlas/editor/import', { method: 'POST', body: JSON.stringify({ sourcePaths }) })
+  return await response.json() as unknown
+}, permit)
 const state = {
   hiddenCityIds: [], hiddenMediaIds: [], hiddenDroneMediaIds: [],
   cityOrderByCountry: {}, mediaOrderByCity: {}, droneOrderByCity: {}, coverMediaByCity: {},
@@ -57,7 +67,7 @@ test('a pending registered media owner blocks every write before fetch while rea
   try {
     await owner.upload([file], (selected, permit) => {
       assert.ok(permit)
-      return uploadLocalMedia({ ...upload, file: selected }, permit)
+      return uploadMedia('neutral-city', selected, permit)
     })
     assert.equal(owner.getSnapshot().phase, 'pending')
     assert.equal(requests, 1)
@@ -71,8 +81,8 @@ test('a pending registered media owner blocks every write before fetch while rea
       ['update want to go', () => updateLocalWantToGo('other-record', { hidden: true })],
       ['delete want to go', () => deleteHiddenLocalWantToGo(['other-record'])],
       ['convert to travel', () => convertLocalWantToGoToTravel({ source: 'want-to-go', id: 'other-record', startDate: '2026-10-03' })],
-      ['upload without owner permit', () => uploadLocalMedia({ ...upload, cityId: 'other-city' })],
-      ['import without owner permit', () => importLocalMedia(['Neutral/Other/photos/other.jpg'])],
+      ['upload without owner permit', () => uploadMedia('other-city', file)],
+      ['import without owner permit', () => importMedia(['Neutral/Other/photos/other.jpg'])],
     ]
     for (const [name, write] of writes) {
       const before: number = requests
@@ -88,7 +98,7 @@ test('a pending registered media owner blocks every write before fetch while rea
     assert.equal(requests, 4)
     await owner.importMedia((paths, permit) => {
       assert.ok(permit)
-      return importLocalMedia(paths, permit)
+      return importMedia(paths, permit)
     })
     assert.equal(requests, 5)
     assert.equal(owner.getSnapshot().phase, 'idle')
@@ -113,7 +123,7 @@ test('an ordinary write keeps its lease through response parsing, blocking media
   try {
     await assert.rejects(other.upload([file], async (selected, permit) => {
       uploads += 1
-      return uploadLocalMedia({ ...upload, file: selected }, permit)
+      return uploadMedia('neutral-city', selected, permit)
     }), busyError)
     assert.equal(uploads, 0)
     assert.equal(requests, 1)

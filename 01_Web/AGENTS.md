@@ -49,8 +49,6 @@ Codex 固定使用端口 5173，DSH 固定使用端口 5174。启用 strict port
 
 - From now on, the Cesium implementation is the primary Map implementation.
 - Daily map development must target `src/components/CesiumAtlasGlobe.tsx` and related Cesium components.
-- The old `src/components/AtlasGlobe.tsx` react-globe implementation is legacy and frozen.
-- Do not modify the legacy react-globe Map unless the user explicitly asks for legacy map changes.
 - When the user says "map", "globe", "route", "city marker", or "camera", assume they mean the Cesium implementation.
 
 ## Personal Media Import

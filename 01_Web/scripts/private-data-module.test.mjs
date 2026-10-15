@@ -279,6 +279,7 @@ test('非媒体路由表正好是 8 个写入端点；没列进去的接口（�
 
 // ---------------------------------------------------------------------------
 // 插件源码：只走 V2，未迁移时拒绝写入
+// 第 7 批：只读端点、虚拟模块的加载与文件事件这三条原来比对源码文本，已改成 local-editor-plugin.test.mjs 里的行为测试。
 // ---------------------------------------------------------------------------
 
 test('插件只走 V2：不再 import 数据模式与旧格式的写入模块，没有旧格式的写入逻辑，也不读旧格式的文件', () => {
@@ -308,31 +309,6 @@ test('写入：先过本机会话检查，再判「未迁移」（未迁移时�
   assert.ok(store > refusal && store < mutation, '新库模式在「未迁移」之后、V2 写入之前分流')
   assert.equal((source.match(/legacyWriteRefusal\(/g) ?? []).length, 1)
   assert.match(source, /const route = v2EditorRoute\(request\.method, url\.pathname\)\n {2}if \(!route\) return \{ status: 404, body: v2ErrorBody\('E_UNKNOWN_ENDPOINT'\) \}/)
-})
-
-test('只读端点照旧：GET /editor/state 在 V2 模式读 V2 文件（新库模式读新库的投影）；目录搜索不判「未迁移」', () => {
-  const source = pluginSource()
-  const getState = sourceBetween(source, "if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {", "if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/catalog/countries')", false)
-  assert.match(getState, /const result = await readV2EditorState\(\{ privatePaths \}\)/)
-  const readOnly = sourceBetween(source, "if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {", 'if (!authorizeWrite(request))', false)
-  assert.doesNotMatch(readOnly, /legacyWriteRefusal|legacyDataStateOf/)
-})
-
-test('虚拟模块的加载：个人模式只读 data/v2/ 的五个文件，外加「未迁移」的判定（只看文件在不在）；公开模式不读任何文件', () => {
-  const source = pluginSource()
-  const load = sourceBetween(source, 'async load(id) {', 'configureServer(server) {', false)
-  assert.match(load, /if \(profile !== 'personal'\) return renderPrivateDataModule\(privateDataModuleExports\(\{ profile \}\)\)/)
-  assert.match(load, /for \(const key of V2_PRIVATE_FILE_KEYS\) v2Values\[key\] = await readJson\(privatePaths\.v2FilePaths\[key\], undefined\)/)
-  assert.match(load, /const legacyUnmigrated = isLegacyUnmigrated\(legacyDataStateOf\(privatePaths\)\)/)
-  assert.equal((load.match(/readJson\(/g) ?? []).length, 1, '只有读 V2 文件的那一处')
-})
-
-test('插件对 add、change、unlink 三种事件注册同一个处理，经 shouldHandlePrivateDataChange（按私人目录的路径）过滤；原有的刷新条件保留', () => {
-  const source = pluginSource()
-  assert.match(source, /for \(const event of PRIVATE_DATA_WATCH_EVENTS\) \{\s*server\.watcher\.on\(event, /)
-  assert.match(source, /if \(!shouldHandlePrivateDataChange\(event, changedPath, privatePaths\)\) return/)
-  assert.doesNotMatch(source, /server\.watcher\.on\('change'/)
-  assert.match(source, /if \(editorMutationDepth > 0 \|\| Date\.now\(\) < ignoreWatcherUntil\) return/)
 })
 
 test('V2 写入分派：先看媒体路由（上传的请求体不按 JSON 读），再看非媒体路由；插件的辅助函数原样传给媒体端点复用', () => {

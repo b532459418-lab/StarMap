@@ -142,10 +142,11 @@ jobs:
       # the local editor's request prefix: the editor client is loaded only behind
       # `import.meta.env.DEV && localEditorAvailable`, so no build, and no chunk of it,
       # may contain it (5B). The smoke cases below also check the endpoint at runtime.
+      # The last marker is the third-party flag host the app used before batch 7 bundled the flags.
       - name: Refuse server-only and local editor code in the public bundle
         run: |
           found=0
-          for marker in STARMAP_PRIVATE_ROOT 06_private operations/media-import /__travelatlas/editor; do
+          for marker in STARMAP_PRIVATE_ROOT 06_private operations/media-import /__travelatlas/editor flagcdn.com; do
             if grep -rlF --include='*.js' -e "$marker" dist; then
               echo "::error::The public bundle contains the forbidden marker $marker"
               found=1

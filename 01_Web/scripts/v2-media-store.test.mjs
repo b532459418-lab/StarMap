@@ -29,6 +29,7 @@ import { handleV2Import, handleV2MediaDelete, handleV2Upload } from './v2-media-
 import { scanV2MediaImport } from './v2-media-import.mjs'
 import { createLocalEditorImporter } from './local-editor-importer.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
+import { isPathInside } from './path-containment.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { placeFolderSuffix } from '../src/data/v2media/editorWrites.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
@@ -56,10 +57,6 @@ const jpeg = (color, width = 64, height = 48) => sharp({ create: { width, height
 /** 上传与导入复用插件实际 helper；sidecar 与路径 helper 使用合成私人根。 */
 const depsFor = (paths) => {
   const inboxRoot = paths.inboxRoot
-  const isPathInside = (root, target) => {
-    const relative = path.relative(root, target)
-    return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative)
-  }
   return {
     isPathInside,
     safeSegment,

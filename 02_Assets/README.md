@@ -3,9 +3,9 @@
 ## Boundary
 
 - The legacy `SourceMedia/` continuity copy was retired after the private `MediaInbox` workflow became the canonical source-media boundary.
-- `MediaInbox/` is the private bulk-delivery entrance for new user photos and drone media. Source media is immutable; only Agent-authored `country.json` and city-level `media.json` control sidecars may be created or updated there. Only the template and instructions are tracked.
-- Browser-ready personal media is generated under `../01_Web/public/media/user/` and remains local-only. Each supported still image is stored by content hash with `thumb.webp`, `preview.webp`, and an `original` tier so list screens never decode full-resolution files.
-- `PrivateData/` is an ignored local archive for migration backups that are not part of the runtime or the eventual public repository.
+- The real media inbox is `<private-root>/MediaInbox/` in the external private layer (`STARMAP_PRIVATE_ROOT`, or the ignored `06_private/` fallback), never this repository. The tracked `MediaInbox/` here holds only its instructions and the neutral `_country-template/`. Source media is immutable; only StarMap's `place.json` folder bindings and the city-level `media.json` drone metadata sidecars may be created or updated there (`country.json` is an optional legacy mapping).
+- Browser-ready personal media is generated under `<private-root>/media/user/` and remains local-only. Each supported still image gets a content-addressed folder `media/user/<16-hex hash>/` with `original.<ext>`, `thumb.webp` (640 px) and `preview.webp` (2400 px), so list screens never decode full-resolution files. The personal dev server serves it at `/media/user/`; `npm run build:personal` copies only the files of media its pages show.
+- `01_Web/public/media/user/` and `02_Assets/PrivateData/` stay in `.gitignore` as safeguards for folders of earlier versions; StarMap no longer writes there.
 - The previous workspace remains the short-term rollback source and was not changed during migration.
 
 ## Bulk Import

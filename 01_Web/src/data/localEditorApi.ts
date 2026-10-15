@@ -5,7 +5,6 @@
 import type { TravelAtlasEditorState } from './editorState'
 import type { WantToGoItem } from './derive/wantToGo.ts'
 import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
-import { parseMediaImportResponse, parseMediaUploadResponse } from './localMediaResponse.ts'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 import { requireLocalEditorReload, withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
 import { sendStoreWrite, type StoreWriteHeaders } from './storeWriteProtocol.ts'
@@ -148,41 +147,6 @@ export type LocalMediaUpload = {
   titleZh?: string
   titleEn?: string
 }
-
-export const uploadLocalMedia = (upload: LocalMediaUpload, permit?: MediaImportPermit) => withLocalEditorWrite(async () => {
-  const search = new URLSearchParams({
-    countryId: upload.countryId,
-    cityId: upload.cityId,
-    kind: upload.kind,
-    fileName: upload.file.name,
-  })
-  if (upload.date) search.set('date', upload.date)
-  if (upload.lat !== undefined) search.set('lat', String(upload.lat))
-  if (upload.lng !== undefined) search.set('lng', String(upload.lng))
-  if (upload.altitudeMeters !== undefined) search.set('altitudeMeters', String(upload.altitudeMeters))
-  if (upload.relativeAltitudeMeters !== undefined) search.set('relativeAltitudeMeters', String(upload.relativeAltitudeMeters))
-  if (upload.titleZh) search.set('titleZh', upload.titleZh)
-  if (upload.titleEn) search.set('titleEn', upload.titleEn)
-
-  const response = await fetch(`/__travelatlas/editor/upload?${search}`, {
-    method: 'POST',
-    headers: {
-      'content-type': upload.file.type || 'application/octet-stream',
-      'x-travelatlas-local-editor': '1',
-    },
-    body: upload.file,
-  })
-  return parseMediaUploadResponse(response)
-}, permit)
-
-export const importLocalMedia = (sourcePaths: string[] = [], permit?: MediaImportPermit) => withLocalEditorWrite(async () => {
-  const response = await fetch('/__travelatlas/editor/import', {
-    method: 'POST',
-    headers: editorHeaders,
-    body: JSON.stringify({ sourcePaths }),
-  })
-  return parseMediaImportResponse(response, sourcePaths)
-}, permit)
 
 const mediaJobsPath = '/__travelatlas/editor/media/jobs'
 const responseInvalid = () => new LocalEditorError({ code: 'E_EDITOR_RESPONSE_INVALID' })

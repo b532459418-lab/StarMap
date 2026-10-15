@@ -19,10 +19,11 @@ import {
   type V2FileInputs,
 } from './canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
-import { canonicalForInputsFixture } from './frozen.fixture.ts'
+import { migratedCanonical } from './frozen.fixture.ts'
 import { readV2 } from './v2Reader.ts'
 import { V2_FILE_KEYS, validateV2Files, type V2Files } from './v2Schema.ts'
 import { buildBaseline, stableStringify } from '../derive/baseline.ts'
+import { migratedFiles } from '../v2write/v2write.fixture.ts'
 
 const NOW = '2000-01-01T00:00:00.000Z'
 
@@ -31,12 +32,11 @@ const baselineText = (data: ReturnType<typeof deriveAppDataFromCanonical>) => st
 
 /**
  * PR3a 的迁移：中性个人模式数据 consistentPersonalRaw → V2 文件（M 与 write(M)）。PR5b 起是冻结的静态数据
- * （./frozen.fixture.ts；删除迁移工具之前用当时的代码生成）。
+ * （../v2write/fixtures/migrated-files.json 与 ./frozen.fixture.ts 的 `migratedCanonical('personal')`；
+ * 删除迁移工具之前用当时的代码生成）。
  */
-const migrated = () => {
-  const { files, migrated: M } = canonicalForInputsFixture()
-  return { files: files as V2Files, M }
-}
+const migrated = (): { files: V2Files; M: ReturnType<typeof migratedCanonical>['canonical'] } =>
+  ({ files: migratedFiles(), M: migratedCanonical('personal').canonical })
 
 /** 旧格式输入的每个字段都换成读了就抛错的 getter：证明 canonicalForInputs 根本不读它们。 */
 const trapLegacyFields = <T extends object>(inputs: T): T => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import fsPromises, { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import fsPromises, { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -100,6 +100,7 @@ test('Local editor middleware preserves authorization, error codes and private f
   process.env = { STARMAP_PRIVATE_ROOT: root }
   try {
     const { travelAtlasLocalEditor } = await import('./local-editor-plugin.mjs')
+    const { getPrivatePaths } = await import('./private-profile.mjs')
 
     await t.test('Public profile registers no editor middleware or private watcher', () => {
       const captured = captureMiddleware(travelAtlasLocalEditor({ profile: 'public', privateRoot: root }))
@@ -466,6 +467,118 @@ test('Local editor middleware preserves authorization, error codes and private f
         assert.equal(result.text, 'Forbidden')
         assert.equal(result.headers.has('content-type'), false)
       }
+    })
+
+    await t.test('Private media refuses a link or junction anywhere on the way to the file (batch 7, review S5)', async () => {
+      const mediaRoot = path.join(root, 'media-links')
+      const outside = path.join(root, 'media-links-outside')
+      const userMedia = path.join(mediaRoot, 'media', 'user')
+      await mkdir(path.join(userMedia, 'plain'), { recursive: true })
+      await mkdir(outside, { recursive: true })
+      await writeFile(path.join(userMedia, 'plain', 'thumb.webp'), Buffer.from('inside'))
+      await writeFile(path.join(outside, 'thumb.webp'), Buffer.from('outside'))
+      const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+      await symlink(outside, path.join(userMedia, 'linked'), linkType)
+      const fresh = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: mediaRoot }))
+      const get = async (url, privateHandler = fresh.handlers[1]) => {
+        const response = { statusCode: 200, headersSent: false, text: '', setHeader: () => {}, end(body = '') { this.text += body } }
+        await privateHandler({ url, method: 'HEAD', headers: { host: '127.0.0.1:5173' }, socket: { remoteAddress: '127.0.0.1' } }, response, () => {})
+        return { status: response.statusCode, text: response.text }
+      }
+      assert.equal((await get('/media/user/plain/thumb.webp')).status, 200)
+      assert.deepEqual(await get('/media/user/linked/thumb.webp'), { status: 403, text: 'Forbidden' })
+      assert.deepEqual(await get('/media/user/plain/thumb.webp/below'), { status: 403, text: 'Forbidden' }, 'a file used as a directory')
+      assert.deepEqual(await get('/media/user/plain/missing.webp'), { status: 404, text: 'Not Found' })
+
+      // The media directory itself as a junction to another place: refused as well.
+      const linkedRoot = path.join(root, 'media-linked-root')
+      await mkdir(path.join(linkedRoot, 'media'), { recursive: true })
+      await symlink(userMedia, path.join(linkedRoot, 'media', 'user'), linkType)
+      const linked = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: linkedRoot }))
+      assert.deepEqual(await get('/media/user/plain/thumb.webp', linked.handlers[1]), { status: 403, text: 'Forbidden' })
+    })
+
+    // Batch 7 (review E6): the following three replace tests that matched the plugin's source text.
+    const v2Fixture = JSON.parse(await readFile(new URL('./fixtures/editor-store-v2.json', import.meta.url), 'utf8'))
+    const legacySentinel = 'Synthetic legacy sentinel 7f3c, deliberately not JSON.\n'
+    const privateRootWith = async (name, { v2 = false, legacy = false } = {}) => {
+      const privateRoot = path.join(root, name)
+      const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: privateRoot })
+      await mkdir(paths.v2DataRoot, { recursive: true })
+      if (v2) for (const [key, file] of Object.entries(paths.v2FilePaths)) await writeFile(file, `${JSON.stringify(v2Fixture[key], null, 2)}\n`)
+      if (legacy) await writeFile(paths.localTravelMapPath, legacySentinel)
+      return { privateRoot, paths }
+    }
+    const moduleOf = async (plugin) => {
+      const code = await plugin.load(plugin.resolveId('virtual:starmap-private-data'))
+      return { code, exports: await import(`data:text/javascript,${encodeURIComponent(code)}`) }
+    }
+
+    await t.test('The private data module: personal reads only the five V2 files plus the unmigrated flag; public reads nothing', async () => {
+      const both = await privateRootWith('module-v2-and-legacy', { v2: true, legacy: true })
+      const personal = await moduleOf(travelAtlasLocalEditor({ profile: 'personal', privateRoot: both.privateRoot }))
+      assert.deepEqual(personal.exports.privateV2Files, v2Fixture)
+      assert.equal(personal.exports.privateLegacyUnmigrated, false, 'V2 files present: the legacy file is a leftover')
+      assert.ok(!personal.code.includes('7f3c'), 'the legacy file is never read')
+
+      const legacyOnly = await privateRootWith('module-legacy-only', { legacy: true })
+      const unmigrated = await moduleOf(travelAtlasLocalEditor({ profile: 'personal', privateRoot: legacyOnly.privateRoot }))
+      assert.deepEqual(unmigrated.exports.privateV2Files, {})
+      assert.equal(unmigrated.exports.privateLegacyUnmigrated, true)
+      assert.ok(!unmigrated.code.includes('7f3c'))
+
+      const publicModule = await moduleOf(travelAtlasLocalEditor({ profile: 'public', privateRoot: both.privateRoot }))
+      assert.equal(publicModule.exports.privateV2Files, undefined)
+      assert.equal(publicModule.exports.privateLegacyUnmigrated, false)
+      assert.ok(!publicModule.code.includes(v2Fixture.places.places[0].id), 'no private file is read for the public profile')
+    })
+
+    await t.test('Read endpoints answer while legacy data is unmigrated; GET /editor/state comes from the V2 files', async () => {
+      const legacyOnly = await privateRootWith('reads-legacy-only', { legacy: true })
+      const unmigratedHandler = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: legacyOnly.privateRoot })).handlers[1]
+      const state = await requestTo(unmigratedHandler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
+      assert.equal(state.status, 200, JSON.stringify(state.body))
+      assert.deepEqual(state.body.state.countryOrder, [])
+      const countries = await requestTo(unmigratedHandler, { url: editorPrefix + 'catalog/countries?q=Iceland', method: 'GET', headers: {} })
+      assert.equal(countries.status, 200, JSON.stringify(countries.body))
+      assert.ok(countries.body.results.length > 0)
+      const write = await requestTo(unmigratedHandler, { url: editorPrefix + 'countries', content: Buffer.from('{') })
+      assertError(write, 409, 'E_LEGACY_UNMIGRATED')
+      assert.equal(await readFile(legacyOnly.paths.localTravelMapPath, 'utf8'), legacySentinel)
+
+      const migrated = await privateRootWith('reads-v2', { v2: true, legacy: true })
+      const migratedHandler = captureMiddleware(travelAtlasLocalEditor({ profile: 'personal', privateRoot: migrated.privateRoot })).handlers[1]
+      const v2State = await requestTo(migratedHandler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
+      assert.equal(v2State.status, 200, JSON.stringify(v2State.body))
+      assert.deepEqual(v2State.body.state.countryOrder, v2Fixture.editorState.countryOrder)
+    })
+
+    await t.test('File events: add, change and unlink share one filter; a handled event invalidates the module and reloads, except right after an editor write', async () => {
+      const { privateRoot, paths } = await privateRootWith('watcher', { v2: true })
+      const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot })
+      const privateModule = { id: plugin.resolveId('virtual:starmap-private-data'), transformResult: { code: '' } }
+      const watching = captureMiddleware(plugin, privateModule)
+      assert.deepEqual([...watching.watcherCallbacks.keys()].sort(), ['add', 'change', 'unlink'])
+      const fire = (event, target) => watching.watcherCallbacks.get(event)(target)
+
+      fire('change', path.join(paths.dataRoot, 'travel-map.local.json'))
+      fire('change', path.join(privateRoot, 'MediaInbox', 'a.jpg'))
+      fire('add', path.join(paths.dataRoot, 'v2-backup', 'places.local.json'))
+      assert.deepEqual(watching.invalidations, [])
+      assert.deepEqual(watching.reloads, [])
+
+      fire('change', paths.v2FilePaths.places)
+      fire('add', path.join(paths.dataRoot, 'travel-map.local.json'))
+      fire('unlink', paths.v2FilePaths.media)
+      assert.equal(watching.invalidations.length, 3)
+      assert.deepEqual(watching.reloads, [{ type: 'full-reload' }, { type: 'full-reload' }, { type: 'full-reload' }])
+
+      const written = await requestTo(watching.handlers[1], { url: editorPrefix + 'countries', content: Buffer.from(JSON.stringify({ countryCode: 'JP', visitedDate: '2026-05-01' })) })
+      assert.equal(written.status, 201, JSON.stringify(written.body))
+      const invalidationsAfterWrite = watching.invalidations.length
+      fire('change', paths.v2FilePaths.places)
+      assert.equal(watching.invalidations.length, invalidationsAfterWrite + 1, 'still invalidated')
+      assert.equal(watching.reloads.length, 3, 'no reload for the editor\'s own write')
     })
   } finally {
     process.env = originalEnvironment

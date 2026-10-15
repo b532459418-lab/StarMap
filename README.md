@@ -206,12 +206,13 @@ From `01_Web/`:
 
 ```powershell
 npm run lint
+npm test
 npm run build:public
 npm run privacy:check
 npm run media:check
 ```
 
-`npm run build:public` creates a static public-display build in `01_Web/dist/` without the local editor: no build contains the editor's client code, and CI refuses a public bundle that does. `npm run release:check` goes further: it requires a clean worktree, archives only Git-tracked files into a temporary clean room, installs dependencies, and runs lint, the tests, and the public build there. This proves an external private layer cannot leak into a public release. Use `build:personal` only for a private deployment you control.
+`npm test` runs every unit and script test (`src/**/*.test.ts` and `scripts/**/*.test.mjs`, plain `node --test`; it takes a few minutes). `npm run build:public` creates a static public-display build in `01_Web/dist/` without the local editor: no build contains the editor's client code, and CI refuses a public bundle that does. `npm run release:check` goes further: it requires a clean worktree, archives only Git-tracked files into a temporary clean room, installs dependencies, and runs lint, the tests, and the public build there. Those commands inherit only a sanitized environment (search path, home and temporary directories, locale, proxy settings): `STARMAP_PRIVATE_ROOT`, `VITE_*` values and tokens are not passed on, and a failing step prints the output it captured. This proves an external private layer cannot leak into a public release. Use `build:personal` only for a private deployment you control. Hidden content does not go into a personal build: hidden countries, cities, Want to Go entries, photos and drone media are left out of its data together with everything only they lead to, and only the media files of what is shown are copied. The development server still has everything, because the editor restores and deletes hidden entries.
 
 ### Caching the public build
 
@@ -224,6 +225,8 @@ The build follows [Cesium's own Vite setup](https://github.com/CesiumGS/cesium-v
 | `cesium/<version>/*` (Cesium's `Workers`, `Assets`, `Widgets` and `ThirdParty`) | Cesium is upgraded (a new version gets a new directory) | `public, max-age=31536000, immutable` |
 
 Cesium has a chunk of its own, so an application change that uses no further Cesium API keeps that chunk's name and every cached copy of it.
+
+For development, run `npx playwright install chromium` and `npm run test:browser` in `01_Web/` to check language drafts, city selection, the Want to Go shortcut, media retries, conversion to travel and the mobile panels. The tests use a new temporary synthetic data directory and never touch real private data; they refuse to start when port 5173 is occupied. The checks form three groups, critical flows, media recovery and time filters, which run on their own with `--critical-flows`, `--media-recovery` or `--time-filters`; add `--shard=<current>/<total>` to rerun one CI shard. After `npm run build:public`, `npm run test:browser -- --public-smoke` checks the public build itself. `npm run perf:browser` measures the interface and scrolling with 1,000 synthetic entries; its numbers are a local development baseline, not a release gate or a CI performance threshold. Configuration and report locations are in `01_Web/README.md`.
 
 ## Updates
 

@@ -391,7 +391,7 @@ export async function checkProject(root) {
   const files = await activeSourceFiles(root)
   const contracts = dynamicKeyContracts(files)
   const issues = checkResources(resources)
-  const uiFiles = [...files].filter(([file]) => file.endsWith('.tsx') && file !== 'src/components/AtlasGlobe.tsx')
+  const uiFiles = [...files].filter(([file]) => file.endsWith('.tsx'))
   for (const [file, source] of uiFiles) issues.push(...checkUiSource(source, file, resources, { contracts }))
   return { issues, uiFiles: uiFiles.length, namespaces: Object.keys(resources.en).length }
 }

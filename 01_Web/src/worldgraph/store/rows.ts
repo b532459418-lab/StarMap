@@ -212,7 +212,7 @@ export function validateRow(table: RowTable, row: unknown, lookup: RowLookup, po
         if (r.itemTable==='entries' && item.layerId!==r.layerId) reject('E_VIEW_LAYER','viewItems.layerId')
       }
       if (!isPosition(r.position)) reject('E_POSITION','viewItems.position')
-      if (typeof r.hidden !== 'boolean') reject('E_SHAPE','viewItems.hidden')
+      if (typeof r.hidden!=='boolean') reject('E_SHAPE','viewItems.hidden')
       return
     }
     case 'viewSettings':
@@ -220,7 +220,7 @@ export function validateRow(table: RowTable, row: unknown, lookup: RowLookup, po
       scope(r.scope,'viewSettings.scope'); opaqueId(r.key,'viewSettings.key')
       if (r.ref!==undefined) {
         shape(r.ref,['table','id'],['table','id'],'viewSettings.ref')
-        if (typeof r.ref.table !== 'string' || !VIEW_ITEM_TABLES.includes(r.ref.table)) reject('E_VIEW_TABLE','viewSettings.ref')
+        if (typeof r.ref.table!=='string' || !VIEW_ITEM_TABLES.includes(r.ref.table)) reject('E_VIEW_TABLE','viewSettings.ref')
         get(r.ref.table as RowTable,r.ref.id,'viewSettings.ref')
       }
       return

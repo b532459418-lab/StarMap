@@ -20,12 +20,10 @@ import {
 } from '../data/wantToGo'
 import { worldGraphSnapshot } from '../data/worldGraph'
 import type { EntityId } from '../worldgraph/types'
-import type { RecordRef } from '../worldgraph/recordIdentity'
 import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
 
 type WantToGoCardProps = {
   entityId: EntityId
-  matchingRecords?: readonly RecordRef[]
   /** Explicit Collection targets and open-detail sources stay fixed across filter changes. */
   explicitRecord?: WantToGoCardRecord
   outsideTimeFilter?: boolean
@@ -47,14 +45,14 @@ type WantToGoCardProps = {
  * 「标记为去过」的门控：想去条目同「隐藏」；planned 条目写的是旅行记录，看 travelAtlasDataSource。
  * 转换对话框收到的是卡片所显示那条记录的 id（想去条目的 id 或 planned 记录的 id），对话框按记录 id 查找。
  */
-export function WantToGoCard({ entityId, matchingRecords, explicitRecord, outsideTimeFilter = false, onClearTimeFilter, onClose, onConvertToTravel }: WantToGoCardProps) {
+export function WantToGoCard({ entityId, explicitRecord, outsideTimeFilter = false, onClearTimeFilter, onClose, onConvertToTravel }: WantToGoCardProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { locale } = useUiLocale()
   const { name, subtitle } = usePlaceNames()
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
-  const record = explicitRecord ?? wantToGoCardRecordOf(worldGraphSnapshot.memberships, entityId, matchingRecords)
+  const record = explicitRecord ?? wantToGoCardRecordOf(worldGraphSnapshot.memberships, entityId)
   const item = record?.source === 'want-to-go' ? wantToGoItemById.get(record.recordId) : undefined
   const planned = record?.source === 'planned' ? plannedRecordById.get(record.recordId) : undefined
 

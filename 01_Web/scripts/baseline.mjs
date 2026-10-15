@@ -35,7 +35,7 @@ import { readJson } from './json-file.mjs'
 import { isAllowedPrivateOutput } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot } from './private-profile.mjs'
 import { readV2SampleFiles, V2_SAMPLE_DIRECTORY } from './v2-sample.mjs'
-import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
+import { baselineDifferences, buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
 import { canonicalForInputs, V2FilesInvalidError } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 
@@ -113,45 +113,6 @@ const sha256 = (content) => createHash('sha256').update(content).digest('hex')
 
 // ---- --compare ----
 
-const kindOf = (value) => (value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value)
-
-const formatKey = (key) => (/^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`)
-
-/** 两份已解析的 JSON 的差异路径。只收集路径，不带值（基线可能含私人地名与坐标）。 */
-const collectDifferences = (first, second) => {
-  const paths = []
-  let total = 0
-  const report = (where) => {
-    total += 1
-    if (paths.length < MAX_REPORTED_DIFFERENCES) paths.push(where)
-  }
-  const walk = (left, right, where) => {
-    const kind = kindOf(left)
-    if (kind !== kindOf(right)) return report(where)
-    if (kind === 'array') {
-      const length = Math.max(left.length, right.length)
-      for (let index = 0; index < length; index += 1) {
-        const child = `${where}[${index}]`
-        if (index >= left.length || index >= right.length) report(child)
-        else walk(left[index], right[index], child)
-      }
-      return
-    }
-    if (kind === 'object') {
-      const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
-      for (const key of keys) {
-        const child = `${where}${formatKey(key)}`
-        if (!Object.hasOwn(left, key) || !Object.hasOwn(right, key)) report(child)
-        else walk(left[key], right[key], child)
-      }
-      return
-    }
-    if (!Object.is(left, right)) report(where)
-  }
-  walk(first, second, '$')
-  return { paths, total }
-}
-
 const firstDifferentByte = (first, second) => {
   const length = Math.min(first.length, second.length)
   for (let index = 0; index < length; index += 1) {
@@ -187,7 +148,7 @@ const compare = async (firstPath, secondPath) => {
     return 1
   }
 
-  const { paths, total } = collectDifferences(parsed[0], parsed[1])
+  const { paths, total } = baselineDifferences(parsed[0], parsed[1], MAX_REPORTED_DIFFERENCES)
   if (total === 0) {
     console.log(`解析后的 JSON 相同，只有格式或换行不同；首个不同字节的偏移：${firstDifferentByte(first, second)}。`)
     return 1

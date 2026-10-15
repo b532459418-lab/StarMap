@@ -6,7 +6,6 @@ import type { AtlasPage } from './components/AtlasHeader'
 import { CesiumAtlasGlobe } from './components/CesiumAtlasGlobe'
 import { CountrySelector } from './components/CountrySelector'
 import { PrivateDataNotice } from './components/PrivateDataNotice'
-import type { ThemeMode } from './components/DayNightToggle'
 import { CompassButton } from './components/CompassButton'
 import type { ConvertToTravelTarget } from './components/ConvertToTravelDialog'
 import { LayerPanel } from './components/LayerPanel'
@@ -101,10 +100,8 @@ type ImageryTuning = {
   saturation: number
 }
 
-const imageryTuningDefaults: Record<ThemeMode, ImageryTuning> = {
-  day: { brightness: 1, contrast: 1, saturation: 1 },
-  night: { brightness: 0.68, contrast: 1.08, saturation: 0.86 },
-}
+// The app has one (night) theme; these are its imagery defaults.
+const imageryTuningDefaults: ImageryTuning = { brightness: 0.68, contrast: 1.08, saturation: 0.86 }
 
 const cameraScaleForDistance = (distance: number): CameraScale => {
   if (distance < 1.68) return 'city'
@@ -193,7 +190,7 @@ function App() {
   const collectionStageRef = useRef<HTMLDivElement>(null)
   const updateStageRef = useRef<HTMLDivElement>(null)
   const [pageBeforeUpdate, setPageBeforeUpdate] = useState<Exclude<AtlasPage, 'about'>>(restoredPageBeforeUpdate)
-  const [imageryTuningByTheme, setImageryTuningByTheme] = useState(imageryTuningDefaults)
+  const [imageryTuning, setImageryTuning] = useState(imageryTuningDefaults)
   const [mapSource, setMapSource] = useState<MapSourceId>(getInitialMapSource)
   const [city3DEnabled, setCity3DEnabled] = useState(() => resolveInitialCity3DEnabled(googleConfigured))
   // The globe hides itself while City 3D is on, so what it receives is gated by the Google key too.
@@ -276,27 +273,12 @@ function App() {
   const shouldShowDronePanel = Boolean(
     selectionMode === 'city' && selectedCityId && (selectedCityHasDroneMedia || localEditorAvailable),
   )
-  const activeTheme: ThemeMode = 'night'
-  const imageryTuning = {
-    ...imageryTuningDefaults[activeTheme],
-    ...imageryTuningByTheme[activeTheme],
-  }
-
   const updateImageryTuning = (property: keyof ImageryTuning, value: number) => {
-    setImageryTuningByTheme((current) => ({
-      ...current,
-      [activeTheme]: {
-        ...current[activeTheme],
-        [property]: value,
-      },
-    }))
+    setImageryTuning((current) => ({ ...current, [property]: value }))
   }
 
   const resetImageryTuning = () => {
-    setImageryTuningByTheme((current) => ({
-      ...current,
-      [activeTheme]: { ...imageryTuningDefaults[activeTheme] },
-    }))
+    setImageryTuning({ ...imageryTuningDefaults })
   }
 
   // 页面的滚动容器：Journey、Collection、About 的舞台里都只有一个子元素，就是该页的滚动容器；地图页没有。
@@ -755,7 +737,6 @@ function App() {
               selectionMode={selectionMode}
               globeScale={globeDistance}
               resetVersion={globeResetVersion}
-              isNight={activeTheme === 'night'}
               showMapContent={activePage === 'map'}
               layerData={layerData}
               activeDroneMediaCityId={activeDroneMediaCityId}

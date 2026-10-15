@@ -1,9 +1,10 @@
 /** Read-only whole-Inbox plans for durable local media tasks. No private configuration is read. */
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
 import { lstat, readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
+import { sha256File } from './file-hash.mjs'
+import { isPathInside } from './path-containment.mjs'
 import { scanV2MediaImport, applyV2MediaImportScan, publishTemporaryOf } from './v2-media-import.mjs'
 import { catalogIntegrityProblems, mediaCatalogFileOf, mediaSourceIndexFileOf, sourcesByIdOf } from '../src/data/v2media/importPlan.ts'
 
@@ -14,11 +15,6 @@ const hash = (value) => createHash('sha256').update(value).digest('hex')
 // content and generator settings/version. Every on-disk result is still hashed.
 const derivativeFingerprints = new Map()
 const FINGERPRINT_LIMIT = 20000
-const fileHash = (target) => new Promise((resolve, reject) => {
-  const digest = createHash('sha256')
-  const stream = createReadStream(target)
-  stream.on('error', reject).on('data', (chunk) => digest.update(chunk)).on('end', () => resolve(digest.digest('hex')))
-})
 const exists = async (target) => {
   try { return await lstat(target) } catch (error) { if (error.code === 'ENOENT') return undefined; throw error }
 }
@@ -55,7 +51,7 @@ async function snapshot(privatePaths, blockers) {
       result.push([namespace, 'directory'])
       for (const entry of (await readdir(target)).sort()) await visit(path.join(target, entry), `${namespace}/${entry}`, semanticJson)
     } else {
-      let digest = await fileHash(target)
+      let digest = await sha256File(target)
       if (semanticJson && target.endsWith('.json')) {
         try { digest = hash(stable(withoutTimestamp(JSON.parse(await readFile(target, 'utf8'))))) } catch { add('E_MEDIA_PLAN_JSON', namespace) }
       }
@@ -66,7 +62,7 @@ async function snapshot(privatePaths, blockers) {
   // Check ancestors before traversing, so a linked parent cannot redirect reads outside the library.
   for (const target of [root, privatePaths.inboxRoot, privatePaths.v2DataRoot, privatePaths.userMediaRoot]) {
     let current = target
-    while (current && path.relative(root, current) !== '..' && !path.relative(root, current).startsWith(`..${path.sep}`)) {
+    while (current && isPathInside(root, current, { allowRoot: true })) {
       const info = await exists(current)
       if (info?.isSymbolicLink() || (info && !info.isDirectory())) add('E_MEDIA_PLAN_LINK', relative(root, current) || '.')
       if (current === root) break
@@ -139,7 +135,7 @@ export async function createMediaImportPlan({ privatePaths, unsafeTestDerivative
     if (!match) { blockers.push({ code: 'E_MEDIA_PLAN_CATALOG' }); continue }
     const target = path.join(privatePaths.userMediaRoot, match[1], match[2])
     try {
-      const digest = await fileHash(target)
+      const digest = await sha256File(target)
       if (digest.slice(0, 16) !== match[1]) blockers.push({ code: 'E_MEDIA_PLAN_OUTPUT', sourcePath: relative(privatePaths.userMediaRoot, target) })
       priorContent.set(digest, [...(priorContent.get(digest) ?? []), item])
     } catch { blockers.push({ code: 'E_MEDIA_PLAN_OUTPUT', sourcePath: relative(privatePaths.userMediaRoot, target) }) }
@@ -185,7 +181,7 @@ export async function createMediaImportPlan({ privatePaths, unsafeTestDerivative
       if (directory) for (const name of await readdir(entry.outputDirectory)) if (!tolerated(name)) blockers.push({ code: 'E_MEDIA_PLAN_OUTPUT', sourcePath: relative(privatePaths.userMediaRoot, path.join(entry.outputDirectory, name)) })
       for (const { target, digest } of expected) {
         outputs.push({ id: entry.id, path: `media/user/${relative(privatePaths.userMediaRoot, target)}`, sha256: digest })
-        if (await exists(target) && await fileHash(target) !== digest) blockers.push({ code: 'E_MEDIA_PLAN_OUTPUT', sourcePath: relative(privatePaths.userMediaRoot, target) })
+        if (await exists(target) && await sha256File(target) !== digest) blockers.push({ code: 'E_MEDIA_PLAN_OUTPUT', sourcePath: relative(privatePaths.userMediaRoot, target) })
       }
       const previous = prior.get(entry.id)
       if (previous && previous.src !== entry.item.src) blockers.push({ code: 'E_MEDIA_PLAN_ID_COLLISION', sourcePath: relative(privatePaths.inboxRoot, entry.sourcePath) })

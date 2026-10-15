@@ -5,12 +5,12 @@
  * library's backup (./store-backup.mjs, 3C-4b): mediaFilePaths, isMediaBackupPath, uniquePaths and
  * checkMediaReferences. A V2 backup behaves exactly as before.
  */
-import { createHash } from 'node:crypto'
-import { constants, createReadStream } from 'node:fs'
+import { constants } from 'node:fs'
 import { copyFile, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { V2_DATA_FILE_NAMES, getPrivatePaths } from './private-profile.mjs'
-import { canonicalPath, isInsideDirectory, isAllowedPrivateOutput } from './private-output.mjs'
+import { canonicalPath, isInsideDirectory, isAllowedPrivateOutput, mayBeInsideDirectory } from './private-output.mjs'
+import { sha256File } from './file-hash.mjs'
 import { legacyDataStateOf, isLegacyUnmigrated } from './legacy-data.mjs'
 import { completeForWrite, integrityProblems } from '../src/data/v2write/transaction.ts'
 
@@ -107,9 +107,7 @@ async function json(root, relative) {
 async function digest(root, relative) {
   const info = await safeStat(root, relative)
   if (!info?.isFile()) fail('E_BACKUP_MISSING')
-  const hash = createHash('sha256')
-  for await (const chunk of createReadStream(path.join(root, relative))) hash.update(chunk)
-  return { path: relative, bytes: info.size, sha256: hash.digest('hex') }
+  return { path: relative, bytes: info.size, sha256: await sha256File(path.join(root, relative)) }
 }
 
 /** Every file under `prefixes`: ignored ones left out, anything outside the allowlist refused; unique and sorted. */
@@ -205,7 +203,8 @@ export async function checkMediaReferences(root, paths, files, { outsideUserMedi
 function destination(root, target) {
   const environment = { STARMAP_PRIVATE_ROOT: root }
   if (!isAllowedPrivateOutput(root, environment) || !isAllowedPrivateOutput(target, environment)) fail('E_BACKUP_PRIVATE_OUTPUT')
-  if (isInsideDirectory(target, root) || isInsideDirectory(root, target)) fail('E_BACKUP_OVERLAP')
+  // Refusal: a target that might be inside the library, or might contain it, overlaps (./path-containment.mjs).
+  if (mayBeInsideDirectory(target, root) || mayBeInsideDirectory(root, target)) fail('E_BACKUP_OVERLAP')
   return canonicalPath(target)
 }
 

@@ -63,6 +63,12 @@ test('schema changes and record identity/source moves require explicit later mig
   throws(()=>applyStoreCommands(w,[{op:'update',table:'entries',id:id(10),expectedRevision:0,value:{...w.entries[0],revision:1,layerId:'user:favorites'}}],0),'E_IDENTITY')
   throws(()=>applyStoreCommands(w,[{op:'update',table:'entries',id:id(10),expectedRevision:0,value:{...w.entries[0],revision:1,source:source('other-source')}}],0),'E_SOURCE_IDENTITY')
 })
+test('an update whose source is null is a StoreError (E_SOURCE_IDENTITY), not a TypeError (batch 7)',()=>{
+  const w=fixture(),entity=w.entities[0]
+  const nullSource=(command:object)=>command as unknown as StoreCommand
+  throws(()=>applyStoreCommands(w,[nullSource({op:'update',table:'entries',id:id(10),expectedRevision:0,value:{...w.entries[0],revision:1,source:null}})],0),'E_SOURCE_IDENTITY')
+  throws(()=>applyStoreCommands(w,[nullSource({op:'update',table:'entities',id:entity.id,expectedRevision:entity.revision,value:{...entity,revision:entity.revision+1,source:null}})],0),'E_SOURCE_IDENTITY')
+})
 test('removing referenced objects or assets fails whole-store reference checks',()=>{
   const w=fixture()
   for(const [table,row] of [['entities',w.entities[0]],['entries',w.entries[0]],['layers',w.layers[0]],['sources',w.sources[0]],['relationTypes',w.relationTypes[0]]] as const)throws(()=>remove(w,table,row),'E_REFERENCE')

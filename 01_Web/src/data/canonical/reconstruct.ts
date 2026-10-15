@@ -157,7 +157,7 @@ export const reconstructAddedCountry = (entry: CanonicalAddedCountry, places: Pl
   }
 }
 
-/** editor-state v2 → 今天 `parseEditorState` 的输出形状（v1）。键与值里的地点 id 原样，其余字段原样。 */
+/** editor-state v2 → v1 形状（`TravelAtlasEditorState`）。键与值里的地点 id 原样，其余字段原样。 */
 export const reconstructEditorState = (state: CanonicalEditorState, places: PlaceIndex): TravelAtlasEditorState => ({
   schemaVersion: 1,
   addedCountries: state.addedCountries.map((entry) => reconstructAddedCountry(entry, places)),

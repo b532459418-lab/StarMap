@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs'
-import { cp, mkdir, stat } from 'node:fs/promises'
+import { copyFile, mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +13,7 @@ import {
   renderPrivateDataModule,
   shouldHandlePrivateDataChange,
 } from './private-data-module.mjs'
+import { filterForPersonalBuild } from './personal-build-filter.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { privateDataSource } from './private-data-source.mjs'
 import { createV2WriteContext, readV2EditorState, runV2Write, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
@@ -21,6 +22,7 @@ import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 import { allowedOrigins, authorizeRead, crossSiteRequestGuard, isLoopbackRequest } from './local-editor-request-guard.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
+import { firstUnsafeComponent, isPathInside } from './path-containment.mjs'
 import { createLocalEditorImporter } from './local-editor-importer.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { assertMediaJobsClear } from './media-job-store.mjs'
@@ -355,11 +357,6 @@ const updateDroneSidecar = async (cityRoot, destination, metadata, imageMetadata
 // Resolve the active private root per invocation, after configurePrivatePaths.
 const runImporter = (options) => createLocalEditorImporter({ webRoot, privateRoot })(options)
 
-const isPathInside = (root, target) => {
-  const relative = path.relative(root, target)
-  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative)
-}
-
 const normalizeInboxRelativePath = (value) => {
   if (typeof value !== 'string' || !value.trim()) return undefined
   const target = path.resolve(inboxRoot, value.trim())
@@ -392,7 +389,9 @@ const serveUserMedia = async (request, response, pathname) => {
     return
   }
   const target = path.resolve(userMediaRoot, relativePath)
-  if (!isPathInside(userMediaRoot, target)) {
+  // A link or junction anywhere from the private root down to the file is refused, as the media tasks and the import
+  // plan refuse it (./path-containment.mjs): nothing inside the library may serve a file from somewhere else.
+  if (!isPathInside(userMediaRoot, target) || await firstUnsafeComponent(privateRoot, target) !== undefined) {
     response.statusCode = 403
     response.end('Forbidden')
     return
@@ -501,6 +500,16 @@ export function travelAtlasLocalEditor(options = {}) {
   // Filled by configResolved. Until then closeBundle treats the run as "not a build" and copies nothing.
   let command
   let outputRoot
+  // Personal build only (batch 7, S3): the media files the filtered data still refers to, set when the virtual module loads.
+  let buildMediaFiles = []
+  // `vite build` of the personal profile inlines only what its pages can show (./personal-build-filter.mjs); the dev
+  // server keeps everything, because the editor restores and deletes hidden entries.
+  const forThisCommand = (v2Values) => {
+    if (command !== 'build') return v2Values
+    const { files, mediaFiles } = filterForPersonalBuild(v2Values)
+    buildMediaFiles = mediaFiles
+    return files
+  }
   // 新库模式（3C-3）：这个插件实例的新库会话，第一次用到时才加载 ./store-session.mjs。整个进程只保留一个连接。
   // 3C-4b：构建（build:personal）以只读方式打开新库：不写正常关闭标记、不取写锁，开发服务器开着新库时也能构建。
   const storePaths = privatePaths
@@ -528,7 +537,7 @@ export function travelAtlasLocalEditor(options = {}) {
         // 3C-4b：库损坏但还能读（打开检查失败）时照常给出数据，另报 storeReadOnly，页面显示只读提示。
         const { files, revision, readOnly } = await (await storeSession()).moduleExports()
         const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
-        return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: files, legacyUnmigrated, storeRevision: revision, storeReadOnly: readOnly }))
+        return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: forThisCommand(files), legacyUnmigrated, storeRevision: revision, storeReadOnly: readOnly }))
       }
       // V2 模式：早先新库模式留下的连接（新库文件被移走）正常关闭。
       await releaseStore()
@@ -536,7 +545,7 @@ export function travelAtlasLocalEditor(options = {}) {
       const v2Values = {}
       for (const key of V2_PRIVATE_FILE_KEYS) v2Values[key] = await readJson(privatePaths.v2FilePaths[key], undefined)
       const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
-      return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values, legacyUnmigrated }))
+      return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: forThisCommand(v2Values), legacyUnmigrated }))
     },
     configureServer(server) {
       if (profile !== 'personal') return
@@ -686,9 +695,18 @@ export function travelAtlasLocalEditor(options = {}) {
       // buildEnd), so without the command check every exit from `dev:personal` would quietly copy the private media
       // into the build output. The target is the resolved build.outDir (dist by default), not a hard-coded path.
       if (command !== 'build' || profile !== 'personal' || !(await exists(userMediaRoot))) return
+      // Only the files the kept media items refer to (originals and their derivatives), never the whole folder: hidden
+      // media stay out of the build (batch 7, S3). Links are refused as when the dev server serves media.
       const outputMediaRoot = path.join(outputRoot, 'media', 'user')
-      await mkdir(path.dirname(outputMediaRoot), { recursive: true })
-      await cp(userMediaRoot, outputMediaRoot, { recursive: true })
+      for (const relative of buildMediaFiles) {
+        const source = path.join(userMediaRoot, ...relative.split('/'))
+        if (!isPathInside(userMediaRoot, source) || await firstUnsafeComponent(privateRoot, source) !== undefined) continue
+        const stats = await stat(source).catch(() => undefined)
+        if (!stats?.isFile()) continue
+        const target = path.join(outputMediaRoot, ...relative.split('/'))
+        await mkdir(path.dirname(target), { recursive: true })
+        await copyFile(source, target)
+      }
     },
   }
 }

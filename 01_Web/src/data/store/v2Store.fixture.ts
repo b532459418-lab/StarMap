@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { type FormalState, emptyFormalState } from '../../worldgraph/store/formal.ts'
 import { memoryReader } from '../../worldgraph/store/reader.ts'
 import { type ChangeSet, applyChangeSet, planCommands } from '../../worldgraph/store/planner.ts'
-import { canonicalForInputsFixture, migratedCanonical, MIGRATED_CANONICAL_NAMES, v2SpaceCanonical, type V2SpaceCanonicalName } from '../canonical/frozen.fixture.ts'
+import { migratedCanonical, MIGRATED_CANONICAL_NAMES, v2SpaceCanonical, type V2SpaceCanonicalName } from '../canonical/frozen.fixture.ts'
 import { publicBridgeFixture, syntheticBridgeFixture } from '../canonical/storeBridge.fixture.ts'
 import { sequentialUuids } from '../canonical/v2.fixture.ts'
 import { serializeV2 } from '../canonical/v2Serializer.ts'
@@ -81,7 +81,6 @@ export function migrationInputs(): readonly (readonly [string, () => V2Files])[]
     ['3C-1b edge cases', edgeCaseFixture],
     ['3C-1b empty lists', emptyListsFixture],
     ['v2write/fixtures/migrated-files.json', migratedFilesFixture],
-    ['canonical/fixtures/canonical-for-inputs.json', () => canonicalForInputsFixture().files],
     ...MIGRATED_CANONICAL_NAMES.map(name => [`canonical/fixtures/migrated-canonical.json ${name}`, () => {
       const { canonical, fileMeta } = migratedCanonical(name)
       return serializeV2(canonical, { ...fileMeta, placesGeneratedAt: PLACES_GENERATED_AT })

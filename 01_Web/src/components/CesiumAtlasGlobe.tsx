@@ -78,7 +78,6 @@ type CesiumAtlasGlobeProps = {
   selectionMode: SelectionMode
   globeScale: number
   resetVersion: number
-  isNight: boolean
   showMapContent?: boolean
   /**
    * 可见图层查询结果（PRD v0.4 FR-MR-1）。城市标记与路线【只】来自这里；
@@ -608,7 +607,6 @@ export function CesiumAtlasGlobe({
   selectionMode,
   globeScale,
   resetVersion,
-  isNight,
   showMapContent = true,
   layerData,
   activeDroneMediaCityId,
@@ -691,8 +689,6 @@ export function CesiumAtlasGlobe({
     }
 
     const points = smoothCursorTrailPoints(trimmedPoints)
-    const night = isNight
-    const themeStrength = night ? 1 : 0.62
     const speedLift = Math.min(1.7, latestPoint.speed * 0.72)
 
     context.globalCompositeOperation = 'lighter'
@@ -732,7 +728,7 @@ export function CesiumAtlasGlobe({
         lastPoint.x,
         lastPoint.y,
       )
-      const alpha = alphaScale * idleFade * themeStrength
+      const alpha = alphaScale * idleFade
       gradient.addColorStop(0, 'rgba(255, 255, 255, 0)')
       gradient.addColorStop(0.16, `rgba(255, 255, 255, ${alpha * 0.08})`)
       gradient.addColorStop(0.52, `rgba(255, 255, 255, ${alpha * 0.42})`)
@@ -753,11 +749,11 @@ export function CesiumAtlasGlobe({
       context.restore()
     }
 
-    drawRibbonPass(3.35, 0.11, night ? 7 : 5)
-    drawRibbonPass(1.75, 0.28, night ? 3.5 : 2.5)
+    drawRibbonPass(3.35, 0.11, 7)
+    drawRibbonPass(1.75, 0.28, 3.5)
     drawRibbonPass(0.72, 0.94, 0)
 
-    const headRadius = (night ? 8.5 : 7) + speedLift * 1.3
+    const headRadius = 8.5 + speedLift * 1.3
     const headGlow = context.createRadialGradient(
       latestPoint.x,
       latestPoint.y,
@@ -767,8 +763,8 @@ export function CesiumAtlasGlobe({
       headRadius,
     )
     headGlow.addColorStop(0, `rgba(255, 255, 255, ${0.98 * idleFade})`)
-    headGlow.addColorStop(0.22, `rgba(255, 255, 255, ${0.74 * idleFade * themeStrength})`)
-    headGlow.addColorStop(0.58, `rgba(255, 255, 255, ${0.24 * idleFade * themeStrength})`)
+    headGlow.addColorStop(0.22, `rgba(255, 255, 255, ${0.74 * idleFade})`)
+    headGlow.addColorStop(0.58, `rgba(255, 255, 255, ${0.24 * idleFade})`)
     headGlow.addColorStop(1, 'rgba(255, 255, 255, 0)')
     context.fillStyle = headGlow
     context.beginPath()
@@ -778,7 +774,7 @@ export function CesiumAtlasGlobe({
     cursorTrailFrameRef.current = window.requestAnimationFrame(
       (nextFrameTime) => cursorTrailDrawRef.current(nextFrameTime),
     )
-  }, [isNight])
+  }, [])
 
   useEffect(() => {
     cursorTrailDrawRef.current = drawCursorTrail
@@ -1733,7 +1729,7 @@ export function CesiumAtlasGlobe({
   return (
     <div
       ref={globeShellRef}
-      className={`cesium-atlas-shell absolute inset-0 h-full w-full ${isNight ? 'bg-[#020817]' : 'bg-sky-100'}`}
+      className={`cesium-atlas-shell absolute inset-0 h-full w-full bg-[#020817]`}
       data-focus-offset-x={focusOffset.x}
       data-focus-offset-y={focusOffset.y}
       data-visible-city-count={visibleCityIds?.size ?? mappedCities.length}
@@ -1777,17 +1773,17 @@ export function CesiumAtlasGlobe({
           />
         ) : null}
         <GooglePhotorealisticTiles enabled={showCity3DTiles} visible={showMapContent} onUnavailable={onCity3DUnavailable} />
-        <Scene backgroundColor={Color.fromCssColorString(isNight ? '#010409' : '#dbeafe')} />
+        <Scene backgroundColor={Color.fromCssColorString('#010409')} />
         <CesiumGlobe
-          baseColor={Color.fromCssColorString(isNight ? '#07111f' : '#cbd5e1')}
-          dynamicAtmosphereLighting={isNight}
-          enableLighting={isNight}
+          baseColor={Color.fromCssColorString('#07111f')}
+          dynamicAtmosphereLighting
+          enableLighting
           show={showMapContent && !showCity3DTiles}
-          vertexShadowDarkness={isNight ? 0.48 : 0.3}
+          vertexShadowDarkness={0.48}
         />
-        <CesiumSkyBox show={!isNight} />
+        <CesiumSkyBox show={false} />
         <SkyAtmosphere show={showMapContent} />
-        <CesiumSun show={!isNight} />
+        <CesiumSun show={false} />
         <ScreenSpaceCameraController
           enableInputs={showMapContent}
           enableLook={cameraScale !== 'world'}
@@ -1806,7 +1802,7 @@ export function CesiumAtlasGlobe({
           overviewHeight={cameraScaleStates.world.rangeOrHeight}
           overviewLat={overviewTarget.lat}
           overviewLng={overviewTarget.lng}
-          show={isNight}
+          show
         />
 
         {mappedRoutes.map((route) => {

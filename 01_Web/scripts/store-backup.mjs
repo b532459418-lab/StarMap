@@ -37,9 +37,10 @@ import { pathToFileURL } from 'node:url'
 import {
   checkMediaReferences, isMediaBackupPath, mediaFilePaths, uniquePaths,
 } from './library-backup.mjs'
+import { sha256File } from './file-hash.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { assertMediaJobsClear } from './media-job-store.mjs'
-import { isAllowedPrivateOutput, isInsideDirectory } from './private-output.mjs'
+import { isAllowedPrivateOutput, mayBeInsideDirectory } from './private-output.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { STORE_FILE_SEGMENTS, privateDataSource, storeFileOf } from './private-data-source.mjs'
 import { StoreToolError } from './store-migrate.mjs'
@@ -64,7 +65,6 @@ export const MEDIA_FILE_LIMIT = 100_000
 export const MEDIA_COPY_MARK_SEGMENTS = Object.freeze(['operations', 'store-backup'])
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
-const hashFile = async (file) => sha256(await readFile(file))
 const missing = (error) => error?.code === 'ENOENT'
 const SHA256 = /^[a-f0-9]{64}$/
 
@@ -224,10 +224,13 @@ async function markMediaCopy(privatePaths, backupId, now) {
 // Backup
 // ---------------------------------------------------------------------------
 
-/** A backup inside the folders it copies (or the data folder) would copy itself. */
+/**
+ * A backup inside the folders it copies (or the data folder) would copy itself. A refusal, so a name that merely begins
+ * with `..` counts as inside (./path-containment.mjs `mayBeInside`).
+ */
 function refuseOverlap(privatePaths, target) {
   for (const directory of [privatePaths.inboxRoot, privatePaths.userMediaRoot, privatePaths.dataRoot]) {
-    if (isInsideDirectory(target, directory)) {
+    if (mayBeInsideDirectory(target, directory)) {
       throw new StoreToolError('E_TARGET_OVERLAP', [`${target} 在私人根的 ${path.relative(privatePaths.root, directory).split(path.sep).join('/')}/ 之内，备份会复制到自己。请换一个位置。`])
     }
   }
@@ -291,13 +294,13 @@ export async function backupStore(privatePaths, { out, now = new Date().toISOStr
       format: BACKUP_FORMAT, formatVersion: BACKUP_FORMAT_VERSION, backupId, createdAt: now,
       store: { format: meta.format, formatVersion: meta.formatVersion, libraryId: meta.libraryId, revision: meta.revision },
       tables,
-      files: { [BACKUP_FILES.store]: { bytes: (await stat(snapshotFile)).size, sha256: await hashFile(snapshotFile) } },
+      files: { [BACKUP_FILES.store]: { bytes: (await stat(snapshotFile)).size, sha256: await sha256File(snapshotFile) } },
       media: { directory: BACKUP_FILES.media, count: entries.length, bytes: mediaBytes, warnings, entries },
       excludes: BACKUP_EXCLUDES,
     }
     await writeJsonExclusive(path.join(target, BACKUP_FILES.manifest), manifest)
     // The completion mark comes last: a backup without it is unfinished and restore refuses it.
-    const manifestSha256 = await hashFile(path.join(target, BACKUP_FILES.manifest))
+    const manifestSha256 = await sha256File(path.join(target, BACKUP_FILES.manifest))
     await writeJsonExclusive(path.join(target, BACKUP_FILES.complete), { format: `${BACKUP_FORMAT}.complete`, backupId, manifestSha256 })
     return {
       out: target, manifest,
@@ -412,7 +415,7 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
     await mkdir(path.dirname(file), { recursive: true })
     await copyFile(path.join(path.resolve(from), BACKUP_FILES.store), file, constants.COPYFILE_EXCL)
     await syncFile(file)
-    if (await hashFile(file) !== manifest.files[BACKUP_FILES.store].sha256) throw new StoreToolError('E_BACKUP_HASH', ['复制后的文件与清单的 SHA-256 不一致。'])
+    if (await sha256File(file) !== manifest.files[BACKUP_FILES.store].sha256) throw new StoreToolError('E_BACKUP_HASH', ['复制后的文件与清单的 SHA-256 不一致。'])
     // Every media file, each copy checked against its SHA-256 in the manifest: one mismatch fails the whole restore.
     if (entries) {
       const made = new Set()

@@ -31,11 +31,11 @@
  * `changed_resource`. Content hashes are compared only by the explicit check `verifyMediaJobReceipts`
  * (`npm run media:check -- --verify`).
  */
-import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { assertMediaJobRecord, createMediaJobStore, mediaJobReceiptSeal } from './media-job-store.mjs'
+import { sha256File } from './file-hash.mjs'
 import { inspectLibraryOperation, withLibraryOperation } from './library-operation-lock.mjs'
 import { assertUploadPath, stageUpload, publishUpload } from './local-editor-upload.mjs'
 import { applyV2Writes, createV2WriteContext, readV2Files } from './v2-editor-store.mjs'
@@ -53,10 +53,8 @@ const hashPattern = /^[a-f0-9]{64}$/
 const fail = (code) => { throw new V2WriteError(code) }
 /** Every content hash this service computes goes through here (tests count the calls). */
 export const mediaJobHashing = {
-  async digestFile(file) {
-    const hash = createHash('sha256')
-    for await (const chunk of createReadStream(file)) hash.update(chunk)
-    return hash.digest('hex')
+  digestFile(file) {
+    return sha256File(file)
   },
 }
 const digestFile = (file) => mediaJobHashing.digestFile(file)

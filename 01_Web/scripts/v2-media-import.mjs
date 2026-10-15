@@ -31,12 +31,13 @@
  * 等字样判断预检是否通过。扫描的其余规则（文件夹别名、支持的格式、文件大小提醒、全景比例、sidecar 的读法）照抄旧导入器。
  */
 
-import { createHash, randomUUID } from 'node:crypto'
-import { constants, createReadStream } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
 import { copyFile, link, lstat, mkdir, open, readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 
+import { sha256File } from './file-hash.mjs'
 import { atomicJsonWrite } from './json-file.mjs'
 import { V2_FILE_KEYS, validateV2Files } from '../src/data/canonical/v2Schema.ts'
 import {
@@ -107,14 +108,6 @@ const listMediaFiles = async (target) => {
   }
   return files
 }
-
-const sha256 = (target) => new Promise((resolve, reject) => {
-  const hash = createHash('sha256')
-  const stream = createReadStream(target)
-  stream.on('error', reject)
-  stream.on('data', (chunk) => hash.update(chunk))
-  stream.on('end', () => resolve(hash.digest('hex')))
-})
 
 // ---- 生成文件：临时文件 + 不覆盖地发布（D7）----
 
@@ -332,7 +325,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, verify = f
       warnings.push(warning); advisoryWarnings.push(warning)
     }
 
-    const fullHash = await sha256(filePath)
+    const fullHash = await sha256File(filePath)
     const hash = contentHashOf(fullHash)
     const still = isStillMedia(kind, extension)
     let dimensions
@@ -528,7 +521,7 @@ async function verifyGeneratedOriginals({ files, unique, outputRoot, errors, log
   for (const [target, expected] of originals) {
     if (!(await pathExists(target))) continue
     checked += 1
-    const actual = (await sha256(target)).slice(0, 16)
+    const actual = (await sha256File(target)).slice(0, 16)
     if (actual !== expected) {
       errors.push(`生成的原图 media/user/${expected}/${path.basename(target)} 与目录名的内容哈希不一致（实际为 ${actual}），可能被截断或改动。确认后删除这个生成目录，再运行 npm run media:import 重新生成。`)
     }

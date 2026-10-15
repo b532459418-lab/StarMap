@@ -12,6 +12,7 @@ import { countryDraftUpdater, withoutIds } from '../data/editorStateDelta'
 import type { CountrySearchOption } from '../data/localEditorApi'
 import { countries, getCitiesForCountry, shouldHideCityFromNavigation } from '../data/travelAtlas'
 import type { CityId, CountryId } from '../types/travel'
+import { countryFlagUrl } from './countryFlagUrl'
 import { LocationSearchField } from './LocationSearchField'
 import { useFlipLayout } from './useFlipLayout'
 
@@ -330,6 +331,7 @@ export function CountrySelector({
         {displayCountries.map((country) => {
           if (!country) return null
           const isSelected = country.id === selectedCountry?.id
+          const flagUrl = countryFlagUrl(country.flagCode)
           const countryCities = getCitiesForCountry(country.id).filter((city) => !shouldHideCityFromNavigation(city)
             && (isEditingCountries || browseCityIds === undefined || browseCityIds.has(city.id)))
 
@@ -423,11 +425,11 @@ export function CountrySelector({
                     }`}
                     aria-hidden="true"
                   >
-                    {country.flagCode ? (
+                    {flagUrl ? (
                       <img
                         alt=""
                         className="h-full w-full object-cover"
-                        src={`https://flagcdn.com/w80/${country.flagCode}.png`}
+                        src={flagUrl}
                       />
                     ) : (
                       <span className="text-base">{country.flag ?? ''}</span>
