@@ -1,10 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
 import { test, expect, openMap, openCollection, readFixture, recordMediaPhase, closeMediaTestContext, saveAndWaitForReload, retainMediaFailure } from './helpers.mjs'
-import { fixtureIds } from '../../scripts/browser-fixture.mjs'
+import { enterStoreMode, fixtureIds } from '../../scripts/browser-fixture.mjs'
+import { withLibraryOperation } from '../../scripts/library-operation-lock.mjs'
+import { createMediaJobStore } from '../../scripts/media-job-store.mjs'
+import { storeFileOf } from '../../scripts/private-data-source.mjs'
+import { getPrivatePaths } from '../../scripts/private-profile.mjs'
+import { openStore } from '../../scripts/store-host.mjs'
+import { projectToV2Files } from '../../scripts/store-projection.mjs'
 
 const jobsUrl = '/__travelatlas/editor/media/jobs'
 const confirmScope = 'I confirm this whole Inbox scope, including other cities and any removals.'
@@ -640,4 +647,149 @@ test('a real failed reception keeps an uncertain task across reload and never re
   expect(await sourceSnapshot()).toEqual(before)
   expect(receives).toBe(1)
   expect(imports).toBe(0)
+})
+
+// 3C-4c: media in the experimental new-library mode (design v2 §10, browser row). These cases run last in this file,
+// each on its own photos in the same store. Before them, an unfinished task left by the cases above is abandoned (as
+// the recovery center would) and their Inbox, generated media and V2 media source index are set aside, so the whole-
+// Inbox scope holds only these cases' files; then the fixture is switched into the mode (scripts/browser-fixture.mjs
+// enterStoreMode). The store's state is read in this process through read-only connections.
+test.describe('new-library mode: media', () => {
+  const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  const confirmMatches = 'I confirm these source matches as proposed.'
+  const moduleUrl = '/@id/__x00__virtual:starmap-private-data'
+  const servedRevision = async page => /privateStoreRevision = (\w+)/.exec(await (await page.request.get(moduleUrl)).text())?.[1]
+  const paths = () => getPrivatePaths({ STARMAP_PRIVATE_ROOT: syntheticRoot() })
+  async function stored() {
+    const handle = openStore(storeFileOf(paths()), { readOnly: true })
+    try { return { files: projectToV2Files(handle.readRowsUnchecked()).files, registry: handle.mediaRegistry(), entities: handle.mediaEntities() } } finally { await handle.close() }
+  }
+  const sourceOf = (state, name) => state.registry.sources.find(source => source.state === 'present' && source.path.endsWith(`/${name}`))
+  const assetOf = (state, name) => state.entities.find(entity => entity.id === sourceOf(state, name)?.recordId)?.fields.asset
+  let leave
+  test.beforeAll(async () => {
+    const root = syntheticRoot()
+    await withLibraryOperation(paths(), async () => {
+      const tasks = createMediaJobStore(paths())
+      for (const job of (await tasks.readSnapshot()).jobs) if (['open', 'paused'].includes(job.phase)) await tasks.abandon(job.jobId, job.revision)
+    })
+    for (const segments of [['MediaInbox'], ['media', 'user'], ['data', 'v2', 'media-source-index.local.json']]) {
+      const from = path.join(root, ...segments)
+      if (existsSync(from)) await rename(from, path.join(root, `${segments.join('-')}.before-store`))
+    }
+    leave = await enterStoreMode(root)
+  })
+  test.afterAll(async () => { await leave?.() })
+
+  /** Receive `files` in a task, import it from the recovery center (confirming source matches when asked), close it. */
+  async function importTask(page, files, { matches = false } = {}) {
+    await expect.poll(() => servedRevision(page)).not.toBe('undefined')
+    const id = await receivePhotos(page, files)
+    await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.files.map(file => file.status), { timeout: 30000 }).toEqual(files.map(() => 'pending'))
+    const preview = await review(page, id)
+    const card = exactCard(page, id)
+    await card.getByRole('checkbox', { name: confirmScope, exact: true }).check()
+    if (matches) {
+      await expect(card.getByTestId('media-scope-source-matches')).toBeVisible()
+      await expect(card.getByRole('button', { name: 'Import confirmed files', exact: true })).toBeDisabled()
+      await card.getByRole('checkbox', { name: confirmMatches, exact: true }).check()
+    }
+    const imported = page.waitForResponse(response => isImport(response.request()))
+    await card.getByRole('button', { name: 'Import confirmed files', exact: true }).click()
+    expect((await imported).status()).toBe(200)
+    await expect(card.locator('header strong')).toHaveText('Completed', { timeout: 30000 })
+    await card.getByRole('button', { name: 'Close completed task', exact: true }).click()
+    await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.status).toBe('closed')
+    await center(page).getByRole('button', { name: 'Close panel', exact: true }).click()
+    return preview
+  }
+  /** The city photo editor of Reykjavik after a fresh load. */
+  async function photoEditor(page) {
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 45000 })
+    await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
+    await selectReykjavik(page)
+    await page.getByRole('button', { name: 'Edit city photos', exact: true }).click()
+    return page.locator('.atlas-info-panel')
+  }
+
+  test('new-library mode: an uploaded photo is imported from the recovery center as a new record and shows in the city photos', async ({ page }) => {
+    test.setTimeout(180000)
+    const photo = await image('store-first.png', { r: 150, g: 70, b: 30 })
+    const preview = await importTask(page, [photo])
+    expect(preview.plan.summary.addedIds).toEqual(['new-1'])
+    expect(preview.plan.summary.sourceMatches).toEqual([])
+    const state = await stored()
+    const id = assetOf(state, 'store-first.png')
+    expect(id).toMatch(UUID_V7)
+    expect(state.files.media.items.find(item => item.id === id)?.placeId).toBe(fixtureIds.reykjavik)
+    expect(state.files.editorState.mediaOrderByCity[fixtureIds.reykjavik].at(-1)).toBe(id)
+    await expect((await photoEditor(page)).locator(`[data-flip-id="${id}"]`)).toBeVisible()
+  })
+
+  test('new-library mode: the same photo uploaded again is a new record; both share one set of generated files', async ({ page }) => {
+    test.setTimeout(240000)
+    const photo = await image('store-twice.png', { r: 40, g: 150, b: 90 })
+    await importTask(page, [photo])
+    await importTask(page, [{ ...photo, name: 'store-twice-again.png' }])
+    const state = await stored()
+    const first = assetOf(state, 'store-twice.png')
+    const second = assetOf(state, 'store-twice-again.png')
+    expect(first).toMatch(UUID_V7)
+    expect(second).toMatch(UUID_V7)
+    expect(second).not.toBe(first)
+    const contents = new Set(state.registry.assetFiles.filter(link => [first, second].includes(link.assetId)).map(link => link.sha256))
+    expect(contents.size).toBe(1)
+    expect(state.registry.files.filter(file => contents.has(file.sha256))).toHaveLength(1)
+    const editor = await photoEditor(page)
+    for (const id of [first, second]) await expect(editor.locator(`[data-flip-id="${id}"]`)).toBeVisible()
+  })
+
+  test('new-library mode: a photo hidden and then deleted for good is gone after the reload, with its Inbox file and generated files', async ({ page }) => {
+    test.setTimeout(240000)
+    const photo = await image('store-delete.png', { r: 90, g: 40, b: 160 })
+    await importTask(page, [photo])
+    let state = await stored()
+    const id = assetOf(state, 'store-delete.png')
+    const source = sourceOf(state, 'store-delete.png')
+    const content = state.registry.files.find(file => file.sha256 === source.sha256)
+    let editor = await photoEditor(page)
+    await editor.locator(`[data-flip-id="${id}"]`).getByRole('button', { name: 'Hide photo', exact: true }).click()
+    await saveAndWaitForReload(page, async () => {
+      const saved = page.waitForResponse(response => response.url().endsWith('/editor/state') && response.request().method() === 'PUT')
+      await page.getByRole('button', { name: 'Save city photos', exact: true }).click()
+      expect((await saved).status()).toBe(200)
+    })
+    await expect.poll(async () => (await stored()).files.editorState.hiddenMediaIds).toContain(id)
+    editor = await photoEditor(page)
+    page.once('dialog', dialog => dialog.accept())
+    await saveAndWaitForReload(page, async () => {
+      const deleted = page.waitForResponse(response => response.url().endsWith('/editor/media/delete'))
+      await editor.getByRole('button', { name: 'Delete hidden photos permanently', exact: true }).click()
+      expect((await deleted).status()).toBe(200)
+    })
+    state = await stored()
+    expect(state.files.media.items.some(item => item.id === id)).toBe(false)
+    expect(state.registry.pendingFileOps).toEqual([])
+    expect(existsSync(path.join(syntheticRoot(), ...source.path.split('/')))).toBe(false)
+    expect(existsSync(path.join(syntheticRoot(), ...content.directory.split('/')))).toBe(false)
+    await expect((await photoEditor(page)).locator(`[data-flip-id="${id}"]`)).toHaveCount(0)
+  })
+
+  test('new-library mode: a file replaced in the Inbox is a source match the recovery center asks to confirm before importing', async ({ page }) => {
+    test.setTimeout(240000)
+    await importTask(page, [await image('store-replaced.png', { r: 200, g: 180, b: 40 })])
+    let state = await stored()
+    const old = assetOf(state, 'store-replaced.png')
+    const source = sourceOf(state, 'store-replaced.png')
+    await writeFile(path.join(syntheticRoot(), ...source.path.split('/')), (await image('replacing.png', { r: 20, g: 20, b: 20 })).buffer)
+    const preview = await importTask(page, [await image('store-after.png', { r: 230, g: 120, b: 200 })], { matches: true })
+    expect(preview.plan.summary.sourceMatches).toEqual([{ sourcePath: source.path.slice('MediaInbox/'.length), kind: 'replaced', proposal: 'new' }])
+    state = await stored()
+    const replacing = assetOf(state, 'store-replaced.png')
+    expect(replacing).toMatch(UUID_V7)
+    expect(replacing).not.toBe(old)
+    expect(state.files.media.items.some(item => item.id === old)).toBe(true)
+    expect(state.registry.sources.find(item => item.seq === source.seq).state).toBe('missing')
+    expect(assetOf(state, 'store-after.png')).toMatch(UUID_V7)
+  })
 })

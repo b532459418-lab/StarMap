@@ -181,7 +181,8 @@ export const previewMediaJob = async (jobId: string, input: MediaJobVersion & {s
   if (body.job.jobId !== jobId || body.job.libraryId !== input.libraryId || body.job.revision !== input.revision || body.plan === null || typeof body.plan !== 'object') throw responseInvalid()
   const plan = body.plan as Record<string, unknown>
   const result = {jobId, revision: body.job.revision, plan: {digest: plan.digest, summary: plan.summary}, selectedFileIds: plan.selectedFileIds, blockers: plan.blockers}
-  assertMediaJobPreview(result)
+  // 3C-4c: the page's own mode decides which preview it accepts; a V2 page never takes a new-library one.
+  assertMediaJobPreview(result, {mode: storeBaseRevision === undefined ? 'v2' : 'store'})
   if (body.job.canImport !== (result.blockers.length === 0)) throw responseInvalid()
   return result
 }

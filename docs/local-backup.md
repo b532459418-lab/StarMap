@@ -84,23 +84,23 @@ npm run store:restore -- --from "D:/StarMap-backups/store-2026-10-15" --to "D:/S
 | Included | Handling |
 | --- | --- |
 | The new library | A consistent `VACUUM INTO` snapshot `world.sqlite`, taken after `quick_check` passed. |
-| `MediaInbox/`, `media/user/` and `data/v2/media-source-index.local.json` | The rules of the V2 backup above: the same allowlist of media types and Inbox sidecars, the same skipped files, portable paths only, links and junctions refused, a file outside the allowlist refuses the backup. |
+| `MediaInbox/` and `media/user/` | The rules of the V2 backup above: the same allowlist of media types and Inbox sidecars, the same skipped files, portable paths only, links and junctions refused, a file outside the allowlist refuses the backup. |
 
-Not included: `config/`, the V2 files in `data/v2/` (the new library replaces them), and `operations/`.
+Not included: `config/`, `data/v2/` (the V2 files and, since 3C-4c, the V2 media source index: the new library keeps its own media registry, and the index goes stale once the new library imports or deletes media), and `operations/`.
 
 ### Backup
 
 1. Refused while a media task is unfinished (`E_MEDIA_JOB_PENDING`).
 2. Under the library operation lock: `quick_check`, the snapshot, and a mark `operations/store-backup/<backup id>.json`. The lock is held for seconds.
-3. The lock is released, so the preview keeps saving. While the mark exists, deletions queued in the new library's `pending_file_ops` must wait (the deletion itself arrives with the media editing of the new-library mode), so every file the snapshot refers to stays. A backup that is killed leaves its mark behind: deletions stay paused until you remove it by hand, once no backup is running.
+3. The lock is released, so the preview keeps saving. While the mark exists, the file removals that media deletions queue in `pending_file_ops` wait, so every file the snapshot refers to stays; the next media write after the backup runs them. A backup that is killed leaves its mark behind: removals stay paused until `npm run library:recover` lists the mark and `npm run library:recover -- --confirm` (once no backup is running) removes it and runs them.
 4. The media files are listed and copied into `payload/`: each file is hashed (SHA-256), copied exclusively and the copy hashed again; a difference fails the backup. Files added after the snapshot are harmless extras.
-5. The snapshot's media references are checked against the copies: every original and variant under `/media/user/`, every source of the media source index, and every Inbox `place.json` naming a place of the library. Media paths outside `/media/user/` are not files of the private root: they are counted in the warning `MEDIA_OUTSIDE_USER_MEDIA`.
+5. The snapshot's media references are checked against the copies: every original and variant under `/media/user/`, and every Inbox `place.json` naming a place of the library. Media paths outside `/media/user/` are not files of the private root: they are counted in the warning `MEDIA_OUTSIDE_USER_MEDIA`. The snapshot's media registry is checked too: every generated file it records must be among the copies with the SHA-256 it records (`E_BACKUP_MEDIA_REGISTRY` otherwise; the content of a folder already queued for removal is skipped). Content-addressed folders no registry row names, left by an interrupted import, are counted in the warning `MEDIA_UNREGISTERED`.
 6. `manifest.json`, then the completion mark `COMPLETE.json` last. Any failure removes the new backup folder.
 
 ```text
 store-backup/
   world.sqlite      # the snapshot
-  payload/          # MediaInbox/..., media/user/..., data/v2/media-source-index.local.json
+  payload/          # MediaInbox/..., media/user/... (backups made before 3C-4c also hold data/v2/media-source-index.local.json)
   manifest.json     # format starmap.store-backup, formatVersion 2: library id, revision, row counts,
                     # the snapshot's size and SHA-256, and media { count, bytes, warnings, entries[path, bytes, sha256] }
   COMPLETE.json     # the manifest's SHA-256; written last
@@ -110,7 +110,7 @@ The output folder must not exist, must be inside the private root or outside thi
 
 ### Restore
 
-`store:restore` checks the completion mark, the manifest and the snapshot's SHA-256, and that `payload/` holds exactly the media files the manifest lists, each an allowlisted media path. It then creates the new private root (which must not exist), copies the snapshot and every media file, checking each copy against its SHA-256 in the manifest, records which backup the library came from (one layer, replaced by the next restore), and runs `integrity_check`, the full check of the library and the media reference check. Any failure, a single media file included, removes the new root. Copy `config/` yourself and point `STARMAP_PRIVATE_ROOT` at the new root. Backups made before media were included (format version 1, the database only) still restore, without media.
+`store:restore` checks the completion mark, the manifest and the snapshot's SHA-256, and that `payload/` holds exactly the media files the manifest lists, each an allowlisted media path. It then creates the new private root (which must not exist), copies the snapshot and every media file, checking each copy against its SHA-256 in the manifest, records which backup the library came from (one layer, replaced by the next restore), and runs `integrity_check`, the full check of the library (the media registry included) and the media reference check, then checks the media registry against the restored files as the backup did: the registry and the generated files correspond one to one. Any failure, a single media file included, removes the new root. Copy `config/` yourself and point `STARMAP_PRIVATE_ROOT` at the new root. Backups made before media were included (format version 1, the database only) still restore, without media. A backup of a library from before the media registry (3C-4b, with the V2 media source index) is upgraded in the new root as `npm run store:upgrade` would, its registry seeded from the restored files and index.
 
 If the preview shows the new library as damaged and read-only, restore the latest backup into a new root this way.
 
@@ -123,9 +123,10 @@ At the real scale of the benchmark (`npm run store:bench:mode`: 10,000 media ite
 | `E_STORE_CORRUPT` | `quick_check` failed: no backup was made. Restore an earlier backup. |
 | `E_BACKUP_UNSUPPORTED_FILE`, `E_BACKUP_LINK`, `E_BACKUP_PATH`, `E_BACKUP_COLLISION` | An unsupported, linked or non-portable file in the media folders. |
 | `E_BACKUP_MEDIA_MISSING`, `E_BACKUP_SOURCE_INDEX`, `E_BACKUP_PIN` | The library refers to media that is missing, or the index or a folder pin is inconsistent. |
+| `E_BACKUP_MEDIA_REGISTRY` | A generated file the media registry records is missing or has other content. `npm run media:check -- --verify` lists them; restore an earlier backup or re-import the media. |
 | `E_BACKUP_INCOMPLETE`, `E_BACKUP_MANIFEST`, `E_BACKUP_HASH`, `E_BACKUP_MEDIA_FILES` | An unfinished, changed or damaged backup: do not use it. |
 | `E_RESTORE_CHECK` | The restored library failed its checks; the new root was removed. |
 
 ## Verification
 
-`npm test` includes isolated backup roundtrips with an actual synthetic media import: V2 bytes, IDs, notes, hidden/cover/order state, originals, derivatives and source index are retained, and reimport retains media identity. Tests also exercise read-only preview, existing-target refusal, tampering, missing files, invalid versions/references, portable path rules, traversal, credential exclusion and symlink/junction refusal. The new-library backup has its own tests: media copied with each size and SHA-256 and restored byte for byte, a damaged, missing or extra media file or a crafted manifest path failing the restore and removing the new root, an unfinished media task and unsupported files refusing the backup, the lock released before the media copy with deletions paused meanwhile, and a version 1 backup still restoring. Fixtures are generated in temporary directories; no owner's private library is used.
+`npm test` includes isolated backup roundtrips with an actual synthetic media import: V2 bytes, IDs, notes, hidden/cover/order state, originals, derivatives and source index are retained, and reimport retains media identity. Tests also exercise read-only preview, existing-target refusal, tampering, missing files, invalid versions/references, portable path rules, traversal, credential exclusion and symlink/junction refusal. The new-library backup has its own tests: media copied with each size and SHA-256 and restored byte for byte, a damaged, missing or extra media file or a crafted manifest path failing the restore and removing the new root, an unfinished media task and unsupported files refusing the backup, the lock released before the media copy with deletions paused meanwhile, a version 1 backup still restoring, the V2 media source index left out, a generated file whose content differs from the registry refusing the backup, and the registry and the generated files corresponding after a restore. Fixtures are generated in temporary directories; no owner's private library is used.
