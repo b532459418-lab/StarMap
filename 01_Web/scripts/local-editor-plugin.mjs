@@ -32,7 +32,8 @@ import { mediaJobRoute, handleMediaJobRead, handleMediaJobPreview, handleMediaJo
 // 数据模式与回滚开关都已删除。私人目录有没迁移的旧数据时（./legacy-data.mjs），全部写入端点返回 409 E_LEGACY_UNMIGRATED。
 // 3C-3：私人根下有 data/store/world.sqlite 时是实验性的新库模式（./private-data-source.mjs，每次读写现判）。这时 App 读
 // 新库的投影（./store-session.mjs，按需加载，公开模式与 V2 模式不加载 node:sqlite）。3C-4a 起 8 个编辑端点都写新库（同样的
-// V2 写入规则，只换存储）；媒体的 3 个端点与媒体任务仍然 409 E_STORE_MODE_LIMITED，同一个私人根任何时候只有一个写入源。
+// V2 写入规则，只换存储）；3C-4c 起媒体的 3 个端点与媒体任务也写新库（./store-media-endpoints.mjs、./media-service.mjs，
+// 存储原生的写入），同一个私人根任何时候只有一个写入源。
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const virtualPrivateDataId = 'virtual:starmap-private-data'
 const resolvedPrivateDataId = `\0${virtualPrivateDataId}`
@@ -479,6 +480,15 @@ const handleV2Media = async (routeName, request, url, leaseToken, input) => {
   return handleV2MediaDelete({ privatePaths, input, ctx, deps })
 }
 
+/** 3C-4c：新库模式下媒体端点用到的插件辅助函数（文件名规则、接收上传、无人机 sidecar、投递箱路径），与 V2 相同。 */
+const storeMediaDeps = () => ({
+  safeSegment,
+  reserveDestination,
+  writeUpload: (stream, destination, kind) => writeUpload(stream, destination, kind, { stagingRoot: path.join(privateRoot, 'operations', 'uploads') }),
+  updateDroneSidecar,
+  normalizeInboxRelativePath,
+})
+
 /**
  * RFC-LOC-1 PR3b-2 / PR3b-3：全部 11 个写入端点。三个媒体端点经 v2-media-store.mjs 的路由表，其余 8 个经 v2-editor-store.mjs 的
  * 路由表分派；两张表都没列的接口回 404。数据读写只碰 data/v2/（媒体另有收件箱与生成文件），不读旧文件、不回落样例。
@@ -599,7 +609,9 @@ export function travelAtlasLocalEditor(options = {}) {
           const jobRoute = mediaJobRoute(request.method, url.pathname)
           if (jobRoute && request.method === 'GET') {
             if (!authorizeWrite(request)) return sendJson(response,403,normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
-            const result = await handleMediaJobRead({ privatePaths, route: jobRoute })
+            // 3C-4c：新库模式下任务读新库的视图与媒体登记。
+            const storeMedia = storeMode() ? { mediaStore: await (await storeSession()).mediaStore() } : undefined
+            const result = await handleMediaJobRead({ privatePaths, route: jobRoute, ...(storeMedia ? { storeMedia } : {}) })
             return sendJson(response,result.status,result.body)
           }
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
@@ -637,15 +649,59 @@ export function travelAtlasLocalEditor(options = {}) {
           // 否则 data/v2/ 被写出后，迁移工具的 --apply 会因为输出目录非空而拒绝运行。每个请求现判（只看文件在不在）。
           const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
           if (refusal) return sendJson(response, refusal.status, refusal.body)
-          // 新库模式：8 个编辑端点写新库（3C-4a）；媒体端点与媒体任务 409 E_STORE_MODE_LIMITED（不读请求体）。
+          // 新库模式：8 个编辑端点写新库（3C-4a）；三个媒体端点与媒体任务也写新库（3C-4c）。
           // 3C-4b：库损坏、只读时，全部写入端点 409 E_STORE_READ_ONLY（编辑端点由会话判定，已提交请求的重放照常回原回执）。
           if (storeMode()) {
             const session = await storeSession()
             const write = session.writeRoute(request.method, url.pathname)
             if (!write) {
-              const known = jobRoute || v2MediaRoute(request.method, url.pathname) || v2EditorRoute(request.method, url.pathname)
+              const mediaRouteName = v2MediaRoute(request.method, url.pathname)
+              const known = jobRoute || mediaRouteName || v2EditorRoute(request.method, url.pathname)
               if (!known) return sendJson(response, 404, v2ErrorBody('E_UNKNOWN_ENDPOINT'))
-              return sendJson(response, 409, v2ErrorBody(await session.isDamaged() ? 'E_STORE_READ_ONLY' : 'E_STORE_MODE_LIMITED'))
+              // 3C-4c：只读的库（损坏）上，媒体端点与媒体任务一律 409 E_STORE_READ_ONLY，什么文件都不写（上传也一样）。
+              if (await session.isDamaged()) return sendJson(response, 409, v2ErrorBody('E_STORE_READ_ONLY'))
+              if (jobRoute) {
+                // 3C-4c：媒体任务走新库（media-job-service.mjs 的 storeMedia）。预览只读、不取租约，其余在库租约之下，同 V2。
+                const { releaseImageFiles } = await import('./media-service.mjs')
+                releaseImageFiles()
+                const jobInput = jobRoute.action === 'receive' ? undefined : await readJsonBody(request)
+                const storeMedia = { mediaStore: await session.mediaStore() }
+                if (jobRoute.action === 'preview') {
+                  const preview = await handleMediaJobPreview({ privatePaths, route: jobRoute, input: jobInput, storeMedia })
+                  return sendJson(response, preview.status, preview.body)
+                }
+                editorMutationDepth += 1
+                let jobResult
+                try {
+                  jobResult = await withLibraryOperation(privatePaths, (leaseToken) => handleMediaJobWrite({
+                    privatePaths, route: jobRoute, input: jobInput, request, url, deps: { safeSegment, reserveDestination, updateDroneSidecar }, leaseToken, storeMedia,
+                  }))
+                } finally {
+                  editorMutationDepth -= 1
+                  if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
+                  invalidatePrivateDataModule()
+                }
+                return sendJson(response, jobResult.status, jobResult.body)
+              }
+              // 3C-4c：三个媒体端点写新库（./store-media-endpoints.mjs），在库租约之下；有未完成的媒体任务时拒绝，同 V2。
+              const mediaInput = mediaRouteName === 'upload' ? undefined : await readJsonBody(request)
+              editorMutationDepth += 1
+              let mediaResult
+              try {
+                mediaResult = await withLibraryOperation(privatePaths, async (leaseToken) => {
+                  await assertMediaJobsClear(privatePaths)
+                  const { handleStoreMediaRoute } = await import('./store-media-endpoints.mjs')
+                  return handleStoreMediaRoute({
+                    routeName: mediaRouteName, privatePaths, mediaStore: await session.mediaStore(), query: url.searchParams, request,
+                    input: mediaInput, headers: request.headers, leaseToken, deps: storeMediaDeps(),
+                  })
+                })
+              } finally {
+                editorMutationDepth -= 1
+                if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
+                invalidatePrivateDataModule()
+              }
+              return sendJson(response, mediaResult.status, mediaResult.body)
             }
             const result = await write({
               headers: request.headers, input: await readJsonBody(request), ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }),

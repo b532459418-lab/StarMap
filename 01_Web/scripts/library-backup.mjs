@@ -3,7 +3,8 @@
  *
  * The media rules (the allowlist, the ignore rules, portablePath, the reference checks) are shared with the new
  * library's backup (./store-backup.mjs, 3C-4b): mediaFilePaths, isMediaBackupPath, uniquePaths and
- * checkMediaReferences. A V2 backup behaves exactly as before.
+ * checkMediaReferences. A V2 backup behaves exactly as before. Since 3C-4c the new library's backup leaves the media
+ * source index out (`sourceIndex: false`): its media registry lives in the store.
  */
 import { constants } from 'node:fs'
 import { copyFile, lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
@@ -16,7 +17,7 @@ import { completeForWrite, integrityProblems } from '../src/data/v2write/transac
 
 const FORMAT = 'starmap-local-backup'
 const INDEX = 'data/v2/media-source-index.local.json'
-/** The media source index (portable path): a file in both modes, backed up with the media. */
+/** The media source index of V2 mode (portable path). The new library's backup leaves it out (3C-4c). */
 export const MEDIA_SOURCE_INDEX = INDEX
 /** The media folders of a private root (portable paths). */
 export const MEDIA_FOLDERS = Object.freeze(['MediaInbox', 'media/user'])
@@ -133,12 +134,12 @@ async function inventory(root) {
 
 /**
  * The media files of a private root with the V2 backup's rules: MediaInbox/ and media/user/ (ignored files left out,
- * anything outside the allowlist refused) and the media source index when it exists. Paths only (no hashing): sorted
- * portable paths. Exported for ./store-backup.mjs.
+ * anything outside the allowlist refused) and the media source index when it exists, unless `sourceIndex` is false
+ * (the new library, 3C-4c). Paths only (no hashing): sorted portable paths. Exported for ./store-backup.mjs.
  */
-export async function mediaFilePaths(root) {
+export async function mediaFilePaths(root, { sourceIndex = true } = {}) {
   const paths = await listFiles(root, MEDIA_FOLDERS)
-  if ((await safeStat(root, INDEX))?.isFile()) paths.push(INDEX)
+  if (sourceIndex && (await safeStat(root, INDEX))?.isFile()) paths.push(INDEX)
   uniquePaths(paths)
   return paths.sort()
 }
@@ -164,9 +165,10 @@ async function validateLibrary(root, entries) {
  * reference fails with its E_BACKUP_* code. Exported for ./store-backup.mjs.
  *
  * A media path outside /media/user/ is E_BACKUP_MEDIA_PATH (the V2 backup). With `outsideUserMedia: 'warn'` (the new
- * library's backup) it is not a file of the private root, so it is counted in a warning instead.
+ * library's backup) it is not a file of the private root, so it is counted in a warning instead. With `sourceIndex:
+ * false` (the new library since 3C-4c, whose registry is checked by ./store-backup.mjs) the index is not looked at.
  */
-export async function checkMediaReferences(root, paths, files, { outsideUserMedia = 'refuse' } = {}) {
+export async function checkMediaReferences(root, paths, files, { outsideUserMedia = 'refuse', sourceIndex = true } = {}) {
   const requireFile = value => {
     portablePath(value)
     if (!allowedFile(value) || !paths.has(value)) fail('E_BACKUP_MEDIA_MISSING')
@@ -183,7 +185,9 @@ export async function checkMediaReferences(root, paths, files, { outsideUserMedi
     }
   }
   const warnings = outside ? [`MEDIA_OUTSIDE_USER_MEDIA: ${outside} media paths are outside /media/user/ and are not files of the private root.`] : []
-  if (paths.has(INDEX)) {
+  if (!sourceIndex) {
+    // The new library: its media registry, not the V2 index, says which Inbox files are sources.
+  } else if (paths.has(INDEX)) {
     const index = await json(root, INDEX)
     if (!isObject(index) || index.schemaVersion !== 1 || !isObject(index.sourcesById) || typeof index.generatedAt !== 'string') fail('E_BACKUP_SOURCE_INDEX')
     for (const sources of Object.values(index.sourcesById)) {

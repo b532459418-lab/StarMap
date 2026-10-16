@@ -5,13 +5,13 @@
  *   1. dry run, then --apply;            2. read the plugin way = readV2;     3. edit a note, then the hidden state;
  *   4. close normally and reopen;        5. the edits and the revision are there;
  *   6. the same request id again: the original receipt, no second write;     7. a stale revision: E_STALE;
- *   8. the media endpoints and media tasks (3C-4c): E_STORE_MODE_LIMITED, not a byte changed;
+ *   8. media (3C-4c): the task list reads the store; an import of an empty Inbox writes nothing;
  *   9. backup and restore to a new root: the same reading;                   10. export-v2 read back = step 5;
  *   11. ten restores in a row, each from a backup of the previous one: neither the file nor store_meta grows.
  */
 import assert from 'node:assert/strict'
 import { statSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { getPrivatePaths } from './private-profile.mjs'
@@ -30,12 +30,6 @@ import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
 const requestIdOf = (n) => `01960000-0000-7000-8000-${n.toString(16).padStart(12, '0')}`
-/** The write endpoints the store does not accept yet (3C-4c): media and media tasks. The eight editor writes are in
- * store-session-editor.test.mjs. */
-const OTHER_WRITES = [
-  ['POST', 'upload'], ['POST', 'import'], ['POST', 'media/delete'],
-  ['POST', 'media/jobs'], ['POST', 'media/jobs/018bd504-c600-7000-8000-000000000001/import'],
-]
 
 const INPUTS = [
   ['public sample', sampleV2Files, (files) => files.wantToGo.items[0].id],
@@ -139,14 +133,25 @@ for (const [name, filesOf, pickWish] of INPUTS) {
       assert.equal((await reading()).revision, 3)
     })
 
-    await t.test('8. media endpoints and media tasks: E_STORE_MODE_LIMITED, not a byte changed', async () => {
+    // The eight editor writes are in store-session-editor.test.mjs, media in store-media-endpoints.test.mjs and
+    // store-media-jobs.test.mjs.
+    await t.test('8. media: the task list reads the store; an import of an empty Inbox writes nothing', async () => {
+      await mkdir(paths.inboxRoot, { recursive: true })
       const before = await treeDigest(root)
-      for (const [method, route] of OTHER_WRITES) {
-        const refused = await requestTo(handler, { url: editorPrefix + route, method, content: Buffer.from('{"id":"x"}') })
-        assert.equal(refused.status, 409, `${method} ${route}`)
-        assert.equal(refused.body.code, 'E_STORE_MODE_LIMITED')
-      }
-      assert.deepEqual(await treeDigest(root), before)
+      const tasks = await requestTo(handler, { url: `${editorPrefix}media/jobs`, method: 'GET' })
+      assert.equal(tasks.status, 200, JSON.stringify(tasks.body))
+      assert.deepEqual(tasks.body.jobs, [])
+      const imported = await requestTo(handler, {
+        url: `${editorPrefix}import`, content: Buffer.from('{}'),
+        headers: { ...authorizedHeaders, [STORE_REQUEST_ID_HEADER]: requestIdOf(4), [STORE_BASE_REVISION_HEADER]: '3' },
+      })
+      assert.equal(imported.status, 200, JSON.stringify(imported.body))
+      assert.equal(imported.body.revision, 3)
+      assert.deepEqual(imported.body.restoredMediaIds, [])
+      assert.equal((await reading()).revision, 3)
+      // Only the library lease's generation counter moved (operations/): the import took the lease.
+      const outsideOperations = (digest) => Object.fromEntries(Object.entries(digest).filter(([file]) => !file.startsWith('operations/')))
+      assert.deepEqual(outsideOperations(await treeDigest(root)), outsideOperations(before))
       assert.deepEqual(await v2Digest(), v2Before)
     })
 

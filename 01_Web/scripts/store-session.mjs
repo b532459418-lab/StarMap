@@ -26,7 +26,8 @@
  *   or the `verify` option) every commit is followed by a fresh projection compared with the cache: a difference is
  *   E_STORE_VERIFY (500 E_STORE_FAILED), the fresh projection replaces the cache, and the log says so.
  * - Writes (`writeRoute`): the eight editor endpoints of ./v2-editor-store.mjs (STORE_WRITE_ROUTES). Media uploads,
- *   imports, deletions and media tasks are refused by the plugin with 409 E_STORE_MODE_LIMITED (3C-4c).
+ *   imports, deletions and media tasks (3C-4c) go through ./store-media-endpoints.mjs, ./media-job-service.mjs and the
+ *   media service with `mediaStore()`; their commits are queued with the editor writes.
  * - Read-only sessions (`readOnly: true`, 3C-4b): `build:personal` reads the store while a dev server may have it open
  *   for writing. The store is opened read-only (openStore `readOnly`): no writer session, so the clean-shutdown mark is
  *   neither read nor written, no SQLite write lock is taken, the library lock is not probed and quick_check does not
@@ -98,6 +99,7 @@ const OPEN_HINTS = Object.freeze({
   E_STORE_ALREADY_OPEN: '这个进程已经打开了这个库。重启开发服务器。',
   E_STORE_NOT_FOUND: 'data/store/world.sqlite 不见了。重启开发服务器。',
   E_STORE_TOO_NEW: '库的格式比这个版本的程序新。请使用更新的 StarMap。',
+  E_STORE_UPGRADE_REQUIRED: '库是旧的存储格式。停掉开发服务器，在 01_Web 下运行 npm run store:upgrade，再重新启动。',
   E_STORE_CORRUPT: '库检查没有通过。请从备份恢复（npm run store:restore），或在 01_Web 下运行 npm run library:recover 查看。',
 })
 
@@ -489,6 +491,35 @@ export function createStoreSession(privatePaths, {
     /** The handler of a write endpoint the store accepts (`{ headers, input, ctx? }` → `{ status, body }`), or undefined. */
     writeRoute(method, pathname) {
       return writes[`${method} ${pathname}`]
+    },
+    /**
+     * 3C-4c: the store as the media service uses it (./media-service.mjs): the read model at the current revision, the
+     * registry, the media entities, a reader, receipt lookups, and commits and file settlements queued with this
+     * process's editor writes. A committed media write was not made by a V2 write function, so it drops the cached view:
+     * the next read projects the store again.
+     */
+    async mediaStore() {
+      const opened = await open()
+      return {
+        get readOnly() { return opened.readOnly },
+        meta: () => opened.meta(),
+        async view() {
+          const { files, revision } = await snapshot()
+          return { files, revision }
+        },
+        mediaRegistry: () => opened.mediaRegistry(),
+        mediaEntities: () => opened.mediaEntities(),
+        read: (callback) => opened.read(callback),
+        lookup: (requestId) => opened.lookup(requestId),
+        commit: (request, options) => serialized(async () => {
+          try {
+            const result = await opened.commit(request, options)
+            if (result.status === 'committed') countCommit()
+            return result
+          } finally { cache = undefined }
+        }),
+        settleFileOps: (work, options) => serialized(() => opened.settleFileOps(work, options)),
+      }
     },
     /** Whether a connection is open. */
     get isOpen() { return handle !== undefined },

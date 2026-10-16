@@ -28,6 +28,7 @@ import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { privateDataSource, storeFileOf } from './private-data-source.mjs'
 import { compareWithV2, projectToV2Files } from './store-projection.mjs'
 import { createStore, openStore } from './store-host.mjs'
+import { createdRowsOf, mediaRecordsOf, readMediaSourceIndex, seedMediaRegistry, seedReportLines } from './media-seed.mjs'
 import { completeV2Files } from '../src/data/canonical/canonicalForInputs.ts'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
@@ -133,13 +134,20 @@ export async function previewMigration(privatePaths, { now = new Date().toISOStr
   const { projection } = projectToV2Files(stateAfterFirstChangeSet(changeSet))
   const comparison = compareWithV2(projection, values)
   const storeExists = privateDataSource(privatePaths) === 'store'
+  // 3C-4c: what the media registry would be seeded with (read-only: the Inbox and the media files are only read).
+  const seeded = await seedMediaRegistry({
+    privatePaths, places: values.places, media: values.media, records: mediaRecordsOf(createdRowsOf(result.commands)),
+    index: await readMediaSourceIndex(privatePaths),
+  })
   const lines = [
     ...reportLines(result.report),
+    ...seedReportLines(seeded.report),
+    ...seeded.problems.map((problem) => `媒体登记的问题（--apply 会拒绝）：${problem}`),
     `迁移批次：${result.commands.length} 条命令，${changeSet.upserts.length} 行；投影跳过 ${projection.skipped.length} 行。`,
     comparisonLine(comparison),
   ]
   if (storeExists) lines.push('注意：data/store/world.sqlite 已经存在，--apply 会拒绝执行。')
-  return { ok: comparison.ok, lines, report: result.report, comparison, storeExists }
+  return { ok: comparison.ok && seeded.problems.length === 0, lines, report: result.report, comparison, storeExists, seed: seeded.report }
 }
 
 /** The library lease the caller already holds, for createStore (which takes the lease itself otherwise). */
@@ -168,6 +176,13 @@ export async function applyMigration(privatePaths, {
   const { values, bytes } = await readV2Inputs(privatePaths)
   const result = migrationOf(values, { now, allocateId })
   return withLibraryOperation(privatePaths, async (leaseToken) => {
+    // 3C-4c: the media registry is seeded from the Inbox and the media files under the same lease, and written in the
+    // store's first transaction with the rows (design v2 §5). A problem refuses the migration before anything exists.
+    const seeded = await seedMediaRegistry({
+      privatePaths, places: values.places, media: values.media, records: mediaRecordsOf(createdRowsOf(result.commands)),
+      index: await readMediaSourceIndex(privatePaths),
+    })
+    if (seeded.problems.length) throw new StoreToolError('E_MEDIA_SEED', seeded.problems)
     const directory = path.dirname(file)
     const createdDirectory = await stat(directory).then(() => false, () => true)
     mkdirSync(directory, { recursive: true })
@@ -175,7 +190,10 @@ export async function applyMigration(privatePaths, {
     try {
       handle = await createStore(file, {
         libraryId, policy: OFFICIAL_POLICY, now: () => now, lock: heldLease(privatePaths, leaseToken),
-        initial: { requestId, kind: MIGRATION_KIND, actor: MIGRATION_ACTOR, commands: result.commands },
+        initial: {
+          requestId, kind: MIGRATION_KIND, actor: MIGRATION_ACTOR, commands: result.commands,
+          ...(Object.keys(seeded.media).length ? { media: seeded.media } : {}),
+        },
       })
     } catch (error) {
       if (createdDirectory) await rmdir(directory).catch(() => {})
@@ -202,7 +220,7 @@ export async function applyMigration(privatePaths, {
       throw error
     }
     return {
-      lines: [...reportLines(result.report), comparisonLine(comparison), `已创建 data/store/world.sqlite：库 id ${libraryId}，修订号 ${revision}。`],
+      lines: [...reportLines(result.report), ...seedReportLines(seeded.report), comparisonLine(comparison),`已创建 data/store/world.sqlite：库 id ${libraryId}，修订号 ${revision}。`],
       libraryId, revision, comparison,
     }
   })

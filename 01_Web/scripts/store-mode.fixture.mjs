@@ -10,6 +10,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { sha256File } from './file-hash.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
+import { rawConnection } from './store-sqlite.mjs'
 import { readV2SampleFiles } from './v2-sample.mjs'
 import { edgeCaseFixture } from '../src/data/store/v2Store.fixture.ts'
 
@@ -61,6 +62,22 @@ export async function treeDigest(root) {
   }
   await walk(root)
   return files
+}
+
+/**
+ * Turn a store file of format 2 back into format 1 (3C-3 to 3C-4b, before the media registry), exactly as that version
+ * created it: the registry's tables and indexes dropped, user_version and store_meta.format_version 1. For the
+ * store:upgrade tests; the store must be closed. Raw SQL below the host, tests only.
+ */
+export function downgradeStoreToFormat1(file) {
+  const db = rawConnection(file)
+  try {
+    db.exec('BEGIN IMMEDIATE')
+    for (const table of ['media_scan_cache', 'media_sources', 'media_asset_files', 'media_files']) db.exec(`DROP TABLE ${table}`)
+    db.exec('PRAGMA user_version = 1')
+    db.exec('UPDATE store_meta SET format_version = 1')
+    db.exec('COMMIT')
+  } finally { db.close() }
 }
 
 /** Lines collected from a tool's `log` / `logError`. */

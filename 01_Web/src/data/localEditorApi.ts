@@ -181,7 +181,8 @@ export const previewMediaJob = async (jobId: string, input: MediaJobVersion & {s
   if (body.job.jobId !== jobId || body.job.libraryId !== input.libraryId || body.job.revision !== input.revision || body.plan === null || typeof body.plan !== 'object') throw responseInvalid()
   const plan = body.plan as Record<string, unknown>
   const result = {jobId, revision: body.job.revision, plan: {digest: plan.digest, summary: plan.summary}, selectedFileIds: plan.selectedFileIds, blockers: plan.blockers}
-  assertMediaJobPreview(result)
+  // 3C-4c: the page's own mode decides which preview it accepts; a V2 page never takes a new-library one.
+  assertMediaJobPreview(result, {mode: storeBaseRevision === undefined ? 'v2' : 'store'})
   if (body.job.canImport !== (result.blockers.length === 0)) throw responseInvalid()
   return result
 }
@@ -192,20 +193,15 @@ const mutateMediaJob = (action: 'import' | 'pause' | 'close' | 'abandon', jobId:
   return job
 }, permit)
 /** Batch 2A: `acceptFolderBindings` confirms the preview's folder bindings found by name; required when it lists any. */
-export const importMediaJob = (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string; acceptFolderBindings?: boolean}, permit: MediaImportPermit) => mutateMediaJob('import', jobId, input, permit)
+export const importMediaJob = (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string; acceptFolderBindings?: boolean; acceptSourceMatches?: boolean}, permit: MediaImportPermit) => mutateMediaJob('import', jobId, input, permit)
 export const pauseMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('pause', jobId, input, permit)
 export const closeMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('close', jobId, input, permit)
 /** Batch 1 D2: end an open/paused task without touching any file; the next import realigns with the Inbox. */
 export const abandonMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('abandon', jobId, input, permit)
 
-export const deleteHiddenLocalMedia = (cityId: string, ids: string[]) => withLocalEditorWrite(async () => {
-  const response = await fetch('/__travelatlas/editor/media/delete', {
-    method: 'POST',
-    headers: editorHeaders,
-    body: JSON.stringify({ cityId, ids }),
-  })
-  return parseResponse<{ deletedIds: string[]; deletedSourceFiles: number; output: string }>(response)
-})
+/** 彻底删除隐藏媒体。V2 模式的请求不变；新库模式（3C-4c）经 `editorWrite` 带上请求编号与修订号。 */
+export const deleteHiddenLocalMedia = (cityId: string, ids: string[]) => editorWrite('/__travelatlas/editor/media/delete', 'POST', { cityId, ids },
+  parseResponse<{ deletedIds: string[]; deletedSourceFiles: number; output: string }>)
 
 export const deleteHiddenLocalCountries = (ids: string[]) => editorWrite('/__travelatlas/editor/countries/delete', 'POST', { ids }, parseResponse<{
   deletedCountryIds: string[]

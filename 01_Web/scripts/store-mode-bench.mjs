@@ -49,8 +49,8 @@ const NOW = '2026-10-14T00:00:00.000Z'
 const hex = (n) => n.toString(16).padStart(12, '0')
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 const placeId = (n) => `01920000-0000-7000-8000-${hex(n)}`
-const ms = (started) => Math.round((performance.now() - started) * 10) / 10
-const stats = (values) => {
+export const ms = (started) => Math.round((performance.now() - started) * 10) / 10
+export const stats = (values) => {
   const sorted = [...values].sort((a, b) => a - b)
   const at = (q) => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)]
   return { n: sorted.length, p50: at(0.5), p95: at(0.95), max: sorted.at(-1) }
@@ -129,7 +129,7 @@ export async function generateRoots(dir, scale) {
 }
 
 /** The local editor plugin for `root` (its module-scope paths come from the environment at its first import). */
-async function pluginFor(root, log) {
+export async function pluginFor(root, log) {
   const original = process.env
   process.env = { ...original, STARMAP_PRIVATE_ROOT: root }
   let travelAtlasLocalEditor
@@ -182,7 +182,7 @@ export async function readSegment(dir) {
 }
 
 /** One HTTP server on 127.0.0.1 (a free port) running the plugin's middlewares. */
-async function serve(handlers) {
+export async function serve(handlers) {
   const server = http.createServer((request, response) => {
     let index = 0
     const next = () => {
@@ -203,7 +203,7 @@ const directAgent = new http.Agent({ keepAlive: false })
 const postJson = (url, headers, body) => requestJson('POST', url, headers, body)
 
 /** One request to the local server (body: JSON text, or undefined); resolves the parsed body. */
-function requestJson(method, url, headers, body) {
+export function requestJson(method, url, headers, body) {
   return new Promise((resolve, reject) => {
     const length = body === undefined ? {} : { 'content-length': Buffer.byteLength(body) }
     const request = http.request(url, { method, agent: directAgent, headers: { ...headers, ...length } }, (response) => {
@@ -383,8 +383,9 @@ export async function pipelineSegment(dir) {
 /**
  * (3C-4b) `media`: media files for the store root's media items, so that a backup copies real files: one derivative
  * per item (its `src`, media/user/synthetic/<n>.webp, scale.derivativeKb), its original under
- * MediaInbox/<country>/<city>/photos/ (scale.originalKb) with a folder pin per city, and the media source index. Every
- * file starts with its own number and continues with one shared block of random bytes (incompressible, distinct hashes).
+ * MediaInbox/<country>/<city>/photos/ (scale.originalKb) with a folder pin per city. No V2 media source index: a store
+ * backup leaves it out since 3C-4c. Every file starts with its own number and continues with one shared block of random
+ * bytes (incompressible, distinct hashes).
  */
 export async function mediaSegment(dir, scale) {
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: rootsOf(dir).store })
@@ -400,17 +401,14 @@ export async function mediaSegment(dir, scale) {
     await mkdir(path.join(folder, 'photos'), { recursive: true })
     await writeFile(path.join(folder, 'place.json'), `${JSON.stringify({ placeId: city.id })}\n`)
   }
-  const sourcesById = {}
   let bytes = 0
   for (const [n, item] of files.media.items.entries()) {
     const source = [...folderOf(placeOf.get(item.placeId)), 'photos', item.originalFileName]
     await writeFile(path.join(paths.root, ...item.src.slice(1).split('/')), bytesOf(n, scale.derivativeKb))
     await writeFile(path.join(paths.inboxRoot, ...source), bytesOf(n, scale.originalKb))
-    sourcesById[item.id] = [source.join('/')]
     bytes += (scale.derivativeKb + scale.originalKb) * 1024
   }
-  await writeFile(paths.v2MediaSourceIndexPath, `${JSON.stringify({ schemaVersion: 1, generatedAt: NOW, sourcesById })}\n`)
-  return { files: files.media.items.length * 2 + scale.cities + 1, mediaBytes: bytes, ms: ms(started) }
+  return { files: files.media.items.length * 2 + scale.cities, mediaBytes: bytes, ms: ms(started) }
 }
 
 /** Bytes and files under `directory`. */

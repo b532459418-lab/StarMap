@@ -137,9 +137,10 @@ const chooseInboxFolder = async (parentDirectory, parentLabel, displayName, plac
  * `query` 是请求的查询参数（URLSearchParams），`request` 是请求本身（文件内容的流，交给 deps.writeUpload）。
  * 成功：201 `{ ok, fileName, bytes, sourcePath }`（同旧）。
  */
-export async function prepareV2Upload({ privatePaths, query, deps, now = new Date() }) {
+export async function prepareV2Upload({ privatePaths, query, deps, now = new Date(), files: givenFiles }) {
     const kind = uploadKindOf(query)
-    const files = await readV2Files(privatePaths)
+    // 3C-4c：新库模式由调用方传入新库的视图（地点注册表），不读 data/v2/。
+    const files = givenFiles ?? await readV2Files(privatePaths)
     const target = uploadTargetOf(files, { countryId: query.get('countryId') ?? '', cityId: query.get('cityId') ?? '' }, now)
     // 先选国家文件夹，再在它下面选城市文件夹，两级同一套规则：显示名的文件夹被别的地点占用、或是手放的时，
     // 改用带地点 id 后缀的名字（第 2D 批：手放的国家文件夹同样不认领，上传会新建 `<国家名> (<后缀>)`）。
@@ -159,9 +160,9 @@ export async function prepareV2Upload({ privatePaths, query, deps, now = new Dat
     return { kind, target, cityRoot, claims, destination, droneMetadata }
 }
 
-export async function handleV2Upload({ privatePaths, query, request, deps, now = new Date() }) {
+export async function handleV2Upload({ privatePaths, query, request, deps, now = new Date(), files }) {
   try {
-    const { kind, cityRoot, claims, destination, droneMetadata } = await prepareV2Upload({ privatePaths, query, deps, now })
+    const { kind, cityRoot, claims, destination, droneMetadata } = await prepareV2Upload({ privatePaths, query, deps, now, files })
     const imageMetadata = await deps.writeUpload(request, destination, kind)
     for (const claim of claims) await atomicJsonWrite(claim.file, claim.value)
     if (droneMetadata) await deps.updateDroneSidecar(cityRoot, destination, droneMetadata, imageMetadata)

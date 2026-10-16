@@ -9,6 +9,10 @@
  * became and the V2 files the import rewrote, each with size, SHA-256 and modification time, plus `libraryDigest` for the
  * rest of the library. Receipts sealed before that listed the whole library and carry neither `libraryDigest` nor
  * output times; they stay valid. Creating a task checks that its largest possible completed record fits the record limit.
+ *
+ * The new library (3C-4c): a receipt may name its store commit, `store: { requestId, revision }`, whose request id is the
+ * import's operation id; its media ids are UUIDv7 asset ids (36 characters, which the largest record now assumes).
+ * Receipts without it (V2 mode, and every receipt sealed before) stay valid.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises'
@@ -84,11 +88,14 @@ const ids = (value, { nonempty = false } = {}) => Array.isArray(value) && value.
 const validOutput = (output, taskScoped) => exact(output, ['path', 'sha256', 'bytes', 'mtimeMs']) && relativePath(output.path)
   && SHA.test(output.sha256) && Number.isSafeInteger(output.bytes) && output.bytes >= 0
   && (taskScoped ? Number.isFinite(output.mtimeMs) && output.mtimeMs >= 0 : output.mtimeMs === undefined)
+/** 3C-4c: the store commit of a new-library import; its request id is the operation id. */
+const validStoreCommit = (record, store) => store === undefined || (exact(store, ['requestId', 'revision'])
+  && store.requestId === record.operationId && Number.isSafeInteger(store.revision) && store.revision >= 0)
 const validReceipt = (job, record) => {
   const receipt = record.receipt
   const taskScoped = object(receipt) && receipt.libraryDigest !== undefined
-  return exact(receipt, ['completedAt', 'mediaIds', 'restoredMediaIds', 'outputs', 'libraryDigest', 'seal'])
-    && (!taskScoped || SHA.test(receipt.libraryDigest))
+  return exact(receipt, ['completedAt', 'mediaIds', 'restoredMediaIds', 'outputs', 'libraryDigest', 'store', 'seal'])
+    && (!taskScoped || SHA.test(receipt.libraryDigest)) && validStoreCommit(record, receipt.store)
     && stamp(receipt.completedAt) && receipt.completedAt >= job.createdAt
     && ids(receipt.mediaIds, { nonempty: true }) && ids(receipt.restoredMediaIds)
     && receipt.restoredMediaIds.every((id) => receipt.mediaIds.includes(id))
@@ -131,7 +138,7 @@ export function assertMediaJobRecord(job) {
 // Upper bounds for the creation-time receipt check. An upload's Inbox folders are display names escaped to at most 121
 // UTF-16 code units (./media-path-segment.mjs), counted here as three UTF-8 bytes each; a destination file name gains
 // at most a `-999` suffix. Each still image becomes an original and two WebP derivatives, and a task import rewrites
-// three V2 files.
+// three V2 files (V2 mode) or names its store commit (the new library, whose media ids are 36-character UUIDs).
 const LONGEST_FOLDER = '国'.repeat(121)
 const GENERATED_FILES = ['original.jpeg', 'thumb.webp', 'preview.webp']
 const REWRITTEN_DATA_FILES = ['data/v2/user-media.local.json', 'data/v2/media-source-index.local.json', 'data/v2/editor-state.local.json']
@@ -151,13 +158,14 @@ export function largestCompletedMediaJobRecord(job) {
       receivedBytes: file.bytes, image: { width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER, format: 'jpeg', orientation: 8 } }
   })
   const output = (outputPath) => ({ path: outputPath, sha256: 'f'.repeat(64), bytes: Number.MAX_SAFE_INTEGER, mtimeMs: Number.MAX_VALUE })
-  const mediaIds = files.map((_file, index) => `media-${hex(index)}`)
+  // The longer of both modes' ids: a UUIDv7 asset id (36 characters) rather than `media-<16 hex>` (22).
+  const mediaIds = files.map((_file, index) => `ffffffff-ffff-7fff-bfff-${index.toString(16).padStart(12, 'f')}`)
   const record = { ...job, revision: Number.MAX_SAFE_INTEGER, phase: 'completed', files,
     import: { operationId: job.jobId, planDigest: 'f'.repeat(64), sourceRevision: job.revision, selectedFileIds: files.map((file) => file.fileId), phase: 'sealed' } }
   const receipt = { completedAt: job.updatedAt, mediaIds, restoredMediaIds: mediaIds, outputs: [
     ...REWRITTEN_DATA_FILES.map(output),
     ...files.flatMap((file, index) => [`MediaInbox/${file.sourcePath}`, ...GENERATED_FILES.map((name) => `media/user/${hex(index)}/${name}`)].map(output)),
-  ], libraryDigest: 'f'.repeat(64) }
+  ], libraryDigest: 'f'.repeat(64), store: { requestId: job.jobId, revision: Number.MAX_SAFE_INTEGER } }
   record.import.receipt = { ...receipt, seal: mediaJobReceiptSeal(record, record.import, receipt) }
   return record
 }

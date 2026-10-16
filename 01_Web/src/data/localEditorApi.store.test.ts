@@ -1,13 +1,13 @@
 /// <reference types="node" />
 /**
- * The client wrappers of the eight editor writes (3C-4a spec §2.4): in V2 mode the requests are exactly as before; in
+ * The client wrappers of the eight editor writes (3C-4a spec §2.4) and of the deletion of hidden media (3C-4c): in V2 mode the requests are exactly as before; in
  * the new-library mode each one carries the request id and base revision, retries an unknown outcome once with the same
  * request id, and a committed answer moves the page's base revision (two writes of one action are not stale).
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  addLocalCountry, addLocalTravelRecord, addLocalWantToGo, convertLocalWantToGoToTravel, deleteHiddenLocalCountries,
+  addLocalCountry, addLocalTravelRecord, addLocalWantToGo, convertLocalWantToGoToTravel, deleteHiddenLocalCountries, deleteHiddenLocalMedia,
   deleteHiddenLocalWantToGo, setStoreBaseRevision, updateLocalEditorState, updateLocalWantToGo,
 } from './localEditorApi.ts'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './storeWriteProtocol.ts'
@@ -44,6 +44,7 @@ const writes = [
   ['wanttogo/delete', () => deleteHiddenLocalWantToGo(['wish-1'])],
   ['wanttogo/convert', () => convertLocalWantToGoToTravel({ source: 'want-to-go', id: 'wish-1', startDate: '2026-04-01' })],
   ['state', () => updateLocalEditorState((current) => ({ ...current, hiddenCountryIds: ['country-1'] }))],
+  ['media/delete', () => deleteHiddenLocalMedia('city-1', ['media-1'])],
 ] as const
 
 async function withFetch(fetch: typeof globalThis.fetch, run: () => Promise<void>) {
@@ -52,7 +53,7 @@ async function withFetch(fetch: typeof globalThis.fetch, run: () => Promise<void
   try { await run() } finally { globalThis.fetch = original; setStoreBaseRevision(undefined) }
 }
 
-test('V2 mode: the eight writes send the editor headers only', async () => {
+test('V2 mode: the eight writes and the media deletion send the editor headers only', async () => {
   const server = fakeServer()
   await withFetch(server.fetch as typeof globalThis.fetch, async () => {
     setStoreBaseRevision(undefined)

@@ -287,7 +287,8 @@ test('keyboard hiding the current cover photo clears the draft cover, and hiding
 // 3C-3, 3C-4a: the experimental new-library mode. These cases switch the shared fixture into the mode (its V2 files reset
 // to the fixture's own content and migrated into data/store/world.sqlite) and put everything back afterwards
 // (scripts/browser-fixture.mjs enterStoreMode). They run last in this file, in order, on the same store: a note, a new
-// Want to Go item, a conversion with a journey choice, a city order, and a media upload that the mode refuses (3C-4c).
+// Want to Go item, a conversion with a journey choice and a city order. Media in this mode (3C-4c) is in the media group
+// (media-recovery.spec.mjs).
 test.describe('new-library mode (experimental)', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
   const moduleUrl = '/@id/__x00__virtual:starmap-private-data'
@@ -429,24 +430,6 @@ test.describe('new-library mode (experimental)', () => {
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
     await expect.poll(order).toEqual(expected)
-    expect(await v2Bytes()).toEqual(v2Before)
-  })
-
-  test('new-library mode: a media upload is refused with E_STORE_MODE_LIMITED and changes nothing', async ({ page }) => {
-    const v2Before = await v2Bytes()
-    const revision = await storeRevision()
-    await expect.poll(() => servedRevision(page)).toBe(String(revision))
-    await openMap(page)
-    await selectReykjavik(page)
-    await page.getByRole('button', { name: 'Edit city photos', exact: true }).click()
-    const image = await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 80, g: 140, b: 190 } } }).png().toBuffer()
-    const refused = page.waitForResponse((response) => response.url().endsWith('/editor/media/jobs') && response.request().method() === 'POST')
-    await page.locator('.atlas-info-panel input[type=file]').setInputFiles({ name: 'browser-neutral.png', mimeType: 'image/png', buffer: image })
-    const response = await refused
-    expect(response.status()).toBe(409)
-    expect((await response.json()).code).toBe('E_STORE_MODE_LIMITED')
-    // A confirmed refusal: nothing was written to the store or the V2 files.
-    expect(await storeRevision()).toBe(revision)
     expect(await v2Bytes()).toEqual(v2Before)
   })
 })

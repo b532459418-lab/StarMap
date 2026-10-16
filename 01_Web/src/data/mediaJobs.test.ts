@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {LocalEditorError} from '../i18n/editorErrors.ts'
 import {createLocalEditorCoordination} from './localEditorCoordination.ts'
 import {assertMediaJob, assertMediaJobsRead, assertMediaJobPreview, createMediaJobs, type MediaJob, type MediaJobPreview, type MediaJobsApi} from './mediaJobs.ts'
-import {readMediaJobs, previewMediaJob} from './localEditorApi.ts'
+import {readMediaJobs, previewMediaJob, setStoreBaseRevision} from './localEditorApi.ts'
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 const sha = 'a'.repeat(64)
@@ -271,5 +271,82 @@ test('Batch 2A: preview pins must carry folder, kind, names and match source', (
   assert.doesNotThrow(() => assertMediaJobPreview(withPin(pin)))
   for (const broken of [{...pin, folder: 'Other'}, {...pin, subtype: 'region'}, {...pin, source: 'guess'}, {...pin, names: 'City'}, {...pin, names: {en: 3}}, {sourcePath: pin.sourcePath, placeId: pin.placeId}]) {
     assert.throws(() => assertMediaJobPreview(withPin(broken)), code('E_EDITOR_RESPONSE_INVALID'), JSON.stringify(broken))
+  }
+})
+test('3C-4c: a preview with source matches imports only with the user confirmation, sent as acceptSourceMatches; outputs not generated yet have no hash', async () => {
+  const f = fixture()
+  const inputs: unknown[] = []
+  const match = {sourcePath: 'Country/City/photos/old.jpg', kind: 'replaced' as const, proposal: 'new' as const}
+  f.api.preview = async () => {
+    const plan = planOf(pending())
+    plan.plan.summary.sourceMatches = [match]
+    plan.plan.summary.missing = 1
+    plan.plan.summary.outputs = [{id: 'new-1', path: 'media/user/aaaaaaaaaaaaaaaa/original.jpg', sha256: sha}, {id: 'new-1', path: 'media/user/aaaaaaaaaaaaaaaa/thumb.webp', sha256: null}]
+    return plan
+  }
+  const originalImport = f.api.import
+  f.api.import = async (jobId, input, permit) => {inputs.push(input); return originalImport(jobId, input, permit)}
+  f.setJobs([pending()])
+  await f.store.refresh()
+  const plan = await f.store.preview(id(1))
+  assert.deepEqual(plan.plan.summary.sourceMatches, [match])
+  await assert.rejects(f.store.importJob(id(1), plan), code('E_MEDIA_SOURCE_MATCHES_UNCONFIRMED'))
+  assert.equal(inputs.length, 0, 'nothing is sent before the confirmation')
+  await f.store.importJob(id(1), plan, {acceptSourceMatches: true})
+  assert.equal((inputs[0] as {acceptSourceMatches?: boolean}).acceptSourceMatches, true)
+  assert.equal(Object.hasOwn(inputs[0] as object, 'acceptFolderBindings'), false)
+  // Malformed matches and counts fail closed.
+  const base = planOf()
+  const withSummary = (extra: Record<string, unknown>) => ({...base, plan: {...base.plan, summary: {...base.plan.summary, ...extra}}})
+  for (const broken of [{sourceMatches: {}}, {sourceMatches: [{...match, kind: 'guess'}]}, {sourceMatches: [{...match, proposal: 'merge'}]}, {sourceMatches: [{...match, sourcePath: '../x'}]},
+    {missing: -1}, {missing: 1.5}, {outputs: [{id: 'new-1', path: 'media/user/a/thumb.webp', sha256: 'short'}]}]) {
+    assert.throws(() => assertMediaJobPreview(withSummary(broken)), code('E_EDITOR_RESPONSE_INVALID'), JSON.stringify(broken))
+  }
+})
+test('3C-4c: operation ids are UUIDv7 by default (the new library refuses other versions)', async () => {
+  const seen: string[] = []
+  const api: MediaJobsApi = {
+    read: async () => ({libraryId: pending().libraryId, jobs: [pending()]}),
+    create: async () => jobOf(), receive: async () => pending(), preview: async () => planOf(pending()),
+    import: async (_jobId, input) => {seen.push(input.operationId); return completed()},
+    pause: async () => pending(), close: async () => pending(), abandon: async () => pending(),
+  }
+  const store = createMediaJobs({api, coordination: createLocalEditorCoordination(), hashFile: async () => sha})
+  await store.refresh()
+  await store.importJob(id(1), await store.preview(id(1)))
+  assert.match(seen[0], /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+})
+test('3C-4c: the relaxed preview fields are accepted only from the new library; a V2 preview stays strict', async () => {
+  const base = planOf()
+  const withSummary = (extra: Record<string, unknown>) => ({...base, plan: {...base.plan, summary: {...base.plan.summary, ...extra}}})
+  const nullHash = {outputs: [{id: 'media-a', path: 'media/user/aaaaaaaaaaaaaaaa/thumb.webp', sha256: null}]}
+  const storeShape = {sourceMatches: [], missing: 0}
+  // A V2 preview (no sourceMatches): a null hash is refused, inferred or by the V2 page's mode.
+  assert.throws(() => assertMediaJobPreview(withSummary(nullHash)), code('E_EDITOR_RESPONSE_INVALID'))
+  assert.throws(() => assertMediaJobPreview(withSummary(nullHash), {mode: 'v2'}), code('E_EDITOR_RESPONSE_INVALID'))
+  // A V2 page never accepts the new library's fields; the new library's page requires them.
+  assert.throws(() => assertMediaJobPreview(withSummary({...storeShape, ...nullHash}), {mode: 'v2'}), code('E_EDITOR_RESPONSE_INVALID'))
+  assert.throws(() => assertMediaJobPreview(withSummary(nullHash), {mode: 'store'}), code('E_EDITOR_RESPONSE_INVALID'))
+  assert.doesNotThrow(() => assertMediaJobPreview(withSummary({...storeShape, ...nullHash}), {mode: 'store'}))
+  assert.doesNotThrow(() => assertMediaJobPreview(withSummary({...storeShape, ...nullHash})))
+  assert.doesNotThrow(() => assertMediaJobPreview(base, {mode: 'v2'}))
+  // previewMediaJob takes the page's mode from its store revision.
+  const original = globalThis.fetch
+  const answer = (summary: unknown) => async () => new Response(JSON.stringify({ok: true, job: {...pending(), canImport: true}, plan: {digest: base.plan.digest, summary, selectedFileIds: base.selectedFileIds, blockers: []}}), {status: 200})
+  const input = {libraryId: id(2), revision: 3, selectedFileIds: [id(5)]}
+  try {
+    setStoreBaseRevision(undefined)
+    globalThis.fetch = answer({...base.plan.summary, ...storeShape, ...nullHash})
+    await assert.rejects(previewMediaJob(id(1), input), code('E_EDITOR_RESPONSE_INVALID'))
+    globalThis.fetch = answer({...base.plan.summary, ...nullHash})
+    await assert.rejects(previewMediaJob(id(1), input), code('E_EDITOR_RESPONSE_INVALID'))
+    setStoreBaseRevision(7)
+    globalThis.fetch = answer({...base.plan.summary, ...storeShape, ...nullHash})
+    assert.equal((await previewMediaJob(id(1), input)).plan.summary.sourceMatches?.length, 0)
+    globalThis.fetch = answer(base.plan.summary)
+    await assert.rejects(previewMediaJob(id(1), input), code('E_EDITOR_RESPONSE_INVALID'))
+  } finally {
+    globalThis.fetch = original
+    setStoreBaseRevision(undefined)
   }
 })

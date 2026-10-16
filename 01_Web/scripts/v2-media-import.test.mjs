@@ -548,7 +548,7 @@ test('入口只剩几行：import-media.mjs 不再含旧导入器，也不再按
   const source = readFileSync(path.join(webRoot, 'scripts', 'import-media.mjs'), 'utf8')
   assert.ok(source.split(/\r?\n/).length < 40, '入口文件应当只有几行')
   assert.doesNotMatch(source, /resolveDataMode|data-mode\.mjs|createLocationIndex|travel-map\.sample\.json|localTravelMapPath/)
-  // 第 2A 批改写：入口另把 --accept-folder-bindings 交给导入器。
+  // 第 2A 批改写：入口另把 --accept-folder-bindings 交给导入器。3C-4c：新库交给 store-media-cli.mjs，V2 照旧。
   assert.match(source, /return runV2MediaImport\(\{ privatePaths, apply, verify, acceptFolderBindings: process\.argv\.includes\('--accept-folder-bindings'\) \}\)/)
 })
 

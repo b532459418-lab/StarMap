@@ -46,10 +46,10 @@ test('smoke: the media, backup and restore segments (3C-4b) run at the tiny scal
   const scale = MODE_BENCH_SCALES.tiny
   await generateRoots(directory, scale)
   const media = await mediaSegment(directory, scale)
-  assert.equal(media.files, scale.media * 2 + scale.cities + 1)
+  assert.equal(media.files, scale.media * 2 + scale.cities)
   const backup = await backupSegment(directory)
   assert.equal(backup.mediaFiles, media.files)
-  assert.ok(backup.mediaBytes > media.mediaBytes, 'the pins and the index are counted too')
+  assert.ok(backup.mediaBytes > media.mediaBytes, 'the pins are counted too')
   assert.ok(backup.leaseMs > 0 && backup.mediaCopyMs >= 0)
   const restore = await restoreSegment(directory)
   assert.equal(restore.revision, backup.revision)

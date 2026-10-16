@@ -4,14 +4,16 @@
  *
  * - `npm run store:backup -- --out <new directory>`:
  *   1. under the library lease: no unfinished media task (assertMediaJobsClear), quick_check (checkIntegrity), a
- *      `VACUUM INTO` snapshot `world.sqlite`, and the list of media files: `MediaInbox/`, `media/user/` and the media
- *      source index `data/v2/media-source-index.local.json`, with the rules of `npm run backup` (./library-backup.mjs:
- *      the allowlist, the ignored files, portablePath; a file outside the allowlist refuses the backup);
+ *      `VACUUM INTO` snapshot `world.sqlite`, and the list of media files: `MediaInbox/` and `media/user/`, with the
+ *      rules of `npm run backup` (./library-backup.mjs: the allowlist, the ignored files, portablePath; a file outside
+ *      the allowlist refuses the backup). Since 3C-4c the V2 media source index (`data/v2/media-source-index.local.json`)
+ *      is left out: the store's media registry replaced it, and it goes stale once the new library imports or deletes;
  *   2. the lease is released, so ordinary edits go on; deletions queued in `pending_file_ops` wait meanwhile (design
- *      §5.2 step 3: the mark under `operations/store-backup/`, see mediaCopyInProgress; the deletion arrives in 3C-4c);
+ *      §5.2 step 3: the mark under `operations/store-backup/`, see mediaCopyInProgress; ./media-file-ops.mjs);
  *   3. every media file is hashed (SHA-256), copied into `payload/` and the copy hashed again (the copy check of
  *      `npm run backup`); then the snapshot's media references are checked against the copies (every original and
- *      variant of the projection, every source of the index, every folder pin names a place);
+ *      variant of the projection, every folder pin names a place) and so is its media registry (checkRegistryFiles:
+ *      every generated file it records is copied with the SHA-256 it records);
  *   4. `manifest.json` (format, library id, revision, row counts, the snapshot's size and SHA-256, and the size and
  *      SHA-256 of every media file) and finally `COMPLETE.json` (the manifest's SHA-256).
  *   The directory is created exclusively: an existing one is refused. Any failure removes it again.
@@ -21,9 +23,17 @@
  *   backup it came from (one layer, replacing any earlier one), then runs `PRAGMA integrity_check`, the full check
  *   (readFormalState and the host's own tables) and the media references. The new root must not exist: a restore never
  *   overwrites anything. Any failure, a single media file included, removes the new root again. A backup of 3C-3
- *   (format version 1, database only) is still restored, without media.
+ *   (format version 1, database only) is still restored, without media. After a restore the media registry and the
+ *   media files correspond (checkRegistryFiles, 3C-4c); a backup of 3C-4b (a format-1 store with the media source index)
+ *   is upgraded and its registry seeded from the restored files and index.
  * - `npm run store:export-v2 -- --out <new directory>`: the store's projection written as the five V2 files (the way
- *   back to V2 mode after edits). Rows V2 cannot express are listed. The directory must not exist.
+ *   back to V2 mode after edits). Rows V2 cannot express are listed. The directory must not exist. Media (3C-4c, design v2
+ *   §7): refused while files wait for deletion (pending_file_ops); a record created in the new library whose content no
+ *   other record uses is exported under V2's content id (`media-<sha16>`, references in the editor state rewritten) so a
+ *   V2 import finds it again, the others keep their ids; `media-source-index.local.json` is written from the registry
+ *   (each exported id → its present and missing sources); and a read-only V2 scan of the exported files against the
+ *   Inbox lists what a V2 `media:import` would then add, change or remove (D2 records of one content merge, records
+ *   whose sources are gone disappear, descriptions follow the sidecars again).
  *
  * Every output is private data: it may only go inside the private root or outside this repository
  * (./private-output.mjs, the gate of the baseline tool). Messages carry codes, counts, ids and output paths, never values
@@ -35,7 +45,7 @@ import { copyFile, lstat, mkdir, open, readFile, readdir, rm, stat } from 'node:
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
-  checkMediaReferences, isMediaBackupPath, mediaFilePaths, uniquePaths,
+  MEDIA_SOURCE_INDEX, checkMediaReferences, isMediaBackupPath, mediaFilePaths, uniquePaths,
 } from './library-backup.mjs'
 import { sha256File } from './file-hash.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
@@ -46,10 +56,12 @@ import { STORE_FILE_SEGMENTS, privateDataSource, storeFileOf } from './private-d
 import { StoreToolError } from './store-migrate.mjs'
 import { projectToV2Files, skippedCounts } from './store-projection.mjs'
 import { openStore } from './store-host.mjs'
+import { upgradeStore } from './store-upgrade.mjs'
 import { EMPTY_PLACES_GENERATED_AT } from '../src/data/canonical/canonicalForInputs.ts'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files } from '../src/data/canonical/v2Schema.ts'
-import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { V2_MEDIA_SOURCE_INDEX_FILE_NAME, contentHashOf, mediaIdOf, mediaSourceIndexFileOf } from '../src/data/v2media/importPlan.ts'
+import { OFFICIAL, OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 export const BACKUP_FORMAT = 'starmap.store-backup'
 /** 2 since 3C-4b (with media). Restore also reads version 1 (3C-3: the database only). */
@@ -58,7 +70,7 @@ const READABLE_VERSIONS = Object.freeze([1, 2])
 /** The entries of a backup directory: the snapshot, the manifest, the completion mark and the media copies (`payload/`). */
 export const BACKUP_FILES = Object.freeze({ store: 'world.sqlite', manifest: 'manifest.json', complete: 'COMPLETE.json', media: 'payload' })
 /** What a backup leaves out (written into the manifest and the documentation). */
-export const BACKUP_EXCLUDES = Object.freeze(['config', 'data/v2 (the V2 files; the media source index is included)', 'operations'])
+export const BACKUP_EXCLUDES = Object.freeze(['config', 'data/v2 (the V2 files and the media source index of V2 mode; the media registry is in the store)', 'operations'])
 /** At most this many media files in one backup (the limit of `npm run backup`). */
 export const MEDIA_FILE_LIMIT = 100_000
 /** Where a backup marks that it is copying media (design 3B §5.2 step 3): `<private root>/operations/store-backup/<backup id>.json`. */
@@ -126,7 +138,31 @@ function openReadOnly(file) {
 /** The V2 files of a store's projection (the media references are checked against them). */
 async function projectedFiles(file) {
   const handle = openReadOnly(file)
-  try { return projectToV2Files(handle.readRowsUnchecked()).files } finally { await handle.close() }
+  try { return { files: projectToV2Files(handle.readRowsUnchecked()).files, registry: handle.mediaRegistry() } } finally { await handle.close() }
+}
+
+const CONTENT_DIRECTORY = /^media\/user\/[0-9a-f]{16}$/
+
+/**
+ * The media registry against media files (3C-4c): every generated file of every registered content is among `entries`
+ * ({ path, sha256 }: a backup's copies, or a restored root's files, both checked against the manifest) with the SHA-256
+ * the registry recorded. A content whose directory a queued deletion removes is skipped. Content-addressed directories
+ * no registry row names (an interrupted import leaves them) are counted in a warning. A mismatch is
+ * E_BACKUP_MEDIA_REGISTRY. Returns the warnings.
+ */
+export function checkRegistryFiles(registry, entries) {
+  const copies = new Map(entries.map((entry) => [entry.path, entry.sha256]))
+  const leaving = new Set(registry.pendingFileOps.filter((op) => op.kind === 'delete-generated').map((op) => op.target))
+  let broken = 0
+  for (const file of registry.files) {
+    if (leaving.has(file.directory)) continue
+    for (const output of file.outputs) if (copies.get(`${file.directory}/${output.name}`) !== output.sha256) broken++
+  }
+  if (broken) throw new StoreToolError('E_BACKUP_MEDIA_REGISTRY', [`新库媒体登记的 ${broken} 个生成文件不在媒体目录里，或者内容与登记不一致。`])
+  const registered = new Set(registry.files.map((file) => file.directory))
+  const directories = new Set([...copies.keys()].map((file) => file.split('/').slice(0, 3).join('/')).filter((directory) => CONTENT_DIRECTORY.test(directory)))
+  const unregistered = [...directories].filter((directory) => !registered.has(directory)).length
+  return unregistered ? [`MEDIA_UNREGISTERED: ${unregistered} content-addressed directories have no registry row (an interrupted import leaves them; library:recover lists them).`] : []
 }
 
 /** What a media failure of ./library-backup.mjs (an Error whose message is its code) means here. Never names a file. */
@@ -276,15 +312,18 @@ export async function backupStore(privatePaths, { out, now = new Date().toISOStr
     // 2.–3. The lease is released (ordinary edits go on); deletions wait for the mark, so every file the snapshot
     // refers to stays. List the media (files added since the snapshot are harmless extras), copy and check every file.
     await onMediaCopy?.()
-    const mediaPaths = await media(() => mediaFilePaths(privatePaths.root))
+    const mediaPaths = await media(() => mediaFilePaths(privatePaths.root, { sourceIndex: false }))
     if (mediaPaths.length > MEDIA_FILE_LIMIT) throw new StoreToolError('E_BACKUP_LIMIT', [`媒体文件超过 ${MEDIA_FILE_LIMIT} 个。`])
     const payload = path.join(target, BACKUP_FILES.media)
     await mkdir(payload)
     const entries = []
     const made = new Set()
     for (const relative of mediaPaths) entries.push(await media(() => copyMediaFile(privatePaths.root, payload, relative, made)))
-    const files = await projectedFiles(path.join(target, BACKUP_FILES.store))
-    const warnings = await media(() => checkMediaReferences(payload, new Set(mediaPaths), files, { outsideUserMedia: 'warn' }))
+    const { files, registry } = await projectedFiles(path.join(target, BACKUP_FILES.store))
+    const warnings = [
+      ...await media(() => checkMediaReferences(payload, new Set(mediaPaths), files, { outsideUserMedia: 'warn', sourceIndex: false })),
+      ...checkRegistryFiles(registry, entries),
+    ]
     await unmark()
     unmark = undefined
     // 4. The manifest, then the completion mark.
@@ -307,7 +346,7 @@ export async function backupStore(privatePaths, { out, now = new Date().toISOStr
       lines: [
         `已备份到 ${target}`,
         `库 id ${meta.libraryId}，修订号 ${meta.revision}，${manifest.files[BACKUP_FILES.store].bytes} 字节，SHA-256 ${manifest.files[BACKUP_FILES.store].sha256}`,
-        `媒体：${entries.length} 个文件，${mediaBytes} 字节（MediaInbox/、media/user/ 与媒体源索引），每个文件的 SHA-256 记在清单里。`,
+        `媒体：${entries.length} 个文件，${mediaBytes} 字节（MediaInbox/ 与 media/user/），每个文件的 SHA-256 记在清单里；新库的媒体登记与生成文件一致。`,
         ...(warnings.length ? [`提醒：${warnings.join('；')}`] : []),
         `不包含：${BACKUP_EXCLUDES.join('、')}。`,
       ],
@@ -432,9 +471,15 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
       backupId: manifest.backupId, backupCreatedAt: manifest.createdAt, libraryId: manifest.store.libraryId,
       revision: manifest.store.revision, sha256: manifest.files[BACKUP_FILES.store].sha256, restoredAt: now,
     }
+    // 3C-4c: a backup of a format-1 store (before the media registry) is upgraded in the new root, its registry seeded
+    // from the restored media (store:upgrade), before the checks below.
+    const probe = openStore(file, { readOnly: true, policy: OFFICIAL_POLICY })
+    const upgradeRequired = probe.diagnostic?.code === 'E_STORE_UPGRADE_REQUIRED'
+    await probe.close()
+    if (upgradeRequired) await upgradeStore(paths, { now: () => now })
     const handle = openStore(file, { privatePaths: paths, policy: OFFICIAL_POLICY, now: () => now })
     let problems = []
-    let files
+    let files, registry
     try {
       if (handle.diagnostic) throw new StoreToolError(handle.diagnostic.code, [`恢复出来的库没有通过打开检查（${handle.diagnostic.code}）。`])
       if (handle.meta().libraryId !== manifest.store.libraryId || handle.meta().revision !== manifest.store.revision) {
@@ -443,10 +488,16 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
       await handle.setRestoredFrom(restoredFrom)
       const integrity = handle.checkIntegrity({ full: true })
       problems = integrity.ok ? [...handle.check().problems] : [...integrity.problems]
-      if (!problems.length && entries) files = projectToV2Files(handle.readRowsUnchecked()).files
+      if (!problems.length && entries) {
+        files = projectToV2Files(handle.readRowsUnchecked()).files
+        registry = handle.mediaRegistry()
+      }
     } finally { await handle.close() }
     if (problems.length) throw new StoreToolError('E_RESTORE_CHECK', problems)
-    if (entries) await media(() => checkMediaReferences(root, new Set(entries.map((entry) => entry.path)), files, { outsideUserMedia: 'warn' }))
+    // A backup of 3C-4b still carries the V2 media source index: its sources are checked as before.
+    const sourceIndex = entries?.some((entry) => entry.path === MEDIA_SOURCE_INDEX) ?? false
+    if (entries) await media(() => checkMediaReferences(root, new Set(entries.map((entry) => entry.path)), files, { outsideUserMedia: 'warn', sourceIndex }))
+    if (entries) checkRegistryFiles(registry, entries)
     const mediaBytes = entries?.reduce((sum, entry) => sum + entry.bytes, 0) ?? 0
     return {
       to: root, restoredFrom,
@@ -454,7 +505,7 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
         `已恢复到新私人根 ${root}`,
         `data/store/world.sqlite：库 id ${restoredFrom.libraryId}，修订号 ${restoredFrom.revision}；integrity_check 与全量校验通过。`,
         entries
-          ? `媒体：${entries.length} 个文件，${mediaBytes} 字节，逐个核对了 SHA-256；新库引用的媒体都在。`
+          ? `媒体：${entries.length} 个文件，${mediaBytes} 字节，逐个核对了 SHA-256；新库引用的媒体都在，媒体登记与生成文件一致。`
           : '这是只含数据库的旧格式备份（3C-3），没有媒体：需要时自己复制 MediaInbox/ 与 media/user/。',
         '新私人根里没有 config/ 与 data/v2/ 的 V2 文件，需要时自己复制。用 STARMAP_PRIVATE_ROOT 指向它即可启用。',
       ],
@@ -474,37 +525,125 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
  * The rows come from readFormalState (the full check). A projection without file metadata of the places registry (no
  * `v2:import` source) gets the export time as its `generated_at` instead of the Unix epoch.
  */
+/**
+ * 3C-4c: the media ids of an export. A record created in the new library (an asset whose source is not `v2:media`) whose
+ * content no other record uses gets V2's content id when no exported item has it yet; every reference in the editor state
+ * follows. Returns { files (a copy), remapped (old id → new id) }.
+ */
+function exportMediaIds(files, state, registry) {
+  const native = new Set(state.assets.filter((asset) => asset.source.sourceId !== 'v2:media').map((asset) => asset.id))
+  const users = new Map()
+  for (const link of registry.assetFiles) users.set(link.sha256, (users.get(link.sha256) ?? 0) + 1)
+  const taken = new Set(files.media.items.map((item) => item.id))
+  const remapped = new Map()
+  for (const link of registry.assetFiles) {
+    if (!native.has(link.assetId) || users.get(link.sha256) !== 1 || !taken.has(link.assetId)) continue
+    const contentId = mediaIdOf(contentHashOf(link.sha256))
+    if (taken.has(contentId)) continue
+    taken.add(contentId)
+    remapped.set(link.assetId, contentId)
+  }
+  const copy = structuredClone(files)
+  const map = (id) => remapped.get(id) ?? id
+  for (const item of copy.media.items) item.id = map(item.id)
+  const state2 = copy.editorState
+  state2.hiddenMediaIds = state2.hiddenMediaIds.map(map)
+  state2.hiddenDroneMediaIds = state2.hiddenDroneMediaIds.map(map)
+  for (const table of [state2.mediaOrderByCity, state2.droneOrderByCity]) for (const city of Object.keys(table)) table[city] = table[city].map(map)
+  for (const city of Object.keys(state2.coverMediaByCity)) state2.coverMediaByCity[city] = map(state2.coverMediaByCity[city])
+  return { files: copy, remapped }
+}
+
+/** 3C-4c: the V2 media source index of an export: each exported media id → its present and missing Inbox paths. */
+function exportSourceIndex(files, state, registry, remapped, now) {
+  const assetOfRecord = new Map(state.entities.filter((entity) => entity.typeId === OFFICIAL.media).map((entity) => [entity.id, entity.fields.asset]))
+  const v2IdOf = new Map(state.assets.map((asset) => [asset.id, asset.source.sourceId === 'v2:media' ? asset.source.recordId : asset.id]))
+  const exported = new Set(files.media.items.map((item) => item.id))
+  const sourcesById = {}
+  for (const source of registry.sources.filter((item) => item.state !== 'deleted')) {
+    const assetId = assetOfRecord.get(source.recordId)
+    const id = remapped.get(assetId) ?? v2IdOf.get(assetId)
+    if (!exported.has(id)) continue
+    ;(sourcesById[id] ??= []).push(source.path.slice('MediaInbox/'.length))
+  }
+  for (const list of Object.values(sourcesById)) list.sort()
+  return mediaSourceIndexFileOf(Object.fromEntries(Object.entries(sourcesById).sort(([a], [b]) => (a < b ? -1 : 1))), now)
+}
+
+/**
+ * 3C-4c: what a V2 `media:import` would change after going back with the exported files: a read-only V2 scan of the
+ * Inbox against them. { added, changed, removed } (ids).
+ */
+async function exportMediaLosses(privatePaths, target, files, now) {
+  const exportPaths = {
+    ...privatePaths, v2DataRoot: target,
+    v2FilePaths: Object.fromEntries(Object.entries(privatePaths.v2FilePaths).map(([key, file]) => [key, path.join(target, path.basename(file))])),
+    v2MediaSourceIndexPath: path.join(target, V2_MEDIA_SOURCE_INDEX_FILE_NAME),
+  }
+  const { scanV2MediaImport } = await import('./v2-media-import.mjs')
+  const scan = await scanV2MediaImport({ privatePaths: exportPaths, now: () => new Date(now), log: () => {}, logError: () => {} })
+  // A scan with problems (no Inbox, a broken sidecar) is no import V2 would run: nothing to compare.
+  if (scan.errors?.length) return { added: [], changed: [], removed: [], problems: scan.errors.length }
+  const before = new Map(files.media.items.map((item) => [item.id, item]))
+  const after = new Map((scan.items ?? []).map((item) => [item.id, item]))
+  const same = (a, b) => JSON.stringify(a, Object.keys(a).sort()) === JSON.stringify(b, Object.keys(b).sort())
+  return {
+    added: [...after.keys()].filter((id) => !before.has(id)),
+    removed: [...before.keys()].filter((id) => !after.has(id)),
+    changed: [...after.keys()].filter((id) => before.has(id) && !same(before.get(id), after.get(id))),
+    problems: 0,
+  }
+}
+
 export async function exportStoreV2(privatePaths, { out, now = new Date().toISOString() } = {}) {
   const target = newOutput(out, '--out <新目录>')
   requireStoreMode(privatePaths)
   const handle = openReadOnly(storeFileOf(privatePaths))
-  let projected, revision
+  let projected, revision, state, registry
   try {
-    const state = handle.readFormalState()
+    state = handle.readFormalState()
     revision = state.revision
     projected = projectToV2Files(state)
+    registry = handle.mediaRegistry()
   } finally { await handle.close() }
-  const { files, projection } = projected
+  if (registry.pendingFileOps.length) {
+    throw new StoreToolError('E_EXPORT_PENDING_FILE_OPS', [`新库还有 ${registry.pendingFileOps.length} 个等待删除的文件。先运行一次媒体写入（npm run media:import），或 npm run library:recover -- --confirm，再导出。`])
+  }
+  const { projection } = projected
+  const { files, remapped } = exportMediaIds(projected.files, state, registry)
   if (files.places.generated_at === EMPTY_PLACES_GENERATED_AT) files.places.generated_at = now
   const invalid = validateV2Files(files)
   if (invalid.length) throw new StoreToolError('E_EXPORT_INVALID', invalid.slice(0, 20).map((problem) => `${V2_FILE_NAMES[problem.file]} ${problem.path}：${problem.message}`))
+  const index = exportSourceIndex(files, state, registry, remapped, now)
   await createExclusive(target)
+  let losses
   try {
     for (const key of V2_FILE_KEYS) await writeJsonExclusive(path.join(target, V2_FILE_NAMES[key]), files[key])
+    await writeJsonExclusive(path.join(target, V2_MEDIA_SOURCE_INDEX_FILE_NAME), index)
+    losses = await exportMediaLosses(privatePaths, target, files, now)
   } catch (error) {
     await rm(target, { recursive: true, force: true, maxRetries: 3 }).catch(() => {})
     throw error
   }
   const skipped = projection.skipped
-  const lines = [`已导出修订号 ${revision} 的五个 V2 文件到 ${target}`]
+  const lines = [`已导出修订号 ${revision} 的五个 V2 文件与媒体源索引到 ${target}`]
+  if (remapped.size) lines.push(`媒体：${remapped.size} 条在新库里新建的资料改用 V2 的内容 id 导出（编辑状态里的引用一并改写）。`)
+  if (losses.problems) {
+    lines.push(`V2 的扫描报告了 ${losses.problems} 个需要处理的问题（npm run media:check 会列出），没有列出回到 V2 之后媒体的变化。`)
+  } else if (losses.added.length || losses.changed.length || losses.removed.length) {
+    lines.push(`回到 V2 之后运行 npm run media:import 会新增 ${losses.added.length} 条、改变 ${losses.changed.length} 条、移除 ${losses.removed.length} 条媒体（同一内容的多条资料会合并，来源不在投递箱中的资料会移除，说明按 sidecar 重新读取）：`)
+    for (const [label, ids] of [['新增', losses.added], ['改变', losses.changed], ['移除', losses.removed]]) for (const id of ids) lines.push(`  ${label} ${id}`)
+  } else {
+    lines.push('回到 V2 之后运行 npm run media:import 不会改变媒体。')
+  }
   if (skipped.length) {
     lines.push(`V2 表达不了、没有导出的内容：${skipped.length} 行（${Object.entries(skippedCounts(skipped)).map(([table, count]) => `${table} ${count}`).join('，')}）。新库与它的备份里仍然保留：`)
     for (const row of skipped) lines.push(`  ${row.table} ${row.id}`)
   } else {
     lines.push('新库的全部内容都已导出，没有 V2 表达不了的内容。')
   }
-  lines.push(`回到 V2 模式：停止开发服务器，把这五个文件放进 data/v2/，再把 ${STORE_FILE_SEGMENTS.join('/')} 移出私人根。`)
-  return { out: target, files, skipped, lines }
+  lines.push(`回到 V2 模式：停止开发服务器，把这五个文件和 ${V2_MEDIA_SOURCE_INDEX_FILE_NAME} 放进 data/v2/，再把 ${STORE_FILE_SEGMENTS.join('/')} 移出私人根。`)
+  return { out: target, files, index, remapped, losses, skipped, lines }
 }
 
 // ---------------------------------------------------------------------------
