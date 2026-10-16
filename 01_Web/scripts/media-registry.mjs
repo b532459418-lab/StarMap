@@ -30,6 +30,16 @@
  * so are confirmed sources whose description (place, kind, sidecar entry) changed but is not applied (D1).
  */
 
+/**
+ * The live media records for classifyScan, from the store's rows (`entities`, `assets`) and the registry's links:
+ * `{ recordId, assetId, placeId, sha256? }` per `starmap:media` entity (sha256 of its asset's file, when linked).
+ */
+export function liveRecordsOf({ entities }, assetFiles) {
+  const linked = new Map(assetFiles.map((link) => [link.assetId, link.sha256]))
+  return entities.filter((entity) => entity.typeId === 'starmap:media' && typeof entity.fields?.asset === 'string')
+    .map((entity) => ({ recordId: entity.id, assetId: entity.fields.asset, placeId: entity.fields.place, sha256: linked.get(entity.fields.asset) }))
+}
+
 /** Kinds of a confirmation: an ambiguous match, content a deleted source had, a file that replaced another at its path. */
 export const CONFIRMATION_KINDS = Object.freeze(['ambiguous-move', 'deleted-content', 'replaced'])
 

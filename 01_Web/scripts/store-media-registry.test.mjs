@@ -150,6 +150,8 @@ test('every block that would break the registry is refused inside the transactio
     ['another content with the same 64-bit prefix', [], { files: [fileEntry(`${record.content.slice(0, 16)}${'0'.repeat(48)}`)] }],
     ['the same content with other bytes', [], { files: [{ ...fileEntry(record.content), bytes: 11 }] }],
     ['an update of a source that does not exist', [], { sources: [{ op: 'update', seq: 999, state: 'missing' }] }],
+    // Without any media block: a request may not write an asset whose files the registry does not know.
+    ['a content-addressed asset written without its link', mediaRecord(handle, { ...fresh, placeId: city.id }), undefined],
   ]
   for (const [name, commands, media] of cases) {
     const before = snapshot()
@@ -207,12 +209,15 @@ test('a malformed media block is refused before the transaction', async (t) => {
   assert.equal(handle.lookup(id(60)).found, false)
 })
 
-test('check() reports a linked asset whose files lie elsewhere and a live source without its media entity (review §8-4)', async (t) => {
+test('check() reports assets whose files lie elsewhere or are not registered, and a live source without its media entity (review §8-4)', async (t) => {
   const store = await migratedStore(t)
   const record = await committedRecord(store)
+  const unlinked = await committedRecord(store, 2)
   await store.handle.close()
   const db = rawConnection(store.file)
   try {
+    // A content-addressed asset whose link is gone.
+    db.prepare('DELETE FROM media_asset_files WHERE asset_id = ?').run(unlinked.assetId)
     // The asset's thumbnail now points into another directory than the file its link names.
     const body = JSON.parse(db.prepare('SELECT body FROM assets WHERE id = ?').get(record.assetId).body)
     body.attributes.variants.thumb.src = '/media/user/ffffffffffffffff/thumb.webp'
@@ -226,6 +231,6 @@ test('check() reports a linked asset whose files lie elsewhere and a live source
   } finally { db.close() }
   const before = fileBytes(store.file)
   const check = await checkStoreFile(store.file, { policy: OFFICIAL_POLICY })
-  assert.deepEqual(check.problems, ['E_MEDIA_ASSET_DIRECTORY: 1', 'E_MEDIA_SOURCE_RECORD: 1'])
+  assert.deepEqual(check.problems, ['E_MEDIA_ASSET_DIRECTORY: 2', 'E_MEDIA_SOURCE_RECORD: 1'])
   assert.equal(fileBytes(store.file), before, 'the check writes nothing')
 })

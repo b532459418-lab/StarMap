@@ -260,6 +260,24 @@ export function applyMediaBlock(db, block, { requestId, at, deletes = [] }) {
   return mediaBlockCounts(block)
 }
 
+/**
+ * After a request's rows are written (with or without a media block): every asset it wrote whose `src` or a variant is
+ * content-addressed (`/media/user/<16 hex>/…`) must be linked to a registered file, and all its files must lie in that
+ * file's directory. A request can therefore never leave a reference to a file the registry does not know (E_MEDIA_REGISTRY,
+ * confirmed not committed). Assets outside `/media/user/` are not managed and need no link.
+ */
+export function checkWrittenAssets(db, upserts) {
+  const sql = statements(db)
+  for (const { table, row } of upserts) {
+    if (table !== 'assets') continue
+    const directories = assetSourcesOf(row.attributes).map((src) => generatedDirectoryOfSrc(src))
+    if (directories.every((directory) => directory === undefined)) continue
+    const link = sql.link.get(row.id)
+    const file = link ? sql.file.get(link.sha256) : undefined
+    if (!file || directories.some((directory) => `${USER_MEDIA_PREFIX}${directory ?? '?'}` !== file.directory)) fail('E_MEDIA_REGISTRY', 'assets')
+  }
+}
+
 /** Every registry row (and every pending file operation), as plain objects, from one read transaction. */
 export function mediaRegistrySnapshot(db) {
   const all = (sqlText) => db.prepare(sqlText).all().map((row) => ({ ...row }))
@@ -293,8 +311,9 @@ export function assetSourcesOf(attributes) {
  * The registry part of the store's full check, against the formal `state` read in the same transaction. Problems are
  * codes with counts:
  * - rows that break the registry's own rules (shapes, the directory of a content, a path's key, unknown states or kinds);
- * - E_MEDIA_ASSET_DIRECTORY: a linked asset's `src` or a variant's lies in another directory than the file its link names
- *   (design v2 review §8-4);
+ * - E_MEDIA_ASSET_DIRECTORY: a linked asset's `src` or a variant's lies in another directory than the file its link names,
+ *   or an asset with a content-addressed `src` or variant (`/media/user/<16 hex>/…`) has no link (design v2 review §8-4).
+ *   Assets whose files are not managed (outside `/media/user/`, as V2 allowed) have no link;
  * - E_MEDIA_SOURCE_RECORD: a source that is not deleted names no existing `starmap:media` entity (§8-4);
  * - E_MEDIA_LINK: a link names an asset or a file that does not exist.
  */
@@ -311,7 +330,10 @@ export function mediaRegistryProblems(db, state) {
   let misplaced = 0
   for (const asset of state.assets) {
     const sha256 = links.get(asset.id)
-    if (sha256 === undefined) continue
+    if (sha256 === undefined) {
+      if (assetSourcesOf(asset.attributes).some((src) => generatedDirectoryOfSrc(src) !== undefined)) misplaced++
+      continue
+    }
     const directory = files.get(sha256)?.directory
     const all = assetSourcesOf(asset.attributes)
     if (all.length === 0 || all.some((src) => `${USER_MEDIA_PREFIX}${generatedDirectoryOfSrc(src) ?? '?'}` !== directory)) misplaced++

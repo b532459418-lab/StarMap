@@ -354,6 +354,9 @@ export const mediaIdOf = (hash: string): string => {
   return `media-${hash}`
 }
 
+/** 一个文件在 V2 里的媒体 id：sidecar 显式写的 `id` 优先，否则是内容 id（`buildMediaItem` 用的就是这条规则；3C-4c 的迁移登记也用它）。 */
+export const v2MediaIdFor = (hash: string, metadata: Record<string, unknown> | undefined): string => trimmedText(metadata?.id) || mediaIdOf(hash)
+
 /** 页面引用生成文件的前缀（开发服务器从私人目录的 media/user/ 提供）。 */
 export const MEDIA_PUBLIC_PREFIX = '/media/user/'
 
@@ -431,10 +434,9 @@ export const buildMediaItem = (facts: MediaFileFacts): V2MediaCatalogItem => {
       }
     : { original: { src } }
 
-  const explicitId = trimmedText(metadata.id)
   const names = namesOf(metadata.titleZh, metadata.titleEn)
   return {
-    id: explicitId || mediaIdOf(facts.hash),
+    id: v2MediaIdFor(facts.hash, metadata),
     kind: facts.kind,
     scope: 'city',
     placeId: facts.placeId,

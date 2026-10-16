@@ -46,6 +46,7 @@ import { STORE_FILE_SEGMENTS, privateDataSource, storeFileOf } from './private-d
 import { StoreToolError } from './store-migrate.mjs'
 import { projectToV2Files, skippedCounts } from './store-projection.mjs'
 import { openStore } from './store-host.mjs'
+import { upgradeStore } from './store-upgrade.mjs'
 import { EMPTY_PLACES_GENERATED_AT } from '../src/data/canonical/canonicalForInputs.ts'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files } from '../src/data/canonical/v2Schema.ts'
@@ -432,6 +433,12 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
       backupId: manifest.backupId, backupCreatedAt: manifest.createdAt, libraryId: manifest.store.libraryId,
       revision: manifest.store.revision, sha256: manifest.files[BACKUP_FILES.store].sha256, restoredAt: now,
     }
+    // 3C-4c: a backup of a format-1 store (before the media registry) is upgraded in the new root, its registry seeded
+    // from the restored media (store:upgrade), before the checks below.
+    const probe = openStore(file, { readOnly: true, policy: OFFICIAL_POLICY })
+    const upgradeRequired = probe.diagnostic?.code === 'E_STORE_UPGRADE_REQUIRED'
+    await probe.close()
+    if (upgradeRequired) await upgradeStore(paths, { now: () => now })
     const handle = openStore(file, { privatePaths: paths, policy: OFFICIAL_POLICY, now: () => now })
     let problems = []
     let files

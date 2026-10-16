@@ -9,7 +9,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { openStore } from './store-host.mjs'
@@ -180,11 +181,34 @@ test('Local editor plugin in the new-library mode', async (t) => {
   }
 })
 
+/**
+ * 3C-4c: the migration seeds the media registry and hashes the generated files the catalog names (design v2 §5); it
+ * refuses files that are not there. The fixture names directories without files, so each content-addressed item gets a
+ * distinct synthetic original (and variants) and points at its real hash. Ids and everything else stay as they were.
+ */
+async function withGeneratedFiles(paths, files) {
+  const result = structuredClone(files)
+  for (const [index, item] of result.media.items.entries()) {
+    const old = /^\/media\/user\/([0-9a-f]{16})\//.exec(item.src)?.[1]
+    if (!old) continue
+    const original = Buffer.from(`synthetic original ${index}`)
+    const directory = createHash('sha256').update(original).digest('hex').slice(0, 16)
+    const moved = JSON.parse(JSON.stringify(item).split(`/media/user/${old}/`).join(`/media/user/${directory}/`))
+    result.media.items[index] = moved
+    for (const src of new Set([moved.src, ...Object.values(moved.variants ?? {}).map((variant) => variant.src)])) {
+      const file = path.join(paths.userMediaRoot, directory, src.slice(src.lastIndexOf('/') + 1))
+      await mkdir(path.dirname(file), { recursive: true })
+      await writeFile(file, src === moved.src ? original : `synthetic variant ${index}`)
+    }
+  }
+  return result
+}
+
 test('a personal build in the new-library mode filters the store projection like the V2 files (batch 7, S3)', async (t) => {
   const { root, paths } = await tempPrivateRoot(t, 'starmap-plugin-store-build-')
   const { hiddenContentFixture, REMOVED } = await import('./personal-build-filter.fixture.mjs')
   const { filterForPersonalBuild } = await import('./personal-build-filter.mjs')
-  const files = hiddenContentFixture()
+  const files = await withGeneratedFiles(paths, hiddenContentFixture())
   await writeV2Files(paths, files)
   await applyMigration(paths, { now: NOW })
   const originalEnvironment = process.env

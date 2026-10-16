@@ -4,8 +4,9 @@
  * the App shows that error with this command; nothing upgrades a store by itself.
  *
  * - Under the library lease (store-host.mjs upgradeStoreFile): the old format is checked exactly (schema, store_meta,
- *   quick_check), the rows are read, `prepare` returns what to seed, and one transaction adds the new tables, writes the
- *   seed and raises the version. Any failure leaves the file at its old format.
+ *   quick_check), the rows are read, the media registry is seeded from them (./media-seed.mjs, the same seeding as
+ *   store:migrate), and one transaction adds the new tables, writes the seed and raises the version. Any failure leaves
+ *   the file at its old format.
  * - Afterwards the full check (checkStoreFile: quick_check, Core's validation, the media registry) runs on the result.
  * - A store already at the current format is left alone (exit 0).
  *
@@ -16,22 +17,45 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getPrivatePaths } from './private-profile.mjs'
 import { privateDataSource, storeFileOf } from './private-data-source.mjs'
+import { mediaRecordsOf, readMediaSourceIndex, seedMediaRegistry, seedReportLines } from './media-seed.mjs'
 import { STORE_FORMAT_VERSION, checkStoreFile, upgradeStoreFile } from './store-host.mjs'
 import { StoreToolError } from './store-migrate.mjs'
+import { projectToV2Files } from './store-projection.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 /**
- * Upgrade the store of `privatePaths`. `prepare({ state, revision })` returns the media block to seed (or undefined);
- * `now` (a function returning an ISO time) and `requestId` are injectable (tests). Resolves { result, check, lines };
- * a refusal throws StoreToolError, and a failed check after the upgrade does too (the upgrade itself is then committed).
+ * The seed of a format-1 store (3C-4c, design v2 §5): the media registry from the store's own rows and projection, the
+ * Inbox, the media files and the V2 media source index (unchanged since the migration: format 1 never wrote media).
+ * A problem refuses the upgrade before its transaction (E_MEDIA_SEED).
+ */
+export function seedFromStore(privatePaths, report = () => {}) {
+  return async ({ state }) => {
+    const { files } = projectToV2Files(state)
+    const seeded = await seedMediaRegistry({
+      privatePaths, places: files.places, media: files.media, records: mediaRecordsOf(state), index: await readMediaSourceIndex(privatePaths),
+    })
+    if (seeded.problems.length) throw new StoreToolError('E_MEDIA_SEED', seeded.problems)
+    report(seeded.report)
+    return seeded.media
+  }
+}
+
+/**
+ * Upgrade the store of `privatePaths`. `prepare({ state, revision })` returns the media block to seed (default:
+ * seedFromStore); `now` (a function returning an ISO time) and `requestId` are injectable (tests). Resolves
+ * { result, check, lines, seed }; a refusal throws StoreToolError, and a failed check after the upgrade does too (the
+ * upgrade itself is then committed).
  */
 export async function upgradeStore(privatePaths, { prepare, now, requestId = uuidv7() } = {}) {
   if (privateDataSource(privatePaths) !== 'store') {
     throw new StoreToolError('E_NOT_STORE_MODE', ['这个私人根没有 data/store/world.sqlite（不是新库模式），没有可以升级的新库。'])
   }
   const file = storeFileOf(privatePaths)
-  const result = await upgradeStoreFile(file, { privatePaths, policy: OFFICIAL_POLICY, requestId, prepare, ...(now ? { now } : {}) })
+  let seed
+  const result = await upgradeStoreFile(file, {
+    privatePaths, policy: OFFICIAL_POLICY, requestId, prepare: prepare ?? seedFromStore(privatePaths, (report) => { seed = report }), ...(now ? { now } : {}),
+  })
   if (!result.upgraded) {
     return { result, check: undefined, lines: [`新库已经是当前的存储格式（${STORE_FORMAT_VERSION}），没有改动。`] }
   }
@@ -41,10 +65,10 @@ export async function upgradeStore(privatePaths, { prepare, now, requestId = uui
   }
   const media = result.receipt.media ?? {}
   return {
-    result, check,
+    result, check, seed,
     lines: [
       `已把新库从存储格式 ${result.fromVersion} 升级到 ${result.toVersion}（修订号 ${result.revision} 不变）。`,
-      `媒体登记：文件 ${media.files ?? 0} 条，资产关联 ${media.assetFiles ?? 0} 条，来源 ${media.sources ?? 0} 条。`,
+      ...(seed ? seedReportLines(seed) : [`媒体登记：文件 ${media.files ?? 0} 条，资产关联 ${media.assetFiles ?? 0} 条，来源 ${media.sources ?? 0} 条。`]),
       '全量检查通过。',
     ],
   }

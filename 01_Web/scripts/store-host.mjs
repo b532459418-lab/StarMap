@@ -16,7 +16,7 @@ import { closeSync, lstatSync, openSync, realpathSync, unlinkSync } from 'node:f
 import path from 'node:path'
 import { libraryLockProbe, withLibraryOperation } from './library-operation-lock.mjs'
 import {
-  MEDIA_SCHEMA, MEDIA_TABLES, applyMediaBlock, mediaRegistryProblems, mediaRegistrySnapshot, validMediaBlock,
+  MEDIA_SCHEMA, MEDIA_TABLES, applyMediaBlock, checkWrittenAssets, mediaRegistryProblems, mediaRegistrySnapshot, validMediaBlock,
 } from './store-media-registry.mjs'
 import {
   StoreHostError, closeQuietly, openConnection, pragmaValue, scratchConnection, sqliteDetail, storeErrorFrom, transactionState,
@@ -589,6 +589,7 @@ function applyRequest(db, request, digest, at, settings, phase) {
   const mediaCounts = request.media === undefined
     ? undefined
     : applyMediaBlock(db, request.media, { requestId: request.requestId, at, deletes: changeSet.deletes })
+  checkWrittenAssets(db, changeSet.upserts)
   if (mediaCounts !== undefined) phase('media')
   const receipt = receiptFor(request, changeSet, at, mediaCounts)
   sql.receiptAdd.run(request.requestId, digest, 'committed', changeSet.nextRevision, JSON.stringify(receipt), at)
