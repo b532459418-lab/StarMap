@@ -136,7 +136,7 @@ test('store:export-v2 writes the five V2 files of the projection, lists what V2 
   } finally { await writer.close() }
   const out = at('export')
   const result = await exportStoreV2(paths, { out, now: '2026-10-16T00:00:00.000Z' })
-  assert.deepEqual((await readdir(out)).sort(), Object.values(V2_FILE_NAMES).sort())
+  assert.deepEqual((await readdir(out)).sort(), [...Object.values(V2_FILE_NAMES), 'media-source-index.local.json'].sort())
   const written = Object.fromEntries(await Promise.all(V2_FILE_KEYS.map(async (key) => [key, JSON.parse(await readFile(path.join(out, V2_FILE_NAMES[key]), 'utf8'))])))
   assert.deepEqual(readV2(written), readV2(files))
   assert.deepEqual(result.skipped, [{ table: 'sources', id: 'synthetic:source' }])

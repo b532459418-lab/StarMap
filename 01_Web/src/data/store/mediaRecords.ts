@@ -12,6 +12,8 @@
  *   restoreImportedMedia does in V2). The covers (`isCover`) of the cities whose photos change follow markCovers.
  * - removeMediaRecordCommands: every view row and setting that refers to the asset (orders, hidden lists, covers), then
  *   the entity and the asset (both tombstoned for good), and the covers of its city again.
+ * - rereadMediaRecordCommands (「重新读取说明」, design v2 §5): the entity's city and title and the asset's described
+ *   keys follow the description the Inbox gives now; ids, hidden lists, orders, cover flags and files stay.
  * Positions: a row appended after the last element; when no key fits (E_POSITION), the scope is renumbered with
  * listPositions in the same batch (`renumbered` names it).
  *
@@ -21,7 +23,7 @@
  */
 import type { FormalCommand, FormalRow, FormalTable, ViewItem, ViewSetting } from '../../worldgraph/store/formal.ts'
 import { positionBetween } from '../../worldgraph/store/position.ts'
-import { StoreError, reject } from '../../worldgraph/store/primitives.ts'
+import { StoreError, jsonKey, reject } from '../../worldgraph/store/primitives.ts'
 import type { AssetReference, JsonObject, JsonValue, StoreEntity } from '../../worldgraph/store/types.ts'
 import type { CanonicalMediaItem } from '../canonical/types.ts'
 import { markCovers } from '../v2media/importPlan.ts'
@@ -189,6 +191,80 @@ export function createMediaRecordCommands(records: readonly NewMediaRecord[], { 
     commands.push(...appendRows(reader, mapListScope(scope, placeId), assetIds, allocateId, renumbered))
   }
   return Object.freeze({ commands: Object.freeze(commands), renumbered: Object.freeze(renumbered) })
+}
+
+/** The keys of a media item its folder and sidecar entry describe, besides its city and title (buildMediaItem). */
+export const DESCRIBED_KEYS = Object.freeze(['kind', 'date', 'resolution', 'captureType', 'description', 'position', 'altitudeMeters', 'relativeAltitudeMeters', 'status'] as const)
+
+/** A record to re-read: its asset and the media item the Inbox describes now (its `id` and files are ignored). */
+export interface RereadMediaRecord {
+  readonly assetId: string
+  readonly item: CanonicalMediaItem
+}
+
+/** The media entity of an asset (the one whose `fields.asset` names it), or undefined. */
+function mediaEntityOf(reader: DiffReader, assetId: string): StoreEntity | undefined {
+  const ref = reader.dependents('assets', assetId).find(item => item.fromTable === 'entities' && item.field === 'fields.asset')
+  const entity = ref ? reader.get('entities', ref.fromId) as StoreEntity | undefined : undefined
+  return entity?.typeId === OFFICIAL.media ? entity : undefined
+}
+
+/** The rows a re-read gives and what it changes (`place`, `title`, described keys). */
+function rereadRows(reader: DiffReader, update: RereadMediaRecord): { asset: AssetReference; entity: StoreEntity; nextAsset: AssetReference; nextEntity: StoreEntity; changed: string[] } {
+  const asset = reader.get('assets', update.assetId) as AssetReference | undefined
+  if (!asset) reject('E_MEDIA_NOT_FOUND', 'assets')
+  const entity = mediaEntityOf(reader, update.assetId)
+  if (!entity) reject('E_MEDIA_NOT_FOUND', 'entities')
+  const item = update.item as unknown as Json
+  const attributes: Json = { ...asset!.attributes as Json }
+  const changed: string[] = []
+  if (entity!.fields.place !== update.item.placeId) changed.push('place')
+  for (const key of DESCRIBED_KEYS) {
+    if (jsonKey(attributes[key] ?? null) !== jsonKey(item[key] ?? null)) changed.push(key)
+    if (item[key] === undefined) delete attributes[key]
+    else attributes[key] = structuredClone(item[key]) as JsonValue
+  }
+  const title = update.item.title
+  const fits = title !== undefined && fitsStoreTitle(title)
+  const v2 = plain(entity!.extensions?.v2) ? { ...entity!.extensions!.v2 as Json } : {}
+  const currentTitle = Object.keys(entity!.title.names).length ? entity!.title : v2.title
+  if (jsonKey(currentTitle ?? null) !== jsonKey(title ?? null)) changed.push('title')
+  delete v2.title
+  if (title !== undefined && !fits) v2.title = title as unknown as JsonValue
+  const extensions: Json = { ...(entity!.extensions as Json | undefined ?? {}) }
+  if (Object.keys(v2).length) extensions.v2 = v2
+  else delete extensions.v2
+  const { extensions: _extensions, ...entityRest } = entity!
+  void _extensions
+  const nextEntity = {
+    ...entityRest, revision: entity!.revision + 1, title: fits ? title : { names: {} }, fields: { ...entity!.fields, place: update.item.placeId },
+    ...(Object.keys(extensions).length ? { extensions } : {}),
+  } as StoreEntity
+  const nextAsset = { ...asset!, revision: asset!.revision + 1, attributes: attributes as JsonObject }
+  return { asset: asset!, entity: entity!, nextAsset, nextEntity, changed }
+}
+
+/** What re-reading a record would change: `place`, `title` and the described keys that differ (empty: nothing). */
+export function rereadChanges(update: RereadMediaRecord, { reader }: Pick<MediaRecordsContext, 'reader'>): string[] {
+  return rereadRows(reader, update).changed
+}
+
+/**
+ * Re-read the descriptions of records: each entity's city and title and its asset's described keys follow `item`.
+ * Ids, hidden lists, orders, cover flags and generated files are left as they are; a record whose description is the
+ * same gets no command.
+ */
+export function rereadMediaRecordCommands(updates: readonly RereadMediaRecord[], { reader }: Pick<MediaRecordsContext, 'reader'>): MediaRecordsPlan {
+  const commands: FormalCommand[] = []
+  for (const update of updates) {
+    const { asset, entity, nextAsset, nextEntity, changed } = rereadRows(reader, update)
+    if (changed.length === 0) continue
+    if (jsonKey(asset.attributes) !== jsonKey(nextAsset.attributes)) {
+      commands.push({ op: 'update', table: 'assets', id: asset.id, expectedRevision: asset.revision, value: nextAsset as unknown as FormalRow })
+    }
+    commands.push({ op: 'update', table: 'entities', id: entity.id, expectedRevision: entity.revision, value: nextEntity as unknown as FormalRow })
+  }
+  return Object.freeze({ commands: Object.freeze(commands), renumbered: Object.freeze([]) })
 }
 
 /** The V2 media id an asset projects to (projectStoreToCanonical): a migrated asset's V2 id, otherwise its own id. */

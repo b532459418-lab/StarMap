@@ -15,6 +15,10 @@
  * commit: the records and every view row naming them gone (tombstoned), their sources deleted, the links gone, the
  * source files and the directories no record links any more queued in pending_file_ops → the queued files removed.
  * The Inbox is not scanned.
+ * Re-reading descriptions (planReread / rereadDescriptions, design v2 §5, the command line's --reread): the records of
+ * the present sources under some Inbox paths take the place, kind, title and sidecar values their folder and sidecar
+ * give now (mediaRecords.ts rereadMediaRecordCommands), and their sources the new description digest. A record whose
+ * present sources describe it differently is refused and listed; a source whose file is gone or changed is listed.
  *
  * `store` is the media store adapter: { readOnly, meta(), view() → { files, revision }, mediaRegistry(), mediaEntities(),
  * read(reader → value), lookup(requestId), commit(request, { leaseToken }), settleFileOps(work, { leaseToken }) }:
@@ -33,7 +37,7 @@ import { directoryOf, pathKeyOf } from './store-media-registry.mjs'
 import { projectToV2Files } from './store-projection.mjs'
 import { publishGeneratedFiles } from './v2-media-import.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
-import { createMediaRecordCommands, removeMediaRecordCommands } from '../src/data/store/mediaRecords.ts'
+import { createMediaRecordCommands, removeMediaRecordCommands, rereadChanges, rereadMediaRecordCommands } from '../src/data/store/mediaRecords.ts'
 import { deletableMediaOf, generatedDirectoriesOf } from '../src/data/v2media/editorWrites.ts'
 import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
@@ -282,8 +286,74 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     return { deletedIds: ids, revision: result.revision, receipt: result.receipt, drained }
   }
 
+  /**
+   * What re-reading the descriptions under `paths` (portable `MediaInbox/…` files or folders) would do, without
+   * writing: { revision, records (each { recordId, assetId, sources, changes, item, digest, seqs }), conflicts (each
+   * { assetId, sources }), problems (lines) }. `changes` lists what differs (place, title, described keys).
+   */
+  async function planReread({ paths }) {
+    const view = await store.view()
+    const registry = store.mediaRegistry()
+    const assetOf = new Map(store.mediaEntities().map((row) => [row.id, row.fields.asset]))
+    const scan = await scanInbox({ privatePaths, places: view.files.places, cache: registry.scanCache, hashFile })
+    const facts = new Map(scan.facts.map((fact) => [fact.pathKey, fact]))
+    const scopes = paths.map((value) => pathKeyOf(value).replace(/\/+$/, ''))
+    const inScope = (key) => scopes.some((scope) => key === scope || key.startsWith(`${scope}/`))
+    const present = registry.sources.filter((source) => source.state === 'present')
+    const recordIds = [...new Set(present.filter((source) => inScope(source.pathKey)).map((source) => source.recordId))]
+    const relative = (value) => value.slice('MediaInbox/'.length)
+    const records = []
+    const conflicts = []
+    const problems = []
+    for (const recordId of recordIds) {
+      const assetId = assetOf.get(recordId)
+      if (typeof assetId !== 'string') continue
+      // Every present source of the record counts, also those outside the paths: they must describe it alike.
+      const described = []
+      for (const source of present.filter((item) => item.recordId === recordId)) {
+        const fact = facts.get(source.pathKey)
+        if (!fact || fact.sha256 !== source.sha256) problems.push(`${relative(source.path)}：不在投递箱中，或者内容变了。请先运行 npm run media:import。`)
+        else described.push({ source, fact })
+      }
+      if (described.length === 0) continue
+      if (new Set(described.map(({ fact }) => fact.descriptionDigest)).size > 1) {
+        conflicts.push({ assetId, sources: described.map(({ source }) => relative(source.path)) })
+        continue
+      }
+      const result = await describeMediaFile(described[0].fact)
+      if (!result.item) {
+        problems.push(...result.errors)
+        continue
+      }
+      const changes = store.read((reader) => rereadChanges({ assetId, item: result.item }, { reader }))
+      records.push({
+        recordId, assetId, sources: described.map(({ source }) => relative(source.path)), changes, item: result.item,
+        digest: described[0].fact.descriptionDigest, seqs: described.filter(({ source }) => source.descriptionDigest !== described[0].fact.descriptionDigest).map(({ source }) => source.seq),
+      })
+    }
+    return { revision: view.revision, records, conflicts, problems }
+  }
+
+  /**
+   * Re-read the descriptions under `paths` (see planReread) in one commit. Resolves { duplicate, receipt } for a
+   * request already committed, { committed: false, plan } when nothing changes, otherwise { committed: true, revision,
+   * receipt, plan }. Conflicts and problems are not written; the caller reports them.
+   */
+  async function rereadDescriptions({ paths, requestId, kind = `${MEDIA_KINDS.cli}.reread`, actor = 'media-import', leaseToken }) {
+    if (store.readOnly) fail('E_STORE_READ_ONLY')
+    const replay = replayOf(requestId, kind)
+    if (replay) return replay
+    const plan = await planReread({ paths })
+    const changing = plan.records.filter((record) => record.changes.length > 0)
+    const sources = plan.records.flatMap((record) => record.seqs.map((seq) => ({ op: 'update', seq, descriptionDigest: record.digest })))
+    if (changing.length === 0 && sources.length === 0) return { committed: false, plan, revision: plan.revision }
+    const commands = changing.length ? store.read((reader) => rereadMediaRecordCommands(changing.map(({ assetId, item }) => ({ assetId, item })), { reader })).commands : []
+    const result = await store.commit({ requestId, baseRevision: plan.revision, kind, actor, commands: [...commands], media: nonEmpty({ sources }) }, { leaseToken })
+    return { committed: true, revision: result.revision, receipt: result.receipt, plan }
+  }
+
   return {
-    planImport, importInbox, deleteMedia, reportLines,
+    planImport, importInbox, deleteMedia, reportLines, planReread, rereadDescriptions,
     drain: (leaseToken) => runPendingFileOps({ privatePaths, store, leaseToken, hashFile }),
   }
 }

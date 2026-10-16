@@ -12,7 +12,7 @@ import type { CanonicalMediaItem } from '../canonical/types.ts'
 import { removeMediaFromEditorState } from '../v2media/editorWrites.ts'
 import { memoryDiffReader } from './diffV2.ts'
 import { storeFrom, viewOf } from './diffV2.fixture.ts'
-import { createMediaRecordCommands, removeMediaRecordCommands, type NewMediaRecord } from './mediaRecords.ts'
+import { createMediaRecordCommands, removeMediaRecordCommands, rereadChanges, rereadMediaRecordCommands, type NewMediaRecord } from './mediaRecords.ts'
 import { OFFICIAL, OFFICIAL_POLICY, VIEW_SCOPES } from './officialDefinitions.ts'
 import { NOW, edgeCaseFixture } from './v2Store.fixture.ts'
 
@@ -106,4 +106,32 @@ test('a title the store cannot hold stays verbatim and projects back', () => {
   const record = { assetId: allocateId(), entityId: allocateId(), item: item({ placeId: cities[0].id, originalFileName: 't.jpg', title: title as CanonicalMediaItem['title'] }) }
   const state = apply(store.state, createMediaRecordCommands([record], { reader: memoryDiffReader(store.state), allocateId }).commands)
   assert.deepEqual(viewOf(state).media.items.find(media => media.id === record.assetId)!.title, title)
+})
+
+test('re-reading a description: city, title and described keys follow the Inbox; ids, orders, hidden lists, cover and files stay', () => {
+  const { store, cities, allocateId } = fixtureStore()
+  const [city, other] = cities
+  const record: NewMediaRecord = { assetId: allocateId(), entityId: allocateId(), appendToCityOrder: true,
+    item: item({ placeId: city.id, kind: 'aerialPhoto', originalFileName: 'drone.jpg', status: 'needsMetadata', title: { names: { en: 'Synthetic old' } } }) }
+  const created = apply(store.state, createMediaRecordCommands([record], { reader: memoryDiffReader(store.state), allocateId }).commands)
+  const before = viewOf(created)
+  const described = item({ placeId: other.id, kind: 'aerialPhoto', originalFileName: 'drone.jpg', status: 'ready', date: '2026-08-01', resolution: '4 × 3',
+    title: { names: { en: 'Synthetic new' } } } as Partial<CanonicalMediaItem> & { placeId: string; originalFileName: string })
+  const reader = memoryDiffReader(created)
+  assert.deepEqual(rereadChanges({ assetId: record.assetId, item: described }, { reader }).sort(), ['date', 'place', 'resolution', 'status', 'title'])
+  assert.deepEqual(rereadChanges({ assetId: record.assetId, item: record.item }, { reader }), [], 'the same description changes nothing')
+  assert.deepEqual(rereadMediaRecordCommands([{ assetId: record.assetId, item: record.item }], { reader }).commands, [])
+  const state = apply(created, rereadMediaRecordCommands([{ assetId: record.assetId, item: described }], { reader }).commands)
+  const view = viewOf(state)
+  assert.deepEqual(validateV2Files(view), [])
+  const media = view.media.items.find(entry => entry.id === record.assetId)!
+  assert.deepEqual([media.placeId, media.date, media.resolution, media.status, media.title], [other.id, '2026-08-01', '4 × 3', 'ready', { names: { en: 'Synthetic new' } }])
+  assert.deepEqual([media.src, media.variants, media.isCover, media.originalFileName], [before.media.items.find(entry => entry.id === record.assetId)!.src,
+    before.media.items.find(entry => entry.id === record.assetId)!.variants, false, 'drone.jpg'])
+  assert.deepEqual(view.media.items.map(entry => entry.id), before.media.items.map(entry => entry.id), 'the media order stays')
+  assert.deepEqual(view.editorState.droneOrderByCity, before.editorState.droneOrderByCity, 'the city order stays')
+  assert.ok(state.entities.some(row => row.id === record.entityId) && state.assets.some(row => row.id === record.assetId))
+  // A description without a date removes it again.
+  const again = apply(state, rereadMediaRecordCommands([{ assetId: record.assetId, item: { ...described, date: undefined } as unknown as CanonicalMediaItem }], { reader: memoryDiffReader(state) }).commands)
+  assert.equal(viewOf(again).media.items.find(entry => entry.id === record.assetId)!.date, undefined)
 })
