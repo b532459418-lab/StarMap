@@ -49,8 +49,8 @@ const NOW = '2026-10-14T00:00:00.000Z'
 const hex = (n) => n.toString(16).padStart(12, '0')
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 const placeId = (n) => `01920000-0000-7000-8000-${hex(n)}`
-const ms = (started) => Math.round((performance.now() - started) * 10) / 10
-const stats = (values) => {
+export const ms = (started) => Math.round((performance.now() - started) * 10) / 10
+export const stats = (values) => {
   const sorted = [...values].sort((a, b) => a - b)
   const at = (q) => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)]
   return { n: sorted.length, p50: at(0.5), p95: at(0.95), max: sorted.at(-1) }
@@ -129,7 +129,7 @@ export async function generateRoots(dir, scale) {
 }
 
 /** The local editor plugin for `root` (its module-scope paths come from the environment at its first import). */
-async function pluginFor(root, log) {
+export async function pluginFor(root, log) {
   const original = process.env
   process.env = { ...original, STARMAP_PRIVATE_ROOT: root }
   let travelAtlasLocalEditor
@@ -182,7 +182,7 @@ export async function readSegment(dir) {
 }
 
 /** One HTTP server on 127.0.0.1 (a free port) running the plugin's middlewares. */
-async function serve(handlers) {
+export async function serve(handlers) {
   const server = http.createServer((request, response) => {
     let index = 0
     const next = () => {
@@ -203,7 +203,7 @@ const directAgent = new http.Agent({ keepAlive: false })
 const postJson = (url, headers, body) => requestJson('POST', url, headers, body)
 
 /** One request to the local server (body: JSON text, or undefined); resolves the parsed body. */
-function requestJson(method, url, headers, body) {
+export function requestJson(method, url, headers, body) {
   return new Promise((resolve, reject) => {
     const length = body === undefined ? {} : { 'content-length': Buffer.byteLength(body) }
     const request = http.request(url, { method, agent: directAgent, headers: { ...headers, ...length } }, (response) => {
