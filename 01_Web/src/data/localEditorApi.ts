@@ -198,14 +198,9 @@ export const closeMediaJob = (jobId: string, input: MediaJobVersion, permit: Med
 /** Batch 1 D2: end an open/paused task without touching any file; the next import realigns with the Inbox. */
 export const abandonMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('abandon', jobId, input, permit)
 
-export const deleteHiddenLocalMedia = (cityId: string, ids: string[]) => withLocalEditorWrite(async () => {
-  const response = await fetch('/__travelatlas/editor/media/delete', {
-    method: 'POST',
-    headers: editorHeaders,
-    body: JSON.stringify({ cityId, ids }),
-  })
-  return parseResponse<{ deletedIds: string[]; deletedSourceFiles: number; output: string }>(response)
-})
+/** 彻底删除隐藏媒体。V2 模式的请求不变；新库模式（3C-4c）经 `editorWrite` 带上请求编号与修订号。 */
+export const deleteHiddenLocalMedia = (cityId: string, ids: string[]) => editorWrite('/__travelatlas/editor/media/delete', 'POST', { cityId, ids },
+  parseResponse<{ deletedIds: string[]; deletedSourceFiles: number; output: string }>)
 
 export const deleteHiddenLocalCountries = (ids: string[]) => editorWrite('/__travelatlas/editor/countries/delete', 'POST', { ids }, parseResponse<{
   deletedCountryIds: string[]

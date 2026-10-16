@@ -297,6 +297,36 @@ export function mediaRegistrySnapshot(db) {
   }
 }
 
+/** The `starmap:media` entities as `{ id, typeId, fields }` (one read of the entities table; for classifyScan's records). */
+export function mediaEntitiesOf(db) {
+  const entities = []
+  for (const row of db.prepare('SELECT id, body FROM entities').all()) {
+    let body
+    try { body = JSON.parse(row.body) } catch { continue }
+    if (body?.typeId === OFFICIAL.media) entities.push({ id: row.id, typeId: body.typeId, fields: body.fields ?? {} })
+  }
+  return entities
+}
+
+/**
+ * Settle pending file operations inside an open write transaction (./media-file-ops.mjs, after the files are handled):
+ * the rows `seqs` go (each must exist), and the media_files rows of `files` whose directory is gone, when nothing links
+ * them any more (a content linked again meanwhile keeps its row). Returns { settled, filesRemoved }.
+ */
+export function settleFileOperations(db, { seqs = [], files = [] }) {
+  const remove = db.prepare('DELETE FROM pending_file_ops WHERE seq = ?')
+  for (const seq of seqs) {
+    if (!Number.isSafeInteger(seq) || remove.run(seq).changes !== 1) fail('E_MEDIA_REGISTRY', 'pendingFileOps')
+  }
+  const sql = statements(db)
+  let filesRemoved = 0
+  for (const sha256 of files) {
+    if (typeof sha256 !== 'string' || !SHA256.test(sha256)) fail('E_MEDIA_REGISTRY', 'files')
+    if (sql.linksOf.get(sha256).count === 0 && sql.fileRemove.run(sha256).changes === 1) filesRemoved += 1
+  }
+  return { settled: seqs.length, filesRemoved }
+}
+
 /** The `/media/user/...` sources of an asset's attributes: `src` and the `src` of every variant. */
 export function assetSourcesOf(attributes) {
   const sources = []

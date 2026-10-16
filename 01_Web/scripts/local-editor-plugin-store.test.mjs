@@ -1,8 +1,8 @@
 /**
  * The local editor plugin in the new-library mode (3C-3, 3C-4a): the virtual module reads the store's projection and
  * its revision, GET /editor/state reads the same model, the editor writes are written to the store (and invalidate the
- * module), the media endpoints and media tasks are refused with 409 E_STORE_MODE_LIMITED before their body is read,
- * and an unopenable store is an error, never a fallback to V2.
+ * module), media tasks are refused with 409 E_STORE_MODE_LIMITED before their body is read (the media endpoints work:
+ * store-media-endpoints.test.mjs), and an unopenable store is an error, never a fallback to V2.
  * The harness (store-mode.fixture.mjs) is the one of local-editor-plugin.test.mjs (no real server).
  */
 import { test } from 'node:test'
@@ -31,9 +31,8 @@ function cleanShutdown(file) {
   try { return db.prepare('SELECT clean_shutdown FROM store_meta').get().clean_shutdown } finally { db.close() }
 }
 
-/** The write endpoints the store does not accept yet (3C-4c): the three media endpoints and the media task actions. */
+/** The write endpoints the store does not accept yet: the media task actions (3C-4c commit 6). The three media endpoints work (store-media-endpoints.test.mjs). */
 const MEDIA_ENDPOINTS = [
-  ['POST', 'upload'], ['POST', 'import'], ['POST', 'media/delete'],
   ['POST', 'media/jobs'], ...['preview', 'import', 'pause', 'close', 'abandon'].map((action) => ['POST', `media/jobs/018bd504-c600-7000-8000-000000000001/${action}`]),
 ]
 
@@ -109,7 +108,7 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.equal(module.privateV2Files.places.places.find((place) => place.id === country.body.countryId).externalIds.iso3166Alpha2, 'JP')
     })
 
-    await t.test('media endpoints and media tasks are 409 E_STORE_MODE_LIMITED, unread and unwritten', async () => {
+    await t.test('media task actions are 409 E_STORE_MODE_LIMITED, unread and unwritten (until 3C-4c commit 6)', async () => {
       const before = await treeDigest(root)
       for (const [method, route] of MEDIA_ENDPOINTS) {
         const result = await requestTo(handler, { url: editorPrefix + route, method, content: Buffer.from('{') })

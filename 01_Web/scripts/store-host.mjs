@@ -16,7 +16,7 @@ import { closeSync, lstatSync, openSync, realpathSync, unlinkSync } from 'node:f
 import path from 'node:path'
 import { libraryLockProbe, withLibraryOperation } from './library-operation-lock.mjs'
 import {
-  MEDIA_SCHEMA, MEDIA_TABLES, applyMediaBlock, checkWrittenAssets, mediaRegistryProblems, mediaRegistrySnapshot, validMediaBlock,
+  MEDIA_SCHEMA, MEDIA_TABLES, applyMediaBlock, checkWrittenAssets, mediaEntitiesOf, mediaRegistryProblems, mediaRegistrySnapshot, settleFileOperations, validMediaBlock,
 } from './store-media-registry.mjs'
 import {
   StoreHostError, closeQuietly, openConnection, pragmaValue, scratchConnection, sqliteDetail, storeErrorFrom, transactionState,
@@ -890,10 +890,15 @@ function hostOptions(options) {
  *
  * Options: `privatePaths` (ordinary writes check the library operation lock under it, see
  * resolveLibrary) or `lock: withoutLibraryLock` (tests and benchmarks: no coordination), `now`,
- * `policy` (StorePolicy for planning and full validation), `readOnly`.
+ * `policy` (StorePolicy for planning and full validation), `readOnly`, and `writerSession: false`
+ * (3C-4c: a writable open for a command-line tool such as media:import, which may run while a dev
+ * server has the store open: it neither reads nor writes clean_shutdown, so the server's flag stays
+ * its own; SQLite still rolls back a hot journal).
  */
 export function openStore(file, options = {}) {
-  return openHandle(file, options, { session: true })
+  const { writerSession = true, ...rest } = options
+  if (typeof writerSession !== 'boolean') fail('E_STORE_OPTIONS', { path: 'writerSession' })
+  return openHandle(file, rest, { session: writerSession })
 }
 
 /**
@@ -1129,6 +1134,20 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
      */
     mediaRegistry() {
       return readTransaction((connection) => ({ revision: currentRevision(connection), ...mediaRegistrySnapshot(connection) }))
+    },
+    /** The `starmap:media` entities `{ id, typeId, fields }` (3C-4c: the records the scan is compared with), one read transaction. */
+    mediaEntities() {
+      return readTransaction((connection) => mediaEntitiesOf(connection))
+    },
+    /**
+     * Settle pending file operations (3C-4c, ./media-file-ops.mjs): remove the rows `seqs` and the media_files rows of
+     * `files` that nothing links any more, in one small write (no revision change). The caller holds the library lease
+     * and passes `{ leaseToken }`. Resolves { settled, filesRemoved }.
+     */
+    async settleFileOps(work, options) {
+      writer()
+      const leaseToken = writeOptions(options)
+      return enqueue(() => smallWrite((connection) => settleFileOperations(connection, work), leaseToken))
     },
     /**
      * Every row as a FormalState, through Core's full validation (readFormalState) and deep

@@ -75,5 +75,21 @@ export async function writeSyntheticInbox(paths) {
   }
 }
 
+/**
+ * A V2 library the V2 importer has imported: the invented registry and the synthetic Inbox (the Hill Town binding
+ * confirmed, so its place.json is written). Returns the Inbox paths of writeSyntheticInbox.
+ */
+export async function importedV2Library(paths, { now = '2026-10-16T00:00:00.000Z' } = {}) {
+  await writeJson(paths.v2FilePaths.places, syntheticPlaces())
+  const files = await writeSyntheticInbox(paths)
+  const { runV2MediaImport } = await import('./v2-media-import.mjs')
+  const code = await runV2MediaImport({ privatePaths: paths, apply: true, acceptFolderBindings: true, now: () => new Date(now), log: () => {}, logError: () => {} })
+  if (code !== 0) throw new Error(`the V2 import of the synthetic library exited with ${code}`)
+  return files
+}
+
+/** A plain-colour JPEG as bytes (an upload's body). */
+export const imageBytes = ({ width = 64, height = 48, color }) => sharp({ create: { width, height, channels: 3, background: color } }).jpeg({ quality: 90 }).toBuffer()
+
 /** The absolute file of a portable `MediaInbox/…` path. */
 export const inboxFile = (paths, portable) => path.join(paths.inboxRoot, ...portable.split('/').slice(1))

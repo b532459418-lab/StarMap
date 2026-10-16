@@ -231,7 +231,7 @@ test('store:backup copies the media with the rules of npm run backup and records
   assert.equal(result.manifest.formatVersion, 2)
   assert.equal(media.count, media.entries.length)
   const listed = media.entries.map((entry) => entry.path)
-  assert.ok(listed.includes('data/v2/media-source-index.local.json'))
+  assert.equal(listed.includes('data/v2/media-source-index.local.json'), false, 'the V2 media source index stays out (3C-4c): the registry is in the store')
   assert.ok(listed.includes('MediaInbox/Iceland/Reykjavik/photos/neutral.png'))
   assert.ok(listed.includes('MediaInbox/Iceland/Reykjavik/place.json'))
   assert.ok(listed.some((file) => file.startsWith('media/user/') && file.endsWith('thumb.webp')))
@@ -261,6 +261,33 @@ test('store:backup copies the media with the rules of npm run backup and records
   const after = await readProjection(restoredPaths)
   assert.deepEqual(after.files, before.files)
   assert.ok(after.files.media.items.length > 0)
+  // The media registry and the files correspond (3C-4c): check() passes and every registered generated file is there
+  // with the SHA-256 the registry recorded.
+  const handle = openStore(storeFileOf(restoredPaths), { readOnly: true, policy: OFFICIAL_POLICY })
+  let registry
+  try {
+    assert.deepEqual(handle.check().problems, [])
+    registry = handle.mediaRegistry()
+  } finally { await handle.close() }
+  assert.ok(registry.files.length > 0)
+  assert.ok(registry.sources.some((source) => source.path === 'MediaInbox/Iceland/Reykjavik/photos/neutral.png' && source.state === 'present'))
+  for (const file of registry.files) {
+    for (const output of file.outputs) assert.equal(await fileSha256(path.join(to, ...file.directory.split('/'), output.name)), output.sha256, output.name)
+  }
+})
+
+test('store:backup refuses a generated file whose content is not the one the media registry recorded (3C-4c)', async (t) => {
+  const { root, paths, at } = await migratedWithMedia(t)
+  const handle = openStore(storeFileOf(paths), { readOnly: true, policy: OFFICIAL_POLICY })
+  let registry
+  try { registry = handle.mediaRegistry() } finally { await handle.close() }
+  const [file] = registry.files
+  const thumb = file.outputs.find((output) => output.name.endsWith('thumb.webp'))
+  const target = path.join(root, ...file.directory.split('/'), thumb.name)
+  await writeFile(target, await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 1, g: 2, b: 3 } } }).webp().toBuffer())
+  await assert.rejects(backupStore(paths, { out: at('backup'), now: NOW }), { code: 'E_BACKUP_MEDIA_REGISTRY' })
+  assert.equal(existsSync(at('backup')), false)
+  assert.equal(await mediaCopyInProgress(paths), false)
 })
 
 test('store:restore fails on a damaged, missing or extra media file, or a media path outside the allowlist, and removes the new root', async (t) => {
@@ -362,7 +389,6 @@ test('media paths outside /media/user/ are not files of the private root: counte
   assert.equal(manifest.media.count, 0)
   assert.deepEqual(manifest.media.warnings, [
     'MEDIA_OUTSIDE_USER_MEDIA: 4 media paths are outside /media/user/ and are not files of the private root.',
-    'SOURCE_INDEX_ABSENT: runtime media is preserved; import replay cannot be guaranteed.',
   ])
   assert.ok(lines.some((line) => line.startsWith('提醒：MEDIA_OUTSIDE_USER_MEDIA')))
   await restoreStore({ from: at('backup'), to: at('restored') })

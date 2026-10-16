@@ -565,6 +565,29 @@ async function verifyGeneratedOriginals({ files, unique, outputRoot, errors, log
 export const scanV2MediaImport = (options) => runV2MediaImport({ ...options, apply: false, capturePlan: true })
 
 /**
+ * The generated files of one content (D7): the original copied, the derivatives made by sharp, each written to a
+ * temporary file, fsynced and published without overwriting; a final path that exists counts as published. Temporary
+ * files other processes left in the directory are removed first. `entry`: { sourcePath, outputDirectory, outputPath,
+ * derivatives: [{ outputPath, maxEdge, quality }] }. Shared by the V2 import and the new library's (3C-4c). The caller
+ * holds the library lease.
+ */
+export async function publishGeneratedFiles(entry) {
+  await mkdir(entry.outputDirectory, { recursive: true })
+  await removeStaleTemporaries(entry.outputDirectory)
+  if (!(await pathExists(entry.outputPath))) {
+    await writeThenPublish(entry.outputPath, (temporary) => copyFile(entry.sourcePath, temporary, constants.COPYFILE_EXCL))
+  }
+  for (const derivative of entry.derivatives) {
+    if (await pathExists(derivative.outputPath)) continue
+    await writeThenPublish(derivative.outputPath, (temporary) => sharp(entry.sourcePath)
+      .rotate()
+      .resize({ width: derivative.maxEdge, height: derivative.maxEdge, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: derivative.quality, effort: 4 })
+      .toFile(temporary))
+  }
+}
+
+/**
  * Caller validates the full plan and holds the library lease before entering. Folder bindings found by name are
  * pinned only when the caller passes `acceptFolderBindings` (batch 2A); otherwise nothing is written.
  */
@@ -577,21 +600,7 @@ export async function applyV2MediaImportScan({ privatePaths, scan, now = () => n
   const relative = (filePath) => path.relative(inboxRoot, filePath)
   const generatedAt = now().toISOString()
   const catalog = mediaCatalogFileOf(items, generatedAt)
-  for (const entry of unique) {
-    await mkdir(entry.outputDirectory, { recursive: true })
-    await removeStaleTemporaries(entry.outputDirectory)
-    if (!(await pathExists(entry.outputPath))) {
-      await writeThenPublish(entry.outputPath, (temporary) => copyFile(entry.sourcePath, temporary, constants.COPYFILE_EXCL))
-    }
-    for (const derivative of entry.derivatives) {
-      if (await pathExists(derivative.outputPath)) continue
-      await writeThenPublish(derivative.outputPath, (temporary) => sharp(entry.sourcePath)
-        .rotate()
-        .resize({ width: derivative.maxEdge, height: derivative.maxEdge, fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: derivative.quality, effort: 4 })
-        .toFile(temporary))
-    }
-  }
+  for (const entry of unique) await publishGeneratedFiles(entry)
   await onStage('generated')
 
   // RFC ID-6：已确认的按名称（或旧 country.json）匹配的文件夹写入 place.json，此后按 id 解析、不再按名字重新匹配。
