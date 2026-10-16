@@ -77,10 +77,10 @@ test('a request without a media block keeps exactly the digest it had before 3C-
   const plain = { requestId: '018f0000-0000-7000-8000-000000000001', baseRevision: 3, kind: 'starmap.editor.state@abc', actor: 'local-editor',
     commands: [{ op: 'remove', table: 'viewItems', id: 'starmap:editor/hidden-media#x', expectedRevision: 2 }] }
   assert.equal(requestDigest(plain), 'a60e7910c1ab5da78736d2da6dcf9155936c8f99001d6c978548de8898b15f93')
-  const withMedia = { ...plain, media: validMediaBlock({ scanCache: [{ op: 'remove', path: 'MediaInbox/a/b/photos/c.jpg' }] }) }
+  const withMedia = { ...plain, media: validMediaBlock({ scanCache: [{ op: 'remove', pathKey: 'mediainbox/a/b/photos/c.jpg' }] }) }
   assert.notEqual(requestDigest(withMedia), requestDigest(plain))
   // The block is normalized before it is digested: the same operations give the same digest.
-  assert.equal(requestDigest({ ...plain, media: validMediaBlock({ scanCache: [{ op: 'remove', path: 'MediaInbox/a/b/photos/c.jpg' }], files: [] }) }), requestDigest(withMedia))
+  assert.equal(requestDigest({ ...plain, media: validMediaBlock({ scanCache: [{ op: 'remove', pathKey: 'mediainbox/a/b/photos/c.jpg' }], files: [] }) }), requestDigest(withMedia))
 })
 
 test('a media block commits with the records it describes, in one transaction, and replays like any request', async (t) => {

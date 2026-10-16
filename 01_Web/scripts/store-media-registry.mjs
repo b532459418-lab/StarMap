@@ -86,7 +86,7 @@ const validOutputs = (outputs) => Array.isArray(outputs) && outputs.length > 0 &
  * - assetFiles: `{ op: 'put', assetId, sha256 }` | `{ op: 'remove', assetId }`
  * - sources: `{ op: 'add', path, sha256, recordId, state, descriptionDigest? }` |
  *   `{ op: 'update', seq, path?, state?, descriptionDigest? }` (a source's content and record never change)
- * - scanCache: `{ op: 'put', path, size, mtimeMs, sha256 }` | `{ op: 'remove', path }`
+ * - scanCache: `{ op: 'put', path, size, mtimeMs, sha256 }` | `{ op: 'remove', pathKey }` (a row by its key)
  * - fileOps: `{ kind: 'delete-source' | 'delete-generated', target, detail }`
  */
 export function validMediaBlock(media) {
@@ -115,7 +115,7 @@ export function validMediaBlock(media) {
         && item.op === 'add' && portableUnder(item.path, INBOX_PREFIX) && SHA256.test(item.sha256) && text(item.recordId)
         && SOURCE_STATES.includes(item.state) && (item.descriptionDigest === undefined || DIGEST.test(item.descriptionDigest)))),
     scanCache: list('scanCache', (item) => (item?.op === 'remove'
-      ? exact(item, ['op', 'path']) && portableUnder(item.path, INBOX_PREFIX)
+      ? exact(item, ['op', 'pathKey']) && text(item.pathKey, 1200) && item.pathKey === pathKeyOf(item.pathKey) && item.pathKey.startsWith(pathKeyOf(INBOX_PREFIX))
       : exact(item, ['op', 'path', 'size', 'mtimeMs', 'sha256']) && item.op === 'put' && portableUnder(item.path, INBOX_PREFIX)
         && count(item.size) && typeof item.mtimeMs === 'number' && Number.isFinite(item.mtimeMs) && item.mtimeMs >= 0 && SHA256.test(item.sha256))),
     fileOps: list('fileOps', (item) => exact(item, ['kind', 'target', 'detail']) && FILE_OP_KINDS.includes(item.kind)
@@ -135,7 +135,7 @@ export function validMediaBlock(media) {
   once('files', (item) => item.sha256)
   once('assetFiles', (item) => item.assetId)
   once('sources', (item) => (item.op === 'update' ? `#${item.seq}` : undefined))
-  once('scanCache', (item) => pathKeyOf(item.path))
+  once('scanCache', (item) => item.pathKey ?? pathKeyOf(item.path))
   return block
 }
 
@@ -249,7 +249,7 @@ export function applyMediaBlock(db, block, { requestId, at, deletes = [] }) {
   })
   for (const item of block.scanCache) {
     if (item.op === 'put') sql.cachePut.run(pathKeyOf(item.path), item.size, item.mtimeMs, item.sha256)
-    else sql.cacheRemove.run(pathKeyOf(item.path))
+    else sql.cacheRemove.run(item.pathKey)
   }
   for (const item of block.fileOps) sql.fileOpInsert.run(item.kind, item.target, requestId, at, JSON.stringify(item.detail))
   // Removed rows of the request's change set leave nothing behind in the registry.
