@@ -13,7 +13,7 @@
  * Responses keep V2's shapes ({ ok, output, restoredMediaIds } / { ok, deletedIds, deletedSourceFiles, output }) plus the
  * revision and the receipt, so the page moves its base revision forward.
  */
-import { MEDIA_KINDS, createMediaService, releaseImageFiles } from './media-service.mjs'
+import { MEDIA_KINDS, assetsOfPaths, createMediaService, releaseImageFiles } from './media-service.mjs'
 import { pathKeyOf } from './store-media-registry.mjs'
 import { storeFailureResponse, storeProtocolOf, storeRequestKind } from './store-session.mjs'
 import { handleV2Upload } from './v2-media-store.mjs'
@@ -22,23 +22,6 @@ import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
 const withDetails = (code, lines, status = 400) => {
   const body = errorBody(new V2WriteError(code))
   return { status, body: lines.length ? { ...body, details: lines.join('\n') } : body }
-}
-
-/**
- * The asset of each explicit path (deduplicated, in order): the record created for it now, otherwise the record its
- * present source names (a file already imported, a retried request). V2 answered with the media of these paths too.
- */
-function restoredIdsOf(explicitKeys, created, mediaStore) {
-  const { sources } = mediaStore.mediaRegistry()
-  const assetOf = new Map(mediaStore.mediaEntities().map((row) => [row.id, row.fields.asset]))
-  const ids = []
-  for (const key of explicitKeys) {
-    const made = created?.get(key)?.assetId
-    const source = made ? undefined : sources.find((item) => item.pathKey === key && item.state === 'present')
-    const id = made ?? (source ? assetOf.get(source.recordId) : undefined)
-    if (typeof id === 'string' && !ids.includes(id)) ids.push(id)
-  }
-  return ids
 }
 
 /** The portable paths of an import request's `sourcePaths` (normalized like V2's), or a refusal. */
@@ -80,7 +63,7 @@ export async function handleStoreMediaRoute({ routeName, privatePaths, mediaStor
       if (result.duplicate) {
         return {
           status: 200,
-          body: { ok: true, output: '这个导入请求已经完成。', restoredMediaIds: restoredIdsOf(explicitKeys, undefined, mediaStore), revision: result.revision, duplicate: true, receipt: result.receipt },
+          body: { ok: true, output: '这个导入请求已经完成。', restoredMediaIds: assetsOfPaths(mediaStore, explicitKeys), revision: result.revision, duplicate: true, receipt: result.receipt },
         }
       }
       if (result.blocked) {
@@ -89,7 +72,7 @@ export async function handleStoreMediaRoute({ routeName, privatePaths, mediaStor
         if (blockers.errors.length || blockers.uncertain.length || blockers.bindings.length) return withDetails('E_MEDIA_IMPORT_BLOCKED', lines)
         return withDetails('E_MEDIA_SOURCE_MATCHES_UNCONFIRMED', lines, 409)
       }
-      const restoredMediaIds = restoredIdsOf(explicitKeys, result.created, mediaStore)
+      const restoredMediaIds = assetsOfPaths(mediaStore, explicitKeys, result.created)
       return {
         status: 200,
         body: { ok: true, output: service.reportLines(result.plan).join('\n'), restoredMediaIds, revision: result.revision, duplicate: false, ...(result.receipt ? { receipt: result.receipt } : {}) },

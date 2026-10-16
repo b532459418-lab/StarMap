@@ -17,13 +17,15 @@ const places = new Map(worldGraphSnapshot.entities.map((place) => [place.id, pla
 const mediaById = new Map(allImportedMediaItems.map((item) => [item.id, item]))
 
 function ImportScope({ job, preview, disabled, onImport }: {
-  job: MediaJob; preview: MediaJobPreview; disabled: boolean; onImport: (options: { acceptFolderBindings?: boolean }) => Promise<unknown>
+  job: MediaJob; preview: MediaJobPreview; disabled: boolean; onImport: (options: { acceptFolderBindings?: boolean; acceptSourceMatches?: boolean }) => Promise<unknown>
 }) {
   const { t } = useTranslation('mediaRecovery')
   const { name } = usePlaceNames()
   const [confirmed, setConfirmed] = useState(false)
   // Batch 2A: folders matched to a place only by name are confirmed here, in the same import step.
   const [bindingsConfirmed, setBindingsConfirmed] = useState(false)
+  // 3C-4c (the new library): source matches are confirmed the same way, next to their list.
+  const [matchesConfirmed, setMatchesConfirmed] = useState(false)
   const blockerDescriptions: Record<string, string> = {
     E_MEDIA_PLAN_READ: t('blockerRead'), E_MEDIA_PLAN_LINK: t('blockerLink'), E_MEDIA_PLAN_JSON: t('blockerJson'),
     E_MEDIA_PLAN_SCAN: t('blockerScan'), E_MEDIA_PLAN_UNCERTAIN: t('blockerUncertain'),
@@ -62,6 +64,9 @@ function ImportScope({ job, preview, disabled, onImport }: {
   const stale = job.revision !== preview.revision
   const bindings = summary.pins
   const bindingsPending = bindings.length > 0 && !bindingsConfirmed
+  const sourceMatches = summary.sourceMatches ?? []
+  const matchesPending = sourceMatches.length > 0 && !matchesConfirmed
+  const matchReason = { 'deleted-content': t('sourceMatchDeleted'), replaced: t('sourceMatchReplaced'), 'ambiguous-move': t('sourceMatchAmbiguous') }
   const bindingPlace = (names: Record<string, string>, placeId: string) =>
     [...new Set([names['zh-Hans'], names.en].filter(Boolean))].join(' / ') || t('placeRecord', { id: placeId })
   return <section className="atlas-media-recovery-preview" data-testid="media-import-preview" aria-label={t('planTitle')}>
@@ -71,6 +76,7 @@ function ImportScope({ job, preview, disabled, onImport }: {
     <p>{t('planCounts', { added: summary.addedIds.length, updated: summary.updatedIds.length, removed: summary.removedIds.length })}</p>
     <p>{t('planEffects', { restored: summary.editorEffects.restoredMediaIds.length, pins: summary.pins.length, outputs: summary.outputs.length })}</p>
     {unsent > 0 ? <p>{t('partial', { received: preview.selectedFileIds.length, unsent })}</p> : null}
+    {summary.missing ? <p>{t('planMissing', { count: summary.missing })}</p> : null}
     {impactGroups.map((group) => <details key={group.testId} data-testid={group.testId} open={group.ids.length > 0}>
       <summary>{group.title}</summary>
       {group.ids.length > 0 ? <ul className="atlas-media-recovery-sources">
@@ -115,6 +121,20 @@ function ImportScope({ job, preview, disabled, onImport }: {
         <span>{t('bindingsConfirm')}</span>
       </label>
     </section> : null}
+    {sourceMatches.length > 0 ? <section data-testid="media-scope-source-matches" aria-label={t('planSourceMatches', { count: sourceMatches.length })}>
+      <h4>{t('planSourceMatches', { count: sourceMatches.length })}</h4>
+      <p>{t('planSourceMatchesNotice')}</p>
+      <ul className="atlas-media-recovery-sources">
+        {sourceMatches.map((match) => <li key={match.sourcePath} data-source-path={match.sourcePath} data-match-kind={match.kind}>
+          <span>{match.sourcePath}</span>
+          <small>{matchReason[match.kind]} · {t(match.proposal === 'move' ? 'sourceMatchMove' : 'sourceMatchNew')}</small>
+        </li>)}
+      </ul>
+      <label className="atlas-media-recovery-checkbox">
+        <input type="checkbox" checked={matchesConfirmed} disabled={disabled || stale || preview.blockers.length > 0} onChange={(event) => setMatchesConfirmed(event.target.checked)} />
+        <span>{t('sourceMatchesConfirm')}</span>
+      </label>
+    </section> : null}
     {preview.blockers.length > 0 ? <div role="status">
       <p>{t('blockers')}</p>
       <ul>{preview.blockers.map((blocker, index) => <li key={`${blocker.code}/${index}`}>
@@ -126,8 +146,11 @@ function ImportScope({ job, preview, disabled, onImport }: {
       <input type="checkbox" checked={confirmed} disabled={disabled || stale || preview.blockers.length > 0} onChange={(event) => setConfirmed(event.target.checked)} />
       <span>{t('scopeConfirm')}</span>
     </label>
-    <button type="button" disabled={disabled || stale || !confirmed || bindingsPending || preview.blockers.length > 0}
-      onClick={() => void onImport(bindings.length > 0 ? { acceptFolderBindings: bindingsConfirmed } : {})}>{t('import')}</button>
+    <button type="button" disabled={disabled || stale || !confirmed || bindingsPending || matchesPending || preview.blockers.length > 0}
+      onClick={() => void onImport({
+        ...(bindings.length > 0 ? { acceptFolderBindings: bindingsConfirmed } : {}),
+        ...(sourceMatches.length > 0 ? { acceptSourceMatches: matchesConfirmed } : {}),
+      })}>{t('import')}</button>
   </section>
 }
 

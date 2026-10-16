@@ -30,6 +30,16 @@
  * changed. Shared V2 data under `data/v2/` is evidence only: ordinary edits rewrite it, so it never raises
  * `changed_resource`. Content hashes are compared only by the explicit check `verifyMediaJobReceipts`
  * (`npm run media:check -- --verify`).
+ *
+ * The new-library mode (3C-4c, design v2 §6): the handlers take `storeMedia` ({ mediaStore }, the plugin's session).
+ * Places come from the store's view; `reconcile` asks the media registry whether a received file was imported (a
+ * present source at its path) instead of the V2 catalog and index; the preview is ./store-media-jobs.mjs's plan; the
+ * import is one store commit by the media service with `requestId = operationId` (UUIDv7; another version is
+ * E_STALE: the page predates the store) and the task's files explicit. Its stages: `generated` and `pins` before
+ * the commit, `catalog` (committed), `index` and `editor` right after (one commit holds all three). The receipt
+ * lists the task's sources and the generated files of their records, `mediaIds` are the new asset ids, and
+ * `store: { requestId, revision }` names the commit. Source matches to confirm need `acceptSourceMatches: true`
+ * (409 E_MEDIA_SOURCE_MATCHES_UNCONFIRMED otherwise). Without `storeMedia` nothing changes.
  */
 import { mkdir, readFile, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
@@ -45,6 +55,8 @@ import { droneUploadMetadataOf, restoreImportedMedia, uploadTargetOf } from '../
 import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
 import { createMediaImportPlan, applyMediaImportPlan, verifyMediaImportPlanInputs } from './media-import-plan.mjs'
 import { isDeepStrictEqual } from 'node:util'
+import { pathKeyOf } from './store-media-registry.mjs'
+import { isUuidV7 } from '../src/data/canonical/uuidv7.ts'
 
 const prefix = '/__travelatlas/editor/media/jobs'
 const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
@@ -104,7 +116,8 @@ const responseError = (error) => {
     ['E_MEDIA_JOB_CONFLICT','E_MEDIA_JOB_REVIEW'].includes(error?.code) ? error.code : 'E_MEDIA_JOB_REVIEW')
   const { details: _details, ...body } = errorBody(known)
   void _details
-  return { status: known.code === 'E_MEDIA_JOB_NOT_FOUND' ? 404 : ['E_LIBRARY_BUSY', 'E_LIBRARY_ROOT_MOVED', 'E_MEDIA_JOB_CONFLICT', 'E_MEDIA_JOB_PENDING', 'E_MEDIA_JOB_REVIEW', 'E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED'].includes(known.code) ? 409 : 400, body }
+  return { status: known.code === 'E_MEDIA_JOB_NOT_FOUND' ? 404 : ['E_LIBRARY_BUSY', 'E_LIBRARY_ROOT_MOVED', 'E_MEDIA_JOB_CONFLICT', 'E_MEDIA_JOB_PENDING', 'E_MEDIA_JOB_REVIEW', 'E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED',
+    'E_MEDIA_SOURCE_MATCHES_UNCONFIRMED', 'E_STALE', 'E_STORE_READ_ONLY'].includes(known.code) ? 409 : 400, body }
 }
 const summary = (job) => ({
   jobId: job.jobId, libraryId: job.libraryId, revision: job.revision, phase: job.phase,
@@ -158,7 +171,9 @@ async function history(paths, job, resourceChecks = new Map()) {
   result.canClose = job.phase === 'completed'
   return result
 }
-async function checkedFiles(paths) {
+async function checkedFiles(paths, storeMedia) {
+  // 3C-4c: the new library's view (places, catalog, editor state), never the V2 files.
+  if (storeMedia) return (await storeMedia.mediaStore.view()).files
   for (const file of Object.values(paths.v2FilePaths)) await assertUploadPath(paths.root, file)
   return readV2Files(paths)
 }
@@ -202,7 +217,7 @@ function abandonedSummary(job) {
   return result
 }
 
-async function reconcile(paths, job, resourceChecks) {
+async function reconcile(paths, job, resourceChecks, storeMedia) {
   // A structurally sealed record is historical proof of that operation. Later edits do not
   // rewind it into an import retry, even when the original target or resources were deleted.
   if (['completed', 'closed'].includes(job.phase)) return history(paths, job, resourceChecks)
@@ -220,12 +235,16 @@ async function reconcile(paths, job, resourceChecks) {
     return result
   }
   try {
-    const files = await checkedFiles(paths)
+    const files = await checkedFiles(paths, storeMedia)
     uploadTargetOf(files, job, new Date())
-    await assertUploadPath(paths.root, paths.v2MediaSourceIndexPath)
-    const index = await readJson(paths.v2MediaSourceIndexPath, { schemaVersion: 1, sourcesById: {} })
-    if (!index || index.schemaVersion !== 1 || typeof index.sourcesById !== 'object' || index.sourcesById === null || Array.isArray(index.sourcesById)
-      || Object.values(index.sourcesById).some(rows => !Array.isArray(rows) || rows.some(value => typeof value !== 'string'))) fail('E_MEDIA_JOB_REVIEW')
+    let index, registry
+    if (storeMedia) registry = storeMedia.mediaStore.mediaRegistry()
+    else {
+      await assertUploadPath(paths.root, paths.v2MediaSourceIndexPath)
+      index = await readJson(paths.v2MediaSourceIndexPath, { schemaVersion: 1, sourcesById: {} })
+      if (!index || index.schemaVersion !== 1 || typeof index.sourcesById !== 'object' || index.sourcesById === null || Array.isArray(index.sourcesById)
+        || Object.values(index.sourcesById).some(rows => !Array.isArray(rows) || rows.some(value => typeof value !== 'string'))) fail('E_MEDIA_JOB_REVIEW')
+    }
     for (let i = 0; i < job.files.length; i++) {
       const file = job.files[i], item = result.files[i]
       item.status = file.phase === 'intended' ? 'not_received' : 'needs_review'
@@ -234,6 +253,14 @@ async function reconcile(paths, job, resourceChecks) {
       await assertUploadPath(paths.root, source)
       if (!(await stat(source)).isFile() || (await stat(source)).size !== file.bytes || await digestFile(source) !== file.sha256
         || !await pinsAndMetadataMatch(paths, job, file)) continue
+      if (registry) {
+        // 3C-4c: a present source with the file's path and content means it was imported (by this task without its
+        // receipt, or by another import): review, never an import again. The same content elsewhere does not count (D2),
+        // nor does a source the registry still lists at that path with other content (the file there was replaced).
+        const key = pathKeyOf(`MediaInbox/${file.sourcePath}`)
+        if (!registry.sources.some(source => source.pathKey === key && source.sha256 === file.sha256 && source.state === 'present')) item.status = 'pending'
+        continue
+      }
       const contentId = `media-${file.sha256.slice(0,16)}`
       // A catalog hit without the task's sealed receipt never proves this import completed.
       if (Object.values(index.sourcesById).some(rows => rows.includes(file.sourcePath))) continue
@@ -269,14 +296,26 @@ async function reconcile(paths, job, resourceChecks) {
   return result
 }
 
-async function taskPlan(paths, job, input) {
-  if (!exactInput(input, ['libraryId','revision','selectedFileIds','operationId','planDigest','acceptFolderBindings'])) fail('E_MEDIA_JOB_INVALID')
+/** 3C-4c: the store plan of a task (./store-media-jobs.mjs): the media service's plan with the task's files explicit. */
+async function storeTaskPlan(paths, job, selectedFileIds, storeMedia) {
+  const { createMediaService } = await import('./media-service.mjs')
+  const { storeTaskPlanOf, taskPathsOf } = await import('./store-media-jobs.mjs')
+  const { mediaStore } = storeMedia
+  const service = createMediaService({ privatePaths: paths, store: mediaStore })
+  const servicePlan = await service.planImport({ explicitPaths: taskPathsOf(job, selectedFileIds), blockOnWarnings: true })
+  return { ...storeTaskPlanOf({ plan: servicePlan, meta: mediaStore.meta(), job, selectedFileIds }), service }
+}
+
+async function taskPlan(paths, job, input, storeMedia) {
+  const keys = ['libraryId','revision','selectedFileIds','operationId','planDigest','acceptFolderBindings', ...(storeMedia ? ['acceptSourceMatches'] : [])]
+  if (!exactInput(input, keys)) fail('E_MEDIA_JOB_INVALID')
   assertIntent(job,input)
   if (job.revision !== input.revision) fail('E_MEDIA_JOB_CONFLICT')
   if (job.import || !['open','paused'].includes(job.phase)) fail('E_MEDIA_JOB_REVIEW')
   const selectedFileIds = selectionOf(job,input.selectedFileIds)
-  const known = await reconcile(paths,job)
+  const known = await reconcile(paths,job,undefined,storeMedia)
   if (known.status !== 'pending' || known.files.some(file => selectedFileIds.includes(file.fileId) && file.status !== 'pending')) fail('E_MEDIA_JOB_REVIEW')
+  if (storeMedia) return { plan: await storeTaskPlan(paths, job, selectedFileIds, storeMedia), selectedFileIds, known }
   const plan = await createMediaImportPlan({privatePaths:paths})
   const sourcePaths = job.files.filter(file => selectedFileIds.includes(file.fileId)).map(file => file.sourcePath)
   // Confirm the scanner resolves the fixed task intent; an explicit sidecar id cannot replace it.
@@ -307,15 +346,18 @@ async function taskPlan(paths, job, input) {
 }
 
 /** POST preview is observational: even coordination records stay byte-for-byte unchanged. */
-export async function handleMediaJobPreview({privatePaths,route,input}) {
+export async function handleMediaJobPreview({privatePaths,route,input,storeMedia}) {
   try {
     if (!exactInput(input,['libraryId','revision','selectedFileIds'])) fail('E_MEDIA_JOB_INVALID')
     const before = await inspectLibraryOperation(privatePaths)
     if (before.state !== 'idle') fail(before.state === 'busy' ? 'E_LIBRARY_BUSY' : 'E_MEDIA_JOB_REVIEW')
     const job = await createMediaJobStore(privatePaths).read(route.jobId)
-    const {plan,selectedFileIds,editorOutcome,known} = await taskPlan(privatePaths,job,input)
+    const {plan,selectedFileIds,editorOutcome,known} = await taskPlan(privatePaths,job,input,storeMedia)
     const after = await inspectLibraryOperation(privatePaths)
     if (after.state !== 'idle' || after.generation !== before.generation) fail('E_MEDIA_JOB_CONFLICT')
+    if (storeMedia) {
+      return {status:200,body:{ok:true,job:{...known,canImport:plan.blockers.length === 0},plan:{digest:plan.digest,summary:plan.summary,blockers:plan.blockers,selectedFileIds}}}
+    }
     const restoredMediaIds = editorOutcome?.result.restoredMediaIds ?? []
     const state = editorOutcome?.writes.find(write => write.file === 'editorState')?.value
     const orders = state ? Object.fromEntries([['photos',state.mediaOrderByCity],['drone',state.droneOrderByCity]]
@@ -325,11 +367,99 @@ export async function handleMediaJobPreview({privatePaths,route,input}) {
   } catch(error) { return responseError(error) }
 }
 
-async function importTask(paths,store,job,input,deps) {
-  if (!exactInput(input,['libraryId','revision','selectedFileIds','operationId','planDigest','acceptFolderBindings'])
+/**
+ * 3C-4c: a task's import in the new library (see the file header). The service computes the plan again after the queued
+ * deletions, and it must still have the previewed digest; the rest follows the V2 task import: the task record's
+ * stages, the sources and outputs verified, then the sealed receipt.
+ */
+async function importStoreTask(paths,store,job,input,deps,storeMedia,leaseToken) {
+  // The store's request ids are lowercase UUIDv7; a page from before the new library generates v4 ids.
+  if (!isUuidV7(input.operationId)) fail('E_STALE')
+  const selectedFileIds = selectionOf(job,input.selectedFileIds)
+  if (job.import) {
+    if (job.import.operationId !== input.operationId || job.import.planDigest !== input.planDigest
+      || job.import.sourceRevision !== input.revision || !isDeepStrictEqual(job.import.selectedFileIds,selectedFileIds)) fail('E_MEDIA_JOB_CONFLICT')
+    if (job.import.phase !== 'sealed' || !['completed','closed'].includes(job.phase)) fail('E_MEDIA_JOB_REVIEW')
+    return {status:200,body:{ok:true,replayed:true,job:await history(paths,job)}}
+  }
+  const {plan} = await taskPlan(paths,job,input,storeMedia)
+  if (plan.digest !== input.planDigest) fail('E_MEDIA_JOB_CONFLICT')
+  if (plan.blockers.length) fail('E_MEDIA_IMPORT_BLOCKED')
+  if (plan.summary.pins.length > 0 && input.acceptFolderBindings !== true) fail('E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED')
+  if (plan.summary.sourceMatches.length > 0 && input.acceptSourceMatches !== true) fail('E_MEDIA_SOURCE_MATCHES_UNCONFIRMED')
+  const { MEDIA_KINDS, assetsOfPaths } = await import('./media-service.mjs')
+  const { storeLibraryDigestOf, storeTaskPlanOf, taskPathsOf } = await import('./store-media-jobs.mjs')
+  const { mediaStore } = storeMedia
+  job = await store.update(job.jobId,job.revision,next => {
+    next.phase = 'open'
+    next.import = {operationId:input.operationId,planDigest:plan.digest,sourceRevision:input.revision,selectedFileIds,phase:'started'}
+    return next
+  })
+  const stage = async phase => {
+    job = await store.update(job.jobId,job.revision,next => {next.import.phase = phase; return next})
+    await deps?.onMediaJobImportStage?.(phase)
+  }
+  try {
+    const explicitPaths = taskPathsOf(job,selectedFileIds)
+    const result = await plan.service.importInbox({
+      requestId: input.operationId, actor: 'local-editor', leaseToken, explicitPaths, blockOnWarnings: true,
+      kind: `${MEDIA_KINDS.task}@${createHash('sha256').update(JSON.stringify([job.jobId, plan.digest, selectedFileIds])).digest('hex')}`,
+      acceptSourceMatches: input.acceptSourceMatches === true, acceptFolderBindings: input.acceptFolderBindings === true,
+      onStage: stage,
+      expect: (current) => {
+        if (storeTaskPlanOf({ plan: current, meta: mediaStore.meta(), job, selectedFileIds }).digest !== input.planDigest) fail('E_MEDIA_JOB_CONFLICT')
+      },
+    })
+    if (!result.committed) fail('E_MEDIA_JOB_REVIEW')
+    // One commit held the records, their city order and the registry: the three later stages follow it.
+    for (const phase of ['catalog','index','editor']) await stage(phase)
+    const selected = job.files.filter(file => selectedFileIds.includes(file.fileId))
+    const mediaIds = assetsOfPaths(mediaStore, explicitPaths.map(value => pathKeyOf(value)), result.created)
+    if (mediaIds.length !== selected.length) fail('E_MEDIA_JOB_REVIEW')
+    for (const file of selected) {
+      const source = path.join(paths.inboxRoot,...file.sourcePath.split('/'))
+      await assertUploadPath(paths.root,source)
+      if ((await stat(source)).size !== file.bytes || await digestFile(source) !== file.sha256 || !await pinsAndMetadataMatch(paths,job,file)) fail('E_MEDIA_JOB_REVIEW')
+    }
+    // D4 in the store: the task's sources and the generated files of their records, each as on disk now.
+    const registry = mediaStore.mediaRegistry()
+    const contents = new Map(registry.files.map(file => [file.sha256, file]))
+    const targets = new Map()
+    for (const file of selected) {
+      targets.set(`MediaInbox/${file.sourcePath}`.toLocaleLowerCase('en-US'), {path:`MediaInbox/${file.sourcePath}`})
+      const content = contents.get(file.sha256)
+      if (!content) fail('E_MEDIA_JOB_REVIEW')
+      for (const output of content.outputs) targets.set(`${content.directory}/${output.name}`.toLocaleLowerCase('en-US'), {path:`${content.directory}/${output.name}`,sha256:output.sha256})
+    }
+    const outputs = []
+    for (const target of [...targets.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
+      const absolute = path.join(paths.root,...target.path.split('/'))
+      await assertUploadPath(paths.root,absolute)
+      const info = await stat(absolute)
+      if (!info.isFile()) fail('E_MEDIA_JOB_REVIEW')
+      const sha256 = await digestFile(absolute)
+      if (target.sha256 !== undefined && sha256 !== target.sha256) fail('E_MEDIA_JOB_REVIEW')
+      outputs.push({path:target.path,bytes:info.size,sha256,mtimeMs:info.mtimeMs})
+    }
+    const receipt = {completedAt:new Date().toISOString(),mediaIds,restoredMediaIds:mediaIds,outputs,
+      libraryDigest:storeLibraryDigestOf({libraryId:mediaStore.meta().libraryId,revision:result.revision,registry}),
+      store:{requestId:input.operationId,revision:result.revision}}
+    receipt.seal = mediaJobReceiptSeal(job,job.import,receipt)
+    job = await store.update(job.jobId,job.revision,next => {next.import.phase='sealed'; next.import.receipt=receipt; next.phase='completed'; return next})
+    return {status:200,body:{ok:true,job:await history(paths,job)}}
+  } catch(error) {
+    try {await store.update(job.jobId,job.revision,next => {next.import.phase='needs_review';return next})} catch { /* Retain the last known stage if even recording the failure is impossible. */ }
+    throw error
+  }
+}
+
+async function importTask(paths,store,job,input,deps,storeMedia,leaseToken) {
+  if (!exactInput(input,['libraryId','revision','selectedFileIds','operationId','planDigest','acceptFolderBindings', ...(storeMedia ? ['acceptSourceMatches'] : [])])
     || !uuidPattern.test(input?.operationId) || !hashPattern.test(input?.planDigest ?? '')
-    || (input.acceptFolderBindings !== undefined && typeof input.acceptFolderBindings !== 'boolean')) fail('E_MEDIA_JOB_INVALID')
+    || (input.acceptFolderBindings !== undefined && typeof input.acceptFolderBindings !== 'boolean')
+    || (input.acceptSourceMatches !== undefined && typeof input.acceptSourceMatches !== 'boolean')) fail('E_MEDIA_JOB_INVALID')
   assertIntent(job,input)
+  if (storeMedia) return importStoreTask(paths,store,job,input,deps,storeMedia,leaseToken)
   const selectedFileIds = selectionOf(job,input.selectedFileIds)
   if (job.import) {
     if (job.import.operationId !== input.operationId || job.import.planDigest !== input.planDigest
@@ -452,7 +582,7 @@ export async function reportMediaJobReceipts(privatePaths, log = console.log) {
 }
 
 /** Zero-write read: generation detects an operation starting and ending during the snapshot. */
-export async function handleMediaJobRead({ privatePaths, route }) {
+export async function handleMediaJobRead({ privatePaths, route, storeMedia }) {
   try {
     const before = await inspectLibraryOperation(privatePaths)
     if (before.state !== 'idle') return { status: 200, body: { ok: true, libraryId: null, status: before.state === 'busy' ? 'processing' : 'needs_review', ...(route.action === 'get' ? {job:null} : {jobs:[]}) } }
@@ -462,7 +592,7 @@ export async function handleMediaJobRead({ privatePaths, route }) {
     if (route.action === 'get' && !selected) fail('E_MEDIA_JOB_NOT_FOUND')
     const jobs = route.action === 'get' ? [selected] : discovered.jobs
     const resourceChecks = new Map()
-    const summaries = await Promise.all(jobs.map(job=>reconcile(privatePaths,job,resourceChecks)))
+    const summaries = await Promise.all(jobs.map(job=>reconcile(privatePaths,job,resourceChecks,storeMedia)))
     const after = await inspectLibraryOperation(privatePaths)
     if (after.state !== 'idle' || after.generation !== before.generation) fail('E_MEDIA_JOB_CONFLICT')
     return { status:200, body: {ok:true,libraryId:discovered.libraryId,...(route.action === 'get' ? {job:summaries[0]} : {jobs:summaries})} }
@@ -470,13 +600,13 @@ export async function handleMediaJobRead({ privatePaths, route }) {
 }
 
 /** Internal entry: verifies caller's disk lease. HTTP authorization lives in the plugin. */
-export async function handleMediaJobWrite({ privatePaths, route, input, request, url, deps, leaseToken }) {
+export async function handleMediaJobWrite({ privatePaths, route, input, request, url, deps, leaseToken, storeMedia }) {
   try {
     if (typeof leaseToken !== 'string') fail('E_LIBRARY_BUSY')
     return await withLibraryOperation(privatePaths, async () => {
       const store = createMediaJobStore(privatePaths)
       if (route.action === 'create') {
-        const files = await checkedFiles(privatePaths)
+        const files = await checkedFiles(privatePaths, storeMedia)
         const target = uploadTargetOf(files, input ?? {}, new Date())
         if (!Array.isArray(input?.files)) fail('E_MEDIA_JOB_INVALID')
         // Reject fields instead of silently accepting a new target, path or metadata at reception time.
@@ -496,13 +626,13 @@ export async function handleMediaJobWrite({ privatePaths, route, input, request,
           }
         }
         const job = await store.create(normalized)
-        return {status:201,body:{ok:true,job:await reconcile(privatePaths,job)}}
+        return {status:201,body:{ok:true,job:await reconcile(privatePaths,job,undefined,storeMedia)}}
       }
       let job = await store.read(route.jobId)
       const params = route.action === 'receive' ? Object.fromEntries(url.searchParams) : input
       const revision = route.action === 'receive' && /^\d+$/.test(params?.revision ?? '') ? Number(params.revision) : params?.revision
       if (params?.libraryId !== job.libraryId || !Number.isSafeInteger(revision) || revision < 0) fail('E_MEDIA_JOB_CONFLICT')
-      if (route.action === 'import') return importTask(privatePaths,store,job,input,deps)
+      if (route.action === 'import') return importTask(privatePaths,store,job,input,deps,storeMedia,leaseToken)
       if (route.action === 'close') {
         if (!exactInput(input,['libraryId','revision'])) fail('E_MEDIA_JOB_INVALID')
         if (job.phase === 'closed') {
@@ -525,7 +655,7 @@ export async function handleMediaJobWrite({ privatePaths, route, input, request,
         if (!exactInput(input,['libraryId','revision'])) fail('E_MEDIA_JOB_INVALID')
         if (job.import || !['open','paused'].includes(job.phase)) fail('E_MEDIA_JOB_REVIEW')
         job = await store.pause(job.jobId,revision)
-        return {status:200,body:{ok:true,job:await reconcile(privatePaths,job)}}
+        return {status:200,body:{ok:true,job:await reconcile(privatePaths,job,undefined,storeMedia)}}
       }
       if (route.action !== 'receive') fail('E_UNKNOWN_ENDPOINT')
       if (job.import || !['open','paused'].includes(job.phase)) fail('E_MEDIA_JOB_REVIEW')
@@ -536,15 +666,15 @@ export async function handleMediaJobWrite({ privatePaths, route, input, request,
       if (Number(request.headers['content-length']) !== file.bytes) fail('E_MEDIA_JOB_CONFLICT')
       if (file.phase === 'received' && file.operationId === params.operationId) {
         if (revision > job.revision) fail('E_MEDIA_JOB_CONFLICT')
-        const known = await reconcile(privatePaths,job)
+        const known = await reconcile(privatePaths,job,undefined,storeMedia)
         if (known.files.find(item=>item.fileId === file.fileId)?.status !== 'pending') fail('E_MEDIA_JOB_REVIEW')
         return {status:200,body:{ok:true,replayed:true,job:known}}
       }
       if (job.revision !== revision || file.phase !== 'intended') fail('E_MEDIA_JOB_CONFLICT')
-      const before = await reconcile(privatePaths,job)
+      const before = await reconcile(privatePaths,job,undefined,storeMedia)
       if (before.status === 'needs_review') fail('E_MEDIA_JOB_REVIEW')
       const prepare = deps.prepareV2Upload ?? prepareV2Upload
-      const plan = await prepare({ privatePaths, query:queryOf(job,file), deps })
+      const plan = await prepare({ privatePaths, query:queryOf(job,file), deps, ...(storeMedia ? { files: await checkedFiles(privatePaths, storeMedia) } : {}) })
       await assertUploadPath(privatePaths.root,plan.destination)
       for (const claim of plan.claims) await assertUploadPath(privatePaths.root,claim.file)
       const sourcePath = path.relative(privatePaths.inboxRoot,plan.destination).split(path.sep).join('/')
@@ -577,7 +707,7 @@ export async function handleMediaJobWrite({ privatePaths, route, input, request,
         if (!await pinsAndMetadataMatch(privatePaths,job,finalFile)) fail('E_MEDIA_JOB_REVIEW')
         job = await store.update(job.jobId,job.revision,next=>{next.files.find(item=>item.fileId === file.fileId).phase='received';return next})
         await unlink(staged).catch(()=>undefined)
-        return {status:201,body:{ok:true,job:await reconcile(privatePaths,job)}}
+        return {status:201,body:{ok:true,job:await reconcile(privatePaths,job,undefined,storeMedia)}}
       } catch (error) {
         // Preserve staging and published bytes. No automatic retransmission, cleanup or importer call.
         try { await store.update(job.jobId,job.revision,next=>{Object.assign(next.files.find(item=>item.fileId===file.fileId),{phase:'needs_review',errorCode:'E_MEDIA_JOB_REVIEW'});return next}) } catch { /* Leave the original stage for review. */ }

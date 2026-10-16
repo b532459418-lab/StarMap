@@ -13,7 +13,7 @@
  * - The library lease and a read-only store.
  */
 import assert from 'node:assert/strict'
-import { copyFile, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { withLibraryOperation } from './library-operation-lock.mjs'
@@ -22,75 +22,11 @@ import { createMediaService, handleMediaStore } from './media-service.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { backupStore } from './store-backup.mjs'
 import { openStore } from './store-host.mjs'
-import { directoryOf, pathKeyOf } from './store-media-registry.mjs'
+import { NOW, UUID_V7, exists, servedLibrary } from './store-media.fixture.mjs'
+import { pathKeyOf } from './store-media-registry.mjs'
 import { applyMigration } from './store-migrate.mjs'
-import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './store-session.mjs'
-import { authorizedHeaders, captureMiddleware, editorPrefix, moduleOf, requestTo, tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
+import { tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
-
-const NOW = '2026-10-16T00:00:00.000Z'
-const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-const exists = (file) => stat(file).then(() => true, (error) => { if (error?.code === 'ENOENT') return false; throw error })
-
-/**
- * A migrated synthetic library served by the plugin. Helpers: `reading()` (the virtual module: revision and V2 files),
- * `write(route, input, base, id?)` (a store write with the protocol headers), `upload(bytes, { fileName, … })`,
- * `registry()` (a separate read-only connection: the registry, the media entities and check()), `assetAt(portable)`
- * (the asset of the record the present source at a path names), `hide(ids)`, `dataDigest()` (the tree without operations/).
- */
-async function servedLibrary(t, prefix) {
-  const context = await tempPrivateRoot(t, prefix)
-  const { root, paths, closeAfter } = context
-  const inbox = await importedV2Library(paths, { now: NOW })
-  assert.equal((await applyMigration(paths, { now: NOW })).revision, 1)
-  // The plugin resolves paths and proxies from the environment when it is first imported: only this root, no real values.
-  const originalEnvironment = process.env
-  process.env = { STARMAP_PRIVATE_ROOT: root }
-  let travelAtlasLocalEditor
-  try { ({ travelAtlasLocalEditor } = await import('./local-editor-plugin.mjs')) } finally { process.env = originalEnvironment }
-  const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: root })
-  // Closed before the temporary root is removed (Windows cannot delete an open store).
-  closeAfter({ close: () => plugin.buildEnd() })
-  const handler = captureMiddleware(plugin).handlers[1]
-  let sequence = 0
-  const nextId = () => `01960000-0000-7000-8000-${(sequence += 1).toString(16).padStart(12, '0')}`
-  const library = {
-    ...context, inbox, plugin, handler, nextId,
-    async reading() {
-      const module = await moduleOf(plugin)
-      return { revision: module.privateStoreRevision, files: module.privateV2Files }
-    },
-    write: (route, input, base, id = nextId(), method = 'POST') => requestTo(handler, {
-      url: editorPrefix + route, method, content: Buffer.from(JSON.stringify(input)),
-      headers: { ...authorizedHeaders, [STORE_REQUEST_ID_HEADER]: id, [STORE_BASE_REVISION_HEADER]: String(base) },
-    }),
-    upload: (content, { fileName, countryId = PLACE.synthland, cityId = PLACE.harbor }) => requestTo(handler, {
-      url: `${editorPrefix}upload?${new URLSearchParams({ countryId, cityId, fileName })}`, content,
-      headers: { ...authorizedHeaders, 'content-length': String(content.length) },
-    }),
-    async registry() {
-      const handle = openStore(storeFileOf(paths), { readOnly: true, policy: OFFICIAL_POLICY })
-      try { return { ...handle.mediaRegistry(), entities: handle.mediaEntities(), problems: handle.check().problems } } finally { await handle.close() }
-    },
-    async assetAt(portable) {
-      const { sources, entities } = await library.registry()
-      const atPath = sources.filter((item) => item.pathKey === pathKeyOf(portable))
-      const source = atPath.find((item) => item.state === 'present') ?? atPath.at(-1)
-      return entities.find((entity) => entity.id === source?.recordId)?.fields.asset
-    },
-    async hide(ids, base) {
-      const { body } = await requestTo(handler, { url: `${editorPrefix}state`, method: 'GET', headers: {} })
-      const hidden = await library.write('state', { ...body.state, hiddenMediaIds: [...body.state.hiddenMediaIds, ...ids] }, base, undefined, 'PUT')
-      assert.equal(hidden.status, 200, JSON.stringify(hidden.body))
-      return hidden.body.revision
-    },
-    async dataDigest() {
-      return Object.fromEntries(Object.entries(await treeDigest(root)).filter(([file]) => !file.startsWith('operations/')))
-    },
-    generated: (sha256) => path.join(root, ...directoryOf(sha256).split('/')),
-  }
-  return library
-}
 
 test('store-mode media import through the plugin', async (t) => {
   const library = await servedLibrary(t, 'starmap-store-media-import-')
@@ -218,7 +154,7 @@ test('store-mode media import through the plugin', async (t) => {
     const order = (await library.reading()).files.editorState.mediaOrderByCity[PLACE.hill] ?? []
     assert.equal(order.includes(assetD) || order.includes(assetE), false)
     // The import read both files (d.jpg: dimensions and derivatives; e.jpg: its header only). Windows refuses to
-    // rewrite or delete a file libvips still holds open; the service keeps none (sharp.cache({ files: 0 })).
+    // rewrite or delete a file libvips still holds open; the service keeps none (releaseImageFiles: sharp.cache(false)).
     await writeFile(inboxFile(paths, fileD), await imageBytes({ color: COLOR.yellow }))
     await unlink(inboxFile(paths, fileE))
   })

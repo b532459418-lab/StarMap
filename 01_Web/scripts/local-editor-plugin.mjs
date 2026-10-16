@@ -609,7 +609,9 @@ export function travelAtlasLocalEditor(options = {}) {
           const jobRoute = mediaJobRoute(request.method, url.pathname)
           if (jobRoute && request.method === 'GET') {
             if (!authorizeWrite(request)) return sendJson(response,403,normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
-            const result = await handleMediaJobRead({ privatePaths, route: jobRoute })
+            // 3C-4c：新库模式下任务读新库的视图与媒体登记。
+            const storeMedia = storeMode() ? { mediaStore: await (await storeSession()).mediaStore() } : undefined
+            const result = await handleMediaJobRead({ privatePaths, route: jobRoute, ...(storeMedia ? { storeMedia } : {}) })
             return sendJson(response,result.status,result.body)
           }
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
@@ -647,7 +649,7 @@ export function travelAtlasLocalEditor(options = {}) {
           // 否则 data/v2/ 被写出后，迁移工具的 --apply 会因为输出目录非空而拒绝运行。每个请求现判（只看文件在不在）。
           const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
           if (refusal) return sendJson(response, refusal.status, refusal.body)
-          // 新库模式：8 个编辑端点写新库（3C-4a）；媒体端点与媒体任务 409 E_STORE_MODE_LIMITED（不读请求体）。
+          // 新库模式：8 个编辑端点写新库（3C-4a）；三个媒体端点与媒体任务也写新库（3C-4c）。
           // 3C-4b：库损坏、只读时，全部写入端点 409 E_STORE_READ_ONLY（编辑端点由会话判定，已提交请求的重放照常回原回执）。
           if (storeMode()) {
             const session = await storeSession()
@@ -658,7 +660,29 @@ export function travelAtlasLocalEditor(options = {}) {
               if (!known) return sendJson(response, 404, v2ErrorBody('E_UNKNOWN_ENDPOINT'))
               // 3C-4c：只读的库（损坏）上，媒体端点与媒体任务一律 409 E_STORE_READ_ONLY，什么文件都不写（上传也一样）。
               if (await session.isDamaged()) return sendJson(response, 409, v2ErrorBody('E_STORE_READ_ONLY'))
-              if (!mediaRouteName) return sendJson(response, 409, v2ErrorBody('E_STORE_MODE_LIMITED'))
+              if (jobRoute) {
+                // 3C-4c：媒体任务走新库（media-job-service.mjs 的 storeMedia）。预览只读、不取租约，其余在库租约之下，同 V2。
+                const { releaseImageFiles } = await import('./media-service.mjs')
+                releaseImageFiles()
+                const jobInput = jobRoute.action === 'receive' ? undefined : await readJsonBody(request)
+                const storeMedia = { mediaStore: await session.mediaStore() }
+                if (jobRoute.action === 'preview') {
+                  const preview = await handleMediaJobPreview({ privatePaths, route: jobRoute, input: jobInput, storeMedia })
+                  return sendJson(response, preview.status, preview.body)
+                }
+                editorMutationDepth += 1
+                let jobResult
+                try {
+                  jobResult = await withLibraryOperation(privatePaths, (leaseToken) => handleMediaJobWrite({
+                    privatePaths, route: jobRoute, input: jobInput, request, url, deps: { safeSegment, reserveDestination, updateDroneSidecar }, leaseToken, storeMedia,
+                  }))
+                } finally {
+                  editorMutationDepth -= 1
+                  if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
+                  invalidatePrivateDataModule()
+                }
+                return sendJson(response, jobResult.status, jobResult.body)
+              }
               // 3C-4c：三个媒体端点写新库（./store-media-endpoints.mjs），在库租约之下；有未完成的媒体任务时拒绝，同 V2。
               const mediaInput = mediaRouteName === 'upload' ? undefined : await readJsonBody(request)
               editorMutationDepth += 1

@@ -273,3 +273,46 @@ test('Batch 2A: preview pins must carry folder, kind, names and match source', (
     assert.throws(() => assertMediaJobPreview(withPin(broken)), code('E_EDITOR_RESPONSE_INVALID'), JSON.stringify(broken))
   }
 })
+test('3C-4c: a preview with source matches imports only with the user confirmation, sent as acceptSourceMatches; outputs not generated yet have no hash', async () => {
+  const f = fixture()
+  const inputs: unknown[] = []
+  const match = {sourcePath: 'Country/City/photos/old.jpg', kind: 'replaced' as const, proposal: 'new' as const}
+  f.api.preview = async () => {
+    const plan = planOf(pending())
+    plan.plan.summary.sourceMatches = [match]
+    plan.plan.summary.missing = 1
+    plan.plan.summary.outputs = [{id: 'new-1', path: 'media/user/aaaaaaaaaaaaaaaa/original.jpg', sha256: sha}, {id: 'new-1', path: 'media/user/aaaaaaaaaaaaaaaa/thumb.webp', sha256: null}]
+    return plan
+  }
+  const originalImport = f.api.import
+  f.api.import = async (jobId, input, permit) => {inputs.push(input); return originalImport(jobId, input, permit)}
+  f.setJobs([pending()])
+  await f.store.refresh()
+  const plan = await f.store.preview(id(1))
+  assert.deepEqual(plan.plan.summary.sourceMatches, [match])
+  await assert.rejects(f.store.importJob(id(1), plan), code('E_MEDIA_SOURCE_MATCHES_UNCONFIRMED'))
+  assert.equal(inputs.length, 0, 'nothing is sent before the confirmation')
+  await f.store.importJob(id(1), plan, {acceptSourceMatches: true})
+  assert.equal((inputs[0] as {acceptSourceMatches?: boolean}).acceptSourceMatches, true)
+  assert.equal(Object.hasOwn(inputs[0] as object, 'acceptFolderBindings'), false)
+  // Malformed matches and counts fail closed.
+  const base = planOf()
+  const withSummary = (extra: Record<string, unknown>) => ({...base, plan: {...base.plan, summary: {...base.plan.summary, ...extra}}})
+  for (const broken of [{sourceMatches: {}}, {sourceMatches: [{...match, kind: 'guess'}]}, {sourceMatches: [{...match, proposal: 'merge'}]}, {sourceMatches: [{...match, sourcePath: '../x'}]},
+    {missing: -1}, {missing: 1.5}, {outputs: [{id: 'new-1', path: 'media/user/a/thumb.webp', sha256: 'short'}]}]) {
+    assert.throws(() => assertMediaJobPreview(withSummary(broken)), code('E_EDITOR_RESPONSE_INVALID'), JSON.stringify(broken))
+  }
+})
+test('3C-4c: operation ids are UUIDv7 by default (the new library refuses other versions)', async () => {
+  const seen: string[] = []
+  const api: MediaJobsApi = {
+    read: async () => ({libraryId: pending().libraryId, jobs: [pending()]}),
+    create: async () => jobOf(), receive: async () => pending(), preview: async () => planOf(pending()),
+    import: async (_jobId, input) => {seen.push(input.operationId); return completed()},
+    pause: async () => pending(), close: async () => pending(), abandon: async () => pending(),
+  }
+  const store = createMediaJobs({api, coordination: createLocalEditorCoordination(), hashFile: async () => sha})
+  await store.refresh()
+  await store.importJob(id(1), await store.preview(id(1)))
+  assert.match(seen[0], /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+})

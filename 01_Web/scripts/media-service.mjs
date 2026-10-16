@@ -16,7 +16,7 @@
  * source files and the directories no record links any more queued in pending_file_ops → the queued files removed.
  * The Inbox is not scanned.
  *
- * `store` is the media store adapter: { readOnly, view() → { files, revision }, mediaRegistry(), mediaEntities(),
+ * `store` is the media store adapter: { readOnly, meta(), view() → { files, revision }, mediaRegistry(), mediaEntities(),
  * read(reader → value), lookup(requestId), commit(request, { leaseToken }), settleFileOps(work, { leaseToken }) }:
  * store-session.mjs mediaStore() for the dev server, handleMediaStore(handle) for a command line.
  */
@@ -39,11 +39,15 @@ import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
 
 /**
- * libvips keeps recently read files open (sharp.cache: 20 files by default). On Windows an Inbox file the import just
- * read could then be neither rewritten nor deleted until it is released. The service runs inside the dev server, so it
- * keeps no file open. Called before the service uses sharp; it affects the whole process (V2 results do not change).
+ * libvips keeps recently read files open through its operation cache. On Windows a file it holds can then not be
+ * rewritten until it is released. `sharp.cache({ files: 0 })` is not enough: it releases what a pipeline writing a file
+ * read, but an input decoded into a buffer (an upload's or a task reception's full decode, whose staging file becomes
+ * the Inbox file by a hard link) stays open. `sharp.cache(false)` turns the operation cache off, which releases every
+ * input, held ones included (observed on Windows with sharp 0.35). These pipelines read each file a few times at most
+ * and gain little from the cache. Called before the media service or a store-mode media endpoint uses sharp; it
+ * affects the whole process (V2 results do not change).
  */
-export const releaseImageFiles = () => sharp.cache({ files: 0 })
+export const releaseImageFiles = () => sharp.cache(false)
 
 /** `kind` prefixes of the service's requests (the host's receipts and op_log). */
 export const MEDIA_KINDS = Object.freeze({ import: 'starmap.media.import', delete: 'starmap.media.delete', task: 'starmap.media.task-import', cli: 'starmap.media.cli-import' })
@@ -51,10 +55,29 @@ export const MEDIA_KINDS = Object.freeze({ import: 'starmap.media.import', delet
 const fail = (code, params) => { throw new V2WriteError(code, params) }
 const nonEmpty = (block) => Object.fromEntries(Object.entries(block).filter(([, list]) => list.length > 0))
 
+/**
+ * The asset of each path key (deduplicated, in order): the record `created` names for it (an import just now),
+ * otherwise the record of the present source at that path (a file already imported, a retried request). The answer of
+ * an import's explicit paths (V2 answered with the media of these paths too) and of a task's receipt.
+ */
+export function assetsOfPaths(store, keys, created) {
+  const { sources } = store.mediaRegistry()
+  const assetOf = new Map(store.mediaEntities().map((row) => [row.id, row.fields.asset]))
+  const ids = []
+  for (const key of keys) {
+    const made = created?.get(key)?.assetId
+    const source = made ? undefined : sources.find((item) => item.pathKey === key && item.state === 'present')
+    const id = made ?? (source ? assetOf.get(source.recordId) : undefined)
+    if (typeof id === 'string' && !ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
+
 /** The media store adapter of an open store handle (a command line, tests): the view is projected on each call. */
 export function handleMediaStore(handle) {
   return {
     get readOnly() { return handle.readOnly },
+    meta: () => handle.meta(),
     async view() {
       const rows = handle.readRowsUnchecked()
       return { files: projectToV2Files(rows).files, revision: rows.revision }

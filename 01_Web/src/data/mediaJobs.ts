@@ -1,4 +1,5 @@
 import { LocalEditorError } from '../i18n/editorErrors.ts'
+import { uuidv7 } from './canonical/uuidv7.ts'
 import { fileSha256 } from './fileSha256.ts'
 import { localEditorCoordination, type LocalEditorCoordination, type MediaImportPermit } from './localEditorCoordination.ts'
 import type { LocalMediaUpload } from './localEditorApi.ts'
@@ -23,9 +24,17 @@ export type MediaJobPreview = {
     addedIds: string[]; updatedIds: string[]; removedIds: string[]
     sources: {id: string; sourcePath: string; sha256: string; bytes: number; kind: string; placeId: string}[]
     /** Batch 2A: folder bindings found by name (or a legacy country.json); importing them needs the user's confirmation. */
-    pins: MediaFolderBinding[]; outputs: {id: string; path: string; sha256: string}[]
+    pins: MediaFolderBinding[]
+    /** `sha256` is null for a file the new library generates at import (3C-4c). */
+    outputs: {id: string; path: string; sha256: string | null}[]
     editorEffects: {restoredMediaIds: string[]; orders: Record<string, Record<string, string[]>>}
+    /** 3C-4c (the new library): matches with records that need the user's confirmation, and sources the import marks missing. */
+    sourceMatches?: MediaSourceMatch[]; missing?: number
   }}
+}
+/** 3C-4c: an Inbox file whose relation to the library's records needs confirming, and what the import proposes. */
+export type MediaSourceMatch = {
+  sourcePath: string; kind: 'ambiguous-move' | 'deleted-content' | 'replaced'; proposal: 'move' | 'new'; mediaId?: string
 }
 /** A pending Inbox folder binding: the folder, the place it resolved to, that place's names and how it was matched. */
 export type MediaFolderBinding = {
@@ -41,7 +50,7 @@ export type MediaJobsApi = {
   create: (intent: MediaJobIntent, permit: MediaImportPermit) => Promise<MediaJob>
   receive: (jobId: string, fileId: string, input: MediaJobVersion & {operationId: string; sha256: string}, file: File, permit: MediaImportPermit) => Promise<MediaJob>
   preview: (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]}) => Promise<MediaJobPreview>
-  import: (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string; acceptFolderBindings?: boolean}, permit: MediaImportPermit) => Promise<MediaJob>
+  import: (jobId: string, input: MediaJobVersion & {selectedFileIds: string[]; operationId: string; planDigest: string; acceptFolderBindings?: boolean; acceptSourceMatches?: boolean}, permit: MediaImportPermit) => Promise<MediaJob>
   pause: (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => Promise<MediaJob>
   close: (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => Promise<MediaJob>
   abandon: (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => Promise<MediaJob>
@@ -123,9 +132,13 @@ export function assertMediaJobPreview(value: unknown): asserts value is MediaJob
     || !Array.isArray(summary.pins) || summary.pins.some(item => !record(item) || !relativePath(item.sourcePath) || !uuid(item.placeId)
       || !relativePath(item.folder) || item.sourcePath !== `${item.folder}/place.json` || !['city', 'country'].includes(String(item.subtype))
       || !['name', 'country.json'].includes(String(item.source)) || !record(item.names) || Object.values(item.names).some(name => typeof name !== 'string'))
-    || !Array.isArray(summary.outputs) || summary.outputs.some(item => !record(item) || typeof item.id !== 'string' || !relativePath(item.path) || !hash(item.sha256))
+    || !Array.isArray(summary.outputs) || summary.outputs.some(item => !record(item) || typeof item.id !== 'string' || !relativePath(item.path) || (item.sha256 !== null && !hash(item.sha256)))
     || !record(summary.editorEffects) || !strings(summary.editorEffects.restoredMediaIds) || !record(summary.editorEffects.orders)
-    || Object.values(summary.editorEffects.orders).some(table => !record(table) || Object.values(table).some(ids => !strings(ids)))) throw invalid()
+    || Object.values(summary.editorEffects.orders).some(table => !record(table) || Object.values(table).some(ids => !strings(ids)))
+    || (summary.sourceMatches !== undefined && (!Array.isArray(summary.sourceMatches) || summary.sourceMatches.some(item => !record(item) || !relativePath(item.sourcePath)
+      || !['ambiguous-move', 'deleted-content', 'replaced'].includes(String(item.kind)) || !['move', 'new'].includes(String(item.proposal))
+      || (item.mediaId !== undefined && typeof item.mediaId !== 'string'))))
+    || (summary.missing !== undefined && (!Number.isSafeInteger(summary.missing) || Number(summary.missing) < 0))) throw invalid()
 }
 
 const version = (job: MediaJob): MediaJobVersion => ({libraryId: job.libraryId, revision: job.revision})
@@ -144,7 +157,8 @@ const checkContinuation = (before: MediaJob, after: MediaJob) => {
  */
 export function createMediaJobs({api, coordination = localEditorCoordination,
   hashFile = fileSha256,
-  operationId = () => crypto.randomUUID() as string,
+  // 3C-4c: UUIDv7, the request ids of the new library (which refuses another version as E_STALE); task records accept v1–v8.
+  operationId = () => uuidv7(),
 }: {api: MediaJobsApi; coordination?: LocalEditorCoordination; hashFile?: (file: File) => Promise<string>; operationId?: () => string}) {
   let state: MediaJobsSnapshot = Object.freeze({jobs: [], libraryId: null, loading: false, busy: false})
   let readSequence = 0, mutation = false
@@ -264,16 +278,19 @@ export function createMediaJobs({api, coordination = localEditorCoordination,
       publish({...state, preview: result})
       return result
     }),
-    importJob: async (jobId: string, preview: MediaJobPreview, {acceptFolderBindings = false}: {acceptFolderBindings?: boolean} = {}) => {
+    importJob: async (jobId: string, preview: MediaJobPreview, {acceptFolderBindings = false, acceptSourceMatches = false}: {acceptFolderBindings?: boolean; acceptSourceMatches?: boolean} = {}) => {
       assertMediaJobPreview(preview)
       if (preview !== acknowledged || preview.jobId !== jobId || preview.blockers.length > 0) throw fault('E_MEDIA_JOB_CONFLICT')
       // Batch 2A: folder bindings in the preview are imported only after the user confirmed them next to that list.
       if (preview.plan.summary.pins.length > 0 && !acceptFolderBindings) throw fault('E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED')
+      // 3C-4c: so are source matches (the new library).
+      const sourceMatches = preview.plan.summary.sourceMatches?.length ?? 0
+      if (sourceMatches > 0 && !acceptSourceMatches) throw fault('E_MEDIA_SOURCE_MATCHES_UNCONFIRMED')
       const job = getJob(jobId)
       if (job.revision !== preview.revision || job.status !== 'pending') throw fault('E_MEDIA_JOB_CONFLICT')
       await run(jobId, async permit => {
         const result = await api.import(jobId, {...version(job), selectedFileIds: preview.selectedFileIds, operationId: operationId(), planDigest: preview.plan.digest,
-          ...(preview.plan.summary.pins.length > 0 ? {acceptFolderBindings: true} : {})}, permit)
+          ...(preview.plan.summary.pins.length > 0 ? {acceptFolderBindings: true} : {}), ...(sourceMatches > 0 ? {acceptSourceMatches: true} : {})}, permit)
         checkContinuation(job, result)
         if (result.jobId !== jobId || result.phase !== 'completed') throw invalid()
         putJob(result)

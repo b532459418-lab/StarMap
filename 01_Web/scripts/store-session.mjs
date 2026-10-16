@@ -26,9 +26,8 @@
  *   or the `verify` option) every commit is followed by a fresh projection compared with the cache: a difference is
  *   E_STORE_VERIFY (500 E_STORE_FAILED), the fresh projection replaces the cache, and the log says so.
  * - Writes (`writeRoute`): the eight editor endpoints of ./v2-editor-store.mjs (STORE_WRITE_ROUTES). Media uploads,
- *   imports and deletions (3C-4c) go through ./store-media-endpoints.mjs and the media service with `mediaStore()`; their
- *   commits are queued with the editor writes. Media tasks are refused by the plugin with 409 E_STORE_MODE_LIMITED
- *   (until 3C-4c commit 6).
+ *   imports, deletions and media tasks (3C-4c) go through ./store-media-endpoints.mjs, ./media-job-service.mjs and the
+ *   media service with `mediaStore()`; their commits are queued with the editor writes.
  * - Read-only sessions (`readOnly: true`, 3C-4b): `build:personal` reads the store while a dev server may have it open
  *   for writing. The store is opened read-only (openStore `readOnly`): no writer session, so the clean-shutdown mark is
  *   neither read nor written, no SQLite write lock is taken, the library lock is not probed and quick_check does not
@@ -503,6 +502,7 @@ export function createStoreSession(privatePaths, {
       const opened = await open()
       return {
         get readOnly() { return opened.readOnly },
+        meta: () => opened.meta(),
         async view() {
           const { files, revision } = await snapshot()
           return { files, revision }

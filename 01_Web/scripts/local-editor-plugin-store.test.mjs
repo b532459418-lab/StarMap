@@ -1,8 +1,8 @@
 /**
  * The local editor plugin in the new-library mode (3C-3, 3C-4a): the virtual module reads the store's projection and
  * its revision, GET /editor/state reads the same model, the editor writes are written to the store (and invalidate the
- * module), media tasks are refused with 409 E_STORE_MODE_LIMITED before their body is read (the media endpoints work:
- * store-media-endpoints.test.mjs), and an unopenable store is an error, never a fallback to V2.
+ * module), media tasks reach the store-mode task service (3C-4c; the media endpoints and task imports are tested in
+ * store-media-endpoints.test.mjs and store-media-jobs.test.mjs), and an unopenable store is an error, never a fallback to V2.
  * The harness (store-mode.fixture.mjs) is the one of local-editor-plugin.test.mjs (no real server).
  */
 import { test } from 'node:test'
@@ -31,10 +31,9 @@ function cleanShutdown(file) {
   try { return db.prepare('SELECT clean_shutdown FROM store_meta').get().clean_shutdown } finally { db.close() }
 }
 
-/** The write endpoints the store does not accept yet: the media task actions (3C-4c commit 6). The three media endpoints work (store-media-endpoints.test.mjs). */
-const MEDIA_ENDPOINTS = [
-  ['POST', 'media/jobs'], ...['preview', 'import', 'pause', 'close', 'abandon'].map((action) => ['POST', `media/jobs/018bd504-c600-7000-8000-000000000001/${action}`]),
-]
+/** The media task actions on a task that does not exist. */
+const MEDIA_TASK_ACTIONS = ['preview', 'import', 'pause', 'close', 'abandon'].map((action) => ['POST', `media/jobs/018bd504-c600-7000-8000-000000000001/${action}`])
+const outsideOperations = (digest) => Object.fromEntries(Object.entries(digest).filter(([file]) => !file.startsWith('operations/')))
 
 test('Local editor plugin in the new-library mode', async (t) => {
   const { directory, root, paths } = await tempPrivateRoot(t, 'starmap-plugin-store-')
@@ -108,14 +107,16 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.equal(module.privateV2Files.places.places.find((place) => place.id === country.body.countryId).externalIds.iso3166Alpha2, 'JP')
     })
 
-    await t.test('media task actions are 409 E_STORE_MODE_LIMITED, unread and unwritten (until 3C-4c commit 6)', async () => {
-      const before = await treeDigest(root)
-      for (const [method, route] of MEDIA_ENDPOINTS) {
-        const result = await requestTo(handler, { url: editorPrefix + route, method, content: Buffer.from('{') })
-        assert.equal(result.status, 409, `${method} ${route}`)
-        assert.equal(result.body.code, 'E_STORE_MODE_LIMITED', `${method} ${route}`)
-        assert.equal(result.body.error, '新库模式（实验性）目前还不能编辑媒体（上传、导入、删除和媒体任务），会在后续接入。本次没有保存。')
-        assert.equal(result.bodyReads, 0, `${method} ${route}`)
+    await t.test('media tasks reach the store-mode task service (3C-4c): the list reads, an unknown task is 404, nothing written', async () => {
+      // The library lease's generation counter (operations/) moves with every leased request.
+      const before = outsideOperations(await treeDigest(root))
+      const list = await requestTo(handler, { url: `${editorPrefix}media/jobs`, method: 'GET' })
+      assert.equal(list.status, 200, JSON.stringify(list.body))
+      assert.deepEqual(list.body.jobs, [])
+      for (const [method, route] of MEDIA_TASK_ACTIONS) {
+        const result = await requestTo(handler, { url: editorPrefix + route, method, content: Buffer.from(JSON.stringify({ libraryId: '018bd504-c600-7000-8000-000000000002', revision: 0 })) })
+        assert.equal(result.status, 404, `${method} ${route}: ${JSON.stringify(result.body)}`)
+        assert.equal(result.body.code, 'E_MEDIA_JOB_NOT_FOUND', `${method} ${route}`)
       }
       const unknown = await requestTo(handler, { url: `${editorPrefix}something-new` })
       assert.equal(unknown.status, 404)
@@ -123,7 +124,7 @@ test('Local editor plugin in the new-library mode', async (t) => {
       // Authorization still comes first.
       const forbidden = await requestTo(handler, { url: `${editorPrefix}records`, headers: {} })
       assert.equal(forbidden.status, 403)
-      assert.deepEqual(await treeDigest(root), before)
+      assert.deepEqual(outsideOperations(await treeDigest(root)), before)
       assert.deepEqual(captured.reloads, [])
     })
 

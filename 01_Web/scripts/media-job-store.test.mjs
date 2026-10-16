@@ -448,6 +448,22 @@ test('D4: task-scoped receipts need a library digest and every output time; whol
   assert.equal((await f.store.close(job.jobId, completed.revision)).phase, 'closed')
 })
 
+test('3C-4c: a receipt may name its store commit, whose request id is the operation id; nothing else is accepted', async (t) => {
+  const f = await fixture(t)
+  const job = await beforeSeal(f, await startImport(f, await receivedJob(f)))
+  const before = await readFile(jobPath(f, job))
+  const output = { path: 'MediaInbox/Country/City/photos/neutral-0.jpg', sha256: '3'.repeat(64), bytes: 32, mtimeMs: 1760000000000.25 }
+  const scoped = { mediaIds: ['01960000-0000-7000-8000-000000000abc'], restoredMediaIds: ['01960000-0000-7000-8000-000000000abc'], outputs: [output], libraryDigest: '5'.repeat(64) }
+  const store = { requestId: job.import.operationId, revision: 7 }
+  for (const broken of [{ ...store, requestId: '01960000-0000-7000-8000-000000000001' }, { ...store, revision: -1 }, { ...store, revision: 1.5 }, { requestId: store.requestId }, { ...store, extra: true }]) {
+    await assert.rejects(finishImport(f, job, receiptFor(job, { ...scoped, store: broken })), code('E_MEDIA_JOB_INVALID'), JSON.stringify(broken))
+    assert.deepEqual(await readFile(jobPath(f, job)), before)
+  }
+  const completed = await finishImport(f, job, receiptFor(job, { ...scoped, store }))
+  assert.deepEqual(completed.import.receipt.store, store)
+  assert.deepEqual(await createMediaJobStore({ root: f.root }).read(job.jobId), completed)
+})
+
 test('D4: creating a task checks its largest completed record; the worst valid task still fits the record limit', async (t) => {
   const f = await fixture(t)
   const files = Array.from({ length: 100 }, (_, index) => ({ fileName: `${'名'.repeat(110)}${String(index).padStart(3, '0')}.jpeg`, bytes: 250 * 1024 * 1024 }))
@@ -455,6 +471,9 @@ test('D4: creating a task checks its largest completed record; the worst valid t
   const largest = largestCompletedMediaJobRecord(job)
   assertMediaJobRecord(largest)
   assert.equal(largest.import.receipt.outputs.length, 3 + 100 * 4)
+  // 3C-4c: the bound assumes 36-character asset ids and a store commit (the new library).
+  assert.ok(largest.import.receipt.mediaIds.every((mediaId) => mediaId.length === 36))
+  assert.equal(largest.import.receipt.store.requestId, largest.import.operationId)
   assert.ok(largest.import.receipt.outputs.every((output) => output.path.split('/').every((segment) => segment.length <= 125)))
   assert.ok(Buffer.byteLength(`${JSON.stringify(largest, null, 2)}
 `) < 1024 * 1024)
