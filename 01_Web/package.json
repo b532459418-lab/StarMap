@@ -28,6 +28,7 @@
     "store:backup": "node scripts/store-backup.mjs backup",
     "store:restore": "node scripts/store-backup.mjs restore",
     "store:export-v2": "node scripts/store-backup.mjs export-v2",
+    "store:upgrade": "node scripts/store-upgrade.mjs",
     "media:check": "node scripts/import-media.mjs",
     "media:import": "node scripts/import-media.mjs --apply",
     "privacy:check": "git -C .. ls-files --cached --others --exclude-standard -z | node scripts/privacy-audit.mjs --manifest-stdin",

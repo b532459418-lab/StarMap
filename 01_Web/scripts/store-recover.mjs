@@ -40,21 +40,31 @@ async function checkV2Files(privatePaths) {
   return { problems: integrityProblems(completeForWrite(files, new Date(0))) }
 }
 
-/** The data check of `npm run library:recover --confirm` for the library's mode: { mode, problems }. */
+/**
+ * The data check of `npm run library:recover --confirm` for the library's mode: { mode, problems, upgradeRequired? }. A
+ * store of an older format is checked as that format (3C-4c), so a lock left on it can be cleared before store:upgrade.
+ */
 export async function checkLibraryData(privatePaths, { policy } = {}) {
   const mode = libraryMode(privatePaths)
-  if (mode === 'store') return { mode, problems: (await checkStoreFile(storeFileOf(privatePaths), { policy })).problems }
+  if (mode === 'store') {
+    const { problems, upgradeRequired } = await checkStoreFile(storeFileOf(privatePaths), { policy })
+    return { mode, problems, ...(upgradeRequired ? { upgradeRequired } : {}) }
+  }
   return { mode, ...(await checkV2Files(privatePaths)) }
 }
 
 const MODE_LABELS = Object.freeze({ store: '新库（data/store/world.sqlite）', v2: 'V2（data/v2/）' })
 
 /** `npm run library:recover`: see recoverLibraryOperation (library-operation-lock.mjs). Returns the exit code. */
-export function recoverLibrary(privatePaths, { confirm = false, rebind = false, policy, log, logError } = {}) {
+export function recoverLibrary(privatePaths, { confirm = false, rebind = false, policy, log = console.log, logError } = {}) {
   return recoverLibraryOperation(privatePaths, {
     confirm, rebind, log, logError,
     modeLabel: MODE_LABELS[libraryMode(privatePaths)],
-    checkData: () => checkLibraryData(privatePaths, { policy }),
+    checkData: async () => {
+      const result = await checkLibraryData(privatePaths, { policy })
+      if (result.upgradeRequired) log('新库是旧的存储格式：清除锁之后，请运行 npm run store:upgrade 升级。')
+      return result
+    },
   })
 }
 

@@ -115,7 +115,7 @@ test('adapter: Node version gate, connection settings read back, SQLite errors c
 
 test('create writes the schema, store_meta, application_id and user_version in one exclusive step', async (t) => {
   const { file, handle } = await freshStore(t)
-  assert.deepEqual(handle.meta(), { format: STORE_FORMAT, formatVersion: 1, libraryId: LIBRARY_ID, revision: 0, createdAt: NOW })
+  assert.deepEqual(handle.meta(), { format: STORE_FORMAT, formatVersion: STORE_FORMAT_VERSION, libraryId: LIBRARY_ID, revision: 0, createdAt: NOW })
   assert.equal(handle.readOnly, false)
   await handle.close()
   const db = rawConnection(file, { readOnly: true })
@@ -126,13 +126,15 @@ test('create writes the schema, store_meta, application_id and user_version in o
     const tables = db.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'table'").all()
     assert.deepEqual(tables.map((row) => row.name).sort(), [
       ...Object.values(ROW_TABLES).map((spec) => spec.sql), 'store_meta', 'refs', 'tombstones', 'receipts', 'op_log', 'id_map', 'pending_file_ops',
+      // 3C-4c (format 2): the media registry.
+      'media_files', 'media_asset_files', 'media_sources', 'media_scan_cache',
     ].sort())
     for (const { name, sql } of tables) assert.match(sql, /\) STRICT(, WITHOUT ROWID)?$/, name)
     // Plain-column references are foreign keys checked at COMMIT.
     const entries = tables.find((row) => row.name === 'entries').sql
     for (const target of ['entities', 'layers', 'sources']) assert.match(entries, new RegExp(`REFERENCES ${target} \\(id\\) DEFERRABLE INITIALLY DEFERRED`))
     assert.deepEqual(db.prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND sql LIKE 'CREATE UNIQUE INDEX%' ORDER BY name").all().map((row) => row.name),
-      ['entries_identity', 'layers_system_key', 'reviews_proposal', 'view_items_item', 'view_settings_key'])
+      ['entries_identity', 'layers_system_key', 'media_files_directory', 'media_sources_present_path', 'reviews_proposal', 'view_items_item', 'view_settings_key'])
   } finally { db.close() }
   const reopened = track(t, openStore(file, { lock: withoutLibraryLock }))
   assert.equal(reopened.diagnostic, undefined)
@@ -178,12 +180,14 @@ test('failed open checks open read-only with a diagnostic and never change the f
   // [case, damage, expected code, still readable, SQL that undoes the damage]
   const cases = [
     ['foreign SQLite file', 'PRAGMA application_id = 7', 'E_STORE_APPLICATION_ID', false, `PRAGMA application_id = ${STORE_APPLICATION_ID}`],
-    ['newer format', 'PRAGMA user_version = 2', 'E_STORE_TOO_NEW', false, 'PRAGMA user_version = 1'],
-    ['unknown older format', 'PRAGMA user_version = 0', 'E_STORE_VERSION', false, 'PRAGMA user_version = 1'],
+    ['newer format', 'PRAGMA user_version = 3', 'E_STORE_TOO_NEW', false, 'PRAGMA user_version = 2'],
+    // 3C-4c: an older format that store:upgrade knows is not opened, upgraded or read; the App points to store:upgrade.
+    ['older format with an upgrade (1)', 'PRAGMA user_version = 1', 'E_STORE_UPGRADE_REQUIRED', false, 'PRAGMA user_version = 2'],
+    ['unknown older format', 'PRAGMA user_version = 0', 'E_STORE_VERSION', false, 'PRAGMA user_version = 2'],
     ['unexpected schema', 'CREATE TABLE extra (x TEXT) STRICT', 'E_STORE_SCHEMA', false, 'DROP TABLE extra'],
     ['auto_vacuum other than INCREMENTAL', 'PRAGMA auto_vacuum = FULL', 'E_STORE_SCHEMA', false, 'PRAGMA auto_vacuum = INCREMENTAL'],
     ['missing store_meta row', 'DELETE FROM store_meta', 'E_STORE_SCHEMA', false,
-      `INSERT INTO store_meta VALUES (1, '${STORE_FORMAT}', 1, '${LIBRARY_ID}', 0, '${NOW}', 1, NULL)`],
+      `INSERT INTO store_meta VALUES (1, '${STORE_FORMAT}', ${STORE_FORMAT_VERSION}, '${LIBRARY_ID}', 0, '${NOW}', 1, NULL)`],
     ['damaged page after an unclean shutdown (test-only byte overwrite)', uncleanDamagedPage, 'E_STORE_CORRUPT', true, undefined],
   ]
   for (const [name, damage, code, readable, undo] of cases) {
@@ -674,7 +678,7 @@ test('ordinary writes take no lease and queue in the process; a lock held elsewh
 test('a read-only store refuses every write with its diagnostic code and stays byte-identical', async (t) => {
   const { file, handle } = await seededStore(t)
   await handle.close()
-  rawEdit(file, 'PRAGMA user_version = 2')
+  rawEdit(file, `PRAGMA user_version = ${STORE_FORMAT_VERSION + 1}`)
   const before = sha256(file)
   const opened = track(t, openStore(file, { lock: withoutLibraryLock }))
   for (const write of [

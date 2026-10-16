@@ -16,6 +16,9 @@ import { closeSync, lstatSync, openSync, realpathSync, unlinkSync } from 'node:f
 import path from 'node:path'
 import { libraryLockProbe, withLibraryOperation } from './library-operation-lock.mjs'
 import {
+  MEDIA_SCHEMA, MEDIA_TABLES, applyMediaBlock, mediaRegistryProblems, mediaRegistrySnapshot, validMediaBlock,
+} from './store-media-registry.mjs'
+import {
   StoreHostError, closeQuietly, openConnection, pragmaValue, scratchConnection, sqliteDetail, storeErrorFrom, transactionState,
 } from './store-sqlite.mjs'
 import { FORMAL_TABLES, readFormalState as readFormalStateCore } from '../src/worldgraph/store/formal.ts'
@@ -28,8 +31,11 @@ import {
 export { StoreHostError } from './store-sqlite.mjs'
 
 export const STORE_FORMAT = 'starmap.formal-store'
-/** Also the SQLite `user_version`. Raise it only together with an entry in MIGRATIONS. */
-export const STORE_FORMAT_VERSION = 1
+/**
+ * Also the SQLite `user_version`. Raise it only together with an entry in MIGRATIONS. 2 since 3C-4c: the media registry
+ * (./store-media-registry.mjs, design v2 §2).
+ */
+export const STORE_FORMAT_VERSION = 2
 /** `PRAGMA application_id` of a formal store file ('SMF1'). */
 export const STORE_APPLICATION_ID = 0x534d4631
 /**
@@ -42,8 +48,12 @@ export const STORE_AUTO_VACUUM = 2
 export const STORE_RELATIVE_PATH = Object.freeze(['data', 'store', 'world.sqlite'])
 export const storePathFor = (privateRoot) => path.join(privateRoot, ...STORE_RELATIVE_PATH)
 
-/** Upgrades from an older user_version, keyed by that version. Version 1 is the first. */
-const MIGRATIONS = Object.freeze({})
+/**
+ * Upgrades from an older user_version, keyed by that version: the statements that turn its schema into the next one. A
+ * store of such a version opens with E_STORE_UPGRADE_REQUIRED and is upgraded only by upgradeStoreFile (`npm run
+ * store:upgrade`), never by an open. Version 1 is the first; 1 → 2 adds the media registry.
+ */
+const MIGRATIONS = Object.freeze({ 1: Object.freeze({ to: 2, statements: MEDIA_SCHEMA }) })
 
 const fail = (code, details) => { throw new StoreHostError(code, details) }
 const missing = (error) => error?.code === 'ENOENT'
@@ -173,25 +183,30 @@ export const SCHEMA_V1 = Object.freeze([
   'CREATE TABLE op_log (seq INTEGER PRIMARY KEY, request_id TEXT NOT NULL, at TEXT NOT NULL, actor TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL) STRICT',
   // Identity manifest for 3C-1b: (kind, source, record) → formal id.
   'CREATE TABLE id_map (kind TEXT NOT NULL, source_id TEXT NOT NULL, record_id TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (kind, source_id, record_id)) STRICT, WITHOUT ROWID',
-  // Media file operations awaiting confirmation or deletion (design 3B §5.1). Logic arrives in 3C-4.
+  // Media file operations awaiting deletion (design 3B §5.1; 3C-4c: rows come with a commit's media block).
   'CREATE TABLE pending_file_ops (seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL, request_id TEXT NOT NULL, at TEXT NOT NULL, detail TEXT NOT NULL) STRICT',
 ])
 
+/** Every CREATE statement of user_version 2 (3C-4c): version 1 and the media registry (./store-media-registry.mjs). */
+export const SCHEMA_V2 = Object.freeze([...SCHEMA_V1, ...MEDIA_SCHEMA])
+/** The schema of each format version this host knows (the current one, and the ones it upgrades from). */
+const SCHEMAS = Object.freeze({ 1: SCHEMA_V1, 2: SCHEMA_V2 })
+
 /** The host's own tables besides store_meta (tableCounts). */
-const HOST_TABLES = Object.freeze(['refs', 'tombstones', 'receipts', 'op_log', 'id_map', 'pending_file_ops'])
+const HOST_TABLES = Object.freeze(['refs', 'tombstones', 'receipts', 'op_log', 'id_map', 'pending_file_ops', ...MEDIA_TABLES])
 
 const SCHEMA_QUERY = "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_stat%' ORDER BY type, name"
-let expectedSchemaRows
-/** sqlite_schema rows a correct store has, derived once by creating SCHEMA_V1 in memory. */
-function expectedSchema() {
-  if (!expectedSchemaRows) {
+const expectedSchemaRows = new Map()
+/** sqlite_schema rows a correct store of `version` has, derived once by creating its schema in memory. */
+function expectedSchema(version = STORE_FORMAT_VERSION) {
+  if (!expectedSchemaRows.has(version)) {
     const db = scratchConnection()
     try {
-      for (const statement of SCHEMA_V1) db.exec(statement)
-      expectedSchemaRows = JSON.stringify(db.prepare(SCHEMA_QUERY).all().map((row) => ({ ...row })))
+      for (const statement of SCHEMAS[version]) db.exec(statement)
+      expectedSchemaRows.set(version, JSON.stringify(db.prepare(SCHEMA_QUERY).all().map((row) => ({ ...row }))))
     } finally { closeQuietly(db) }
   }
-  return expectedSchemaRows
+  return expectedSchemaRows.get(version)
 }
 
 // ---------------------------------------------------------------------------
@@ -375,9 +390,10 @@ const QUICK_CHECK_PROBLEM = /^E_STORE_CORRUPT: quick_check /
 /**
  * Full consistency check of one read transaction: quick_check, Core's full validation
  * (readFormalState), the stored index columns against the row bodies, the refs table against
- * referencesOf, and foreign keys. Problems carry codes, tables and counts only.
+ * referencesOf, foreign keys, and (3C-4c) the media registry against the rows
+ * (./store-media-registry.mjs mediaRegistryProblems). Problems carry codes, tables and counts only.
  */
-function checkConnection(db, settings) {
+function checkConnection(db, settings, { media = true } = {}) {
   const problems = []
   const quick = quickCheck(db, settings)
   if (quick.length) problems.push(quickCheckProblem(quick))
@@ -405,6 +421,7 @@ function checkConnection(db, settings) {
   if (expected.size || unexpected) problems.push(`E_STORE_REFS: ${expected.size} missing, ${unexpected} unexpected`)
   const violations = db.prepare('PRAGMA foreign_key_check').all().length
   if (violations) problems.push(`E_STORE_FOREIGN_KEY: ${violations}`)
+  if (media) problems.push(...mediaRegistryProblems(db, state))
   return problems
 }
 
@@ -413,6 +430,8 @@ function checkConnection(db, settings) {
 // ---------------------------------------------------------------------------
 
 const REQUEST_KEYS = Object.freeze(['requestId', 'baseRevision', 'kind', 'actor', 'commands'])
+/** Optional request keys: `media`, the media registry changes of the request (3C-4c, ./store-media-registry.mjs). */
+const OPTIONAL_REQUEST_KEYS = Object.freeze(['media'])
 /** A receipt lists at most this many affected rows; a larger batch (a migration) keeps its counts only. */
 export const RECEIPT_AFFECTED_LIMIT = 1000
 
@@ -422,23 +441,35 @@ function requestText(value, pathName, max) {
   if (value.length > max) reject('E_REQUEST', pathName)
 }
 
-/** Validated, frozen copy of a request (design 3B §4.4). The commands are validated by the planner. */
+/**
+ * Validated, frozen copy of a request (design 3B §4.4). The commands are validated by the planner; a `media` block
+ * (3C-4c) by its shape here and against the state when it is applied.
+ */
 function validRequest(request) {
-  return core(() => {
+  const valid = core(() => {
     validateJson(request, 'request')
-    shape(request, REQUEST_KEYS, REQUEST_KEYS, 'request')
+    shape(request, [...REQUEST_KEYS, ...OPTIONAL_REQUEST_KEYS], REQUEST_KEYS, 'request')
     uuid(request.requestId, 'request.requestId')
     revision(request.baseRevision, 'request.baseRevision')
     requestText(request.kind, 'request.kind', 128)
     requestText(request.actor, 'request.actor', 256)
     if (!Array.isArray(request.commands)) reject('E_COMMAND', 'request.commands')
-    return freezeCopy(request)
+    return request
   }, 'not_committed')
+  if (valid.media === undefined) return freezeCopy(valid)
+  return freezeCopy({ ...valid, media: validMediaBlock(valid.media) })
 }
 
-/** SHA-256 of this request only (kind, baseRevision, actor, commands), canonical JSON (Core jsonKey). Never a store hash. */
+/**
+ * SHA-256 of this request only (kind, baseRevision, actor, commands, and the media block when there is one), canonical
+ * JSON (Core jsonKey). Never a store hash. A request without a media block has exactly the digest it had before 3C-4c,
+ * so receipts written earlier still answer their retries.
+ */
 export const requestDigest = (request) => createHash('sha256')
-  .update(jsonKey({ kind: request.kind, baseRevision: request.baseRevision, actor: request.actor, commands: request.commands }))
+  .update(jsonKey({
+    kind: request.kind, baseRevision: request.baseRevision, actor: request.actor, commands: request.commands,
+    ...(request.media === undefined ? {} : { media: request.media }),
+  }))
   .digest('hex')
 
 /** Host timestamps in one canonical form (milliseconds, Z), so stored times order as strings. */
@@ -512,8 +543,11 @@ function executeChangeSet(db, changeSet, phase) {
   for (const tombstone of changeSet.tombstones) sql.tombstone.run(tombstone.table, tombstone.id, tombstone.deletedAt)
 }
 
-/** The original receipt: status committed, the revision after, counts and (bounded) affected rows. */
-function receiptFor(request, changeSet, at) {
+/**
+ * The original receipt: status committed, the revision after, counts and (bounded) affected rows; with a media block,
+ * also its operation counts (`media`).
+ */
+function receiptFor(request, changeSet, at, mediaCounts) {
   const counts = Object.fromEntries(Object.entries(changeSet.summary.counts)
     .filter(([, count]) => count.created || count.updated || count.removed))
   const affected = [
@@ -524,28 +558,45 @@ function receiptFor(request, changeSet, at) {
     status: 'committed', requestId: request.requestId, kind: request.kind, baseRevision: request.baseRevision,
     revision: changeSet.nextRevision, at, counts,
     ...(affected.length <= RECEIPT_AFFECTED_LIMIT ? { affected } : { affectedOmitted: affected.length }),
+    ...(mediaCounts === undefined ? {} : { media: mediaCounts }),
   }
 }
 
 /**
  * Plan and execute one validated request inside an open BEGIN IMMEDIATE transaction: revision
  * check, planCommands over the transaction's reader, the change set, the store revision, the
- * receipt and the op_log summary. Returns the receipt. Shared by commit and createStore.
+ * media block (3C-4c: the registry rows, in the same transaction), the receipt and the op_log
+ * summary. Returns the receipt. Shared by commit, createStore and upgradeStoreFile.
+ *
+ * A request without commands changes no row and keeps the revision; with a media block it still
+ * writes the registry, the receipt and the op_log entry (a scan that only moved sources).
  */
 function applyRequest(db, request, digest, at, settings, phase) {
   if (currentRevision(db) !== request.baseRevision) fail('E_STALE', { path: 'request.baseRevision' })
-  const { reader, close } = transactionReader(db)
   let changeSet
-  try {
-    changeSet = core(() => planCommands(reader, request.commands, { baseRevision: request.baseRevision, now: at, policy: settings.policy }), 'not_committed')
-  } finally { close() }
+  if (request.commands.length === 0 && request.media !== undefined) {
+    // Core plans only non-empty batches; a registry-only request changes no row.
+    changeSet = { baseRevision: request.baseRevision, nextRevision: request.baseRevision, upserts: [], deletes: [], tombstones: [], refsAdded: [], refsRemoved: [], summary: { counts: {} } }
+  } else {
+    const { reader, close } = transactionReader(db)
+    try {
+      changeSet = core(() => planCommands(reader, request.commands, { baseRevision: request.baseRevision, now: at, policy: settings.policy }), 'not_committed')
+    } finally { close() }
+  }
   executeChangeSet(db, changeSet, phase)
   const sql = writeStatements(db)
   if (changeSet.nextRevision !== request.baseRevision && sql.revision.run(changeSet.nextRevision, request.baseRevision).changes !== 1) inconsistent('store_meta')
-  const receipt = receiptFor(request, changeSet, at)
+  const mediaCounts = request.media === undefined
+    ? undefined
+    : applyMediaBlock(db, request.media, { requestId: request.requestId, at, deletes: changeSet.deletes })
+  if (mediaCounts !== undefined) phase('media')
+  const receipt = receiptFor(request, changeSet, at, mediaCounts)
   sql.receiptAdd.run(request.requestId, digest, 'committed', changeSet.nextRevision, JSON.stringify(receipt), at)
   sql.opLogAdd.run(request.requestId, at, request.actor, request.kind,
-    JSON.stringify({ baseRevision: request.baseRevision, revision: changeSet.nextRevision, counts: receipt.counts }))
+    JSON.stringify({
+      baseRevision: request.baseRevision, revision: changeSet.nextRevision, counts: receipt.counts,
+      ...(mediaCounts === undefined ? {} : { media: mediaCounts }),
+    }))
   return deepFreeze(receipt)
 }
 
@@ -707,11 +758,25 @@ function openFailure(error) {
 }
 
 /**
+ * The format checks of an open store for `version` (the current one, or the version upgradeStoreFile upgrades from): the
+ * schema (the DDL rows and auto_vacuum) and store_meta. A diagnostic or undefined.
+ */
+function formatDiagnostic(db, version) {
+  if (JSON.stringify(db.prepare(SCHEMA_QUERY).all().map((row) => ({ ...row }))) !== expectedSchema(version)) return { code: 'E_STORE_SCHEMA' }
+  if (pragmaValue(db, 'auto_vacuum') !== STORE_AUTO_VACUUM) return { code: 'E_STORE_SCHEMA', detail: { pragma: 'auto_vacuum' } }
+  const meta = db.prepare('SELECT format, format_version FROM store_meta WHERE singleton = 1').get()
+  if (meta?.format !== STORE_FORMAT || meta.format_version !== version) return { code: 'E_STORE_SCHEMA', detail: { table: 'store_meta' } }
+  return undefined
+}
+
+/**
  * The open checks (design 3B §4.3, v1.1 §16.2-3), all of them cheap: application_id,
- * user_version (newer is E_STORE_TOO_NEW, older migrates), schema (the DDL rows and auto_vacuum)
+ * user_version (newer is E_STORE_TOO_NEW; an older one with an entry in MIGRATIONS is
+ * E_STORE_UPGRADE_REQUIRED, any other E_STORE_VERSION), schema (the DDL rows and auto_vacuum)
  * and store_meta. No quick_check here: it runs only after an unclean shutdown (startSession), and
  * on request (checkIntegrity). Returns undefined when the store is usable, otherwise a diagnostic
- * { code, detail? }. Never repairs anything.
+ * { code, detail? }. Never repairs or upgrades anything: an older store stays as it is until
+ * `npm run store:upgrade` (upgradeStoreFile).
  */
 function openDiagnostic(db) {
   try {
@@ -719,14 +784,11 @@ function openDiagnostic(db) {
     const version = pragmaValue(db, 'user_version')
     if (version > STORE_FORMAT_VERSION) return { code: 'E_STORE_TOO_NEW', detail: { version } }
     if (version < STORE_FORMAT_VERSION) {
-      // No older version exists yet; a future migration runs MIGRATIONS[version] here.
-      if (!Object.hasOwn(MIGRATIONS, version)) return { code: 'E_STORE_VERSION', detail: { version } }
+      return Object.hasOwn(MIGRATIONS, version)
+        ? { code: 'E_STORE_UPGRADE_REQUIRED', detail: { version } }
+        : { code: 'E_STORE_VERSION', detail: { version } }
     }
-    if (JSON.stringify(db.prepare(SCHEMA_QUERY).all().map((row) => ({ ...row }))) !== expectedSchema()) return { code: 'E_STORE_SCHEMA' }
-    if (pragmaValue(db, 'auto_vacuum') !== STORE_AUTO_VACUUM) return { code: 'E_STORE_SCHEMA', detail: { pragma: 'auto_vacuum' } }
-    const meta = db.prepare('SELECT format, format_version FROM store_meta WHERE singleton = 1').get()
-    if (meta?.format !== STORE_FORMAT || meta.format_version !== STORE_FORMAT_VERSION) return { code: 'E_STORE_SCHEMA', detail: { table: 'store_meta' } }
-    return undefined
+    return formatDiagnostic(db, STORE_FORMAT_VERSION)
   } catch (error) {
     return openFailure(error)
   }
@@ -1061,6 +1123,13 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
       })
     },
     /**
+     * The media registry (3C-4c) and the store revision from one read transaction: `{ revision, files, assetFiles,
+     * sources, scanCache, pendingFileOps }`, plain objects (./store-media-registry.mjs mediaRegistrySnapshot).
+     */
+    mediaRegistry() {
+      return readTransaction((connection) => ({ revision: currentRevision(connection), ...mediaRegistrySnapshot(connection) }))
+    },
+    /**
      * Every row as a FormalState, through Core's full validation (readFormalState) and deep
      * frozen. For migration, restore, export, the check command and tests; neither the write path
      * nor the start-up read model calls it.
@@ -1252,7 +1321,7 @@ function removeEmptyJournal(file) {
  * Create a new store file, exclusively: an existing target is E_STORE_EXISTS and is never
  * touched. `auto_vacuum` is set before the first table; schema, `application_id`, `user_version`
  * and `store_meta` are written in one transaction under the library lease, together with the optional `initial` request
- * `{ requestId, kind?, actor, commands }` (base revision 0). Until 3C-1b's official definitions
+ * `{ requestId, kind?, actor, commands, media? }` (base revision 0; `media` seeds the registry, 3C-4c). Until 3C-1b's official definitions
  * exist, the initial commands always come from the caller. `libraryId` (UUIDv7) is injected.
  * On any failure the new file is removed: nothing half-created is left behind.
  */
@@ -1279,7 +1348,7 @@ export async function createStore(file, options = {}) {
       db.exec('BEGIN IMMEDIATE')
       db.exec(`PRAGMA application_id = ${STORE_APPLICATION_ID}`)
       db.exec(`PRAGMA user_version = ${STORE_FORMAT_VERSION}`)
-      for (const statement of SCHEMA_V1) db.exec(statement)
+      for (const statement of SCHEMAS[STORE_FORMAT_VERSION]) db.exec(statement)
       // The creating handle is the store's first writer session: clean_shutdown 0 until its close().
       db.prepare('INSERT INTO store_meta (singleton, format, format_version, library_id, revision, created_at, clean_shutdown) VALUES (1, ?, ?, ?, 0, ?, 0)')
         .run(STORE_FORMAT, STORE_FORMAT_VERSION, options.libraryId, createdAt)
@@ -1300,9 +1369,110 @@ export async function createStore(file, options = {}) {
   })
 }
 
+/** `kind` and default `actor` of the request an upgrade writes (its receipt and op_log entry). */
+export const STORE_UPGRADE_KIND = 'store.upgrade'
+export const STORE_UPGRADE_ACTOR = 'store:upgrade'
+
+/**
+ * Upgrade a store of an older format version in place (3C-4c: 1 → 2, `npm run store:upgrade`), under the library lease:
+ * 1. a writable connection (it rolls back a hot journal), application_id and the version: a version with an entry in
+ *    MIGRATIONS is upgraded; the current one is left alone ({ upgraded: false }); a newer one is E_STORE_TOO_NEW, any
+ *    other E_STORE_VERSION. Then the old version's exact schema and store_meta, and quick_check (E_STORE_CORRUPT);
+ * 2. every row, read in one transaction (as readRowsUnchecked), goes to `prepare({ state, revision })`. It may do IO (the
+ *    media registry is seeded from the Inbox and the media files) and returns the media block to write, or undefined;
+ * 3. one write transaction: the revision must not have moved (E_STALE); MIGRATIONS[version].statements; a request
+ *    without commands (`kind` store.upgrade, the media block, its receipt and op_log entry; the revision stays); then
+ *    user_version and store_meta.format_version; the new version's open checks must pass inside it;
+ * 4. COMMIT, settled into the three outcomes like a commit.
+ * Any failure before COMMIT rolls back: the file keeps its old version, nothing else changed. No writer session is
+ * started (clean_shutdown is left as it was). `requestId` (UUIDv7) is injected; options as openStore (`privatePaths` or
+ * `lock`, `now`, `policy`). Resolves { upgraded, fromVersion, toVersion, revision, receipt? }.
+ */
+export async function upgradeStoreFile(file, options = {}) {
+  const target = absoluteFile(file)
+  existingFile(target)
+  const settings = hostOptions(options)
+  core(() => uuid(options.requestId, 'requestId'), 'not_committed')
+  const library = resolveLibrary(options)
+  return library.lease(async () => {
+    const key = writerKey(target)
+    if (writers.has(key)) fail('E_STORE_ALREADY_OPEN', { path: 'file' })
+    const db = openConnection(target)
+    writers.add(key)
+    try {
+      if (pragmaValue(db, 'application_id') !== STORE_APPLICATION_ID) fail('E_STORE_APPLICATION_ID', { outcome: 'not_committed' })
+      const version = pragmaValue(db, 'user_version')
+      if (version === STORE_FORMAT_VERSION) {
+        const current = formatDiagnostic(db, version)
+        if (current) fail(current.code, { outcome: 'not_committed' })
+        return Object.freeze({ upgraded: false, fromVersion: version, toVersion: version, revision: currentRevision(db) })
+      }
+      if (version > STORE_FORMAT_VERSION) fail('E_STORE_TOO_NEW', { outcome: 'not_committed' })
+      const migration = MIGRATIONS[version]
+      if (!migration) fail('E_STORE_VERSION', { outcome: 'not_committed' })
+      const old = formatDiagnostic(db, version)
+      if (old) fail(old.code, { outcome: 'not_committed' })
+      if (quickCheck(db, settings).length) fail('E_STORE_CORRUPT', { outcome: 'not_committed' })
+      let state
+      db.exec('BEGIN')
+      try { state = formalStateValue(db) } finally { if (transactionState(db) === true) db.exec('ROLLBACK') }
+      const media = await options.prepare?.({ state, revision: state.revision })
+      const request = validRequest({
+        requestId: options.requestId, baseRevision: state.revision, kind: STORE_UPGRADE_KIND, actor: options.actor ?? STORE_UPGRADE_ACTOR, commands: [],
+        media: media ?? {},
+      })
+      const at = hostTime(settings)
+      let commitIssued = false
+      try {
+        db.exec('BEGIN IMMEDIATE')
+        if (currentRevision(db) !== state.revision) fail('E_STALE', { path: 'revision' })
+        for (const statement of migration.statements) db.exec(statement)
+        const receipt = applyRequest(db, request, requestDigest(request), at, settings, () => {})
+        db.exec(`PRAGMA user_version = ${migration.to}`)
+        if (db.prepare('UPDATE store_meta SET format_version = ? WHERE singleton = 1').run(migration.to).changes !== 1) inconsistent('store_meta')
+        const upgraded = formatDiagnostic(db, migration.to)
+        if (upgraded) fail(upgraded.code, { path: 'schema' })
+        commitIssued = true
+        db.exec('COMMIT')
+        return Object.freeze({ upgraded: true, fromVersion: version, toVersion: migration.to, revision: receipt.revision, receipt })
+      } catch (error) {
+        throw settleFailure(db, error, commitIssued)
+      }
+    } finally {
+      writers.delete(key)
+      closeQuietly(db)
+    }
+  })
+}
+
+/**
+ * checkStoreFile for a store of an older format that store:upgrade knows (3C-4c): its exact old schema, then the same
+ * full check without the parts that version does not have (the media registry). Writes nothing. A sound store is
+ * { ok: true, upgradeRequired: true }: library:recover can clear a lock left on it, after which store:upgrade (which
+ * needs the lease) can run. Without this the two would wait on each other.
+ */
+function checkOlderStoreFile(file, policy) {
+  const settings = hostOptions({ policy })
+  let db
+  try {
+    db = openConnection(absoluteFile(file))
+    const version = pragmaValue(db, 'user_version')
+    const old = formatDiagnostic(db, version)
+    if (old) return Object.freeze({ ok: false, upgradeRequired: true, problems: Object.freeze([old.code]) })
+    db.exec('BEGIN')
+    try {
+      const problems = checkConnection(db, settings, { media: version >= 2 })
+      return Object.freeze({ ok: problems.length === 0, upgradeRequired: true, problems: Object.freeze(problems) })
+    } finally { if (transactionState(db) === true) db.exec('ROLLBACK') }
+  } catch (error) {
+    return Object.freeze({ ok: false, upgradeRequired: true, problems: Object.freeze([storeErrorFrom(error).code]) })
+  } finally { closeQuietly(db) }
+}
+
 /**
  * Open `file`, run the full check (quick_check included) and close: library:recover's store
- * check. The open is an inspection: it rolls back a hot journal like any writable connection,
+ * check. A store of an older format that store:upgrade knows is checked as that format
+ * ({ upgradeRequired: true }). The open is an inspection: it rolls back a hot journal like any writable connection,
  * but starts no writer session, so clean_shutdown is left as it was and a clean store is not
  * written at all. Any open diagnostic or check problem is reported; nothing is repaired.
  */
@@ -1312,6 +1482,7 @@ export async function checkStoreFile(file, { policy } = {}) {
     return Object.freeze({ ok: false, problems: Object.freeze([error?.code ?? 'E_STORE_OPEN']) })
   }
   try {
+    if (handle.diagnostic?.code === 'E_STORE_UPGRADE_REQUIRED') return checkOlderStoreFile(file, policy)
     if (handle.diagnostic) return Object.freeze({ ok: false, problems: Object.freeze([handle.diagnostic.code]) })
     return handle.check()
   } catch (error) {
