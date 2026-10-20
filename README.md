@@ -207,6 +207,15 @@ npm run store:backup -- --out <new folder>
 npm run store:restore -- --from <backup folder> --to <new private root>
 ```
 
+Export the new library's read model (`starmap.read-model`: every place, record, item and view setting the App reads, without the media registry, receipts or any other table only the store keeps) as one JSON file:
+
+```powershell
+npm run store:export-read-model -- --out <new file>            # everything
+npm run store:export-read-model -- --out <new file> --public   # only what is marked public, and what it needs
+```
+
+The output follows the rule of the other exports (inside the private root or outside this repository, never over an existing file) and passes a full check before it is written.
+
 A backup refuses while a media task is unfinished. Under the library lock (a few seconds) it runs an integrity check and takes a consistent snapshot of the database; then it releases the lock, so the preview keeps saving, and copies the media with the rules of `npm run backup`: files outside its list of media types refuse the backup, and each copy is checked against the SHA-256 of its source. The manifest records the size and SHA-256 of every file, and the completion mark is written last. A restore checks the manifest, creates a new private root with the new library and the media, checks every media file against its SHA-256 (one mismatch fails the restore and removes the new root), runs `integrity_check` and the full check, and never overwrites anything. Copy `config/` yourself and point `STARMAP_PRIVATE_ROOT` at the new root. A backup of ten thousand photos takes a few minutes: most of the time goes to the number of files. On a private root with a new library, `npm run backup -- create` (below) uses the same implementation and says so. Every output folder must be inside the private root or outside this repository, and not inside its media or data folders. Details: [docs/local-backup.md](docs/local-backup.md).
 
 Run one personal preview per private root: the dev server keeps the new library open. `npm run build:personal` reads the new library read-only, so it can run while the preview is open. Do not keep a library that is in use in a synced folder such as OneDrive; sync only finished backups. If the preview is killed instead of stopped, the next start runs SQLite's `quick_check` first.

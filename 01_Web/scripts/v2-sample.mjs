@@ -4,8 +4,9 @@
  * 目录里只有五个 V2 文件（文件名不带 `.local`——它们是公开样例，不是私人数据）。公开模式与强制样例经 V2 Reader 读它们
  * （src/data/rawInputs.ts 静态 import，文件名同下面的 V2_SAMPLE_FILE_NAMES）。
  *
- * PR5b 起它们是唯一来源，手工维护：不再由迁移工具生成（`sample:v2` 与固定的迁移清单已删除）。改完运行
- * `npm run privacy:check`，由下面的 `auditV2SampleDirectory` 校验格式与中立性。
+ * PR5b 起它们手工维护：不再由迁移工具生成（`sample:v2` 与固定的迁移清单已删除）。改完运行
+ * `npm run privacy:check`，由下面的 `auditV2SampleDirectory` 校验格式与中立性。3C-5A 起另有新库格式的原生样例
+ * （src/data/sample/，./public-sample.mjs）；公开构建在 3C-5B 之前仍读这里的 V2 文件，两份样例要保持一致。
  *
  * 本模块给基线工具（`--sample`）、privacy-audit 与测试共用：目录与文件名、读五个文件，以及隐私审计的规则。
  */
