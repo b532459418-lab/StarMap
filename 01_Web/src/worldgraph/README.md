@@ -134,6 +134,22 @@ Focused verification from `01_Web/`:
 node --test --test-isolation=none src/worldgraph/store/*.test.ts
 ```
 
+## Read model (3C-5)
+
+`readModel/` holds `starmap.read-model` v1: a read-only copy of a formal store's rows, the one shape a reader of a
+library or of the public sample gets. It is generic: every definition, fact and view row of the store is in it,
+official or not. A host builds it from the rows it reads; the App does not read it yet.
+
+| File | Responsibility |
+| --- | --- |
+| `readModel/types.ts` | `ReadModel`: the header (`format`, `formatVersion` 1, `revision`, `origin` `local` or `sample`) and Core's formal rows, every table ordered by id in code-point order (`compareIds`, the order SQLite reads them in). Never in it: tombstones, review receipts, proposals, and everything only a host keeps (receipts, logs, id maps, pending file operations, the media registry). |
+| `readModel/build.ts` | `readModelOf(rows, header)` and `formalStateOfReadModel(model)`, the FormalState with the same rows for the existing pure readers. |
+| `readModel/check.ts` | `readReadModel`: header and shape only, for every read; a newer `formatVersion` is `E_READ_MODEL_TOO_NEW`. `validateReadModel`: the full check for exports and tests, through `readFormalState` (Core's own row rules). A row that names a review receipt is trusted to have it, since receipts never leave the host. |
+| `readModel/lookup.ts` | `indexReadModel`: rows by id, entries by layer or entity, relations by either end (optionally of one type), anchors by entity, view items by scope in position order, view settings by scope. |
+| `readModel/delta.ts` | `applyReadModelDelta(model, changeSet)`: the planner's change set applied to the read model of its base revision gives the read model of the next one, without reading the store. |
+| `readModel/select.ts` | `selectReadModel(model, keep, { prune })`: the rows `keep` accepts, closed under references (a row referring to a removed row goes; sequences and evidence lists keep what remains); a pruned table keeps only what a kept non-view row refers to. The base of filtered exports. |
+| `readModel/readModel.test.ts` | Building, reading, validation, lookups, three random command sequences (every step's delta equals a fresh read) and selection. |
+
 ## Names and UI locale
 
 Entity, place-input, map-query and Collection titles use `LocalizedText`:
