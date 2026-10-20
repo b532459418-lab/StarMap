@@ -11,10 +11,14 @@
  * - definitions, evidence and assets only while a kept row that is not view state refers to them (so an asset only a
  *   hidden list names goes, and an unreferenced source such as the V2 file headers goes);
  * - view settings without a reference only in the display scope (the overview target and the region matchers); every
- *   other value setting goes, the list elements that never resolved to a row (`unresolved:`) included;
+ *   other value setting goes, the list elements that never resolved to a row (`unresolved:`) included. The overview
+ *   target is published on purpose: it is the coordinate of the map's default camera, which a public map needs (review
+ *   of 3C-5A);
  * - `extensions`: only the verbatim V2 values the official view reads (PUBLIC_EXTENSION_KEYS); anything else, such as
  *   old name-derived keys or values of unknown meaning, goes, and so does every other table's extensions.
- * Asset attributes and evidence attributes are row data, not extensions, and stay as they are.
+ * Asset attributes and evidence attributes are row data, not extensions, and stay as they are, except an asset's
+ * `originalFileName` (PUBLIC_ASSET_ATTRIBUTES_REMOVED): the name of the file it was imported from may carry names or
+ * dates, so a public export never has it (review of 3C-5A).
  *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types).
  */
@@ -34,6 +38,8 @@ export const PUBLIC_EXTENSION_KEYS: Readonly<Partial<Record<ReadModelTable, read
 })
 /** Scopes whose value settings (no reference) are published. */
 export const PUBLIC_VALUE_SCOPES: readonly string[] = Object.freeze([VIEW_SCOPES.display])
+/** Asset attributes a public export never carries. */
+export const PUBLIC_ASSET_ATTRIBUTES_REMOVED: readonly string[] = Object.freeze(['originalFileName'])
 /** Tables that keep only what a kept fact refers to. */
 export const PUBLIC_PRUNED_TABLES: readonly ReadModelTable[] = Object.freeze([...READ_MODEL_DEFINITION_TABLES, 'evidence', 'assets'])
 
@@ -48,6 +54,14 @@ function publishedExtensions(table: ReadModelTable, row: ReadModelRow): ReadMode
   const next: Record<string, unknown> = { ...row }
   if (Object.keys(v2).length) next.extensions = { v2 }; else delete next.extensions
   return next as unknown as ReadModelRow
+}
+
+/** An asset without the attributes a public export never carries (a new object), or the row itself. */
+function publishedAttributes(table: ReadModelTable, row: ReadModelRow): ReadModelRow {
+  const attributes = (row as { readonly attributes?: JsonObject }).attributes
+  if (table !== 'assets' || attributes === undefined || !PUBLIC_ASSET_ATTRIBUTES_REMOVED.some((key) => Object.hasOwn(attributes, key))) return row
+  const kept = Object.fromEntries(Object.entries(attributes).filter(([key]) => !PUBLIC_ASSET_ATTRIBUTES_REMOVED.includes(key)))
+  return { ...row, attributes: kept } as unknown as ReadModelRow
 }
 
 /** The public part of `model` (see the file header). The header is kept. */
@@ -68,7 +82,7 @@ export function publicReadModelOf(model: ReadModel): ReadModel {
   const selected = selectReadModel(model, keep, { prune: PUBLIC_PRUNED_TABLES })
   const result: Record<string, unknown> = { ...selected }
   for (const table of READ_MODEL_TABLES) {
-    result[table] = (selected[table] as readonly ReadModelRow[]).map((row) => publishedExtensions(table, row))
+    result[table] = (selected[table] as readonly ReadModelRow[]).map((row) => publishedAttributes(table, publishedExtensions(table, row)))
   }
   return result as unknown as ReadModel
 }

@@ -6,8 +6,9 @@
  *   every definition, fact and view row, without tombstones, review receipts or anything only the host keeps (receipts,
  *   op_log, id_map, pending file operations, the media registry with its Inbox paths).
  * - `--public`: only what may be published (src/data/store/publicReadModel.ts): entities whose visibility is public,
- *   what they and their entries refer to, and the official view's verbatim values only. The header (revision, origin)
- *   stays.
+ *   what they and their entries refer to, and the official view's verbatim values only; media assets without their
+ *   original file names. The map's display settings are published, so the coordinate of its default camera (the
+ *   overview target) is public. The header (revision, origin) stays.
  * - Before anything is written, the result goes through the full check (`validateReadModel`, Core's own row rules).
  * - The output is checked like `store:export-v2`'s (./store-backup.mjs `newOutput`): inside the private root or outside
  *   this repository, and it must not exist. It is written exclusively, then synced.
@@ -68,6 +69,7 @@ export async function exportStoreReadModel(privatePaths, { out, publicOnly = fal
   if (publicOnly) {
     const removed = READ_MODEL_TABLES.map((table) => [table, full[table].length - model[table].length]).filter(([, count]) => count > 0)
     lines.push(removed.length ? `没有公开、未导出：${removed.map(([table, count]) => `${table} ${count}`).join('，')}。` : '库里的全部内容都是公开的。')
+    lines.push('公开导出包含地图默认镜头的坐标（overviewTarget）；媒体资产不带原始文件名。')
   }
   return { out: target, model, lines }
 }

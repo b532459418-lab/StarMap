@@ -9,7 +9,7 @@ import { validateReadModel } from '../../worldgraph/readModel/check.ts'
 import { READ_MODEL_TABLES, type ReadModel, type ReadModelRow, type ReadModelTable } from '../../worldgraph/readModel/types.ts'
 import { OFFICIAL, OFFICIAL_POLICY, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES } from './officialDefinitions.ts'
 import { projectStoreToCanonical } from './projectCanonical.ts'
-import { PUBLIC_EXTENSION_KEYS, publicReadModelOf } from './publicReadModel.ts'
+import { PUBLIC_ASSET_ATTRIBUTES_REMOVED, PUBLIC_EXTENSION_KEYS, publicReadModelOf } from './publicReadModel.ts'
 import { edgeCaseFixture, migrateIntoEmptyStore } from './v2Store.fixture.ts'
 
 const ICELAND = '01a0ed02-3f45-7743-8aec-d757b6c28eba'
@@ -56,6 +56,18 @@ test('only assets a kept entity refers to are exported; a hidden list does not k
   assert.deepEqual(ids(exported, 'assets'), [PUBLIC_PHOTO])
   // The drone asset is named by a drone order and a hidden list, but its media entity is private.
   assert.ok(!exported.viewItems.some((row) => row.itemId === 'synthetic-drone'))
+})
+
+test('public assets lose their original file name; their other attributes stay', () => {
+  assert.deepEqual(PUBLIC_ASSET_ATTRIBUTES_REMOVED, ['originalFileName'])
+  const source = library([]).assets.find((row) => row.id === PUBLIC_PHOTO)!
+  assert.equal(source.attributes.originalFileName, 'neutral.jpg', 'the source has one')
+  const published = exported.assets.find((row) => row.id === PUBLIC_PHOTO)!
+  assert.ok(!Object.hasOwn(published.attributes, 'originalFileName'))
+  const { originalFileName: _name, ...rest } = source.attributes
+  void _name
+  assert.deepEqual(published.attributes, rest)
+  assert.ok(!JSON.stringify(exported).includes('neutral.jpg'))
 })
 
 test('relations need both ends', () => {

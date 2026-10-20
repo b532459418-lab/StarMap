@@ -140,6 +140,7 @@ test('store:export-read-model --public publishes only public entities and what t
   assert.doesNotThrow(() => validateReadModel(written, OFFICIAL_POLICY))
   assert.match(result.lines[0], /公开读模型/)
   assert.ok(result.lines.some((line) => line.startsWith('没有公开、未导出：')))
+  assert.ok(result.lines.some((line) => line.includes('overviewTarget') && line.includes('原始文件名')), 'the export says what else it publishes and leaves out')
 })
 
 test('store:export-read-model refuses an existing file, a V2 root and an output inside the repository, writing nothing', async (t) => {

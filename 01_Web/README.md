@@ -96,7 +96,8 @@ library from the dev server (`scripts/store-init.mjs`), and everything else answ
 `E_LEGACY_UNMIGRATED` or `E_STORE_RECOVERY_REQUIRED` before reading a request body.
 The read model `starmap.read-model` (3C-5A) is a read-only copy of the store's rows (Core `src/worldgraph/readModel/`):
 the host builds it with `readModel()`, without tombstones, review receipts or the host's own tables, and
-`npm run store:export-read-model -- --out <new file> [--public]` writes it (`--public`: `src/data/store/publicReadModel.ts`).
+`npm run store:export-read-model -- --out <new file> [--public]` writes it (`--public`: `src/data/store/publicReadModel.ts`;
+the coordinate of the map's default camera is published, media assets lose their original file names).
 The App does not read it yet (3C-5B).
 `npm run library:recover` clears a library operation lock left by a crashed
 writer after checking the data; see the root README.
