@@ -3,6 +3,11 @@
  *
  * 入口是 scripts/import-media.mjs（`npm run media:check` / `media:import`）：PR5a 起旧格式的导入器已删除，入口只检查
  * 私人目录有没有没迁移的旧数据（有则拒绝，退出码 2），然后调用这里的 runV2MediaImport。
+ *
+ * 3C-4d：个人数据只写新库。media:import 只走 ./store-media-cli.mjs；在不是新库的私人根上，media:check 用这里做只读预检
+ * （apply 为 false，不取库租约）。runV2MediaImport 的写入（apply 为 true）保留到 3C-5：
+ * 生产代码已经没有入口；只用来为测试生成迁移输入（./media-inbox.fixture.mjs 等）。
+ * 扫描（scanV2MediaImport）与生成文件的发布（publishGeneratedFiles）新库照常共用。
  * 流程与旧导入器相同——扫描投递箱 → 打印报告（预检）→ 加 --apply 时生成三级网页文件并写目录——只有三处不同：
  *
  * - **归属**：从地点注册表（data/v2/places.local.json）建索引，国家文件夹按 place.json → 旧 country.json 的 countryId
@@ -363,7 +368,8 @@ export async function walkInbox({ inboxRoot, index, errors, warnings, pins, onFi
 }
 
 /**
- * 运行 V2 导入。`apply` 为 false 时只预检（不写任何文件）。返回退出码：0 完成（可能有提醒），1 有需要处理的问题或读写失败，
+ * 运行 V2 导入。`apply` 为 false 时只预检（不写任何文件）。`apply` 为 true 的写入（3C-4d 起，保留到 3C-5）：
+ * 生产代码已经没有入口；只用来为测试生成迁移输入。返回退出码：0 完成（可能有提醒），1 有需要处理的问题或读写失败，
  * 2 有待确认的文件夹绑定而没有 `acceptFolderBindings`（第 2A 批；什么都不写）。
  * `now` 与两个输出函数可注入（测试用）。
  */

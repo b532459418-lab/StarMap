@@ -26,7 +26,7 @@ const editorHeaders = {
   'x-travelatlas-local-editor': '1',
 }
 
-// 新库模式（3C-3 起，实验性）：页面加载时的全库修订号。./localEditorClient.ts 加载本模块时设一次；V2 模式为 undefined。
+// 新库（3C-3 起；3C-4d 起是唯一的写入方式）：页面加载时的全库修订号。./localEditorClient.ts 加载本模块时设一次；不是新库时为 undefined。
 // 一次写入提交成功后改为它回答的修订号：同一个操作接着写第二次（例如先隐藏国家、再彻底删除）时不算过期。
 let storeBaseRevision: number | undefined
 export const setStoreBaseRevision = (revision: number | undefined) => {

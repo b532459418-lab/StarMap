@@ -21,7 +21,9 @@ import v2SampleMedia from './v2-sample/user-media.json'
 import v2SamplePlaces from './v2-sample/places.json'
 import v2SampleTravel from './v2-sample/travel-map.json'
 import v2SampleWantToGo from './v2-sample/want-to-go.json'
-import { privateLegacyUnmigrated, privateStoreReadOnly, privateStoreRevision, privateV2Files } from 'virtual:starmap-private-data'
+import {
+  privateLegacyUnmigrated, privateStoreMigrationRequired, privateStoreReadOnly, privateStoreRecoveryRequired, privateStoreRevision, privateV2Files,
+} from 'virtual:starmap-private-data'
 import type { AppInputs, V2FileInputs } from './canonical/canonicalForInputs.ts'
 
 /** 原 worldGraph.ts 的 worldGraphSessionNow：模块加载时固定一次，适配器要求 now 必填且不读时钟。 */
@@ -60,8 +62,8 @@ export const appInputs: AppInputs = useSampleData
 export const legacyUnmigrated: boolean = !useSampleData && privateLegacyUnmigrated === true
 
 /**
- * 新库模式（3C-3，实验性）的全库修订号：私人根下有 data/store/world.sqlite 时，插件把新库投影成上面同样的五个 V2 文件，
- * 另外给出这个修订号；V2 模式、公开模式与强制样例下为 undefined。只有本地编辑器（经 ./localEditorClient.ts 的门）用它：
+ * 新库（3C-3；3C-4d 起是唯一的写入方式）的全库修订号：私人根下有 data/store/world.sqlite 时，插件把新库投影成上面同样的
+ * 五个 V2 文件，另外给出这个修订号；还不是新库（只读）、公开模式与强制样例下为 undefined。只有本地编辑器（经 ./localEditorClient.ts 的门）用它：
  * 「修改想去」的请求带上它作为 x-starmap-base-revision。
  */
 export const storeRevision: number | undefined = useSampleData ? undefined : privateStoreRevision
@@ -71,3 +73,15 @@ export const storeRevision: number | undefined = useSampleData ? undefined : pri
  * 地图页显示只读提示（./privateDataNotice.ts，只在本地编辑器可用时）。读公开样例时恒为 false。
  */
 export const storeReadOnly: boolean = !useSampleData && privateStoreReadOnly === true
+
+/**
+ * 3C-4d：个人数据还没有迁移到新库（有 V2 数据、没有新库）。数据只读显示，写入一律被拒绝（E_STORE_MIGRATION_REQUIRED）；
+ * 地图页提示运行迁移（./privateDataNotice.ts，只在本地编辑器可用时）。读公开样例时恒为 false。
+ */
+export const storeMigrationRequired: boolean = !useSampleData && privateStoreMigrationRequired === true
+
+/**
+ * 3C-4d：没有可用的新库，data/store/ 下有残留（或空的私人根没能建立新库）。只读，写入被拒绝（E_STORE_RECOVERY_REQUIRED）；
+ * 地图页提示运行 npm run library:recover。读公开样例时恒为 false。
+ */
+export const storeRecoveryRequired: boolean = !useSampleData && privateStoreRecoveryRequired === true

@@ -26,7 +26,7 @@ import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, readV2Files, runV2Write } from './v2-editor-store.mjs'
 import { handleV2Import, handleV2MediaDelete, handleV2Upload } from './v2-media-store.mjs'
-import { scanV2MediaImport } from './v2-media-import.mjs'
+import { runV2MediaImport, scanV2MediaImport } from './v2-media-import.mjs'
 import { createLocalEditorImporter } from './local-editor-importer.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
 import { isPathInside } from './path-containment.mjs'
@@ -54,6 +54,20 @@ const placesFile = () => ({
 
 const jpeg = (color, width = 64, height = 48) => sharp({ create: { width, height, channels: 3, background: color } }).jpeg({ quality: 90 }).toBuffer()
 
+/**
+ * 3C-4d：media:import 只写新库（CLI 在 V2 私人根上拒绝 --apply），插件也不再走这些 V2 端点。它们的测试在删除之前，让编辑器
+ * 导入器在进程内运行 V2 导入器（参数与输出同 CLI；退出码不为 0 时同 execFile 抛错）。
+ */
+const inProcessImport = (paths) => async (_command, args) => {
+  const stdout = []
+  const stderr = []
+  const code = await runV2MediaImport({ privatePaths: paths, apply: args.includes('--apply'), log: (line) => stdout.push(line), logError: (line) => stderr.push(line) })
+  const result = { stdout: stdout.length ? `${stdout.join('\n')}\n` : '', stderr: stderr.length ? `${stderr.join('\n')}\n` : '' }
+  // As node:child_process: "Command failed: <command>" and the standard error on the next line.
+  if (code !== 0) throw Object.assign(new Error(`Command failed: import-media.mjs ${args.slice(1).join(' ')}\n${result.stderr}`), { code, ...result })
+  return result
+}
+
 /** 上传与导入复用插件实际 helper；sidecar 与路径 helper 使用合成私人根。 */
 const depsFor = (paths) => {
   const inboxRoot = paths.inboxRoot
@@ -75,7 +89,7 @@ const depsFor = (paths) => {
       }
       await atomicJsonWrite(sidecarPath, sidecar)
     },
-    runImporter: createLocalEditorImporter({ webRoot, privateRoot: paths.root }),
+    runImporter: createLocalEditorImporter({ webRoot, privateRoot: paths.root, execFileAsync: inProcessImport(paths) }),
     normalizeInboxRelativePath: (value) => {
       if (typeof value !== 'string' || !value.trim()) return undefined
       const target = path.resolve(inboxRoot, value.trim())

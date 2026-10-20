@@ -1,6 +1,13 @@
 /**
  * `npm run store:migrate` (3C-3, design 3B §7): migrate a private root's five V2 files into the formal store
- * `data/store/world.sqlite`, which switches the root to the experimental new-library mode (./private-data-source.mjs).
+ * `data/store/world.sqlite`, the only way personal data is written since 3C-4d (./private-data-source.mjs). A dev server
+ * that is running switches over by itself (its watcher sees the new file).
+ *
+ * 3C-4d: the root's state is checked first. Legacy-format data that was never migrated to V2 is refused
+ * (E_LEGACY_UNMIGRATED: the migration of commit 4fd32a9 comes first; migrating would make an empty library of it), and
+ * so is a leftover under `data/store/` without a store (E_STORE_RESIDUE: `npm run library:recover`). With `--apply`, an
+ * unfinished media task refuses too (E_MEDIA_JOB_PENDING), under the lease. A root without any data gets an empty
+ * library initialized in the formal model (./store-init.mjs), never through the V2 reader.
  *
  * - Without arguments it only previews (a dry run): read the V2 files, `migrateV2` (3C-1b), plan the batch on an empty
  *   store in memory, project it back and compare with `readV2` and the derived baseline. It prints the counts, the V2
@@ -20,12 +27,14 @@
  * Exit codes: 0 preview or migration done, 1 refused or failed.
  */
 import { readFile, rmdir, stat, unlink } from 'node:fs/promises'
+import { LEGACY_MIGRATION_STEPS } from './legacy-data.mjs'
+import { assertMediaJobsClear } from './media-job-store.mjs'
 import { lstatSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
-import { privateDataSource, storeFileOf } from './private-data-source.mjs'
+import { privateDataSource, privateDataState, storeFileOf } from './private-data-source.mjs'
 import { compareWithV2, projectToV2Files } from './store-projection.mjs'
 import { createStore, openStore } from './store-host.mjs'
 import { createdRowsOf, mediaRecordsOf, readMediaSourceIndex, seedMediaRegistry, seedReportLines } from './media-seed.mjs'
@@ -124,10 +133,28 @@ function reportLines(report) {
 const comparisonLine = (comparison) => `比对：Canonical 与 readV2 ${comparison.canonical ? '一致' : '不一致'}；派生基线 ${comparison.baseline ? '一致' : '不一致'}。`
 
 /**
+ * 3C-4d: the state of the root, refusing what must not be migrated: legacy data never migrated to V2, a leftover under
+ * `data/store/` without a store. Returns the state ('store' is left to the callers' own message).
+ */
+function migratableState(privatePaths) {
+  const decided = privateDataState(privatePaths)
+  if (decided.state === 'migration-required' && decided.reason === 'legacy') {
+    throw new StoreToolError('E_LEGACY_UNMIGRATED', ['私人目录里有旧格式的数据，还没有迁移到 V2，没有建立新库。', LEGACY_MIGRATION_STEPS])
+  }
+  if (decided.state !== 'store' && decided.residue.length > 0) {
+    throw new StoreToolError('E_STORE_RESIDUE', [`data/store/ 里有 ${decided.residue.length} 个残留的文件，没有新库。请先运行 npm run library:recover 查看并处理。`])
+  }
+  return decided.state
+}
+
+/**
  * The dry run: migrate, plan on an empty store in memory, project, compare. Writes nothing.
  * Returns { ok, lines, report, comparison, storeExists }; a refused migration throws StoreToolError.
  */
 export async function previewMigration(privatePaths, { now = new Date().toISOString(), allocateId } = {}) {
+  if (migratableState(privatePaths) === 'empty') {
+    return { ok: true, empty: true, lines: ['私人根里没有任何数据：--apply 会建立一个空的新库（不经过 V2 文件）。'], storeExists: false }
+  }
   const { values } = await readV2Inputs(privatePaths)
   const result = migrationOf(values, { now, allocateId })
   const changeSet = planCommands(memoryReader(emptyFormalState()), result.commands, { baseRevision: 0, now, policy: OFFICIAL_POLICY })
@@ -173,9 +200,23 @@ export async function applyMigration(privatePaths, {
   now = new Date().toISOString(), allocateId, libraryId = uuidv7(), requestId = uuidv7(), compare = compareWithV2,
 } = {}) {
   const file = storeFileOf(privatePaths)
+  if (migratableState(privatePaths) === 'empty') {
+    // 3C-4d: nothing to migrate: an empty library in the formal model (./store-init.mjs takes the lease and decides again).
+    const { createEmptyLibrary } = await import('./store-init.mjs')
+    const created = await createEmptyLibrary(privatePaths, { now, libraryId, requestId, actor: MIGRATION_ACTOR })
+    return {
+      lines: [`私人根里没有任何数据：已建立空的新库 data/store/world.sqlite：库 id ${created.libraryId}，修订号 ${created.revision}。`],
+      libraryId: created.libraryId, revision: created.revision, comparison: { ok: true, canonical: true, baseline: true }, empty: true,
+    }
+  }
   const { values, bytes } = await readV2Inputs(privatePaths)
   const result = migrationOf(values, { now, allocateId })
   return withLibraryOperation(privatePaths, async (leaseToken) => {
+    // 3C-4d: a media task left unfinished in V2 mode could not be finished in the new library: refused first.
+    try { await assertMediaJobsClear(privatePaths) } catch (error) {
+      if (error?.code === 'E_MEDIA_JOB_PENDING') throw new StoreToolError('E_MEDIA_JOB_PENDING', ['这个私人库还有没有完成的媒体任务。请先完成或放弃它，再迁移。'])
+      throw error
+    }
     // 3C-4c: the media registry is seeded from the Inbox and the media files under the same lease, and written in the
     // store's first transaction with the rows (design v2 §5). A problem refuses the migration before anything exists.
     const seeded = await seedMediaRegistry({
@@ -251,7 +292,7 @@ export async function runMigrateCli(argv, { privatePaths = getPrivatePaths(), lo
     }
     const applied = await applyMigration(privatePaths)
     printLines(applied.lines, log)
-    log('\n新库模式已启用（实验性）。重启开发服务器后生效；V2 文件保持原样。回到 V2：编辑之前删除 data/store/world.sqlite，编辑之后先运行 npm run store:export-v2。')
+    log('\n新库已建立，个人数据从此写入新库。开发服务器开着时页面会自动切换，不用重启；V2 文件保持原样，可以留作迁移前的备份。需要 V2 格式时运行 npm run store:export-v2。')
     return 0
   } catch (error) {
     if (error instanceof StoreToolError) {

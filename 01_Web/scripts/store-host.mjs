@@ -5,8 +5,8 @@
  * - SQLite access goes through the thin adapter ./store-sqlite.mjs (`node:sqlite`).
  * - Domain rules stay in Core (`src/worldgraph/store/`, loaded by Node 24 directly as `.ts`):
  *   the host plans with `planCommands` inside `BEGIN IMMEDIATE` and executes the change set.
- * - No Vite, no App: the experimental new-library mode (3C-3) wires it through
- *   ./store-session.mjs (the plugin) and the store:* tools; more writes follow in 3C-4.
+ * - No Vite, no App: the new-library mode (3C-3; the only write path since 3C-4d) wires it through
+ *   ./store-session.mjs (the plugin) and the store:* tools.
  *
  * The production location is `<private-root>/data/store/world.sqlite` (STORE_RELATIVE_PATH,
  * ./private-data-source.mjs decides the mode by it). Callers pass the file path.

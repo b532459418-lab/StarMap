@@ -1,36 +1,34 @@
 /**
- * `npm run media:check`（预检）与 `npm run media:import`（加 --apply）的入口（RFC-LOC-1 PR5a 规格 §4.3）：运行 V2 导入器
- * （./v2-media-import.mjs）；本地编辑器（local-editor-plugin.mjs 的 runImporter）以子进程运行本文件。私人目录有没迁移的
- * 旧数据时（./legacy-data.mjs）拒绝运行，退出码 2，不读、不写任何数据文件。私人根是新库时（3C-4c）交给
- * ./store-media-cli.mjs（只读的 media:check、--reread、--reimport）。退出码：0 完成；1 有问题或读写失败；2 旧数据没有迁移，或待确认的
- * 文件夹绑定没加 --accept-folder-bindings（2A）。
+ * `npm run media:check`（预检）与 `npm run media:import`（加 --apply）的入口。3C-4d 起只有新库能导入：新库交给
+ * ./store-media-cli.mjs；不是新库时（./private-data-source.mjs 的状态）media:check 只读运行 V2 的预检（不取库租约、不写任何
+ * 文件），media:import 拒绝运行（退出码 2），说明先迁移或恢复。私人目录有没迁移的旧数据时（./legacy-data.mjs）同样拒绝。
+ * 退出码：0 完成；1 有问题或读写失败；2 不能导入（旧数据、待迁移、需要恢复、还没有新库），或待确认项没有确认。
  */
 import { isLegacyUnmigrated, LEGACY_UNMIGRATED_IMPORT_MESSAGE, legacyDataStateOf } from './legacy-data.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
+import { privateDataState } from './private-data-source.mjs'
+import { NOT_A_STORE_IMPORT_MESSAGES, runStoreMediaCli } from './store-media-cli.mjs'
 import { runV2MediaImport } from './v2-media-import.mjs'
-import { withLibraryOperation } from './library-operation-lock.mjs'
-import { assertMediaJobsClear } from './media-job-store.mjs'
-import { privateDataSource } from './private-data-source.mjs'
 
 const privatePaths = getPrivatePaths()
 const apply = process.argv.includes('--apply')
-// 第 1 批 D7：`npm run media:check -- --verify` 对已生成的原图核对内容哈希，只报告不一致。
-// 第 2 批 D6：--verify 时还核对已完成媒体任务的凭据所记录的文件（读取任务列表不再算哈希），只提醒，不影响退出码。
+// 第 1 批 D7 / 第 2 批 D6：`npm run media:check -- --verify` 核对已生成的原图与任务凭据，只提醒，不影响退出码。
 const verify = process.argv.includes('--verify')
 
 try {
+  const { state } = privateDataState(privatePaths)
   if (isLegacyUnmigrated(legacyDataStateOf(privatePaths))) {
     console.error(`[import-media] ${LEGACY_UNMIGRATED_IMPORT_MESSAGE}`)
     process.exitCode = 2
-  } else if (privateDataSource(privatePaths) === 'store') {
-    const { runStoreMediaCli } = await import('./store-media-cli.mjs')
+  } else if (state === 'store') {
     process.exitCode = await runStoreMediaCli({ privatePaths, argv: process.argv.slice(2), leaseToken: process.env.STARMAP_LIBRARY_LEASE })
+  } else if (apply) {
+    console.error(`[import-media] ${NOT_A_STORE_IMPORT_MESSAGES[state]}`)
+    process.exitCode = 2
   } else {
-    process.exitCode = await withLibraryOperation(privatePaths, async () => {
-      if (apply) await assertMediaJobsClear(privatePaths)
-      if (verify) await (await import('./media-job-service.mjs')).reportMediaJobReceipts(privatePaths)
-      return runV2MediaImport({ privatePaths, apply, verify, acceptFolderBindings: process.argv.includes('--accept-folder-bindings') })
-    }, { leaseToken: process.env.STARMAP_LIBRARY_LEASE })
+    if (verify) await (await import('./media-job-service.mjs')).reportMediaJobReceipts(privatePaths)
+    process.exitCode = await runV2MediaImport({ privatePaths, apply: false, verify, acceptFolderBindings: process.argv.includes('--accept-folder-bindings') })
+    console.log(`\n${NOT_A_STORE_IMPORT_MESSAGES[state]}`)
   }
 } catch (error) {
   console.error(error)

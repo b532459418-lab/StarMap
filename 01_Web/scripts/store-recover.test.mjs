@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { closeSync, openSync, readFileSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -14,7 +14,9 @@ import { getPrivatePaths } from './private-profile.mjs'
 import { createStore, openStore, storePathFor } from './store-host.mjs'
 import { rawConnection } from './store-sqlite.mjs'
 import { recoverLibrary } from './store-recover.mjs'
-import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, runV2Write } from './v2-editor-store.mjs'
+import { applyMigration } from './store-migrate.mjs'
+import { createEmptyLibrary } from './store-init.mjs'
+import { privateDataState, storeFileOf } from './private-data-source.mjs'
 import { V2_FILE_KEYS } from '../src/data/canonical/v2Schema.ts'
 import { FORMAL_TABLES, readFormalState } from '../src/worldgraph/store/formal.ts'
 import { formalFixture, formalFromWorld } from '../src/worldgraph/store/formal.fixture.ts'
@@ -102,7 +104,7 @@ async function v2Library(t, mutate = (files) => files) {
   return context
 }
 
-test('library:recover (V2 mode): a holder killed in its lease, a read-only dry run, then --confirm clears it and writes work again', { timeout: 120_000 }, async (t) => {
+test('library:recover (V2 mode): a holder killed in its lease, a read-only dry run, then --confirm clears it and the migration can run', { timeout: 120_000 }, async (t) => {
   const { directory, root, paths } = await v2Library(t)
   await killedAt(directory, { mode: 'lease', root }, 'leased')
   assert.deepEqual(await inspectLibraryOperation(paths), { state: 'busy', reason: 'lease_present' })
@@ -111,7 +113,7 @@ test('library:recover (V2 mode): a holder killed in its lease, a read-only dry r
   const before = await snapshot(root)
   const dry = recoverCli(root)
   assert.equal(dry.status, 0, dry.stderr)
-  for (const expected of [`持有者：${owner}`, '创建时间：', '与当前私人根一致', 'V2（data/v2/）', '未加 --confirm，没有修改任何文件']) assert.ok(dry.stdout.includes(expected), expected)
+  for (const expected of [`持有者：${owner}`, '创建时间：', '与当前私人根一致', '还不是新库', '未加 --confirm，没有修改任何文件']) assert.ok(dry.stdout.includes(expected), expected)
   assert.deepEqual(await snapshot(root), before, 'the dry run changes nothing')
   const confirmed = recoverCli(root, ['--confirm'])
   assert.equal(confirmed.status, 0, confirmed.stderr)
@@ -120,12 +122,8 @@ test('library:recover (V2 mode): a holder killed in its lease, a read-only dry r
   const after = await inspectLibraryOperation(paths)
   assert.equal(after.state, 'idle')
   assert.notEqual(after.generation, generationBefore, 'recovery advanced the generation')
-  // An ordinary V2 write works again.
-  const state = (await readV2EditorState({ privatePaths: paths })).body.state
-  const written = await withLibraryOperation(paths, () => runV2Write({
-    privatePaths: paths, route: V2_EDITOR_ROUTES['PUT /__travelatlas/editor/state'], input: state, ctx: createV2WriteContext({ countryCatalog: new Map() }),
-  }))
-  assert.equal(written.status, 200, JSON.stringify(written.body))
+  // 3C-4d: a V2 root is written by nothing but the migration, which takes the lease: it runs again.
+  assert.equal((await applyMigration(paths, { now: NOW })).revision, 1)
   const again = recoverCli(root)
   assert.equal(again.status, 0)
   assert.match(again.stdout, /没有库操作锁/)
@@ -154,7 +152,7 @@ test('library:recover (V2 mode) keeps the lock when the data check fails or the 
 
 const identityPath = (base) => path.join(base, 'operations', 'media-import', 'v1', 'library.json')
 
-test('library:recover --confirm --rebind (V2 mode): a root moved while a lock was left behind is rebound after the data check, and writes work again', { timeout: 120_000 }, async (t) => {
+test('library:recover --confirm --rebind (V2 mode): a root moved while a lock was left behind is rebound after the data check, and the migration can run', { timeout: 120_000 }, async (t) => {
   const { directory, root } = await v2Library(t)
   await killedAt(directory, { mode: 'lease', root }, 'leased')
   const oldBinding = libraryRootBinding(await realpath(root))
@@ -183,12 +181,40 @@ test('library:recover --confirm --rebind (V2 mode): a root moved while a lock wa
   assert.equal((await inspectLibraryOperation(paths)).state, 'idle')
   assert.equal(JSON.parse(await readFile(path.join(moved, 'operations', 'library-operation-state.json'), 'utf8')).rootBinding, newBinding)
   assert.deepEqual(JSON.parse(await readFile(identityPath(moved), 'utf8')), { ...identity, rootBinding: newBinding }, 'the media task identity is rebound too')
-  // An ordinary V2 write works again.
-  const state = (await readV2EditorState({ privatePaths: paths })).body.state
-  const written = await withLibraryOperation(paths, () => runV2Write({
-    privatePaths: paths, route: V2_EDITOR_ROUTES['PUT /__travelatlas/editor/state'], input: state, ctx: createV2WriteContext({ countryCatalog: new Map() }),
-  }))
-  assert.equal(written.status, 200, JSON.stringify(written.body))
+  // 3C-4d: the migration (the only writer of a V2 root) takes the lease again.
+  assert.equal((await applyMigration(paths, { now: NOW })).revision, 1)
+})
+
+test('library:recover (3C-4d, review §8-1): leftovers under data/store/ without a library are listed; --confirm moves them (never deletes) into data/store-residue/, and the root can get its library', async (t) => {
+  const { root, paths } = await tempDirectory(t)
+  const storeDirectory = path.dirname(storeFileOf(paths))
+  await mkdir(storeDirectory, { recursive: true })
+  await writeFile(`${storeFileOf(paths)}-journal`, 'synthetic leftover journal')
+  await writeFile(path.join(storeDirectory, 'world.sqlite.restore-staging'), 'synthetic leftover staging')
+  assert.equal(privateDataState(paths).state, 'needs-recovery')
+  const before = await snapshot(root)
+  const dry = quietly()
+  assert.equal(await recoverLibrary(paths, { ...dry }), 0)
+  const dryText = dry.lines.join('\n')
+  assert.match(dryText, /没有库操作锁/)
+  assert.match(dryText, /data\/store\/ 里有 2 个残留的文件/)
+  assert.match(dryText, /data\/store\/world\.sqlite-journal/)
+  assert.match(dryText, /未加 --confirm，没有修改任何文件/)
+  assert.deepEqual(await snapshot(root), before, 'the dry run changes nothing')
+
+  const confirmed = quietly()
+  assert.equal(await recoverLibrary(paths, { confirm: true, ...confirmed }), 0)
+  assert.match(confirmed.lines.join('\n'), /已把 2 个残留的文件移到 data\/store-residue\//)
+  assert.equal(existsSync(storeDirectory), false, 'the emptied data/store/ is removed')
+  const [moved] = await readdir(path.join(paths.dataRoot, 'store-residue'))
+  const residue = path.join(paths.dataRoot, 'store-residue', moved)
+  assert.equal(await readFile(path.join(residue, 'world.sqlite-journal'), 'utf8'), 'synthetic leftover journal')
+  assert.equal(await readFile(path.join(residue, 'world.sqlite.restore-staging'), 'utf8'), 'synthetic leftover staging')
+  assert.equal(privateDataState(paths).state, 'empty')
+  assert.equal((await inspectLibraryOperation(paths)).state, 'idle')
+  // The root now gets its empty library (as the personal dev server does).
+  await createEmptyLibrary(paths, { now: NOW })
+  assert.equal(privateDataState(paths).state, 'store')
 })
 
 // ---------------------------------------------------------------------------

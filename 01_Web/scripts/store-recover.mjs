@@ -14,18 +14,21 @@
  *   （operations/store-backup/*.json；有它时待删文件一直暂停）、pending_file_ops 里等待删除的文件、没有登记的按内容寻址
  *   生成目录（中断的导入留下的，只列出，不删）。加 --confirm 时（你已确认没有备份正在运行），在库租约下删除这些标记，
  *   再执行等待删除的文件（./media-file-ops.mjs）。
+ * - 3C-4d，不是新库：`data/store/` 下有残留（中断的迁移或恢复留下的日志、临时文件），而没有新库时，开发服务器不建库、
+ *   store:migrate 拒绝运行。这里列出这些文件；加 --confirm（你已确认没有迁移或恢复正在运行）在库租约下把它们移到
+ *   `data/store-residue/<时间>/`（只移动，不删除），之后可以迁移或建立空的新库。
  *
  * 模式的判定与插件、store:* 工具共用 ./private-data-source.mjs（3C-3）。新库的全量校验用 App 的官方策略
  * （OFFICIAL_POLICY：两个官方图层的 systemKey），否则迁移来的库会因 E_SYSTEM_KEY 而检查不通过。
  */
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { readdir, rm } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises'
 import { readJson } from './json-file.mjs'
 import { recoverLibraryOperation, withLibraryOperation } from './library-operation-lock.mjs'
 import { MEDIA_COPY_MARK_SEGMENTS } from './store-backup.mjs'
 import { V2_PRIVATE_FILE_KEYS, getPrivatePaths } from './private-profile.mjs'
-import { privateDataSource, storeFileOf } from './private-data-source.mjs'
+import { privateDataSource, privateDataState, storeFileOf } from './private-data-source.mjs'
 import { checkStoreFile, openStore } from './store-host.mjs'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { completeForWrite, integrityProblems } from '../src/data/v2write/transaction.ts'
@@ -59,7 +62,34 @@ export async function checkLibraryData(privatePaths, { policy } = {}) {
   return { mode, ...(await checkV2Files(privatePaths)) }
 }
 
-const MODE_LABELS = Object.freeze({ store: '新库（data/store/world.sqlite）', v2: 'V2（data/v2/）' })
+const MODE_LABELS = Object.freeze({ store: '新库（data/store/world.sqlite）', v2: '还不是新库（V2 文件、旧格式数据或空的私人根）' })
+
+/**
+ * 3C-4d (review §8-1): leftovers under `data/store/` without a store (a journal, a staging file of a migration or
+ * restore). The personal dev server never creates a library over them and `store:migrate` refuses. Listed here; with
+ * `confirm` (you made sure no migration or restore is running) they are moved, never deleted, into
+ * `data/store-residue/<time>/`, so the root can be migrated or get its empty library.
+ */
+async function recoverStoreResidue(privatePaths, { confirm, log, now = () => new Date() }) {
+  const { state, residue } = privateDataState(privatePaths)
+  if (state === 'store' || residue.length === 0) return 0
+  const directory = path.dirname(storeFileOf(privatePaths))
+  log(`\ndata/store/ 里有 ${residue.length} 个残留的文件，没有新库：`)
+  for (const name of residue.slice(0, 20)) log(`  data/store/${name}`)
+  if (residue.length > 20) log(`  ……另有 ${residue.length - 20} 个`)
+  if (!confirm) {
+    log('未加 --confirm，没有修改任何文件。确认没有迁移或恢复正在运行之后运行 npm run library:recover -- --confirm：它把这些文件移到 data/store-residue/ 下（不删除），之后可以迁移或建立新库。')
+    return 0
+  }
+  return withLibraryOperation(privatePaths, async () => {
+    const target = path.join(privatePaths.dataRoot, 'store-residue', now().toISOString().replaceAll(':', '-'))
+    await mkdir(target, { recursive: true })
+    for (const name of residue) await rename(path.join(directory, name), path.join(target, name))
+    await rmdir(directory).catch(() => {})
+    log(`已把 ${residue.length} 个残留的文件移到 ${path.relative(privatePaths.root, target).split(path.sep).join('/')}/。`)
+    return 0
+  })
+}
 
 const CONTENT_DIRECTORY = /^[0-9a-f]{16}$/
 
@@ -135,7 +165,8 @@ export async function recoverLibrary(privatePaths, { confirm = false, rebind = f
       return result
     },
   })
-  if (code !== 0 || libraryMode(privatePaths) !== 'store') return code
+  if (code !== 0) return code
+  if (libraryMode(privatePaths) !== 'store') return recoverStoreResidue(privatePaths, { confirm, log })
   return recoverStoreMedia(privatePaths, { confirm, policy, log, logError })
 }
 

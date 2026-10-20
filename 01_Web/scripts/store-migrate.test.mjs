@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { withLibraryOperation } from './library-operation-lock.mjs'
+import { createMediaJobStore } from './media-job-store.mjs'
+import { EMPTY_LIBRARY_KIND } from './store-init.mjs'
 import { privateDataSource, storeFileOf } from './private-data-source.mjs'
 import { openStore } from './store-host.mjs'
 import { MIGRATION_KIND, StoreToolError, applyMigration, previewMigration, readV2Inputs, runMigrateCli } from './store-migrate.mjs'
@@ -15,6 +17,8 @@ import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { OFFICIAL_POLICY, V2_SOURCES } from '../src/data/store/officialDefinitions.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
+// The library lease's generation counter (operations/) moves with every leased call.
+const outsideOperations = (digest) => Object.fromEntries(Object.entries(digest).filter(([file]) => !file.startsWith('operations/')))
 const migrateScript = fileURLToPath(new URL('./store-migrate.mjs', import.meta.url))
 
 for (const [name, files] of [['public sample', sampleV2Files], ['3C-1b edge cases', edgeV2Files]]) {
@@ -125,6 +129,74 @@ test('--apply refuses an existing store, a held lease and a failed check, and le
   assert.equal(again?.code, 'E_STORE_EXISTS')
   const after = await treeDigest(root)
   assert.equal(after['data/store/world.sqlite'], before['data/store/world.sqlite'])
+})
+
+test('3C-4d: legacy data never migrated to V2, a leftover under data/store/ and (with --apply) an unfinished media task are refused; nothing is written', async (t) => {
+  const { directory } = await tempPrivateRoot(t, 'starmap-store-migrate-refused-')
+  const { getPrivatePaths } = await import('./private-profile.mjs')
+  const rootFor = async (name) => {
+    const root = path.join(directory, name)
+    await mkdir(root)
+    return { root, paths: getPrivatePaths({ STARMAP_PRIVATE_ROOT: root }) }
+  }
+  const refusedWith = async (run, code) => {
+    const failure = await run().then(() => undefined, (error) => error)
+    assert.ok(failure instanceof StoreToolError, String(failure))
+    assert.equal(failure.code, code)
+    return failure
+  }
+
+  const legacy = await rootFor('legacy')
+  await mkdir(legacy.paths.dataRoot, { recursive: true })
+  await writeFile(legacy.paths.localTravelMapPath, '{"schema_version":1,"records":[]}')
+  let before = await treeDigest(legacy.root)
+  const legacyFailure = await refusedWith(() => previewMigration(legacy.paths, { now: NOW }), 'E_LEGACY_UNMIGRATED')
+  assert.match(legacyFailure.problems.join('\n'), /4fd32a9/)
+  await refusedWith(() => applyMigration(legacy.paths, { now: NOW }), 'E_LEGACY_UNMIGRATED')
+  assert.deepEqual(await treeDigest(legacy.root), before)
+
+  const residue = await rootFor('residue')
+  await writeV2Files(residue.paths, sampleV2Files())
+  await mkdir(path.dirname(storeFileOf(residue.paths)), { recursive: true })
+  await writeFile(`${storeFileOf(residue.paths)}-journal`, 'synthetic leftover')
+  before = await treeDigest(residue.root)
+  const residueFailure = await refusedWith(() => previewMigration(residue.paths, { now: NOW }), 'E_STORE_RESIDUE')
+  assert.match(residueFailure.problems.join('\n'), /library:recover/)
+  await refusedWith(() => applyMigration(residue.paths, { now: NOW }), 'E_STORE_RESIDUE')
+  assert.deepEqual(await treeDigest(residue.root), before)
+
+  const pending = await rootFor('pending-task')
+  const files = sampleV2Files()
+  await writeV2Files(pending.paths, files)
+  const city = files.places.places.find((place) => place.subtype === 'city' && place.partOf)
+  await withLibraryOperation(pending.paths, () => createMediaJobStore(pending.paths).create({ countryId: city.partOf, cityId: city.id, kind: 'photo', files: [{ fileName: 'waiting.jpg', bytes: 128 }] }))
+  assert.equal((await previewMigration(pending.paths, { now: NOW })).ok, true, 'the dry run writes nothing and still runs')
+  before = outsideOperations(await treeDigest(pending.root))
+  await refusedWith(() => applyMigration(pending.paths, { now: NOW }), 'E_MEDIA_JOB_PENDING')
+  assert.deepEqual(outsideOperations(await treeDigest(pending.root)), before)
+  assert.equal(existsSync(path.join(pending.root, 'data', 'store')), false)
+  assert.equal(existsSync(path.join(pending.root, 'operations', 'library-operation.lock')), false)
+})
+
+test('3C-4d: a root without any data: the dry run says so; --apply initializes an empty library in the formal model, no V2 file', async (t) => {
+  const { root, paths } = await tempPrivateRoot(t, 'starmap-store-migrate-empty-')
+  const before = await treeDigest(root)
+  const preview = await previewMigration(paths, { now: NOW })
+  assert.equal(preview.ok, true)
+  assert.equal(preview.empty, true)
+  assert.match(preview.lines.join('\n'), /空的新库/)
+  assert.deepEqual(await treeDigest(root), before)
+  const requestId = '01960000-0000-7000-8000-0000000c4d11'
+  const applied = await applyMigration(paths, { now: NOW, requestId })
+  assert.equal(applied.revision, 1)
+  assert.equal(applied.empty, true)
+  assert.equal(privateDataSource(paths), 'store')
+  assert.equal(existsSync(paths.v2DataRoot), false)
+  const handle = openStore(storeFileOf(paths), { readOnly: true, policy: OFFICIAL_POLICY })
+  try {
+    assert.equal(handle.lookup(requestId).receipt.kind, EMPTY_LIBRARY_KIND)
+    assert.deepEqual(projectToV2Files(handle.readRowsUnchecked()).files.places.places, [])
+  } finally { await handle.close() }
 })
 
 test('the command line previews by default, applies with --apply and refuses unknown arguments', async (t) => {

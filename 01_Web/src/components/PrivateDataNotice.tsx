@@ -1,7 +1,7 @@
 import { privateDataNotice } from '../data/privateDataNotice'
 import { useTranslation } from 'react-i18next'
 import { localEditorAvailable } from '../data/editorState'
-import { legacyUnmigrated, storeReadOnly } from '../data/rawInputs'
+import { legacyUnmigrated, storeMigrationRequired, storeReadOnly, storeRecoveryRequired } from '../data/rawInputs'
 import { plannedRecords, travelAtlasMeta } from '../data/travelAtlas'
 import { wantToGoItems } from '../data/wantToGo'
 
@@ -11,6 +11,9 @@ const notice = privateDataNotice({
   legacyUnmigrated,
   // 3C-4b：只读提示只在开发服务器的本地编辑器里有意义（构建产物本来就不能编辑），放在第 5B 批的门后。
   storeReadOnly: import.meta.env.DEV && localEditorAvailable && storeReadOnly,
+  // 3C-4d：待迁移与需要恢复同样只在本地编辑器里提示（构建产物本来就不能编辑）。
+  storeMigrationRequired: import.meta.env.DEV && localEditorAvailable && storeMigrationRequired,
+  storeRecoveryRequired: import.meta.env.DEV && localEditorAvailable && storeRecoveryRequired,
   travelRecordCount: travelAtlasMeta.importedRecords + plannedRecords.length,
   wantToGoItemCount: wantToGoItems.length,
 })
@@ -26,7 +29,11 @@ export function PrivateDataNotice() {
   if (!notice) return null
   const lines = notice.kind === 'store-read-only'
     ? ['storeReadOnly']
-    : notice.kind === 'legacy-unmigrated'
+    : notice.kind === 'store-migration-required'
+      ? ['storeMigrationRequired', 'storeMigrationSteps']
+      : notice.kind === 'store-recovery-required'
+        ? ['storeRecoveryRequired']
+        : notice.kind === 'legacy-unmigrated'
       ? ['legacyUnmigrated', 'legacyMigration', 'legacyRemove']
       : ['emptyPrivateData']
   return (

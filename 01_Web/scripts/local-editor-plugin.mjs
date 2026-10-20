@@ -2,7 +2,6 @@ import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import { fileURLToPath } from 'node:url'
 import { EnvHttpProxyAgent, fetch as proxyAwareFetch } from 'undici'
 import worldCountries from 'world-countries'
 import { atomicJsonWrite, exists, readJson } from './json-file.mjs'
@@ -15,26 +14,25 @@ import {
 } from './private-data-module.mjs'
 import { filterForPersonalBuild } from './personal-build-filter.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
-import { privateDataSource } from './private-data-source.mjs'
-import { createV2WriteContext, readV2EditorState, runV2Write, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
-import { handleV2Import, handleV2MediaDelete, handleV2Upload, v2MediaRoute } from './v2-media-store.mjs'
+import { privateDataState } from './private-data-source.mjs'
+import { createV2WriteContext, readV2EditorState, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
+import { v2MediaRoute } from './v2-media-store.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
 import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 import { allowedOrigins, authorizeRead, crossSiteRequestGuard, isLoopbackRequest } from './local-editor-request-guard.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
 import { firstUnsafeComponent, isPathInside } from './path-containment.mjs'
-import { createLocalEditorImporter } from './local-editor-importer.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { assertMediaJobsClear } from './media-job-store.mjs'
 import { mediaJobRoute, handleMediaJobRead, handleMediaJobPreview, handleMediaJobWrite } from './media-job-service.mjs'
 
-// RFC-LOC-1 PR5a：本地编辑器只读写 data/v2/（V2 写入层：v2-editor-store.mjs 与 v2-media-store.mjs）。旧格式的写入逻辑、
-// 数据模式与回滚开关都已删除。私人目录有没迁移的旧数据时（./legacy-data.mjs），全部写入端点返回 409 E_LEGACY_UNMIGRATED。
-// 3C-3：私人根下有 data/store/world.sqlite 时是实验性的新库模式（./private-data-source.mjs，每次读写现判）。这时 App 读
-// 新库的投影（./store-session.mjs，按需加载，公开模式与 V2 模式不加载 node:sqlite）。3C-4a 起 8 个编辑端点都写新库（同样的
-// V2 写入规则，只换存储）；3C-4c 起媒体的 3 个端点与媒体任务也写新库（./store-media-endpoints.mjs、./media-service.mjs，
-// 存储原生的写入），同一个私人根任何时候只有一个写入源。
-const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+// 3C-4d：新库是私人数据唯一的写入方式。私人根的状态由 ./private-data-source.mjs 的 privateDataState 每次读写现判：
+// - store：App 读新库的投影（./store-session.mjs，按需加载，公开模式不加载 node:sqlite）；8 个编辑端点（3C-4a，V2 写入规则
+//   作为规则引擎）、3 个媒体端点与媒体任务（3C-4c，./store-media-endpoints.mjs、./media-service.mjs）都写新库。
+// - migration-required：有 V2 数据（或没迁移的旧格式数据）、还没有新库。只读显示 data/v2/ 的文件，页面提示运行迁移；
+//   全部写入端点、媒体端点与媒体任务（含任务列表）返回 409 E_STORE_MIGRATION_REQUIRED（旧格式：E_LEGACY_UNMIGRATED）。
+// - needs-recovery：data/store/ 下有残留、没有新库。同样只读，409 E_STORE_RECOVERY_REQUIRED，提示 npm run library:recover。
+// - empty：开发服务器（个人、可写）启动时在库租约下建一个空的新库（./store-init.mjs），之后按 store 处理；构建不建库。
 const virtualPrivateDataId = 'virtual:starmap-private-data'
 const resolvedPrivateDataId = `\0${virtualPrivateDataId}`
 let privatePaths
@@ -355,9 +353,6 @@ const updateDroneSidecar = async (cityRoot, destination, metadata, imageMetadata
   await atomicJsonWrite(sidecarPath, sidecar)
 }
 
-// Resolve the active private root per invocation, after configurePrivatePaths.
-const runImporter = (options) => createLocalEditorImporter({ webRoot, privateRoot })(options)
-
 const normalizeInboxRelativePath = (value) => {
   if (typeof value !== 'string' || !value.trim()) return undefined
   const target = path.resolve(inboxRoot, value.trim())
@@ -424,61 +419,12 @@ const serveUserMedia = async (request, response, pathname) => {
   await pipeline(createReadStream(target), response)
 }
 
-const removeSidecarEntries = async (sourcePaths) => {
-  const removalsBySidecar = new Map()
-  for (const sourcePath of sourcePaths) {
-    const mediaFolder = path.dirname(sourcePath)
-    const cityRoot = path.dirname(mediaFolder)
-    const sidecarPath = path.join(cityRoot, 'media.json')
-    const relativeKey = path.posix.join(path.basename(mediaFolder), path.basename(sourcePath)).toLocaleLowerCase('en-US')
-    removalsBySidecar.set(sidecarPath, new Set([...(removalsBySidecar.get(sidecarPath) ?? []), relativeKey]))
-  }
-
-  for (const [sidecarPath, relativeKeys] of removalsBySidecar) {
-    if (!await exists(sidecarPath)) continue
-    const sidecar = await readJson(sidecarPath, {})
-    let changed = false
-    for (const key of Object.keys(sidecar)) {
-      const normalizedKey = key.replaceAll('\\', '/').toLocaleLowerCase('en-US')
-      if (!relativeKeys.has(normalizedKey)) continue
-      delete sidecar[key]
-      changed = true
-    }
-    if (changed) await atomicJsonWrite(sidecarPath, sidecar)
-  }
-}
-
 // Reads use authorizeRead (./local-editor-request-guard.mjs); writes additionally need the editor header.
 const authorizeWrite = (request) => (
   isLoopbackRequest(request)
   && request.headers[editorHeader] === '1'
   && allowedOrigins(request)
 )
-
-/**
- * RFC-LOC-1 PR3b-3：三个媒体端点（上传、导入、彻底删除隐藏媒体），交给 v2-media-store.mjs。
- * 上面的辅助函数（文件名规则、接收上传、无人机 sidecar、运行导入器、删 sidecar 条目）原样传进去复用。
- * 上传的请求体是文件本身，不按 JSON 读。
- */
-const handleV2Media = async (routeName, request, url, leaseToken, input) => {
-  const deps = {
-    safeSegment,
-    reserveDestination,
-    writeUpload,
-    updateDroneSidecar,
-    runImporter,
-    normalizeInboxRelativePath,
-    removeSidecarEntries,
-    isPathInside,
-  }
-  deps.runImporter = () => runImporter({ leaseToken })
-  deps.writeUpload = (stream, destination, kind) => writeUpload(stream, destination, kind, { stagingRoot: path.join(privateRoot, 'operations', 'uploads') })
-  await assertMediaJobsClear(privatePaths)
-  if (routeName === 'upload') return handleV2Upload({ privatePaths, query: url.searchParams, request, deps })
-  const ctx = createV2WriteContext({ countryCatalog: countryCatalogByCode })
-  if (routeName === 'import') return handleV2Import({ privatePaths, input, ctx, deps })
-  return handleV2MediaDelete({ privatePaths, input, ctx, deps })
-}
 
 /** 3C-4c：新库模式下媒体端点用到的插件辅助函数（文件名规则、接收上传、无人机 sidecar、投递箱路径），与 V2 相同。 */
 const storeMediaDeps = () => ({
@@ -490,15 +436,12 @@ const storeMediaDeps = () => ({
 })
 
 /**
- * RFC-LOC-1 PR3b-2 / PR3b-3：全部 11 个写入端点。三个媒体端点经 v2-media-store.mjs 的路由表，其余 8 个经 v2-editor-store.mjs 的
- * 路由表分派；两张表都没列的接口回 404。数据读写只碰 data/v2/（媒体另有收件箱与生成文件），不读旧文件、不回落样例。
+ * 3C-4d：不是新库的私人根拒绝一切写入（编辑、媒体、媒体任务）时的回答：没迁移的旧格式数据沿用 409 E_LEGACY_UNMIGRATED；
+ * 有 V2 数据时 409 E_STORE_MIGRATION_REQUIRED；data/store/ 有残留（或空库没能建立）时 409 E_STORE_RECOVERY_REQUIRED。
  */
-const handleV2Write = async (request, url, leaseToken, input) => {
-  const mediaRoute = v2MediaRoute(request.method, url.pathname)
-  if (mediaRoute) return handleV2Media(mediaRoute, request, url, leaseToken, input)
-  const route = v2EditorRoute(request.method, url.pathname)
-  if (!route) return { status: 404, body: v2ErrorBody('E_UNKNOWN_ENDPOINT') }
-  return runV2Write({ privatePaths, route, input, ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }) })
+const notWritableResponse = (state) => {
+  if (state.state === 'migration-required' && state.reason === 'legacy') return legacyWriteRefusal(legacyDataStateOf(privatePaths))
+  return { status: 409, body: v2ErrorBody(state.state === 'migration-required' ? 'E_STORE_MIGRATION_REQUIRED' : 'E_STORE_RECOVERY_REQUIRED') }
 }
 
 export function travelAtlasLocalEditor(options = {}) {
@@ -528,7 +471,23 @@ export function travelAtlasLocalEditor(options = {}) {
     countryCatalog: countryCatalogByCode, readOnly: command === 'build',
   })))
   const releaseStore = async () => { if (storeSessionLoading) await (await storeSessionLoading).close() }
-  const storeMode = () => options.forceSample !== true && privateDataSource(storePaths) === 'store'
+  const dataState = () => privateDataState(storePaths)
+  const storeMode = () => options.forceSample !== true && dataState().state === 'store'
+  // 3C-4d（D-b A，评审 §8-1）：空的私人根在个人、可写的开发服务器启动时建一个空的新库（./store-init.mjs，在库租约下，
+  // 建之前再判一次）。只在 configureServer 里开始：构建、公开模式与强制样例从不建库。虚拟模块与编辑接口先等它完成。
+  // 建不成（例如另一个进程拿着库租约）时记日志，这个私人根按需要恢复处理（E_STORE_RECOVERY_REQUIRED）。
+  let initialization
+  let initializationFailed = false
+  const initializeEmptyLibrary = () => (initialization ??= (async () => {
+    if (dataState().state !== 'empty') return
+    const { createEmptyLibrary } = await import('./store-init.mjs')
+    const created = await createEmptyLibrary(storePaths, { actor: 'local-editor' })
+    console.log(`[StarMap store] 私人根是空的：已建立新库（库 id ${created.libraryId}）。`)
+  })().catch((error) => {
+    initializationFailed = true
+    console.error(`[StarMap store] 没有为空的私人根建立新库（${error?.code ?? error?.message ?? error}）。运行 npm run library:recover 查看。`)
+  }))
+  const initialized = () => initialization ?? Promise.resolve()
 
   return {
     name: 'travelatlas-local-editor',
@@ -542,6 +501,7 @@ export function travelAtlasLocalEditor(options = {}) {
     async load(id) {
       if (id !== resolvedPrivateDataId) return undefined
       if (profile !== 'personal') return renderPrivateDataModule(privateDataModuleExports({ profile }))
+      await initialized()
       if (storeMode()) {
         // 3C-3 新库模式：新库的投影经 serializeV2 得到的五个文件与全库修订号。打不开就抛错（App 显示），绝不回落到 V2 文件。
         // 3C-4b：库损坏但还能读（打开检查失败）时照常给出数据，另报 storeReadOnly，页面显示只读提示。
@@ -549,13 +509,18 @@ export function travelAtlasLocalEditor(options = {}) {
         const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
         return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: forThisCommand(files), legacyUnmigrated, storeRevision: revision, storeReadOnly: readOnly }))
       }
-      // V2 模式：早先新库模式留下的连接（新库文件被移走）正常关闭。
+      // 不是新库（3C-4d）：早先的连接（新库文件被移走）正常关闭。只读 data/v2/ 的五个 V2 文件（缺的为 undefined），外加状态：
+      // 待迁移、需要恢复、没迁移的旧格式数据（只看文件在不在，不读内容）。页面据此显示提示，写入一律被拒绝。
       await releaseStore()
-      // RFC-LOC-1 PR5a：只读 data/v2/ 的五个 V2 文件（缺的为 undefined），外加「未迁移」的判定（只看旧文件在不在，不读内容）。
       const v2Values = {}
       for (const key of V2_PRIVATE_FILE_KEYS) v2Values[key] = await readJson(privatePaths.v2FilePaths[key], undefined)
+      const state = dataState()
       const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
-      return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: forThisCommand(v2Values), legacyUnmigrated }))
+      return renderPrivateDataModule(privateDataModuleExports({
+        profile, v2Values: forThisCommand(v2Values), legacyUnmigrated,
+        storeMigrationRequired: state.state === 'migration-required' && state.reason === 'v2',
+        storeRecoveryRequired: state.state === 'needs-recovery' || (state.state === 'empty' && initializationFailed),
+      }))
     },
     configureServer(server) {
       if (profile !== 'personal') return
@@ -564,8 +529,10 @@ export function travelAtlasLocalEditor(options = {}) {
       // so it keeps the guard too. Vite's own CORS is off in this profile (vite.config.ts).
       server.middlewares.use(crossSiteRequestGuard)
       if (options.forceSample === true) return
-      // 3C-3：新库模式下启动时就打开新库（失败只记日志；页面加载虚拟模块时会再试一次并显示错误）。
-      if (storeMode()) {
+      // 3C-4d：空的私人根先建空库（建好之后，第一次读写时打开）。3C-3：本来就是新库时启动就打开它（失败只记日志；页面加载虚拟
+      // 模块时会再试一次并显示错误）。
+      if (dataState().state === 'empty') void initializeEmptyLibrary()
+      else if (storeMode()) {
         void storeSession().then((session) => session.open()).catch((error) => console.error(error?.message ?? error))
       }
       let editorMutationDepth = 0
@@ -600,6 +567,7 @@ export function travelAtlasLocalEditor(options = {}) {
         if (!url.pathname.startsWith('/__travelatlas/editor/')) return next()
 
         try {
+          await initialized()
           // A sample-preview page never discovers or mutates private tasks.
           if (request.headers.referer) {
             let sample = false
@@ -609,9 +577,13 @@ export function travelAtlasLocalEditor(options = {}) {
           const jobRoute = mediaJobRoute(request.method, url.pathname)
           if (jobRoute && request.method === 'GET') {
             if (!authorizeWrite(request)) return sendJson(response,403,normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
-            // 3C-4c：新库模式下任务读新库的视图与媒体登记。
-            const storeMedia = storeMode() ? { mediaStore: await (await storeSession()).mediaStore() } : undefined
-            const result = await handleMediaJobRead({ privatePaths, route: jobRoute, ...(storeMedia ? { storeMedia } : {}) })
+            // 3C-4d：媒体任务只在新库里进行；不是新库时连任务列表也回 409（页面据此说明要先迁移）。
+            if (!storeMode()) {
+              const refused = notWritableResponse(dataState())
+              return sendJson(response, refused.status, refused.body)
+            }
+            // 3C-4c：任务读新库的视图与媒体登记。
+            const result = await handleMediaJobRead({ privatePaths, route: jobRoute, storeMedia: { mediaStore: await (await storeSession()).mediaStore() } })
             return sendJson(response,result.status,result.body)
           }
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
@@ -645,13 +617,18 @@ export function travelAtlasLocalEditor(options = {}) {
           }
 
           if (!authorizeWrite(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_WRITE_FORBIDDEN')))
-          // RFC-LOC-1 PR5a 决定 I：私人目录有没迁移的旧数据时，全部写入端点拒绝（409 E_LEGACY_UNMIGRATED），什么都不写——
-          // 否则 data/v2/ 被写出后，迁移工具的 --apply 会因为输出目录非空而拒绝运行。每个请求现判（只看文件在不在）。
-          const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
-          if (refusal) return sendJson(response, refusal.status, refusal.body)
-          // 新库模式：8 个编辑端点写新库（3C-4a）；三个媒体端点与媒体任务也写新库（3C-4c）。
+          // RFC-LOC-1 PR5a 决定 I：私人目录有没迁移的旧数据时，全部写入端点拒绝（409 E_LEGACY_UNMIGRATED），什么都不写（新库
+          // 模式同样，沿用原来的判定）。3C-4d：不是新库的私人根（待迁移、需要恢复）同样拒绝一切写入（不认识的接口也一样），
+          // 不读请求体，什么都不写。每个请求现判（只看文件在不在）。
+          const legacyRefusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))
+          if (legacyRefusal) return sendJson(response, legacyRefusal.status, legacyRefusal.body)
+          if (!storeMode()) {
+            const refused = notWritableResponse(dataState())
+            return sendJson(response, refused.status, refused.body)
+          }
+          // 8 个编辑端点写新库（3C-4a）；三个媒体端点与媒体任务也写新库（3C-4c）。
           // 3C-4b：库损坏、只读时，全部写入端点 409 E_STORE_READ_ONLY（编辑端点由会话判定，已提交请求的重放照常回原回执）。
-          if (storeMode()) {
+          {
             const session = await storeSession()
             const write = session.writeRoute(request.method, url.pathname)
             if (!write) {
@@ -710,33 +687,6 @@ export function travelAtlasLocalEditor(options = {}) {
             invalidatePrivateDataModule()
             return sendJson(response, result.status, result.body)
           }
-          if (!jobRoute && !v2MediaRoute(request.method,url.pathname) && !v2EditorRoute(request.method,url.pathname)) {
-            return sendJson(response,404,v2ErrorBody('E_UNKNOWN_ENDPOINT'))
-          }
-          const input = jobRoute?.action === 'receive' || v2MediaRoute(request.method,url.pathname) === 'upload'
-            ? undefined : await readJsonBody(request)
-
-          if (jobRoute?.action === 'preview') {
-            const result = await handleMediaJobPreview({privatePaths,route:jobRoute,input})
-            return sendJson(response,result.status,result.body)
-          }
-
-          editorMutationDepth += 1
-          let result
-          try {
-            result = await withLibraryOperation(privatePaths, async (leaseToken) => {
-              if (!jobRoute) return handleV2Write(request,url,leaseToken,input)
-              return handleMediaJobWrite({ privatePaths, route:jobRoute, input, request, url,
-                deps:{safeSegment,reserveDestination,updateDroneSidecar}, leaseToken })
-            })
-          } finally {
-            editorMutationDepth -= 1
-            if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
-            // 首次写入才创建 dataRoot 时 watcher 可能漏掉事件；失败也可能已写入部分文件。
-            // 在响应结束前失效缓存，让客户端原有的刷新读到当前数据，不额外触发页面刷新。
-            invalidatePrivateDataModule()
-          }
-          return sendJson(response, result.status, result.body)
         } catch (error) {
           return sendJson(response, ['E_LIBRARY_BUSY', 'E_LIBRARY_ROOT_MOVED'].includes(error?.code) ? 409 : 400, normalizeLocalEditorError(error))
         }
@@ -744,6 +694,7 @@ export function travelAtlasLocalEditor(options = {}) {
     },
     // 3C-3：开发服务器关闭时正常关闭新库（写入「正常关闭」标记）。构建时没有打开过，什么都不做。
     async buildEnd() {
+      await initialized()
       await releaseStore()
     },
     async closeBundle() {

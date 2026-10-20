@@ -25,20 +25,22 @@ test('smoke: every segment of the new-library benchmark runs at the tiny scale',
   assert.match(read.store.firstBuild, /^\[StarMap store\] 读模型（修订号 1）/)
   assert.equal(read.store.rebuilds.length, 5)
   const updates = await httpSegment(directory, scale)
-  assert.equal(updates.v2.endToEnd.n, scale.updates)
+  // 3C-4d: the write segments measure the store mode only.
+  assert.deepEqual(Object.keys(updates), ['store'])
+  assert.equal(updates.store.endToEnd.n, scale.updates)
   assert.equal(updates.store.commit.n, scale.updates)
   const pipeline = await pipelineSegment(directory)
   assert.ok(pipeline.v2FilesJsonBytes > 0 && pipeline.canonicalJsonBytes > 0)
-  // 3C-4a: the eight editor writes in both modes.
+  // 3C-4a: the eight editor writes (the store mode only since 3C-4d).
   const editors = await editorsSegment(directory, scale)
+  assert.deepEqual(Object.keys(editors), ['store'])
   const endpoints = ['countries', 'records', 'wanttogo', 'wanttogo/update', 'wanttogo/convert', 'state', 'wanttogo/delete', 'countries/delete']
-  for (const mode of ['v2', 'store']) {
-    // The tiny scale has a single hidden want-to-go item to delete.
-    const count = (endpoint) => (endpoint === 'wanttogo/delete' ? 1 : scale.updates)
-    for (const endpoint of endpoints) assert.equal(editors[mode][endpoint].endToEnd.n, count(endpoint), `${mode} ${endpoint}`)
-    if (mode === 'store') for (const endpoint of endpoints) assert.equal(editors.store[endpoint].commit.n, count(endpoint), endpoint)
+  // The tiny scale has a single hidden want-to-go item to delete.
+  const count = (endpoint) => (endpoint === 'wanttogo/delete' ? 1 : scale.updates)
+  for (const endpoint of endpoints) {
+    assert.equal(editors.store[endpoint].endToEnd.n, count(endpoint), endpoint)
+    assert.equal(editors.store[endpoint].commit.n, count(endpoint), endpoint)
   }
-  assert.equal(editors.v2.state.commit, undefined, 'V2 mode has no host commit')
 })
 
 test('smoke: the media, backup and restore segments (3C-4b) run at the tiny scale', async (t) => {

@@ -13,8 +13,11 @@
  *             large library in steps that each fit a command's time
  *   rescan-only  one import with nothing new on --root (no photo written first)
  *   latency   GET /media/jobs every 20 ms while an import of --files new photos (default 200) runs (their answers counted)
- * Each run prints one JSON line and appends it to <dir>/results.jsonl. In V2 mode the plugin runs the importer as a
- * child process (as the dev server does); in the store mode the media service runs in the dev server's process.
+ * Each run prints one JSON line and appends it to <dir>/results.jsonl. The media service runs in the dev server's process.
+ *
+ * 3C-4d: the new library is the only write path, so `--mode` is `store` only (a V2 root's media endpoints answer
+ * E_STORE_MIGRATION_REQUIRED). The V2 figures of 3C-4c stay in its report. The V2 import still builds the synthetic
+ * library that is then migrated (./media-inbox.fixture.mjs).
  */
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { mkdir, mkdtemp, rename, writeFile } from 'node:fs/promises'
@@ -44,8 +47,9 @@ export async function writePhotos(directory, count, prefix = 'bench') {
   return names
 }
 
-/** A fresh root under `dir` in `mode`: the synthetic library imported by V2, migrated for the store. */
+/** A fresh root under `dir` in `mode` (`store` only, 3C-4d): the synthetic library imported by V2, then migrated. */
 export async function benchRoot(dir, mode) {
+  if (mode !== 'store') throw new Error(`3C-4d: the media bench runs the store mode only (got ${mode})`)
   mkdirSync(dir, { recursive: true })
   const root = path.join(await mkdtemp(path.join(dir, `${mode}-`)), 'private')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
@@ -97,6 +101,7 @@ export async function opsSegment(dir, mode, { files = 200, imported = 50 } = {})
   await writePhotos(path.join(river, 'photos'), files, 'rename')
   const page = await served(paths, mode)
   try {
+    const beforeItems = (await page.view()).files.media.items.length
     const setup = await timed(() => page.write('import', {}))
     await writePhotos(path.join(paths.inboxRoot, 'Synthland', 'Harbor Town', 'photos'), imported, 'new')
     const importMs = (await timed(() => page.write('import', {}))).ms
@@ -108,7 +113,7 @@ export async function opsSegment(dir, mode, { files = 200, imported = 50 } = {})
     await rename(river, path.join(paths.inboxRoot, 'Second Land', 'River Town Moved'))
     const renameMs = (await timed(() => page.write('import', {}))).ms
     const after = (await page.view()).files.media.items.length
-    return { mode, segment: 'ops', setupImportMs: setup.ms, import50Ms: importMs, delete1Ms: deleteMs, renameFolderFiles: files, renameImportMs: renameMs, mediaItems: after }
+    return { mode, segment: 'ops', setupImportMs: setup.ms, import50Ms: importMs, delete1Ms: deleteMs, renameFolderFiles: files, renameImportMs: renameMs, beforeItems, mediaItems: after }
   } finally { await page.close() }
 }
 
@@ -191,8 +196,8 @@ const SEGMENTS = Object.freeze({ ops: opsSegment, rescan: rescanSegment, latency
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const arg = (name) => { const at = process.argv.indexOf(name); return at > 0 ? process.argv[at + 1] : undefined }
   const dir = arg('--dir'), mode = arg('--mode'), segment = arg('--segment'), files = arg('--files'), root = arg('--root')
-  if (!dir || !['v2', 'store'].includes(mode) || !SEGMENTS[segment]) {
-    console.error('用法：node scripts/store-media-bench.mjs --dir <工作目录> --mode v2|store --segment ops|rescan|latency|grow|rescan-only [--files <n>] [--root <私人根>]')
+  if (!dir || mode !== 'store' || !SEGMENTS[segment]) {
+    console.error('用法：node scripts/store-media-bench.mjs --dir <工作目录> --mode store --segment ops|rescan|latency|grow|rescan-only [--files <n>] [--root <私人根>]（3C-4d 起只有新库模式）')
     process.exitCode = 1
   } else {
     const result = await SEGMENTS[segment](path.resolve(dir), mode, { ...(files ? { files: Number(files) } : {}), ...(root ? { root } : {}) })

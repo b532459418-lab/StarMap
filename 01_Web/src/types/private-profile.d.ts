@@ -21,4 +21,14 @@ declare module 'virtual:starmap-private-data' {
    * （E_STORE_READ_ONLY），页面显示只读提示。其余情况恒为 false。
    */
   export const privateStoreReadOnly: boolean
+  /**
+   * 3C-4d：私人根有 V2 数据、还没有新库时为 true（scripts/private-data-source.mjs 的 'migration-required'）：数据只读显示，
+   * 写入一律被拒绝（E_STORE_MIGRATION_REQUIRED），页面提示运行迁移。其余情况恒为 false。
+   */
+  export const privateStoreMigrationRequired: boolean
+  /**
+   * 3C-4d：没有新库、data/store/ 下有残留，或空的私人根没能建立新库时为 true：只读，写入被拒绝（E_STORE_RECOVERY_REQUIRED），
+   * 页面提示运行 npm run library:recover。其余情况恒为 false。
+   */
+  export const privateStoreRecoveryRequired: boolean
 }

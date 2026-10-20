@@ -25,6 +25,10 @@
  *
  * Each segment prints one JSON line and appends it to <dir>/results.jsonl. Run every segment in its own process (the
  * store's open is measured cold). `--scale tiny` is the smoke scale.
+ *
+ * 3C-4d: the new library is the only write path; a V2 root only reads (its writes answer E_STORE_MIGRATION_REQUIRED). The
+ * `http` and `editors` segments therefore measure the store mode only (the V2 figures of 3C-3 and 3C-4a stay in their
+ * reports); `read` still compares the two virtual modules.
  */
 import { randomBytes } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
@@ -219,11 +223,11 @@ export function requestJson(method, url, headers, body) {
   })
 }
 
-/** `http`: note updates through the plugin over HTTP in both modes. */
+/** `http`: note updates through the plugin over HTTP (the store mode only since 3C-4d). */
 export async function httpSegment(dir, scale) {
   const roots = rootsOf(dir)
   const result = {}
-  for (const mode of ['v2', 'store']) {
+  for (const mode of ['store']) {
     const lines = []
     const { plugin, handlers, load, restoreConsole } = await pluginFor(roots[mode], (line) => lines.push(line))
     const { server, url } = await serve(handlers)
@@ -280,7 +284,8 @@ export async function editorsSegment(dir, scale) {
   await generateRoots(base, scale)
   const copies = rootsOf(base)
   const result = {}
-  for (const mode of ['v2', 'store']) {
+  // 3C-4d: the store mode only (a V2 root no longer writes).
+  for (const mode of ['store']) {
     const lines = []
     const { plugin, handlers, load, restoreConsole } = await pluginFor(copies[mode], (line) => lines.push(line))
     const { server, url } = await serve(handlers)

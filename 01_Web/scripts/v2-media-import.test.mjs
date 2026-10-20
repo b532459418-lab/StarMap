@@ -1,6 +1,8 @@
 /**
  * V2 媒体导入（scripts/v2-media-import.mjs，入口 scripts/import-media.mjs）的端到端测试
  * （RFC-LOC-1 PR3b-3 规格 §2.5、§3「导入器幂等」「改名与搬家」；PR5a 规格 §4.3、§5：旧导入器删除，未迁移时退出码 2）。
+ * 3C-4d：media:import 只写新库，CLI 在 V2 私人根上只做只读预检；V2 导入器的写入保留到 3C-5，只用来为测试生成迁移输入，
+ * 这里在进程内直接调用（runImportV2、importDirect）。
  *
  * 每个用例在 fs.mkdtemp 建的临时私人根上运行：地点注册表是手写的中性数据
  * （冰岛：雷克雅未克、维克；法罗群岛：托尔斯港），投递箱里的图片由 sharp 现场生成（纯色小图，一张 2:1）。
@@ -103,6 +105,20 @@ const runImportCli = (root, args = []) => spawnSync(process.execPath, [path.join
 })
 
 /**
+ * 3C-4d：media:import 只写新库，V2 导入器的写入只用来为测试生成迁移输入（./v2-media-import.mjs）。这里按旧 CLI 的参数
+ * （--apply、--verify、--accept-folder-bindings）在进程内运行它，输出同 CLI 分成 stdout 与 stderr；预检仍走真正的 CLI。
+ */
+const runImportV2 = async (root, args = []) => {
+  const stdout = []
+  const stderr = []
+  const status = await runV2MediaImport({
+    privatePaths: getPrivatePaths({ STARMAP_PRIVATE_ROOT: root }), apply: args.includes('--apply'), verify: args.includes('--verify'),
+    acceptFolderBindings: args.includes('--accept-folder-bindings'), log: (line) => stdout.push(line), logError: (line) => stderr.push(line),
+  })
+  return { status, stdout: `${stdout.join('\n')}\n`, stderr: `${stderr.join('\n')}\n` }
+}
+
+/**
  * 直接调用（不起子进程），收集输出。第 2A 批起按文件夹名匹配的绑定要确认：这里的投递箱有这样的文件夹
  * （Iceland、Vik、Faroe Islands、Torshavn），而这些用例测的是别的事，所以默认带上确认（同 CLI 的 --accept-folder-bindings）；
  * 绑定确认本身由「文件夹绑定需要确认」的用例测。
@@ -148,12 +164,12 @@ test('V2 导入（CLI）：预检不写文件；--apply 写 V3 目录与 V2 源�
     assert.equal(existsSync(paths.v2MediaSourceIndexPath), false)
     assert.equal(existsSync(paths.userMediaRoot), false, '预检不生成网页文件')
 
-    const first = runImportCli(root, ['--apply', '--accept-folder-bindings'])
+    const first = await runImportV2(root, ['--apply', '--accept-folder-bindings'])
     assert.equal(first.status, 0, first.stderr)
     const catalogBytes1 = await readFile(paths.v2FilePaths.media, 'utf8')
     const indexBytes1 = await readFile(paths.v2MediaSourceIndexPath, 'utf8')
 
-    const second = runImportCli(root, ['--apply', '--accept-folder-bindings'])
+    const second = await runImportV2(root, ['--apply', '--accept-folder-bindings'])
     assert.equal(second.status, 0, second.stderr)
     const catalogBytes2 = await readFile(paths.v2FilePaths.media, 'utf8')
     const indexBytes2 = await readFile(paths.v2MediaSourceIndexPath, 'utf8')
@@ -265,7 +281,7 @@ test('V2 导入的错误：找不到国家或城市、place.json 指向别国城
     await makeImage(path.join(paths.inboxRoot, '冰岛', '雷克雅未克', 'photos', 'c.jpg'), { color: BLUE })
     await writeJson(path.join(paths.inboxRoot, '冰岛', '雷克雅未克', 'place.json'), { placeId: ID.torshavn })
 
-    const result = runImportCli(root, ['--apply', '--accept-folder-bindings'])
+    const result = await runImportV2(root, ['--apply', '--accept-folder-bindings'])
     assert.equal(result.status, 1)
     assert.match(result.stderr, /需要处理（3）/)
     assert.match(result.stderr, /找不到国家：Atlantis。目录名需与 StarMap 中的国家中文名、英文名或国家代码一致，或在 place.json 中填写 placeId。/)
@@ -328,7 +344,7 @@ test('文件夹绑定需要确认（第 2A 批，改写自「固定归属」）�
     for (const [folder] of PINNED_FOLDERS) assert.equal(existsSync(placeJsonOf(paths, folder)), false, `预检不写 ${folder}/place.json`)
 
     // --apply 不带确认：退出码 2，列出绑定，什么都不写（place.json、媒体目录、源文件索引、生成文件）。
-    const refused = runImportCli(root, ['--apply'])
+    const refused = await runImportV2(root, ['--apply'])
     assert.equal(refused.status, 2, refused.stdout + refused.stderr)
     assert.match(refused.stdout, /待确认的文件夹绑定（4）/)
     assert.match(refused.stderr, /未写入任何文件：有 4 个按名称匹配的文件夹绑定还没有确认/)
@@ -338,7 +354,7 @@ test('文件夹绑定需要确认（第 2A 批，改写自「固定归属」）�
     assert.equal(existsSync(paths.userMediaRoot), false)
 
     // 带 --accept-folder-bindings：国家与城市文件夹都写入指向正确地点的 place.json；手写的与旧 country.json 不动。
-    const first = runImportCli(root, ['--apply', '--accept-folder-bindings'])
+    const first = await runImportV2(root, ['--apply', '--accept-folder-bindings'])
     assert.equal(first.status, 0, first.stderr)
     assert.match(first.stdout, /已确认 4 个按名称匹配的文件夹绑定，写入 place\.json，固定为地点 id/)
     for (const [folder, placeId] of PINNED_FOLDERS) {
@@ -355,10 +371,10 @@ test('文件夹绑定需要确认（第 2A 批，改写自「固定归属」）�
     places.places.find((place) => place.id === ID.faroe).names = { 'zh-Hans': '法罗', en: 'Faroes' }
     places.places.find((place) => place.id === ID.torshavn).names = { 'zh-Hans': '托尔斯港市', en: 'Tórshavn Town' }
     await writeJson(paths.v2FilePaths.places, places)
-    const second = runImportCli(root, ['--apply', '--accept-folder-bindings'])
+    const second = await runImportV2(root, ['--apply', '--accept-folder-bindings'])
     assert.equal(second.status, 0, second.stderr)
     assert.doesNotMatch(second.stdout, /写入 place\.json|待确认的文件夹绑定/, '已经固定，不再写，也不再需要确认')
-    assert.equal(runImportCli(root, ['--apply']).status, 0, '固定之后不带确认也能导入')
+    assert.equal((await runImportV2(root, ['--apply'])).status, 0, '固定之后不带确认也能导入')
     assert.equal(withoutGeneratedAt(await readFile(paths.v2FilePaths.media, 'utf8')), withoutGeneratedAt(catalogBefore), 'id、路径、归属都不变')
     assert.equal(withoutGeneratedAt(await readFile(paths.v2MediaSourceIndexPath, 'utf8')), withoutGeneratedAt(indexBefore))
     const catalog = await readJsonFile(paths.v2FilePaths.media)
@@ -544,12 +560,17 @@ test('D7：media:check --verify 只报告与目录名哈希不一致的原图，
 // 旧格式数据（RFC-LOC-1 PR5a 决定 I）：旧导入器已删除；没迁移时拒绝，迁移之后的残留照常
 // ---------------------------------------------------------------------------
 
-test('入口只剩几行：import-media.mjs 不再含旧导入器，也不再按数据模式分派；直接调用 V2 导入器', () => {
+test('入口只剩几行：import-media.mjs 不再含旧导入器，也不再按数据模式分派；只有新库能导入，V2 导入器只做只读预检（3C-4d）', () => {
   const source = readFileSync(path.join(webRoot, 'scripts', 'import-media.mjs'), 'utf8')
   assert.ok(source.split(/\r?\n/).length < 40, '入口文件应当只有几行')
   assert.doesNotMatch(source, /resolveDataMode|data-mode\.mjs|createLocationIndex|travel-map\.sample\.json|localTravelMapPath/)
-  // 第 2A 批改写：入口另把 --accept-folder-bindings 交给导入器。3C-4c：新库交给 store-media-cli.mjs，V2 照旧。
-  assert.match(source, /return runV2MediaImport\(\{ privatePaths, apply, verify, acceptFolderBindings: process\.argv\.includes\('--accept-folder-bindings'\) \}\)/)
+  // 3C-4c：新库交给 store-media-cli.mjs。3C-4d：不是新库时 V2 导入器只预检（apply: false，不取库租约），--apply 被拒绝。
+  assert.match(source, /runStoreMediaCli\(/)
+  assert.match(source, /runV2MediaImport\(\{ privatePaths, apply: false, verify, acceptFolderBindings: process\.argv\.includes\('--accept-folder-bindings'\) \}\)/)
+  assert.doesNotMatch(source, /withLibraryOperation|apply: true|apply, verify/)
+  // 评审 §7-3：写入能力保留到 3C-5，说明写在导入器的文档注释里。
+  const importer = readFileSync(path.join(webRoot, 'scripts', 'v2-media-import.mjs'), 'utf8')
+  assert.ok(importer.includes('生产代码已经没有入口；只用来为测试生成迁移输入'))
 })
 
 test('未迁移：私人目录只有旧数据、data/v2/ 没有 V2 文件 → media:check 与 media:import 都拒绝，退出码 2，说明怎么迁移；不写任何文件', async () => {
@@ -578,17 +599,21 @@ test('未迁移：私人目录只有旧数据、data/v2/ 没有 V2 文件 → me
   }
 })
 
-test('残留：旧文件与 V2 文件都在（已迁移）→ 照常由 V2 导入器导入，不写旧格式的媒体目录；PR4 的数据模式标记（哪怕是 legacy）被忽略', async () => {
+test('残留：旧文件与 V2 文件都在（已迁移到 V2）→ 按待迁移到新库处理（3C-4d）：media:import 退出码 2、提示迁移而不是旧数据；预检照常；什么都不写；PR4 的数据模式标记（哪怕是 legacy）被忽略', async () => {
   await withV2Root(async ({ root, paths }) => {
     await writeJson(paths.localTravelMapPath, { schema_version: 1, records: [] })
     await writeJson(path.join(paths.dataRoot, 'data-mode.local.json'), { mode: 'legacy' })
     await writeInbox(paths)
-    const result = runImportCli(root, ['--apply', '--accept-folder-bindings'])
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-    const catalog = await readJsonFile(paths.v2FilePaths.media)
-    assert.equal(catalog.items.length, 4)
-    assert.ok(catalog.items.every((item) => /^media-[0-9a-f]{16}$/.test(item.id)))
+    const before = (await readdir(root, { recursive: true })).sort()
+    const refused = runImportCli(root, ['--apply', '--accept-folder-bindings'])
+    assert.equal(refused.status, 2, `${refused.stdout}\n${refused.stderr}`)
+    assert.match(refused.stderr, /还没有迁移到新库/)
+    assert.doesNotMatch(refused.stderr, /旧格式的数据/)
+    const checked = runImportCli(root, ['--accept-folder-bindings'])
+    assert.equal(checked.status, 0, checked.stderr)
+    assert.match(checked.stdout, /^StarMap 媒体预检：4 个文件$/m)
+    assert.match(checked.stdout, /还没有迁移到新库/)
+    assert.deepEqual((await readdir(root, { recursive: true })).sort(), before, '不写媒体目录、生成文件、place.json，也不取库租约')
     assert.equal(existsSync(paths.mediaCatalogPath), false, '不写旧格式的媒体目录')
-    assert.equal(existsSync(path.join(paths.dataRoot, 'media-source-index.local.json')), false, '不写旧格式的源文件索引')
   })
 })

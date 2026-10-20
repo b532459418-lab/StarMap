@@ -27,6 +27,7 @@ import { hasLegacyData, hasV2Data, isLegacyUnmigrated, legacyDataStateOf, legacy
 import { privateDataModuleExports } from './private-data-module.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, runV2Write } from './v2-editor-store.mjs'
+import { runV2MediaImport } from './v2-media-import.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
@@ -225,11 +226,14 @@ const importInto = async (root, { withBak, images }) => {
   if (withBak) await addInboxBaks(paths)
   const preflight = runScript('import-media.mjs', [], root)
   // 第 2A 批：这里的投递箱按文件夹名匹配，要明确确认文件夹绑定（本用例测的是 .bak，不是绑定确认）。
-  const applied = runScript('import-media.mjs', ['--apply', '--accept-folder-bindings'], root)
-  assert.equal(applied.status, 0, `${applied.stdout}\n${applied.stderr}`)
+  // 3C-4d：media:import 只写新库；V2 导入器的写入只用来为测试生成迁移输入，这里在进程内直接调用（预检仍走 CLI）。
+  const lines = []
+  const log = (line) => lines.push(String(line))
+  const status = await runV2MediaImport({ privatePaths: paths, apply: true, acceptFolderBindings: true, log, logError: log })
+  assert.equal(status, 0, lines.join('\n'))
   return {
     preflight: preflight.stdout + preflight.stderr,
-    output: applied.stdout.replaceAll(root, '<root>') + applied.stderr.replaceAll(root, '<root>'),
+    output: lines.join('\n').replaceAll(root, '<root>'),
     catalog: withoutGeneratedAt(await readFile(paths.v2FilePaths.media, 'utf8')),
     index: withoutGeneratedAt(await readFile(paths.v2MediaSourceIndexPath, 'utf8')),
     generated: (await readdir(paths.userMediaRoot, { recursive: true })).sort(),
