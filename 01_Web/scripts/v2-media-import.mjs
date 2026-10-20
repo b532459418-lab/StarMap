@@ -17,7 +17,7 @@
  *   （只有一个候选时也一样）是「待确认的文件夹绑定」。预检列出「文件夹 → 地点（中文名 / 英文名）」；--apply 时有待确认的
  *   绑定就拒绝写入（退出码 2，什么都不写），加 --accept-folder-bindings 才接受：整次导入没有错误时写入 place.json
  *   （`{ "placeId": … }`，atomicJsonWrite）固定下来，此后按 id 解析，地点改名也不影响。已有 place.json 的文件夹不受影响。
- *   媒体任务（恢复中心）在导入确认步骤里一并确认（./media-import-plan.mjs、./media-job-service.mjs）。
+ *   媒体任务（恢复中心，3C-4d 起只在新库里）在导入确认步骤里一并确认（./media-job-service.mjs）。
  * - **内容寻址**：媒体 id = media-<源文件 sha256 前 16 位>，生成文件在 media/user/<同一哈希>/。改名、搬城市、改类型
  *   都不改变 id 与路径；重复运行，目录与源文件索引除 generatedAt 外逐字节相同。
  * - **写盘**：data/v2/user-media.local.json（PR3a 的 V3 格式）与 data/v2/media-source-index.local.json，都用
@@ -118,8 +118,8 @@ const listMediaFiles = async (target) => {
 
 const PUBLISH_TEMPORARY = /^\.(.+)\.([1-9]\d{0,9})\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/
 
-/** 导入器发布用的临时文件名 → `{ finalName, pid }`；不是这种名字为 undefined。计划（media-import-plan.mjs）也用它容忍遗留。 */
-export const publishTemporaryOf = (name) => {
+/** 导入器发布用的临时文件名 → `{ finalName, pid }`；不是这种名字为 undefined。 */
+const publishTemporaryOf = (name) => {
   const match = PUBLISH_TEMPORARY.exec(name)
   return match ? { finalName: match[1], pid: Number(match[2]) } : undefined
 }
@@ -597,7 +597,7 @@ export async function publishGeneratedFiles(entry) {
  * Caller validates the full plan and holds the library lease before entering. Folder bindings found by name are
  * pinned only when the caller passes `acceptFolderBindings` (batch 2A); otherwise nothing is written.
  */
-export async function applyV2MediaImportScan({ privatePaths, scan, now = () => new Date(), log = () => {}, onStage = async () => {}, acceptFolderBindings = false }) {
+async function applyV2MediaImportScan({ privatePaths, scan, now = () => new Date(), log = () => {}, onStage = async () => {}, acceptFolderBindings = false }) {
   const { unique, planned, pins, items } = scan
   if (pins.length > 0 && !acceptFolderBindings) {
     throw Object.assign(new Error('E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED'), { code: 'E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED' })

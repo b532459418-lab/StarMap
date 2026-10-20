@@ -26,7 +26,8 @@ import sharp from 'sharp'
 import { hasLegacyData, hasV2Data, isLegacyUnmigrated, legacyDataStateOf, legacyWriteRefusal } from './legacy-data.mjs'
 import { privateDataModuleExports } from './private-data-module.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
-import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState, runV2Write } from './v2-editor-store.mjs'
+import { atomicJsonWrite } from './json-file.mjs'
+import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState } from './v2-editor-store.mjs'
 import { runV2MediaImport } from './v2-media-import.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
@@ -124,12 +125,18 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
   await writeJson(paths.localTravelMapPath, { schema_version: 1, records: [] })
   await writeJson(paths.wantToGoPath, { schema_version: 1, items: [] })
 
-  // 经插件用的同一个 IO 层做两次编辑：atomicJsonWrite 给被改写的文件留下 .bak（上一版）。
+  // 两次编辑：规则引擎的纯函数算出写入，atomicJsonWrite 写盘，给被改写的文件留下 .bak（上一版）。3C-4d 删除了 V2 的写盘
+  // （runV2Write），V2 文件只由 store:export-v2、恢复等写出，同样经 atomicJsonWrite；这里照它的写法做。
+  const writeV2Edit = async ({ privatePaths, route, input, ctx: context }) => {
+    const outcome = route.run(await readFiveV2Files(privatePaths), input, context)
+    for (const step of outcome.writes) await atomicJsonWrite(privatePaths.v2FilePaths[step.file], step.value)
+    return { status: route.status, body: { ok: true, ...outcome.result } }
+  }
   const ctx = createV2WriteContext({ countryCatalog: CATALOG, newId: sequentialUuids(Date.UTC(2026, 8, 29)) })
   const state = (await readV2EditorState({ privatePaths: paths })).body.state
-  const reorder = await runV2Write({ privatePaths: paths, route: V2_EDITOR_ROUTES['PUT /__travelatlas/editor/state'], input: { ...state, countryOrder: [...state.countryOrder].reverse() }, ctx })
+  const reorder = await writeV2Edit({ privatePaths: paths, route: V2_EDITOR_ROUTES['PUT /__travelatlas/editor/state'], input: { ...state, countryOrder: [...state.countryOrder].reverse() }, ctx })
   assert.equal(reorder.status, 200, JSON.stringify(reorder.body))
-  const add = await runV2Write({
+  const add = await writeV2Edit({
     privatePaths: paths,
     route: V2_EDITOR_ROUTES['POST /__travelatlas/editor/wanttogo'],
     input: { place: { kind: 'city', nameZh: '卑尔根', nameEn: 'Bergen', countryCode: 'NO', lat: 60.3913, lng: 5.3221 } },

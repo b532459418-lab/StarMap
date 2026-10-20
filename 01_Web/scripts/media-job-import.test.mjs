@@ -1,4 +1,11 @@
-/** RD-07 batch-two acceptance. Owned synthetic libraries and generated JPEG bytes only. */
+/**
+ * RD-07 batch-two acceptance. Owned synthetic libraries and generated JPEG bytes only.
+ *
+ * 3C-4d: media tasks run in the new library only. Each root's synthetic places are migrated into a store, and the
+ * handlers get `storeMedia` from a store session as the plugin passes it; operation ids are UUIDv7 (the store's request
+ * ids). Cases about what only the V2 import wrote (the catalog, the source index, content ids, the V2 files in a receipt)
+ * are removed; the store's import and receipt are covered by store-media-jobs.test.mjs.
+ */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -18,7 +25,10 @@ import { withLibraryOperation } from './library-operation-lock.mjs'
 import * as service from './media-job-service.mjs'
 import { assertMediaJobRecord, largestCompletedMediaJobRecord, mediaJobReceiptSeal } from './media-job-store.mjs'
 import { prepareV2Upload } from './v2-media-store.mjs'
+import { createStoreSession } from './store-session.mjs'
+import { applyMigration } from './store-migrate.mjs'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
+import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { placeFolderSuffix } from '../src/data/v2media/editorWrites.ts'
 
 const newId = sequentialUuids(Date.UTC(2026, 9, 4))
@@ -39,13 +49,17 @@ const dependencies = () => ({ safeSegment, reserveDestination, prepareV2Upload,
     await atomicJsonWrite(target, sidecar)
   },
 })
-async function withRoot(run) {
+async function withRoot(run, { registry = places() } = {}) {
   const prefix = 'starmap-rd07-import-acceptance-'
   const directory = await mkdtemp(path.join(tmpdir(), prefix))
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: path.join(directory, 'private') })
   await mkdir(paths.v2DataRoot, { recursive: true })
-  await writeFile(paths.v2FilePaths.places, `${JSON.stringify(places(), null, 2)}\n`)
-  try { await run({ paths, deps: dependencies() }) } finally {
+  await writeFile(paths.v2FilePaths.places, `${JSON.stringify(registry, null, 2)}\n`)
+  // 3C-4d: the places migrated into a new library; the handlers read and import through a session, as the plugin does.
+  await applyMigration(paths, { now: '2026-10-04T00:00:00.000Z' })
+  const session = createStoreSession(paths, { log: () => {} })
+  try { await run({ paths, deps: dependencies(), session, storeMedia: { mediaStore: await session.mediaStore() } }) } finally {
+    await session.close()
     assert.equal(path.dirname(directory), path.resolve(tmpdir()))
     assert.ok(path.basename(directory).startsWith(prefix))
     await rm(directory, { recursive: true, force: true })
@@ -65,17 +79,18 @@ async function tree(root, { omitCoordination = false } = {}) {
   return records
 }
 const route = (action, job) => service.mediaJobRoute('POST', job ? `${base}/${job.jobId}/${action}` : base)
-const write = (env, action, job, input, extra = {}) => withLibraryOperation(env.paths, leaseToken => service.handleMediaJobWrite({ privatePaths: env.paths, deps: env.deps, route: route(action, job), input, ...extra, leaseToken }))
-const get = (env, job) => service.handleMediaJobRead({ privatePaths: env.paths, route: service.mediaJobRoute('GET', `${base}/${job.jobId}`) })
+const write = (env, action, job, input, extra = {}) => withLibraryOperation(env.paths, leaseToken => service.handleMediaJobWrite({ privatePaths: env.paths, deps: env.deps, route: route(action, job), input, ...extra, leaseToken, storeMedia: env.storeMedia }))
+const get = (env, job) => service.handleMediaJobRead({ privatePaths: env.paths, route: service.mediaJobRoute('GET', `${base}/${job.jobId}`), storeMedia: env.storeMedia })
+const catalogOf = async (env) => (await env.storeMedia.mediaStore.view()).files.media
 const selection = (job) => job.files.filter(file => file.phase === 'received').map(file => file.fileId)
 const identity = (job) => ({ libraryId: job.libraryId, revision: job.revision })
-const preview = (env, job, selectedFileIds = selection(job), override = {}) => service.handleMediaJobPreview({ privatePaths: env.paths, route: route('preview', job), input: { ...identity(job), selectedFileIds, ...override } })
-const importInput = (job, plan, operationId = randomUUID()) => ({ ...identity(job), selectedFileIds: selection(job), operationId, planDigest: plan.digest })
+const preview = (env, job, selectedFileIds = selection(job), override = {}) => service.handleMediaJobPreview({ privatePaths: env.paths, route: route('preview', job), input: { ...identity(job), selectedFileIds, ...override }, storeMedia: env.storeMedia })
+const importInput = (job, plan, operationId = uuidv7()) => ({ ...identity(job), selectedFileIds: selection(job), operationId, planDigest: plan.digest })
 const jobPath = (env, job) => path.join(env.paths.root, 'operations/media-import/v1/jobs', `${job.jobId}.json`)
 async function receive(env, job, bytes, fileId = job.files[0].fileId) {
   const request = Readable.from([bytes]); request.headers = { 'content-length': String(bytes.length) }
   const url = new URL(`${base}/${job.jobId}/files/${fileId}?${new URLSearchParams({ ...identity(job), operationId: randomUUID(), sha256: sha(bytes) })}`, 'http://127.0.0.1')
-  const result = await withLibraryOperation(env.paths, leaseToken => service.handleMediaJobWrite({ privatePaths: env.paths, deps: env.deps, route: service.mediaJobRoute('POST', url.pathname), request, url, leaseToken }))
+  const result = await withLibraryOperation(env.paths, leaseToken => service.handleMediaJobWrite({ privatePaths: env.paths, deps: env.deps, route: service.mediaJobRoute('POST', url.pathname), request, url, leaseToken, storeMedia: env.storeMedia }))
   assert.equal(result.status, 201, JSON.stringify(result))
   return result.body.job
 }
@@ -98,12 +113,13 @@ async function importReady(env, job) {
   return { input, result: imported, plan: result.body.plan }
 }
 const freshRead = async (env, job) => {
-  const script = `import {getPrivatePaths} from './scripts/private-profile.mjs';import {handleMediaJobRead,mediaJobRoute} from './scripts/media-job-service.mjs';const paths=getPrivatePaths({STARMAP_PRIVATE_ROOT:${JSON.stringify(env.paths.root)}}); const result=await handleMediaJobRead({privatePaths:paths,route:mediaJobRoute('GET',${JSON.stringify(`${base}/${job.jobId}`)})});process.stdout.write(JSON.stringify(result));`
+  // Another process opens the store read-only (as build:personal does next to the dev server).
+  const script = `import {getPrivatePaths} from './scripts/private-profile.mjs';import {handleMediaJobRead,mediaJobRoute} from './scripts/media-job-service.mjs';import {createStoreSession} from './scripts/store-session.mjs';const paths=getPrivatePaths({STARMAP_PRIVATE_ROOT:${JSON.stringify(env.paths.root)}});const session=createStoreSession(paths,{log:()=>{},readOnly:true});const result=await handleMediaJobRead({privatePaths:paths,route:mediaJobRoute('GET',${JSON.stringify(`${base}/${job.jobId}`)}),storeMedia:{mediaStore:await session.mediaStore()}});await session.close();process.stdout.write(JSON.stringify(result));`
   const result = await execute(process.execPath, ['--input-type=module', '-e', script], { cwd: path.resolve(import.meta.dirname, '..'), maxBuffer: 1024 * 1024 })
   return JSON.parse(result.stdout)
 }
 const freshReplay = async (env, job, input) => {
-  const script = `import {getPrivatePaths} from './scripts/private-profile.mjs';import {handleMediaJobWrite,mediaJobRoute} from './scripts/media-job-service.mjs';import {withLibraryOperation} from './scripts/library-operation-lock.mjs';const paths=getPrivatePaths({STARMAP_PRIVATE_ROOT:${JSON.stringify(env.paths.root)}});const result=await withLibraryOperation(paths,leaseToken=>handleMediaJobWrite({privatePaths:paths,route:mediaJobRoute('POST',${JSON.stringify(`${base}/${job.jobId}/import`)}),input:${JSON.stringify(input)},deps:{},leaseToken}));process.stdout.write(JSON.stringify(result));`
+  const script = `import {getPrivatePaths} from './scripts/private-profile.mjs';import {handleMediaJobWrite,mediaJobRoute} from './scripts/media-job-service.mjs';import {withLibraryOperation} from './scripts/library-operation-lock.mjs';import {createStoreSession} from './scripts/store-session.mjs';const paths=getPrivatePaths({STARMAP_PRIVATE_ROOT:${JSON.stringify(env.paths.root)}});const session=createStoreSession(paths,{log:()=>{},readOnly:true});const storeMedia={mediaStore:await session.mediaStore()};const result=await withLibraryOperation(paths,leaseToken=>handleMediaJobWrite({privatePaths:paths,route:mediaJobRoute('POST',${JSON.stringify(`${base}/${job.jobId}/import`)}),input:${JSON.stringify(input)},deps:{},leaseToken,storeMedia}));await session.close();process.stdout.write(JSON.stringify(result));`
   const result = await execute(process.execPath, ['--input-type=module', '-e', script], { cwd: path.resolve(import.meta.dirname, '..'), maxBuffer: 1024 * 1024 })
   return JSON.parse(result.stdout)
 }
@@ -147,21 +163,6 @@ test('RD-07 batch2 foreign library and stale revision preview are rejected witho
   assert.deepEqual(await tree(env.paths.root), before)
 }))
 
-test('RD-07 batch2 import creates a catalog, source index, three tiers and sealed historical completion', async () => withRoot(async env => {
-  const bytes = await jpeg(), job = await received(env, bytes), receipt = await readJson(jobPath(env, job))
-  const { result } = await importReady(env, job), contentId = `media-${sha(bytes).slice(0, 16)}`
-  assert.equal(result.body.job.files[0].status, 'completed')
-  const catalog = await readJson(env.paths.v2FilePaths.media), index = await readJson(env.paths.v2MediaSourceIndexPath)
-  assert.equal(catalog.items.length, 1); assert.equal(catalog.items[0].id, contentId); assert.equal(catalog.items[0].placeId, ID.city)
-  assert.ok(index.sourcesById[contentId].includes(receipt.files[0].sourcePath))
-  for (const filename of ['original.jpg', 'thumb.webp', 'preview.webp']) assert.ok((await stat(path.join(env.paths.userMediaRoot, sha(bytes).slice(0,16), filename))).size > 0)
-  assert.deepEqual(await readFile(path.join(env.paths.inboxRoot, receipt.files[0].sourcePath)), bytes)
-  const saved = await readJson(jobPath(env, job)); assert.equal(saved.phase, 'completed'); assert.ok(saved.import)
-  const before = await tree(env.paths.root), restarted = await freshRead(env, job)
-  assert.equal(restarted.body.job.status, 'completed', JSON.stringify(restarted))
-  assert.deepEqual(await tree(env.paths.root), before)
-}))
-
 test('RD-07 batch2 sealed import replay consumes the original intent without rewriting bytes or timestamps', async () => withRoot(async env => {
   const job = await received(env, await jpeg()), { input, result } = await importReady(env, job)
   const before = await tree(env.paths.root, { omitCoordination: true })
@@ -188,15 +189,6 @@ test('RD-07 batch2 a changed source between preview and import invalidates the p
   assert.equal(Object.keys(before).some(name => name.startsWith('media/user/')), false)
 }))
 
-test('RD-07 batch2 an edited library after preview invalidates the confirmed digest without any apply', async () => withRoot(async env => {
-  const job = await received(env, await jpeg()), plan = (await preview(env, job)).body.plan
-  const changed = await readJson(env.paths.v2FilePaths.places)
-  changed.places.find(place => place.id === ID.city).names.en = 'Renamed Test City'
-  await atomicJsonWrite(env.paths.v2FilePaths.places, changed)
-  const before = await tree(env.paths.root, { omitCoordination: true }), result = await write(env, 'import', job, importInput(job, plan))
-  assert.ok(result.status >= 400, JSON.stringify(result)); assert.deepEqual(await tree(env.paths.root, { omitCoordination: true }), before)
-}))
-
 test('RD-07 batch2 stale and foreign import intents do not create stages or media', async () => withRoot(async env => {
   const job = await received(env, await jpeg()), plan = (await preview(env, job)).body.plan, input = importInput(job, plan)
   const before = await tree(env.paths.root, { omitCoordination: true })
@@ -210,16 +202,6 @@ test('RD-07 batch2 an unrelated unknown-city Inbox delivery blocks the whole-lib
   const bytes = await jpeg(), job = await received(env, bytes)
   const unknown = path.join(env.paths.inboxRoot, 'Test Country', 'Unknown City', 'photos', 'other.jpg')
   await mkdir(path.dirname(unknown), { recursive: true }); await writeFile(unknown, await jpeg({ r: 100, g: 10, b: 80 }))
-  const before = await tree(env.paths.root), result = await preview(env, job)
-  assert.ok(result.status >= 400 || result.body.plan.blockers.length > 0, JSON.stringify(result))
-  assert.deepEqual(await tree(env.paths.root), before)
-}))
-
-test('RD-07 batch2 same content in a different city never silently changes ownership', async () => withRoot(async env => {
-  const bytes = await jpeg(), job = await received(env, bytes)
-  const cityRoot = path.join(env.paths.inboxRoot, 'Test Country', 'Other City')
-  await mkdir(path.join(cityRoot, 'photos'), { recursive: true }); await writeFile(path.join(cityRoot, 'place.json'), JSON.stringify({ placeId: ID.otherCity }))
-  await writeFile(path.join(cityRoot, 'photos', 'same.jpg'), bytes)
   const before = await tree(env.paths.root), result = await preview(env, job)
   assert.ok(result.status >= 400 || result.body.plan.blockers.length > 0, JSON.stringify(result))
   assert.deepEqual(await tree(env.paths.root), before)
@@ -280,36 +262,11 @@ test('RD-07 batch2 modified generated bytes during the editor stage cannot be se
   assert.deepEqual(await tree(env.paths.root), before)
 }))
 
-for (const resource of ['catalog', 'index']) test(`RD-07 batch2 externally changed ${resource} after editor write cannot receive a completion seal`, async () => withRoot(async env => {
-  const job = await received(env, await jpeg()), plan = (await preview(env, job)).body.plan
-  let changed = false
-  env.deps.onMediaJobImportStage = async stage => {
-    if (stage !== 'editor') return
-    const target = resource === 'catalog' ? env.paths.v2FilePaths.media : env.paths.v2MediaSourceIndexPath
-    const contents = await readJson(target)
-    if (resource === 'catalog') contents.items = []
-    else contents.sourcesById = {}
-    await writeFile(target, `${JSON.stringify(contents, null, 2)}\n`); changed = true
-  }
-  const result = await write(env, 'import', job, importInput(job, plan))
-  assert.equal(changed, true); assert.ok(result.status >= 400, JSON.stringify(result))
-  const saved = await readJson(jobPath(env, job)); assert.notEqual(saved.import.phase, 'sealed')
-  const before = await tree(env.paths.root), restarted = await freshRead(env, job)
-  assert.equal(restarted.body.job.status, 'needs_review', JSON.stringify(restarted)); assert.deepEqual(await tree(env.paths.root), before)
-}))
-
-test('RD-07 batch2 history stays completed after hiding, sorting, source removal and derivative removal', async () => withRoot(async env => {
+test('RD-07 batch2 history stays completed after source removal and derivative removal', async () => withRoot(async env => {
   const bytes = await jpeg(), job = await received(env, bytes), { input, result } = await importReady(env, job)
-  const persisted = await readJson(jobPath(env, job)), id = `media-${sha(bytes).slice(0, 16)}`
-  const state = await readJson(env.paths.v2FilePaths.editorState)
-  state.hiddenMediaIds = [id]; state.mediaOrderByCity = { [ID.city]: [id] }; state.coverMediaByCity = { [ID.city]: id }
-  await atomicJsonWrite(env.paths.v2FilePaths.editorState, state)
-  const hidden = await get(env, job); assert.equal(hidden.body.job.status, 'completed', JSON.stringify(hidden))
+  const persisted = await readJson(jobPath(env, job))
   await unlink(path.join(env.paths.inboxRoot, persisted.files[0].sourcePath))
   await unlink(path.join(env.paths.userMediaRoot, sha(bytes).slice(0,16), 'thumb.webp'))
-  const catalog = await readJson(env.paths.v2FilePaths.media), index = await readJson(env.paths.v2MediaSourceIndexPath)
-  catalog.items = []; index.sourcesById = {}
-  await atomicJsonWrite(env.paths.v2FilePaths.media, catalog); await atomicJsonWrite(env.paths.v2MediaSourceIndexPath, index)
   const before = await tree(env.paths.root, { omitCoordination: true }), historical = await freshRead(env, job)
   assert.equal(historical.body.job.status, 'completed', JSON.stringify(historical)); assert.equal(historical.body.job.canImport, false)
   assert.ok(historical.body.job.warnings?.length > 0, JSON.stringify(historical))
@@ -347,12 +304,10 @@ test('RD-07 batch2 two consecutive closed tasks import different content without
   const secondBytes = await jpeg({ r: 170, g: 35, b: 20 })
   const second = await received(env, secondBytes, { files: [{ fileName: 'second.jpg', bytes: secondBytes.length }] })
   const secondImport = await importReady(env, second)
-  const catalog = await readJson(env.paths.v2FilePaths.media), index = await readJson(env.paths.v2MediaSourceIndexPath)
-  assert.equal(catalog.items.length, 2)
+  assert.equal((await catalogOf(env)).items.length, 2)
+  const registry = env.storeMedia.mediaStore.mediaRegistry()
   for (const bytes of [firstBytes, secondBytes]) {
-    const id = `media-${sha(bytes).slice(0,16)}`
-    assert.ok(catalog.items.some(item => item.id === id))
-    assert.equal(index.sourcesById[id].length, 1)
+    assert.equal(registry.sources.filter(source => source.sha256 === sha(bytes) && source.state === 'present').length, 1)
     for (const filename of ['original.jpg', 'thumb.webp', 'preview.webp']) assert.ok((await stat(path.join(env.paths.userMediaRoot, sha(bytes).slice(0,16), filename))).size > 0)
   }
   const secondClosed = await write(env, 'close', secondImport.result.body.job, identity(secondImport.result.body.job))
@@ -364,85 +319,12 @@ test('RD-07 batch2 two consecutive closed tasks import different content without
   assert.equal(oldHistory.body.job.completion.operationId, firstImport.input.operationId)
 }))
 
-test('RD-07 batch2 a new same-city same-content intent needs explicit import and deduplicates only after confirmation', async () => withRoot(async env => {
-  const bytes = await jpeg(), first = await received(env, bytes), firstImport = await importReady(env, first)
-  const firstClosed = await write(env, 'close', firstImport.result.body.job, identity(firstImport.result.body.job))
-  assert.equal(firstClosed.status, 200, JSON.stringify(firstClosed))
-  const firstRecordBefore = await readFile(jobPath(env, first))
-  const second = await received(env, bytes, { files: [{ fileName: 'same-content-new-delivery.jpg', bytes: bytes.length }] })
-  const persisted = await readJson(jobPath(env, second)), contentId = `media-${sha(bytes).slice(0,16)}`
-  const indexBefore = await readJson(env.paths.v2MediaSourceIndexPath)
-  assert.equal(indexBefore.sourcesById[contentId].includes(persisted.files[0].sourcePath), false)
-  const beforePreview = await tree(env.paths.root), current = await get(env, second)
-  assert.notEqual(current.body.job.status, 'completed', JSON.stringify(current))
-  assert.equal(current.body.job.status, 'pending', JSON.stringify(current))
-  const planned = await preview(env, second)
-  assert.equal(planned.status, 200, JSON.stringify(planned)); assert.deepEqual(planned.body.plan.blockers, [])
-  assert.deepEqual(await tree(env.paths.root), beforePreview)
-  const secondImport = await importReady(env, second)
-  const catalog = await readJson(env.paths.v2FilePaths.media), indexAfter = await readJson(env.paths.v2MediaSourceIndexPath)
-  assert.equal(catalog.items.length, 1)
-  assert.equal(catalog.items[0].id, contentId)
-  assert.equal(indexAfter.sourcesById[contentId].length, 2)
-  assert.ok(indexAfter.sourcesById[contentId].includes(persisted.files[0].sourcePath))
-  assert.notEqual(secondImport.input.operationId, firstImport.input.operationId)
-  assert.deepEqual(await readFile(jobPath(env, first)), firstRecordBefore)
-  const beforeReplay = await tree(env.paths.root, { omitCoordination: true })
-  assert.equal((await freshReplay(env, second, secondImport.input)).status, 200)
-  assert.deepEqual(await tree(env.paths.root, { omitCoordination: true }), beforeReplay)
-}))
-
 // ---------------------------------------------------------------------------
 // Batch 2 D4 / D6: task-scoped receipts and reads without content hashing
 // ---------------------------------------------------------------------------
 
-const DATA_FILES = ['data/v2/editor-state.local.json', 'data/v2/media-source-index.local.json', 'data/v2/user-media.local.json']
+
 const generatedPaths = (bytes) => ['original.jpg', 'preview.webp', 'thumb.webp'].map((name) => `media/user/${sha(bytes).slice(0, 16)}/${name}`)
-
-test('D4 the completion receipt lists only this task: its source, its generated files and the rewritten V2 files, plus a library digest', async () => withRoot(async env => {
-  const firstBytes = await jpeg(), first = await received(env, firstBytes)
-  const firstImport = await importReady(env, first)
-  const firstRecord = await readJson(jobPath(env, first)), firstReceipt = firstRecord.import.receipt
-  assert.deepEqual(firstReceipt.outputs.map((output) => output.path).sort(),
-    [...DATA_FILES, `MediaInbox/${firstRecord.files[0].sourcePath}`, ...generatedPaths(firstBytes)].sort())
-  assert.deepEqual(firstReceipt.mediaIds, [`media-${sha(firstBytes).slice(0, 16)}`])
-  assert.match(firstReceipt.libraryDigest, /^[a-f0-9]{64}$/)
-  for (const output of firstReceipt.outputs) {
-    const info = await stat(path.join(env.paths.root, ...output.path.split('/')))
-    assert.equal(output.mtimeMs, info.mtimeMs, output.path); assert.equal(output.bytes, info.size, output.path)
-  }
-  await write(env, 'close', firstImport.result.body.job, identity(firstImport.result.body.job))
-
-  // A second task in a library that now holds both images: its receipt has the same shape and does not list the first task.
-  const secondBytes = await jpeg({ r: 170, g: 35, b: 20 })
-  const second = await received(env, secondBytes, { files: [{ fileName: 'second.jpg', bytes: secondBytes.length }] })
-  await importReady(env, second)
-  const secondRecord = await readJson(jobPath(env, second)), secondReceipt = secondRecord.import.receipt
-  assert.equal((await readJson(env.paths.v2FilePaths.media)).items.length, 2)
-  assert.deepEqual(secondReceipt.outputs.map((output) => output.path).sort(),
-    [...DATA_FILES, `MediaInbox/${secondRecord.files[0].sourcePath}`, ...generatedPaths(secondBytes)].sort())
-  assert.deepEqual(secondReceipt.mediaIds, [`media-${sha(secondBytes).slice(0, 16)}`])
-  assert.notEqual(secondReceipt.libraryDigest, firstReceipt.libraryDigest)
-}))
-
-test('D4 the receipt scope does not grow with the library: a 2,000-item catalog gives the same receipt as a one-item one', () => {
-  const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: path.join(tmpdir(), 'starmap-d4-scope-never-created') })
-  const job = { files: [{ fileId: 'selected', sourcePath: 'Test Country/Test City/photos/scene.jpg' }, { fileId: 'other', sourcePath: 'Test Country/Test City/photos/later.jpg' }] }
-  const entryOf = (index, sourcePath = `Test Country/Test City/photos/bulk-${index}.jpg`) => ({ id: `media-${index.toString(16).padStart(16, '0')}`, sourcePath })
-  const outputsOf = (entry) => ['original.jpg', 'thumb.webp', 'preview.webp'].map((name) => ({ id: entry.id, path: `media/user/${entry.id.slice(6)}/${name}`, sha256: 'a'.repeat(64) }))
-  const planOf = (count) => {
-    const entries = [entryOf(0, job.files[0].sourcePath), ...Array.from({ length: count - 1 }, (_, index) => entryOf(index + 1))]
-    return { entries, summary: { outputs: entries.flatMap(outputsOf) } }
-  }
-  const rewrittenFiles = [paths.v2FilePaths.media, paths.v2MediaSourceIndexPath, paths.v2FilePaths.editorState]
-  const small = service.taskReceiptScope({ paths, job, selectedFileIds: ['selected'], plan: planOf(1), rewrittenFiles })
-  const large = service.taskReceiptScope({ paths, job, selectedFileIds: ['selected'], plan: planOf(2000), rewrittenFiles })
-  assert.equal(planOf(2000).summary.outputs.length, 6000)
-  assert.deepEqual(large, small)
-  assert.equal(small.targets.length, 7)
-  assert.deepEqual(small.mediaIds, ['media-0000000000000000'])
-  assert.equal(Buffer.byteLength(JSON.stringify(large)), Buffer.byteLength(JSON.stringify(small)))
-})
 
 test('D4 a task\'s largest possible completed record fits the record limit, even at the input limits', async () => withRoot(async env => {
   const title = '题'.repeat(500)
@@ -471,7 +353,7 @@ test('D4 receipts sealed before D4 (whole-library outputs, no times or library d
   }
   const { libraryDigest: _digest, seal: _seal, ...rest } = record.import.receipt
   void _digest; void _seal
-  const receipt = { ...rest, mediaIds: (await readJson(env.paths.v2FilePaths.media)).items.map((item) => item.id), outputs }
+  const receipt = { ...rest, outputs }
   record.import.receipt = { ...receipt, seal: mediaJobReceiptSeal(record, record.import, receipt) }
   await writeFile(jobPath(env, job), `${JSON.stringify(record, null, 2)}\n`)
 
@@ -497,7 +379,7 @@ test('D6 reading the task list hashes nothing; only the explicit receipt check d
   fs.createReadStream = (...args) => { streams += 1; return originalStream(...args) }
   syncBuiltinESMExports()
   try {
-    const list = await service.handleMediaJobRead({ privatePaths: env.paths, route: service.mediaJobRoute('GET', base) })
+    const list = await service.handleMediaJobRead({ privatePaths: env.paths, route: service.mediaJobRoute('GET', base), storeMedia: env.storeMedia })
     const one = await get(env, job)
     assert.equal(list.status, 200, JSON.stringify(list)); assert.equal(list.body.jobs[0].status, 'closed')
     assert.equal(one.body.job.status, 'closed'); assert.deepEqual(one.body.job.warnings, [])
@@ -521,36 +403,23 @@ test('D6 reading the task list hashes nothing; only the explicit receipt check d
   }
 }))
 
-test('D6 ordinary edits after completion (hiding, sorting, another task import) raise no changed_resource warning', async () => withRoot(async env => {
-  const bytes = await jpeg(), job = await received(env, bytes)
-  const { result } = await importReady(env, job)
-  await write(env, 'close', result.body.job, identity(result.body.job))
-  const id = `media-${sha(bytes).slice(0, 16)}`
-  const state = await readJson(env.paths.v2FilePaths.editorState)
-  state.hiddenMediaIds = [id]; state.mediaOrderByCity = { [ID.city]: [id] }
-  await atomicJsonWrite(env.paths.v2FilePaths.editorState, state)
-  const otherBytes = await jpeg({ r: 20, g: 160, b: 60 })
-  await importReady(env, await received(env, otherBytes, { files: [{ fileName: 'other.jpg', bytes: otherBytes.length }] }))
-  const read = await get(env, job)
-  assert.equal(read.body.job.status, 'closed', JSON.stringify(read))
-  assert.deepEqual(read.body.job.warnings, [])
-}))
-
 // ---------------------------------------------------------------------------
 // Batch 2 D9: one Inbox folder-name rule for uploads and tasks
 // ---------------------------------------------------------------------------
 
 /** Adds a city of Test Country to the place registry and returns its id. */
-async function addCity(env, en) {
-  const registry = await readJson(env.paths.v2FilePaths.places), id = newId()
-  registry.places.push({ id, subtype: 'city', names: { en }, partOf: ID.country, location: { lat: 64.5, lng: -20.5 } })
-  await writeFile(env.paths.v2FilePaths.places, `${JSON.stringify(registry, null, 2)}\n`)
-  return id
+/** D9: two cities with names Windows cannot use as folder names, part of the library from the start. */
+const D9_CITIES = [['Washington D.C.', newId()], ['CON', newId()]]
+const d9Places = () => {
+  const registry = places()
+  for (const [en, id] of D9_CITIES) registry.places.push({ id, subtype: 'city', names: { en }, partOf: ID.country, location: { lat: 64.5, lng: -20.5 } })
+  return registry
 }
 
 test('D9 cities named "Washington D.C." and "CON" complete task uploads into escaped Inbox folders and import', async () => withRoot(async env => {
+  const cityOf = Object.fromEntries(D9_CITIES)
   for (const [en, folder, color] of [['Washington D.C.', 'Washington D.C._', { r: 90, g: 30, b: 200 }], ['CON', 'CON_', { r: 200, g: 200, b: 30 }]]) {
-    const cityId = await addCity(env, en), bytes = await jpeg(color)
+    const cityId = cityOf[en], bytes = await jpeg(color)
     const job = await received(env, bytes, { cityId, files: [{ fileName: 'scene.jpg', bytes: bytes.length }] })
     assert.equal(job.files[0].phase, 'received', en)
     assert.equal(job.status, 'pending', en)
@@ -559,10 +428,10 @@ test('D9 cities named "Washington D.C." and "CON" complete task uploads into esc
     assert.deepEqual(await readJson(path.join(env.paths.inboxRoot, 'Test Country', folder, 'place.json')), { placeId: cityId }, en)
     const { result } = await importReady(env, job)
     assert.equal(result.body.job.files[0].status, 'completed', en)
-    assert.ok((await readJson(env.paths.v2FilePaths.media)).items.some((item) => item.placeId === cityId), en)
+    assert.ok((await catalogOf(env)).items.some((item) => item.placeId === cityId), en)
     await write(env, 'close', result.body.job, identity(result.body.job))
   }
-}))
+}, { registry: d9Places() }))
 
 test('Batch 2A: a hand-made folder matched only by name is listed in the preview and imported only after its binding is confirmed', async () => withRoot(async env => {
   const job = await received(env, await jpeg())
@@ -586,7 +455,7 @@ test('Batch 2A: a hand-made folder matched only by name is listed in the preview
   const imported = await write(env, 'import', job, { ...importInput(job, result.body.plan), acceptFolderBindings: true })
   assert.equal(imported.status, 200, JSON.stringify(imported)); assert.equal(imported.body.job.status, 'completed')
   assert.deepEqual(await readJson(path.join(env.paths.inboxRoot, 'Test Country', 'Other City', 'place.json')), { placeId: ID.otherCity })
-  const catalog = await readJson(env.paths.v2FilePaths.media)
+  const catalog = await catalogOf(env)
   assert.equal(catalog.items.find(item => item.originalFileName === 'manual.jpg')?.placeId, ID.otherCity)
 }))
 
@@ -655,6 +524,6 @@ test('Batch 2D: task reception never claims a hand-made country folder either; i
   assert.equal(imported.status, 200, JSON.stringify(imported)); assert.equal(imported.body.job.status, 'completed')
   assert.deepEqual(await readJson(path.join(handMade, 'place.json')), { placeId: ID.country })
   assert.deepEqual(await readJson(path.join(handMade, 'Test City', 'place.json')), { placeId: ID.city })
-  const owners = Object.fromEntries((await readJson(env.paths.v2FilePaths.media)).items.map(item => [item.originalFileName, item.placeId]))
+  const owners = Object.fromEntries((await catalogOf(env)).items.map(item => [item.originalFileName, item.placeId]))
   assert.deepEqual(owners, { 'manual.jpg': ID.city, 'scene.jpg': ID.city })
 }))

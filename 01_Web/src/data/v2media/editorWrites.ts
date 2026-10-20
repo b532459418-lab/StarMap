@@ -1,13 +1,13 @@
 /**
- * 本地编辑器三个媒体端点在 V2 数据模式下的纯函数（RFC-LOC-1 PR3b-3 规格 §2.4）：
+ * 本地编辑器媒体端点的纯函数（RFC-LOC-1 PR3b-3 规格 §2.4）：
  *
  * - `POST /upload`：上传目标（城市地点与所属国家、收件箱文件夹的显示名）、其余参数的校验、
  *   收件箱文件夹的选择（同名地点不共用文件夹）与 `place.json` 的写入；
- * - `POST /import`：导入之后按 V2 源文件索引恢复新导入条目的隐藏状态，并把它们追加进排序表（键为地点 id）；
  * - `POST /media/delete`：能删哪些媒体、内容寻址的生成目录在哪、从 editor-state 里清掉这些 id。
  *
- * `src/data/v2media/` 是 App 层，【不是】 StarMap Core。IO（读写文件、上传的流、运行导入器、删除文件）在
- * scripts/v2-media-store.mjs，插件（scripts/local-editor-plugin.mjs）在 V2 下把三个媒体端点交给它。
+ * `src/data/v2media/` 是 App 层，【不是】 StarMap Core。3C-4d 起只有新库写入：上传的 IO 在 scripts/v2-media-store.mjs，
+ * 导入与删除在新库的媒体服务（scripts/media-service.mjs）；V2 的导入之后恢复（按 V2 源文件索引）与按索引找源文件已删除。
+ * `removeMediaFromEditorState` 只留作新库删除语义的对照（src/data/store/mediaRecords.test.ts），3C-5 再定。
  * 写 editor-state 走 PR3b-2 的事务（`runV2Transaction`：入口与出口的完整性检查、按顺序给出写入）。
  * 错误抛 `V2WriteError`，文案沿用旧模式（码表在 ../v2write/errors.ts）。
  *
@@ -195,58 +195,6 @@ export const pickInboxFolder = (placeId: PlaceId, candidates: readonly InboxFold
 }
 
 // ---------------------------------------------------------------------------
-// 导入之后
-// ---------------------------------------------------------------------------
-
-export interface RestoreInput {
-  /** 这次上传的源文件（相对收件箱，`/` 分隔）。 */
-  sourcePaths: readonly string[]
-  /** V2 源文件索引（`data/v2/media-source-index.local.json`）的内容。 */
-  sourceIndex: unknown
-}
-
-const sourcesByIdOf = (sourceIndex: unknown): Record<string, unknown> =>
-  isObject(sourceIndex) && isObject(sourceIndex.sourcesById) ? sourceIndex.sourcesById : {}
-
-const normalizeSourceKey = (value: unknown) => String(value).replaceAll('\\', '/').toLocaleLowerCase('en-US')
-
-/**
- * 导入之后（§2.4，同旧模式 restoreImportedMedia）：按 V2 源文件索引找出这次上传的文件对应的媒体 id；
- * 把它们从两个隐藏表里去掉（重新上传即恢复），并追加到所在城市排序表的末尾（照片 → mediaOrderByCity，
- * 无人机影像 → droneOrderByCity，键为城市地点 id）。没有上传文件时什么都不写。
- * 只写 editor-state，走 PR3b-2 的事务。
- */
-export function restoreImportedMedia(
-  files: V2FilesOrEmpty | undefined,
-  input: RestoreInput,
-  ctx: V2WriteContext,
-): V2WriteOutcome<{ restoredMediaIds: string[] }> {
-  if (input.sourcePaths.length === 0) return { writes: [], result: { restoredMediaIds: [] } }
-  const requested = new Set(input.sourcePaths.map(normalizeSourceKey))
-  const importedIds = Object.entries(sourcesByIdOf(input.sourceIndex))
-    .filter(([, sources]) => Array.isArray(sources) && sources.some((source) => requested.has(normalizeSourceKey(source))))
-    .map(([id]) => id)
-  if (importedIds.length === 0) fail('E_MEDIA_IMPORT_NO_RECORD')
-
-  return runV2Transaction(files, ctx, (draft) => {
-    const itemsById = new Map(draft.files.media.items.map((item) => [item.id, item]))
-    const importedItems = importedIds.map((id) => itemsById.get(id))
-    if (importedItems.some((item) => item === undefined)) fail('E_MEDIA_INDEX_MISMATCH', { ids: importedIds.filter((id) => !itemsById.has(id)) })
-
-    const state = draft.files.editorState
-    const imported = new Set(importedIds)
-    state.hiddenMediaIds = state.hiddenMediaIds.filter((id) => !imported.has(id))
-    state.hiddenDroneMediaIds = state.hiddenDroneMediaIds.filter((id) => !imported.has(id))
-    for (const item of importedItems) {
-      if (!item) continue
-      const table = item.kind === 'photo' ? state.mediaOrderByCity : state.droneOrderByCity
-      table[item.placeId] = [...(table[item.placeId] ?? []).filter((id) => id !== item.id), item.id]
-    }
-    return { result: { restoredMediaIds: importedIds }, writes: [{ file: 'editorState' }] }
-  })
-}
-
-// ---------------------------------------------------------------------------
 // 删除
 // ---------------------------------------------------------------------------
 
@@ -280,24 +228,6 @@ export const deletableMediaOf = (files: V2FilesOrEmpty | undefined, input: unkno
     return item as V2Files['media']['items'][number]
   })
   return { cityId, ids, items }
-}
-
-/** 源文件索引里还没有这些 id 的条目（旧模式在这种情况下先重新导入一次）。 */
-export const idsMissingFromSourceIndex = (sourceIndex: unknown, ids: readonly string[]): string[] => {
-  const sources = sourcesByIdOf(sourceIndex)
-  return ids.filter((id) => !Array.isArray(sources[id]))
-}
-
-/** 每个 id 的源文件（相对收件箱）；缺了或为空 → `E_MEDIA_SOURCE_MISSING`。 */
-export const mediaSourcesOf = (sourceIndex: unknown, ids: readonly string[]): string[] => {
-  const sources = sourcesByIdOf(sourceIndex)
-  const result: string[] = []
-  for (const id of ids) {
-    const list = sources[id]
-    if (!Array.isArray(list) || list.length === 0) fail('E_MEDIA_SOURCE_MISSING', { id })
-    for (const source of list as unknown[]) result.push(String(source))
-  }
-  return result
 }
 
 /**

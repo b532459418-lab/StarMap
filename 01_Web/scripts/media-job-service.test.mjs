@@ -1,5 +1,10 @@
-/** RD-07 IO acceptance: real JPEG streams and V2 fixtures in an owned temporary root.
+/** RD-07 IO acceptance: real JPEG streams and synthetic places in an owned temporary root.
  * No configured/private user root, browser storage, or actual owner media is accessed.
+ *
+ * 3C-4d: media tasks run in the new library only. Each root's synthetic places are migrated into a store, and the
+ * handlers get `storeMedia` from a store session as the plugin passes it. The cases that only concerned the V2 catalog
+ * and source index (an import by the old importer without a receipt, a malformed source index) are removed; the store's
+ * counterpart of the first is store-media-jobs.test.mjs ("a received file another import took meanwhile needs review").
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -16,10 +21,13 @@ import { getPrivatePaths } from './private-profile.mjs'
 import { atomicJsonWrite, readJson } from './json-file.mjs'
 import { safeSegment, reserveDestination } from './local-editor-upload.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
-import { mediaJobRoute, handleMediaJobRead, handleMediaJobWrite } from './media-job-service.mjs'
+import { mediaJobRoute, handleMediaJobPreview, handleMediaJobRead, handleMediaJobWrite } from './media-job-service.mjs'
 import { prepareV2Upload } from './v2-media-store.mjs'
+import { createMediaService } from './media-service.mjs'
+import { createStoreSession } from './store-session.mjs'
+import { applyMigration } from './store-migrate.mjs'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
-import { runV2MediaImport } from './v2-media-import.mjs'
+import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 
 const newId = sequentialUuids(Date.UTC(2026, 9, 4))
 const ID = { country: newId(), city: newId(), otherCity: newId() }
@@ -63,17 +71,21 @@ async function withRoot(run) {
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: path.join(directory, 'private') })
   await mkdir(paths.v2DataRoot, { recursive: true })
   await writeFile(paths.v2FilePaths.places, `${JSON.stringify(places(), null, 2)}\n`)
-  try { await run({ paths, deps: depsFor() }) } finally {
+  // 3C-4d: the places migrated into a new library; the handlers read it through a session, as the plugin does.
+  await applyMigration(paths, { now: '2026-10-04T00:00:00.000Z' })
+  const session = createStoreSession(paths, { log: () => {} })
+  try { await run({ paths, deps: depsFor(), session, storeMedia: { mediaStore: await session.mediaStore() } }) } finally {
+    await session.close()
     assert.equal(path.dirname(directory), path.resolve(tmpdir()))
     assert.ok(path.basename(directory).startsWith(prefix))
     await rm(directory, { recursive: true, force: true })
   }
 }
-const write = (env, route, options) => withLibraryOperation(env.paths, (leaseToken) => handleMediaJobWrite({ privatePaths: env.paths, deps: env.deps, route, ...options, leaseToken }))
+const write = (env, route, options) => withLibraryOperation(env.paths, (leaseToken) => handleMediaJobWrite({ privatePaths: env.paths, deps: env.deps, route, ...options, leaseToken, storeMedia: env.storeMedia }))
 const create = (env, bytes, options = {}) => write(env, mediaJobRoute('POST', base), { input: {
   countryId: ID.country, cityId: ID.city, kind: 'photo', files: [{ fileName: 'scene.jpg', bytes: bytes.length }], ...options,
 } })
-const get = (env, jobId) => handleMediaJobRead({ privatePaths: env.paths, route: mediaJobRoute('GET', jobId ? `${base}/${jobId}` : base) })
+const get = (env, jobId) => handleMediaJobRead({ privatePaths: env.paths, route: mediaJobRoute('GET', jobId ? `${base}/${jobId}` : base), storeMedia: env.storeMedia })
 const requestOf = (bytes) => {
   const request = Readable.from([bytes])
   request.headers = { 'content-length': String(bytes.length) }
@@ -154,7 +166,7 @@ test('RD-07 persisted intent survives service recreation; readonly lookup never 
     const job = await newJob(env, bytes)
     assert.equal(job.revision, 0)
     const before = await tree(env.paths.root)
-    const result = await get({ paths: { ...env.paths } }, job.jobId)
+    const result = await get({ paths: { ...env.paths }, storeMedia: env.storeMedia }, job.jobId)
     assert.equal(result.status, 200)
     assert.equal(result.body.job.jobId, job.jobId)
     assert.equal(result.body.job.files[0].status, 'not_received')
@@ -179,7 +191,7 @@ test('RD-07 complete source receipt survives a lost HTTP response and readonly r
     assert.equal((await readJson(path.join(env.paths.inboxRoot, 'Test Country', 'place.json'))).placeId, ID.country)
     assert.equal((await readJson(path.join(env.paths.inboxRoot, 'Test Country', 'Test City', 'place.json'))).placeId, ID.city)
     const before = await tree(env.paths.root)
-    const result = await get({ paths: { ...env.paths } }, job.jobId)
+    const result = await get({ paths: { ...env.paths }, storeMedia: env.storeMedia }, job.jobId)
     assert.equal(result.body.job.files[0].status, 'pending')
     assert.deepEqual(await tree(env.paths.root), before)
   })
@@ -271,9 +283,12 @@ test('RD-07 received-file modifications and deleted targets are never accepted a
       await rename(replacement, source)
     }
     if (change === 'target') {
-      const data = places()
-      data.places = data.places.filter((place) => place.id !== ID.city)
-      await writeFile(env.paths.v2FilePaths.places, JSON.stringify(data))
+      // The task's city is gone from the library: the store's view without it.
+      const real = env.storeMedia.mediaStore
+      env.storeMedia = { mediaStore: { ...real, async view() {
+        const view = await real.view()
+        return { ...view, files: { ...view.files, places: { ...view.files.places, places: view.files.places.places.filter((place) => place.id !== ID.city) } } }
+      } } }
     }
     if (change === 'pin') await writeFile(path.join(env.paths.inboxRoot, 'Test Country', 'Test City', 'place.json'), JSON.stringify({ placeId: ID.otherCity }))
     const before = await tree(env.paths.root)
@@ -379,25 +394,13 @@ test('RD-07 drone receipt fixes submitted metadata and detects later sidecar con
   })
 })
 
-test('RD-07 existing catalog/index output is uncertainty until an import completion receipt exists', async () => {
-  await withRoot(async (env) => {
-    const job = await receivedJob(env, await jpeg())
-    // Simulate another writer completing the old importer before RD-07 batch-two receipts exist.
-    const exit = await withLibraryOperation(env.paths, () => runV2MediaImport({ privatePaths: env.paths, apply: true, acceptFolderBindings: true, log: () => {}, logError: () => {} }))
-    assert.equal(exit, 0)
-    const before = await tree(env.paths.root)
-    const result = await get(env, job.jobId)
-    assert.equal(result.body.job.files[0].status, 'needs_review')
-    assert.equal(result.body.job.canImport, false)
-    assert.deepEqual(await tree(env.paths.root), before)
-  })
-})
 
 test('RD-07 a separate Node process discovers the received receipt without writes', async () => {
   await withRoot(async (env) => {
     const job = await receivedJob(env, await jpeg())
     const before = await tree(env.paths.root)
-    const code = `import {getPrivatePaths} from './scripts/private-profile.mjs';import {mediaJobRoute,handleMediaJobRead} from './scripts/media-job-service.mjs';const result=await handleMediaJobRead({privatePaths:getPrivatePaths({STARMAP_PRIVATE_ROOT:process.argv[1]}),route:mediaJobRoute('GET','${base}/'+process.argv[2])});console.log(JSON.stringify(result));`
+    // The other process opens the store read-only (as build:personal does next to the dev server).
+    const code = `import {getPrivatePaths} from './scripts/private-profile.mjs';import {mediaJobRoute,handleMediaJobRead} from './scripts/media-job-service.mjs';import {createStoreSession} from './scripts/store-session.mjs';const privatePaths=getPrivatePaths({STARMAP_PRIVATE_ROOT:process.argv[1]});const session=createStoreSession(privatePaths,{log:()=>{},readOnly:true});const result=await handleMediaJobRead({privatePaths,route:mediaJobRoute('GET','${base}/'+process.argv[2]),storeMedia:{mediaStore:await session.mediaStore()}});await session.close();console.log(JSON.stringify(result));`
     const result = await execute(process.execPath, ['--input-type=module', '-e', code, env.paths.root, job.jobId], {
       cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
       env: { SystemRoot: process.env.SystemRoot, TEMP: tmpdir() },
@@ -423,22 +426,26 @@ test('RD-07 a published source can be explicitly removed on Windows and then req
   })
 })
 
-test('RD-07 same-content media owned by another city cannot imply this task completed', async () => {
+test('RD-07 same-content media owned by another city cannot imply this task completed (3C-4c D2: it is this task\'s own record)', async () => {
   await withRoot(async (env) => {
     const bytes = await jpeg()
-    const otherSource = path.join(env.paths.inboxRoot, 'Test Country', 'Other City', 'photos', 'existing.jpg')
+    const otherCity = path.join(env.paths.inboxRoot, 'Test Country', 'Other City')
+    const otherSource = path.join(otherCity, 'photos', 'existing.jpg')
     await mkdir(path.dirname(otherSource), { recursive: true })
     await writeFile(otherSource, bytes)
-    const exit = await withLibraryOperation(env.paths, () => runV2MediaImport({ privatePaths: env.paths, apply: true, acceptFolderBindings: true, log: () => {}, logError: () => {} }))
-    assert.equal(exit, 0)
-    const catalogBefore = await readFile(env.paths.v2FilePaths.media)
-    const indexBefore = await readFile(env.paths.v2MediaSourceIndexPath)
+    await writeFile(path.join(env.paths.inboxRoot, 'Test Country', 'place.json'), JSON.stringify({ placeId: ID.country }))
+    await writeFile(path.join(otherCity, 'place.json'), JSON.stringify({ placeId: ID.otherCity }))
+    await withLibraryOperation(env.paths, async (leaseToken) => {
+      const imported = await createMediaService({ privatePaths: env.paths, store: env.storeMedia.mediaStore }).importInbox({ requestId: uuidv7(), leaseToken })
+      assert.equal(imported.committed, true)
+    })
+    const registryBefore = env.storeMedia.mediaStore.mediaRegistry()
     const job = await receivedJob(env, bytes)
-    assert.equal(job.files[0].status, 'needs_review')
-    assert.equal(job.canImport, false)
+    // The same content under another city's path is not this task's source: the received file still awaits its import.
+    assert.equal(job.files[0].status, 'pending')
+    assert.equal(job.canPreview, true)
     assert.deepEqual(await readFile(otherSource), bytes)
-    assert.deepEqual(await readFile(env.paths.v2FilePaths.media), catalogBefore)
-    assert.deepEqual(await readFile(env.paths.v2MediaSourceIndexPath), indexBefore)
+    assert.deepEqual(env.storeMedia.mediaStore.mediaRegistry(), registryBefore)
   })
 })
 
@@ -472,18 +479,23 @@ test('RD-07 explicitly receiving a paused intended file reopens the task without
   })
 })
 
-test('RD-07 unknown or malformed source-index evidence requires review and stays untouched', async () => {
-  for (const index of [
-    { schemaVersion: 2, sourcesById: {} },
-    { schemaVersion: 1, sourcesById: null },
-    { schemaVersion: 1, sourcesById: { 'media-invalid': [null] } },
-  ]) await withRoot(async (env) => {
+test('3C-4d: without the new library (no storeMedia) every task handler answers E_STORE_MIGRATION_REQUIRED and writes nothing', async () => {
+  await withRoot(async (env) => {
     const job = await receivedJob(env, await jpeg())
-    await writeFile(env.paths.v2MediaSourceIndexPath, JSON.stringify(index))
-    const before = await tree(env.paths.root)
-    const result = await get(env, job.jobId)
-    assert.equal(result.body.job.files[0].status, 'needs_review')
-    assert.deepEqual(await tree(env.paths.root), before)
+    const before = await tree(env.paths.root, { omitCoordination: true })
+    const bare = { paths: env.paths, deps: env.deps }
+    const results = [
+      await get(bare),
+      await get(bare, job.jobId),
+      await create(bare, Buffer.alloc(14)),
+      await write(bare, mediaJobRoute('POST', `${base}/${job.jobId}/import`), { input: { libraryId: job.libraryId, revision: job.revision, selectedFileIds: [job.files[0].fileId], operationId: uuidv7(), planDigest: 'a'.repeat(64) } }),
+      await handleMediaJobPreview({ privatePaths: env.paths, route: mediaJobRoute('POST', `${base}/${job.jobId}/preview`), input: { libraryId: job.libraryId, revision: job.revision, selectedFileIds: [job.files[0].fileId] } }),
+    ]
+    for (const result of results) {
+      assert.equal(result.status, 409, JSON.stringify(result))
+      assert.equal(result.body.code, 'E_STORE_MIGRATION_REQUIRED')
+    }
+    assert.deepEqual(await tree(env.paths.root, { omitCoordination: true }), before)
   })
 })
 
