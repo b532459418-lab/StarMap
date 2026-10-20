@@ -1,7 +1,6 @@
 import { test, expect, openMap, selectReykjavik, openCollection, readFixture } from './helpers.mjs'
-import { createBrowserFixture, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
-import { readFile, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { createBrowserFixture, fixtureHashes, fixtureIds, importInboxMedia, patchFixture as patchStoreFixture } from '../../scripts/browser-fixture.mjs'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import sharp from 'sharp'
@@ -22,16 +21,10 @@ test.afterEach(async ({ page }) => {
   await createBrowserFixture(root)
 })
 
-async function patchFixture(key, change) {
-  const value = await readFixture(key)
-  change(value)
-  await writeFile(path.join(root, 'data', 'v2', fixtureFileNames[key]), JSON.stringify(value, null, 2) + '\n')
-}
-async function hashes() {
-  return Object.fromEntries(await Promise.all(Object.entries(fixtureFileNames).map(async ([key, name]) =>
-    [key, createHash('sha256').update(await readFile(path.join(root, 'data', 'v2', name))).digest('hex')],
-  )))
-}
+// 3C-4d: the fixture is a store; a patch is one commit, and the dev server serves it before the case loads the page.
+const patchFixture = (key, change) => patchStoreFixture(root, key, change)
+/** The fixture as the App reads it, and the store revision: equal means nothing was written. */
+const hashes = () => fixtureHashes(root)
 function captureWrites(page) {
   const writes = []
   page.on('request', (request) => {
@@ -51,16 +44,19 @@ async function applyYear(page, value, id = 'travel') {
 }
 
 test('an unsaved photo layout survives empty time results and saves to the original selected city', async ({ page }) => {
-  const mediaIds = ['synthetic-reykjavik-photo-one', 'synthetic-reykjavik-photo-two']
-  await patchFixture('media', (file) => {
-    file.items = mediaIds.map((id, index) => ({
-      id, kind: 'photo', scope: 'city', status: 'ready', isCover: false,
-      placeId: fixtureIds.reykjavik, src: `/media/user/synthetic-drafts/${index}.png`,
-      originalFileName: `synthetic-${index}.png`,
-    }))
-  })
-  const image = await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 70, g: 135, b: 190 } } }).png().toBuffer()
-  await page.route('**/media/user/synthetic-drafts/*.png', (route) => route.fulfill({ contentType: 'image/png', body: image }))
+  // 3C-4d: media are store-native (a reset keeps media items; review §7-1), so the two photos are real Inbox files
+  // imported through the media service. CI runs this group on its own root, where Reykjavik has no other photo.
+  const names = ['synthetic-0.png', 'synthetic-1.png']
+  const city = path.join(root, 'MediaInbox', 'Iceland', 'Reykjavik')
+  await mkdir(path.join(city, 'photos'), { recursive: true })
+  await writeFile(path.join(root, 'MediaInbox', 'Iceland', 'place.json'), JSON.stringify({ placeId: fixtureIds.iceland }))
+  await writeFile(path.join(city, 'place.json'), JSON.stringify({ placeId: fixtureIds.reykjavik }))
+  for (const [index, name] of names.entries()) {
+    await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 70 + index * 60, g: 135, b: 190 } } }).png().toFile(path.join(city, 'photos', name))
+  }
+  await importInboxMedia(root)
+  const imported = (await readFixture('media')).items
+  const mediaIds = names.map((name) => imported.find((item) => item.originalFileName === name && item.placeId === fixtureIds.reykjavik).id)
   const before = await hashes()
   const writes = captureWrites(page)
   await openMap(page)

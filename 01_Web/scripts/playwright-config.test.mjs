@@ -11,9 +11,9 @@ let evaluation = 0
 
 // The config reads its environment once, at import; a fresh query string evaluates it again.
 async function configWith(env) {
-  const names = ['STARMAP_BROWSER_TEST_ROOT', 'STARMAP_BROWSER_PERFORMANCE', 'STARMAP_BROWSER_PUBLIC_SMOKE', 'CI']
+  const names = ['STARMAP_BROWSER_TEST_ROOT', 'STARMAP_BROWSER_PERFORMANCE', 'STARMAP_BROWSER_PUBLIC_SMOKE', 'STARMAP_BROWSER_MIGRATION', 'CI']
   const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]))
-  Object.assign(process.env, { STARMAP_BROWSER_TEST_ROOT: fakeRoot, STARMAP_BROWSER_PERFORMANCE: '0', STARMAP_BROWSER_PUBLIC_SMOKE: '0' })
+  Object.assign(process.env, { STARMAP_BROWSER_TEST_ROOT: fakeRoot, STARMAP_BROWSER_PERFORMANCE: '0', STARMAP_BROWSER_PUBLIC_SMOKE: '0', STARMAP_BROWSER_MIGRATION: '0' })
   delete process.env.CI
   Object.assign(process.env, env)
   try {
@@ -43,6 +43,13 @@ test('--public-smoke uses only *.smoke.mjs against vite preview of the public bu
   assert.equal(config.globalSetup, undefined, 'vite preview needs no dev-server warm-up')
 })
 
+test('--migration (3C-4d) uses only *.migration.mjs against the personal dev server, warmed up like the other groups', async () => {
+  const config = await configWith({ STARMAP_BROWSER_MIGRATION: '1' })
+  assert.equal(config.testMatch, '**/*.migration.mjs')
+  assert.equal(config.webServer.command, 'npm run dev:personal')
+  assert.equal(config.globalSetup, './tests/browser/dev-server-warmup.mjs')
+})
+
 test('the performance baseline keeps its own files and the dev server', async () => {
   const config = await configWith({ STARMAP_BROWSER_PERFORMANCE: '1' })
   assert.equal(config.testMatch, '**/*.perf.mjs')
@@ -58,9 +65,10 @@ test('a committed test.only fails only under CI', async () => {
 test('every browser test file belongs to exactly one runner mode, and the smoke and warm-up files are not specs', async () => {
   const files = (await readdir(new URL('../tests/browser/', import.meta.url))).filter((name) => !['helpers.mjs', 'dev-server-warmup.mjs'].includes(name))
   for (const name of files) {
-    const modes = ['.spec.mjs', '.smoke.mjs', '.perf.mjs'].filter((suffix) => name.endsWith(suffix))
+    const modes = ['.spec.mjs', '.smoke.mjs', '.perf.mjs', '.migration.mjs'].filter((suffix) => name.endsWith(suffix))
     assert.equal(modes.length, 1, name)
   }
   assert.ok(files.includes('public-build.smoke.mjs'))
+  assert.ok(files.includes('store-migration.migration.mjs'))
   assert.equal(files.filter((name) => name.endsWith('.smoke.mjs')).some((name) => name.endsWith('.spec.mjs')), false)
 })

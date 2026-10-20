@@ -18,6 +18,8 @@ const GROUP_ARGS = Object.freeze({
   '--media-lifecycle': Object.freeze(['media-recovery.spec.mjs', '--grep', 'lost responses, storage loss']),
   // The built public bundle through `vite preview`; the config then matches only *.smoke.mjs.
   '--public-smoke': Object.freeze([]),
+  // 3C-4d: a root that needs migrating, migrated while the dev server runs; the config then matches only *.migration.mjs.
+  '--migration': Object.freeze([]),
 })
 
 export const BROWSER_TEST_GROUPS = Object.freeze(Object.keys(GROUP_ARGS))

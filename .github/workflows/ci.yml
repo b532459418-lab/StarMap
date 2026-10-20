@@ -51,10 +51,16 @@ jobs:
       # test group: the time-filter files use parallel mode, so time is split by case.
       # media stays whole because its file is serial by design (the cases share task
       # history in one synthetic library); critical is short and stays whole too.
+      # migration (3C-4d) runs on a fixture left unmigrated and migrates it while the
+      # dev server runs. Every entry is part of browser-checks, which Public checks requires.
       matrix:
         include:
           - suite: critical
             flag: --critical-flows
+            shard: 1
+            shards: 1
+          - suite: migration
+            flag: --migration
             shard: 1
             shards: 1
           - suite: media

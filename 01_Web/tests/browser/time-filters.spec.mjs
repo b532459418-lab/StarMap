@@ -1,8 +1,7 @@
 import { test, expect, openMap, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure,
   screenshotWithObservations, retainScreenshotObservations, settleScreenshotObservations } from './helpers.mjs'
-import { createBrowserFixture, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { createBrowserFixture, fixtureHashes, fixtureIds, patchFixture as patchStoreFixture } from '../../scripts/browser-fixture.mjs'
+import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -28,11 +27,8 @@ test.afterEach(async ({ page }, testInfo) => {
   await createBrowserFixture(root)
 })
 
-async function patchFixture(key, change) {
-  const value = await readFixture(key)
-  change(value)
-  await writeFile(path.join(root, 'data', 'v2', fixtureFileNames[key]), JSON.stringify(value, null, 2) + '\n')
-}
+// 3C-4d: the fixture is a store; a patch is one commit, and the dev server serves it before the case loads the page.
+const patchFixture = (key, change) => patchStoreFixture(root, key, change)
 async function filters(page, id = 'travel') {
   if (!await panel(page).isVisible()) {
     await page.locator('.atlas-time-query-toolbar').getByRole('button', { name: 'Time filters', exact: true }).click()
@@ -60,11 +56,8 @@ async function journey(page) {
   await page.getByRole('navigation').getByRole('button', { name: 'Journey', exact: true }).click()
 }
 async function savedFilters(page) { return page.evaluate((key) => localStorage.getItem(key), storageKey) }
-async function diskHashes() {
-  return Object.fromEntries(await Promise.all(Object.entries(fixtureFileNames).map(async ([key, name]) =>
-    [key, createHash('sha256').update(await readFile(path.join(root, 'data', 'v2', name))).digest('hex')],
-  )))
-}
+/** The fixture as the App reads it, and the store revision: equal means nothing was written. */
+const diskHashes = () => fixtureHashes(root)
 
 test('year shortcuts match manual intervals and clearing restores the full chronology', async ({ page }) => {
   await openMap(page)

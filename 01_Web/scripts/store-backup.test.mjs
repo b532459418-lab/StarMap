@@ -198,7 +198,8 @@ const fileSha256 = async (file) => createHash('sha256').update(await readFile(fi
 async function migratedWithMedia(t) {
   const context = await tempPrivateRoot(t, 'starmap-store-backup-media-')
   const { root, paths } = context
-  await createBrowserFixture(root)
+  // The V2 files of the fixture (3C-4d: its default is a new library), imported by V2, then migrated below.
+  await createBrowserFixture(root, { mode: 'v2' })
   const city = path.join(paths.inboxRoot, 'Iceland', 'Reykjavik')
   await writeJson(path.join(paths.inboxRoot, 'Iceland', 'place.json'), { placeId: fixtureIds.iceland })
   await writeJson(path.join(city, 'place.json'), { placeId: fixtureIds.reykjavik })

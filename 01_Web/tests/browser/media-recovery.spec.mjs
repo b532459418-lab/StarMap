@@ -1,17 +1,18 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
 import { test, expect, openMap, openCollection, readFixture, recordMediaPhase, closeMediaTestContext, saveAndWaitForReload, retainMediaFailure } from './helpers.mjs'
-import { enterStoreMode, fixtureIds } from '../../scripts/browser-fixture.mjs'
+import { fixtureIds } from '../../scripts/browser-fixture.mjs'
 import { withLibraryOperation } from '../../scripts/library-operation-lock.mjs'
 import { createMediaJobStore } from '../../scripts/media-job-store.mjs'
 import { storeFileOf } from '../../scripts/private-data-source.mjs'
 import { getPrivatePaths } from '../../scripts/private-profile.mjs'
 import { openStore } from '../../scripts/store-host.mjs'
 import { projectToV2Files } from '../../scripts/store-projection.mjs'
+import { uuidv7 } from '../../src/data/canonical/uuidv7.ts'
 
 const jobsUrl = '/__travelatlas/editor/media/jobs'
 const confirmScope = 'I confirm this whole Inbox scope, including other cities and any removals.'
@@ -97,6 +98,19 @@ async function image(name, color) {
   return { name, mimeType: 'image/png', buffer }
 }
 
+// 3C-4d: the fixture is a new library from the start, so every case here imports into the store (design v2 §6): a
+// task's file is a new record (a UUIDv7 asset id), a file gone from the Inbox leaves its record, and a hidden record is
+// not shown again by a later import. The store's state is read in this process through read-only connections.
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const storePaths = () => getPrivatePaths({ STARMAP_PRIVATE_ROOT: syntheticRoot() })
+async function stored() {
+  const handle = openStore(storeFileOf(storePaths()), { readOnly: true })
+  try { return { files: projectToV2Files(handle.readRowsUnchecked()).files, registry: handle.mediaRegistry(), entities: handle.mediaEntities() } } finally { await handle.close() }
+}
+/** The present source at an Inbox file of this name, and the asset (the App's media id) of the record it names. */
+const sourceOf = (state, name) => state.registry.sources.find(source => source.state === 'present' && source.path.endsWith(`/${name}`))
+const assetOf = (state, name) => state.entities.find(entity => entity.id === sourceOf(state, name)?.recordId)?.fields.asset
+
 async function sourceSnapshot() {
   const result = {}
   const root = path.join(syntheticRoot(), 'MediaInbox')
@@ -176,7 +190,8 @@ async function seedHiddenAndRemovedMedia(page, first) {
   await page.reload({ waitUntil: 'domcontentloaded' })
   await selectReykjavik(page)
   await page.getByRole('button', { name: 'Edit city photos', exact: true }).click()
-  const hiddenId = `media-${createHash('sha256').update(first.buffer).digest('hex').slice(0, 16)}`
+  const hiddenId = assetOf(await stored(), baseline.name)
+  expect(hiddenId).toMatch(UUID_V7)
   await page.locator(`.atlas-info-panel [data-flip-id="${hiddenId}"]`).getByRole('button', { name: 'Hide photo', exact: true }).click()
   const saved = page.waitForResponse(response => response.url().endsWith('/editor/state') && response.request().method() === 'PUT')
   // Ordinary city-photo saves reload the document; finish that navigation before the next batch.
@@ -190,10 +205,10 @@ async function seedHiddenAndRemovedMedia(page, first) {
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
   await expect(page.locator('.cesium-widget canvas')).toBeVisible()
   await expect.poll(async () => (await readFixture('editorState')).hiddenMediaIds).toContain(hiddenId)
-  const removedId = `media-${createHash('sha256').update(removed.buffer).digest('hex').slice(0, 16)}`
-  const index = JSON.parse(await readFile(path.join(syntheticRoot(), 'data', 'v2', 'media-source-index.local.json'), 'utf8'))
-  expect(index.sourcesById[removedId]).toHaveLength(1)
-  return { removed, removedId, sourcePath: index.sourcesById[removedId][0], hiddenId }
+  const state = await stored()
+  const removedId = assetOf(state, removed.name)
+  expect(removedId).toMatch(UUID_V7)
+  return { removed, removedId, sourcePath: sourceOf(state, removed.name).path.slice('MediaInbox/'.length), hiddenId }
 }
 
 async function canvasState(page) {
@@ -406,11 +421,13 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     recordMediaPhase(page, 'correct unsent reception complete')
 
     const staleResponse = await other.request.post(`${jobsUrl}/${id}/import`, { headers: { 'x-travelatlas-local-editor': '1' }, data: {
-      libraryId: stale.job.libraryId, revision: stale.job.revision, selectedFileIds: stale.selectedFileIds, planDigest: stale.plan.digest, operationId: randomUUID(),
+      // A UUIDv7 as the page sends it (the new library refuses other ids as E_STALE before it looks at the plan).
+      libraryId: stale.job.libraryId, revision: stale.job.revision, selectedFileIds: stale.selectedFileIds, planDigest: stale.plan.digest, operationId: uuidv7(),
     } })
     expect(staleResponse.status()).toBe(409)
     expect((await staleResponse.json()).code).toBe('E_MEDIA_JOB_CONFLICT')
-    expect((await readFixture('media')).items.some(item => item.id === `media-${createHash('sha256').update(second.buffer).digest('hex').slice(0, 16)}`)).toBe(false)
+    // The refused import wrote nothing: the second photo has no source in the registry.
+    expect(sourceOf(await stored(), second.name)).toBeUndefined()
     await checkTasks(other)
     await expect(exactCard(other, id).getByTestId('media-import-preview')).toHaveCount(0)
     console.info('MR lifecycle: server rejected stale cross-tab plan and client discarded it')
@@ -441,17 +458,20 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     expect(plan.plan.summary.sources.some(source => source.placeId === fixtureIds.torshavn)).toBe(true)
     const preview = exactCard(other, id).getByTestId('media-import-preview')
     await expect(preview).toContainText(foreign.name)
-    expect(plan.plan.summary.removedIds).toContain(baseline.removedId)
-    const removedImpact = preview.getByTestId('media-scope-removed').locator(`[data-media-id="${baseline.removedId}"]`)
-    await expect(removedImpact).toContainText(baseline.removed.name)
-    await expect(removedImpact).toContainText('Reykjavik')
-    expect(plan.plan.summary.editorEffects.restoredMediaIds).toContain(baseline.hiddenId)
-    await expect(preview.getByTestId('media-scope-restored').locator(`[data-media-id="${baseline.hiddenId}"]`)).toBeVisible()
-    const secondId = `media-${createHash('sha256').update(second.buffer).digest('hex').slice(0, 16)}`
+    // 3C-4c: a file gone from the Inbox leaves its record (nothing is removed), and the hidden photo's content received
+    // again is a new record of the task, so the hidden one stays hidden.
+    expect(plan.plan.summary.removedIds).toEqual([])
+    await expect(preview.getByTestId('media-scope-removed').locator('[data-media-id]')).toHaveCount(0)
+    expect(plan.plan.summary.editorEffects.restoredMediaIds).not.toContain(baseline.hiddenId)
+    await expect(preview.getByTestId('media-scope-restored').locator(`[data-media-id="${baseline.hiddenId}"]`)).toHaveCount(0)
+    const shaOf = (file) => createHash('sha256').update(file.buffer).digest('hex')
+    const plannedOf = (file) => plan.plan.summary.sources.find(source => source.sourcePath.endsWith(`/${file.name}`) && source.sha256 === shaOf(file))?.id
+    const secondId = plannedOf(second)
+    expect(secondId).toMatch(/^new-\d+$/)
     await expect(preview.getByTestId('media-scope-added').locator(`[data-media-id="${secondId}"]`)).toBeVisible()
     const proposedOrder = plan.plan.summary.editorEffects.orders.photos[fixtureIds.reykjavik]
-    expect(proposedOrder).toContain(baseline.hiddenId)
     expect(proposedOrder).toContain(secondId)
+    expect(proposedOrder).toContain(plannedOf(first))
     const order = preview.getByTestId('media-scope-orders').locator(`[data-city-id="${fixtureIds.reykjavik}"][data-order-kind="photos"]`)
     expect(await order.locator('ol li').evaluateAll(items => items.map(item => item.dataset.mediaId))).toEqual(proposedOrder)
     const desktopPath = await artifactPath(testInfo, 'batch3-recovery-desktop.png')
@@ -479,13 +499,17 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     expect(imports).toBe(1)
     expect(receives).toBe(2)
     expect(await sourceSnapshot()).toEqual(beforeImport)
-    const catalog = await readFixture('media')
-    expect(catalog.items.some(item => item.id === baseline.removedId)).toBe(false)
-    const savedState = await readFixture('editorState')
-    expect(savedState.hiddenMediaIds).not.toContain(baseline.hiddenId)
-    expect(savedState.mediaOrderByCity[fixtureIds.reykjavik]).toEqual(proposedOrder)
+    const state = await stored()
+    const catalog = state.files.media
+    expect(catalog.items.some(item => item.id === baseline.removedId)).toBe(true)
+    const savedState = state.files.editorState
+    expect(savedState.hiddenMediaIds).toContain(baseline.hiddenId)
+    // The proposed order with the provisional ids (new-N) replaced by the records the import created.
+    const created = Object.fromEntries(plan.plan.summary.sources.map(source => [source.id, assetOf(state, source.sourcePath.slice(source.sourcePath.lastIndexOf('/') + 1))]))
+    expect(savedState.mediaOrderByCity[fixtureIds.reykjavik]).toEqual(proposedOrder.map(mediaId => created[mediaId] ?? mediaId))
     for (const file of [first, second, foreign]) {
-      const mediaId = `media-${createHash('sha256').update(file.buffer).digest('hex').slice(0, 16)}`
+      const mediaId = assetOf(state, file.name)
+      expect(mediaId).toMatch(UUID_V7)
       expect(catalog.items.filter(item => item.id === mediaId)).toHaveLength(1)
     }
     const completion = (await checkTasks(other)).jobs.find(job => job.jobId === id).completion
@@ -599,7 +623,8 @@ test('drone reception fixes the chosen type and required date without inventing 
   await exactCard(page, id).getByRole('checkbox', { name: confirmScope, exact: true }).check()
   await exactCard(page, id).getByRole('button', { name: 'Import confirmed files', exact: true }).click()
   await expect(exactCard(page, id).locator('header strong')).toHaveText('Completed', { timeout: 30000 })
-  const mediaId = `media-${createHash('sha256').update(file.buffer).digest('hex').slice(0, 16)}`
+  const mediaId = assetOf(await stored(), file.name)
+  expect(mediaId).toMatch(UUID_V7)
   const item = (await readFixture('media')).items.find(item => item.id === mediaId)
   expect(item.kind).toBe('aerialPhoto')
   expect(item.date).toBe('2026-03-12')
@@ -649,37 +674,19 @@ test('a real failed reception keeps an uncertain task across reload and never re
   expect(imports).toBe(0)
 })
 
-// 3C-4c: media in the experimental new-library mode (design v2 §10, browser row). These cases run last in this file,
-// each on its own photos in the same store. Before them, an unfinished task left by the cases above is abandoned (as
-// the recovery center would) and their Inbox, generated media and V2 media source index are set aside, so the whole-
-// Inbox scope holds only these cases' files; then the fixture is switched into the mode (scripts/browser-fixture.mjs
-// enterStoreMode). The store's state is read in this process through read-only connections.
+// 3C-4c: media in the new library (design v2 §10, browser row). These cases run last in this file, each on its own
+// photos in the same store. Before them, an unfinished task left by the cases above is abandoned (as the recovery center
+// would); the cases above imported every file they received, so a whole-Inbox scope holds only these cases' new files.
 test.describe('new-library mode: media', () => {
-  const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
   const confirmMatches = 'I confirm these source matches as proposed.'
   const moduleUrl = '/@id/__x00__virtual:starmap-private-data'
   const servedRevision = async page => /privateStoreRevision = (\w+)/.exec(await (await page.request.get(moduleUrl)).text())?.[1]
-  const paths = () => getPrivatePaths({ STARMAP_PRIVATE_ROOT: syntheticRoot() })
-  async function stored() {
-    const handle = openStore(storeFileOf(paths()), { readOnly: true })
-    try { return { files: projectToV2Files(handle.readRowsUnchecked()).files, registry: handle.mediaRegistry(), entities: handle.mediaEntities() } } finally { await handle.close() }
-  }
-  const sourceOf = (state, name) => state.registry.sources.find(source => source.state === 'present' && source.path.endsWith(`/${name}`))
-  const assetOf = (state, name) => state.entities.find(entity => entity.id === sourceOf(state, name)?.recordId)?.fields.asset
-  let leave
   test.beforeAll(async () => {
-    const root = syntheticRoot()
-    await withLibraryOperation(paths(), async () => {
-      const tasks = createMediaJobStore(paths())
+    await withLibraryOperation(storePaths(), async () => {
+      const tasks = createMediaJobStore(storePaths())
       for (const job of (await tasks.readSnapshot()).jobs) if (['open', 'paused'].includes(job.phase)) await tasks.abandon(job.jobId, job.revision)
     })
-    for (const segments of [['MediaInbox'], ['media', 'user'], ['data', 'v2', 'media-source-index.local.json']]) {
-      const from = path.join(root, ...segments)
-      if (existsSync(from)) await rename(from, path.join(root, `${segments.join('-')}.before-store`))
-    }
-    leave = await enterStoreMode(root)
   })
-  test.afterAll(async () => { await leave?.() })
 
   /** Receive `files` in a task, import it from the recovery center (confirming source matches when asked), close it. */
   async function importTask(page, files, { matches = false } = {}) {

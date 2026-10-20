@@ -1,16 +1,16 @@
 import { test, expect, openMap, selectReykjavik, openCollection, readFixture, saveAndWaitForReload } from './helpers.mjs'
-import { enterDamagedStoreMode, enterStoreMode, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
+import {
+  PRIVATE_MODULE_PATH, createBrowserFixture, enterDamagedStoreMode, fixtureFileNames, fixtureIds, importInboxMedia, readFixtureFiles, setStoreAside,
+  storeRevisionOf, waitForServedRevision,
+} from '../../scripts/browser-fixture.mjs'
 import { storeFileOf } from '../../scripts/private-data-source.mjs'
 import { getPrivatePaths } from '../../scripts/private-profile.mjs'
-import { openStore } from '../../scripts/store-host.mjs'
-import { projectToV2Files } from '../../scripts/store-projection.mjs'
-import { existsSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 
-// Cases that seed sample media restore the shared fixture after closing their page, so later cases and files read
-// exactly the files they would have read without them.
+// 3C-4d: the fixture is a new library from the start. Cases that seed sample media reset the shared fixture after
+// closing their page (resetFixture: everything but the media items, which stay; review §7-1).
 let restoreFixture
 test.afterEach(async ({ page }) => {
   if (!restoreFixture) return
@@ -19,22 +19,31 @@ test.afterEach(async ({ page }) => {
   await page.close()
   await restore()
 })
-// The tracked unit-test fixture holds two Reykjavik photos and a Torshavn aerial photo; the runner's fixture drops them.
-async function seedSampleMedia(page, adjust = {}) {
-  const sample = JSON.parse(await readFile(new URL('../../src/data/v2write/fixtures/migrated-files.json', import.meta.url), 'utf8'))
-  const originals = []
-  const changes = [['media', (file) => { file.items.push(...sample.media.items); adjust.media?.(file) }], ['editorState', (state) => adjust.editorState?.(state)]]
-  for (const [key, change] of changes) {
-    const file = path.join(process.env.STARMAP_BROWSER_TEST_ROOT, 'data', 'v2', fixtureFileNames[key])
-    const text = await readFile(file, 'utf8')
-    originals.push([file, text])
-    const value = JSON.parse(text)
-    change(value)
-    await writeFile(file, JSON.stringify(value, null, 2) + '\n')
+/**
+ * Two Reykjavik photos (the one named cover-… is the city's cover photo by the import rule) and a Torshavn aerial photo:
+ * real Inbox files imported into the store through the media service (media items are store-native since 3C-4c).
+ * Resolves the media items as the App reads them. Importing the same files again adds nothing.
+ */
+async function seedSampleMedia() {
+  const root = process.env.STARMAP_BROWSER_TEST_ROOT
+  const inbox = path.join(root, 'MediaInbox')
+  const jpeg = (r) => sharp({ create: { width: 64, height: 32, channels: 3, background: { r, g: 120, b: 180 } } }).jpeg({ quality: 90 })
+  const folders = [['Iceland', fixtureIds.iceland], ['Iceland/Reykjavik', fixtureIds.reykjavik], ['Faroe Islands', fixtureIds.faroe], ['Faroe Islands/Torshavn', fixtureIds.torshavn]]
+  for (const [folder, placeId] of folders) {
+    await mkdir(path.join(inbox, ...folder.split('/')), { recursive: true })
+    await writeFile(path.join(inbox, ...folder.split('/'), 'place.json'), JSON.stringify({ placeId }))
   }
-  restoreFixture = () => Promise.all(originals.map(([file, text]) => writeFile(file, text)))
-  const image = await sharp({ create: { width: 64, height: 32, channels: 3, background: { r: 60, g: 120, b: 180 } } }).png().toBuffer()
-  await page.route('**/media/user/sample/*', (route) => route.fulfill({ contentType: 'image/png', body: image }))
+  await mkdir(path.join(inbox, 'Iceland', 'Reykjavik', 'photos'), { recursive: true })
+  await mkdir(path.join(inbox, 'Faroe Islands', 'Torshavn', 'drone'), { recursive: true })
+  await jpeg(60).toFile(path.join(inbox, 'Iceland', 'Reykjavik', 'photos', 'cover-harbour.jpg'))
+  await jpeg(90).toFile(path.join(inbox, 'Iceland', 'Reykjavik', 'photos', 'photo-2.jpg'))
+  await jpeg(120).toFile(path.join(inbox, 'Faroe Islands', 'Torshavn', 'drone', 'drone-1.jpg'))
+  await writeFile(path.join(inbox, 'Faroe Islands', 'Torshavn', 'media.json'), JSON.stringify({
+    'drone/drone-1.jpg': { kind: 'aerialPhoto', date: '2025-06-06', resolution: '64 × 32', captureType: 'Aerial Photo', lat: 62.01, lng: -6.77 },
+  }))
+  await importInboxMedia(root)
+  restoreFixture = () => createBrowserFixture(root)
+  return (await readFixtureFiles(root)).media.items
 }
 const focusInDialog = (page) => page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"][aria-modal="true"]')))
 
@@ -176,7 +185,12 @@ test('forced sample view renders a real city without write controls', async ({ p
 
 test('an unconfirmed conversion keeps every write on the page blocked until a reload; the dialog keeps and returns focus', async ({ page }) => {
   const writes = []
-  page.on('request', (request) => { if (request.url().includes('/__travelatlas/editor/') && request.method() !== 'GET') writes.push(new URL(request.url()).pathname) })
+  const requestIds = []
+  page.on('request', (request) => {
+    if (!request.url().includes('/__travelatlas/editor/') || request.method() === 'GET') return
+    writes.push(new URL(request.url()).pathname)
+    requestIds.push(request.headers()['x-starmap-request-id'])
+  })
   await openMap(page)
   await openCollection(page)
   const opener = page.getByRole('button', { name: 'Mark as visited: Bergen', exact: true })
@@ -214,13 +228,18 @@ test('an unconfirmed conversion keeps every write on the page blocked until a re
   await page.locator('.collection-card textarea').fill('Blocked until reload')
   await page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click()
   await expect(page.getByText(/Nothing more can be saved until you reload/)).toBeVisible()
-  expect(writes).toEqual(['/__travelatlas/editor/wanttogo/convert'])
+  // The new library (3C-4a) retries a save it cannot confirm once, with the same request id, then blocks the page.
+  expect(writes).toEqual(['/__travelatlas/editor/wanttogo/convert', '/__travelatlas/editor/wanttogo/convert'])
+  expect(requestIds[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  expect(requestIds[1]).toBe(requestIds[0])
 })
 
 test('keyboard: a drone card opens its viewer from View, the viewer keeps and returns focus, and the globe scale slider keeps focus while stepping', async ({ page }) => {
-  await seedSampleMedia(page)
+  const media = await seedSampleMedia()
+  const drone = media.find((item) => item.placeId === fixtureIds.torshavn && item.originalFileName === 'drone-1.jpg')
+  const droneDirectory = `${path.posix.dirname(drone.src)}/`
   const droneLoads = []
-  page.on('request', (request) => { if (request.url().includes('/media/user/sample/drone-1.jpg')) droneLoads.push(new URL(request.url()).search) })
+  page.on('request', (request) => { if (new URL(request.url()).pathname.startsWith(droneDirectory)) droneLoads.push(new URL(request.url()).search) })
   await openMap(page)
   await page.getByRole('button', { name: 'Faroe Islands', exact: true }).click()
   await page.getByRole('button', { name: 'Torshavn Drone media available', exact: true }).click()
@@ -251,16 +270,17 @@ test('keyboard: a drone card opens its viewer from View, the viewer keeps and re
 
 test('keyboard hiding the current cover photo clears the draft cover, and hiding a city by keyboard asks first', async ({ page }) => {
   // No saved cover for Reykjavik and one photo marked as cover, so that photo is the current cover. Earlier tests in
-  // this group import a photo into Reykjavik, so both inputs of the cover rule are pinned here, not assumed.
-  await seedSampleMedia(page, {
-    media: (file) => { for (const item of file.items) if (item.placeId === fixtureIds.reykjavik) item.isCover = item.id === 'photo-reykjavik-1' },
-    editorState: (state) => { delete state.coverMediaByCity[fixtureIds.reykjavik] },
-  })
+  // this group import a photo into Reykjavik, so both inputs of the cover rule are checked here, not assumed: the seeded
+  // cover-… photo is the city's cover photo (the import's rule), and the reset fixture saves no cover.
+  const media = await seedSampleMedia()
+  const coverPhoto = media.find((item) => item.placeId === fixtureIds.reykjavik && item.isCover)
+  expect(coverPhoto?.originalFileName).toBe('cover-harbour.jpg')
+  expect((await readFixture('editorState')).coverMediaByCity[fixtureIds.reykjavik]).toBeUndefined()
   await openMap(page)
   await selectReykjavik(page)
   const info = page.locator('.atlas-info-panel')
   await info.getByRole('button', { name: 'Edit city photos', exact: true }).click()
-  const cover = info.locator('[data-flip-id="photo-reykjavik-1"]')
+  const cover = info.locator(`[data-flip-id="${coverPhoto.id}"]`)
   await expect(cover.getByRole('button', { name: 'Set as city cover', exact: true })).toHaveAttribute('data-active', 'true')
   await cover.getByRole('button', { name: 'Hide photo', exact: true }).focus()
   await page.keyboard.press('Enter')
@@ -271,8 +291,8 @@ test('keyboard hiding the current cover photo clears the draft cover, and hiding
     expect((await saved).ok()).toBe(true)
   })
   const state = await readFixture('editorState')
-  expect(state.hiddenMediaIds).toContain('photo-reykjavik-1')
-  expect(state.coverMediaByCity[fixtureIds.reykjavik]).not.toBe('photo-reykjavik-1')
+  expect(state.hiddenMediaIds).toContain(coverPhoto.id)
+  expect(state.coverMediaByCity[fixtureIds.reykjavik]).not.toBe(coverPhoto.id)
   // Choosing the selected city again returns to Iceland's city list.
   await page.getByRole('button', { name: 'Reykjavik', exact: true }).click()
   await info.getByRole('button', { name: 'Edit cities', exact: true }).click()
@@ -284,35 +304,25 @@ test('keyboard hiding the current cover photo clears the draft cover, and hiding
   await expect(info.getByRole('button', { name: 'Hide Reykjavik', exact: true })).toBeVisible()
 })
 
-// 3C-3, 3C-4a: the experimental new-library mode. These cases switch the shared fixture into the mode (its V2 files reset
-// to the fixture's own content and migrated into data/store/world.sqlite) and put everything back afterwards
-// (scripts/browser-fixture.mjs enterStoreMode). They run last in this file, in order, on the same store: a note, a new
-// Want to Go item, a conversion with a journey choice and a city order. Media in this mode (3C-4c) is in the media group
-// (media-recovery.spec.mjs).
-test.describe('new-library mode (experimental)', () => {
+// 3C-3, 3C-4a: the editor writes of the new library (the only write path since 3C-4d), with the request protocol. These
+// cases first reset the shared fixture to its own content (scripts/browser-fixture.mjs resetFixture: a commit) and run
+// in order on the same store: a note, a new Want to Go item, a conversion with a journey choice and a city order. Media
+// in the new library (3C-4c) are in the media group (media-recovery.spec.mjs).
+test.describe('the new library: editor writes', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
-  const moduleUrl = '/@id/__x00__virtual:starmap-private-data'
-  /** The revision the dev server's virtual module carries ('undefined' in V2 mode). */
-  const servedRevision = async (page) => /privateStoreRevision = (\w+)/.exec(await (await page.request.get(moduleUrl)).text())?.[1]
+  /** The revision the dev server's virtual module carries ('undefined' without a store). */
+  const servedRevision = async (page) => /privateStoreRevision = (\w+)/.exec(await (await page.request.get(PRIVATE_MODULE_PATH)).text())?.[1]
   /** The store revision, read in this process through a read-only connection. */
-  async function storeRevision() {
-    const handle = openStore(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() })), { readOnly: true })
-    try { return handle.meta().revision } finally { await handle.close() }
-  }
+  const storeRevision = () => storeRevisionOf(root())
   /** The store's V2 view, read in this process through a read-only connection (what a new dev server would serve). */
-  async function storedFiles() {
-    const handle = openStore(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() })), { readOnly: true })
-    try { return projectToV2Files(handle.readRowsUnchecked()).files } finally { await handle.close() }
-  }
+  const storedFiles = () => readFixtureFiles(root())
   const v2Bytes = async () => Promise.all(Object.values(fixtureFileNames).map((name) => readFile(path.join(root(), 'data', 'v2', name), 'utf8')))
-  let leave
-  test.beforeAll(async () => { leave = await enterStoreMode(root()) })
-  test.afterAll(async () => { await leave?.() })
+  test.beforeAll(async () => { await createBrowserFixture(root()) })
 
   test('new-library mode: a Want to Go note edited in Collection is still there after a reload', async ({ page }) => {
     const v2Before = await v2Bytes()
-    // The dev server notices the new store file and invalidates its module; wait until it serves the store.
-    await expect.poll(() => servedRevision(page)).toBe('1')
+    const revision = await storeRevision()
+    await expect.poll(() => servedRevision(page)).toBe(String(revision))
     await openMap(page)
     await openCollection(page)
     const sent = []
@@ -326,8 +336,8 @@ test.describe('new-library mode (experimental)', () => {
     })
     expect(sent).toHaveLength(1)
     expect(sent[0]['x-starmap-request-id']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
-    expect(sent[0]['x-starmap-base-revision']).toBe('1')
-    expect(await storeRevision()).toBe(2)
+    expect(sent[0]['x-starmap-base-revision']).toBe(String(revision))
+    expect(await storeRevision()).toBe(revision + 1)
     const note = page.locator('.collection-card').filter({ hasText: 'Nuuk' }).locator('.collection-card-note')
     for (let reload = 0; reload < 2; reload++) {
       if (reload) await page.reload({ waitUntil: 'domcontentloaded' })
@@ -436,21 +446,30 @@ test.describe('new-library mode (experimental)', () => {
 
 // 3C-4b: a damaged new library (design 3B §5). The store is damaged before the dev server ever sees it
 // (scripts/browser-fixture.mjs enterDamagedStoreMode): its open check fails, and the App shows the data read-only with a
-// persistent notice; a write is refused with E_STORE_READ_ONLY. It runs after the cases above: the module is first
-// loaded in V2 mode, which closes the store they used, so the damaged one is opened afresh. On Windows the dev server
-// keeps the store of the cases above open and it cannot be removed, so the case skips itself when that store is still
-// there: run it on its own on Windows (CI runs it with the group on Linux).
-test.describe('new-library mode: a damaged store', () => {
+// persistent notice; a write is refused with E_STORE_READ_ONLY. It runs last: the fixture's store is first moved aside
+// (setStoreAside) and the module loaded without a store, which closes the store the cases above used, so the damaged one
+// is opened afresh; afterwards the damaged store is removed and the fixture's store put back. Windows refuses to move the
+// store the dev server holds open, so there the case skips itself (CI runs it with the group on Linux).
+test.describe('the new library: a damaged store', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
-  const moduleUrl = '/@id/__x00__virtual:starmap-private-data'
-  const served = async (page, name) => new RegExp(`${name} = ([A-Za-z0-9_]+)`).exec(await (await page.request.get(moduleUrl)).text())?.[1]
+  const served = async (page, name) => new RegExp(`${name} = ([A-Za-z0-9_]+)`).exec(await (await page.request.get(PRIVATE_MODULE_PATH)).text())?.[1]
   const storeBytes = () => readFile(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() })))
-  let leave
-  test.afterAll(async () => { await leave?.() })
+  let leave, restore
+  test.afterAll(async () => {
+    if (leave) {
+      await leave()
+      // The module loaded without a store closes the damaged one before the fixture's store comes back.
+      await waitForServedRevision('undefined')
+    }
+    if (restore) {
+      await restore()
+      await waitForServedRevision(await storeRevisionOf(root()))
+    }
+  })
 
   test('a damaged new library is shown read-only with a notice, and a note save is refused with E_STORE_READ_ONLY', async ({ page }) => {
-    test.skip(process.platform === 'win32' && existsSync(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root() }))),
-      'The dev server still holds the store of the cases above open (Windows); run this case on its own.')
+    restore = await setStoreAside(root())
+    test.skip(!restore, 'The dev server holds the fixture\'s store open and Windows cannot move it; CI runs this case on Linux.')
     await expect.poll(() => served(page, 'privateStoreRevision')).toBe('undefined')
     leave = await enterDamagedStoreMode(root())
     await expect.poll(() => served(page, 'privateStoreReadOnly')).toBe('true')

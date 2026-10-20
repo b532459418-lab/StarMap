@@ -1,7 +1,6 @@
 import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure, saveAndWaitForReload } from './helpers.mjs'
-import { createBrowserFixture, fixtureFileNames, fixtureIds } from '../../scripts/browser-fixture.mjs'
-import { readFile, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { createBrowserFixture, fixtureHashes, fixtureIds, patchFixture as patchStoreFixture, storeRevisionOf } from '../../scripts/browser-fixture.mjs'
+import { uuidv7 } from '../../src/data/canonical/uuidv7.ts'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -22,11 +21,8 @@ test.afterEach(async ({ page }, testInfo) => {
   await createBrowserFixture(root)
 })
 
-async function patchFixture(key, change) {
-  const value = await readFixture(key)
-  change(value)
-  await writeFile(path.join(root, 'data', 'v2', fixtureFileNames[key]), JSON.stringify(value, null, 2) + '\n')
-}
+// 3C-4d: the fixture is a store; a patch is one commit, and the dev server serves it before the case loads the page.
+const patchFixture = (key, change) => patchStoreFixture(root, key, change)
 async function year(page, value) {
   if (!await panel(page).isVisible()) await page.locator('.atlas-time-query-toolbar button').click()
   const editor = panel(page).locator('[data-layer="travel"]')
@@ -35,11 +31,8 @@ async function year(page, value) {
   await editor.getByRole('button', { name: 'Use this year', exact: true }).click()
   await panel(page).getByRole('button', { name: 'Close', exact: true }).click()
 }
-async function hashes() {
-  return Object.fromEntries(await Promise.all(Object.entries(fixtureFileNames).map(async ([key, name]) =>
-    [key, createHash('sha256').update(await readFile(path.join(root, 'data', 'v2', name))).digest('hex')],
-  )))
-}
+/** The fixture as the App reads it, and the store revision: equal means nothing was written. */
+const hashes = () => fixtureHashes(root)
 
 test('manual country dates show their own evidence without inventing cities or visit records', async ({ page }) => {
   await patchFixture('editorState', file => {
@@ -127,8 +120,9 @@ test('an existing footprint excluded by time still prevents duplicate conversion
   await expect(page.getByRole('button', { name: 'Mark as visited: Akureyri', exact: true })).toBeDisabled()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   const before = await hashes()
+  // The new library's request protocol (3C-4a): without it the store would answer E_STALE before the rule runs.
   const response = await page.request.post('/__travelatlas/editor/wanttogo/convert', {
-    headers: { Origin: 'http://127.0.0.1:5173', 'x-travelatlas-local-editor': '1' },
+    headers: { Origin: 'http://127.0.0.1:5173', 'x-travelatlas-local-editor': '1', 'x-starmap-request-id': uuidv7(), 'x-starmap-base-revision': String(await storeRevisionOf(root)) },
     data: { source: 'want-to-go', id: 'wtg_2026-08-12_akureyri', startDate: '2023-01-12' },
   })
   expect(response.ok()).toBe(false)

@@ -5,11 +5,18 @@
 //
 // Browsing is read-only. The synthetic root is compared before and after; any change fails the run. A browsing
 // failure only logs a warning: the cases then run against a cold server, as they did before this warm-up existed.
+// 3C-4d: the fixture is a new library. The dev server opens it when it starts (its in-use mark) and may run a record
+// pruning step under the library lease, so the store file and the lease's generation record are compared by what they
+// hold instead: the store's revision and the fixture as the App reads it (fixtureHashes).
 import { chromium } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { readdir, readFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fixtureHashes } from '../../scripts/browser-fixture.mjs'
+
+/** Paths compared by content instead of bytes (see above). */
+const COMPARED_BY_CONTENT = /^(?:data\/store\/|operations\/library-operation-state\.json$)/
 
 const stepTimeout = 180000
 
@@ -19,6 +26,7 @@ async function snapshot(root) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const target = path.join(directory, entry.name)
       const key = path.relative(root, target).split(path.sep).join('/')
+      if (COMPARED_BY_CONTENT.test(entry.isDirectory() ? `${key}/` : key)) continue
       if (entry.isDirectory()) {
         entries[`${key}/`] = 'directory'
         await walk(target)
@@ -35,7 +43,7 @@ export default async function warmDevServer(config) {
   const root = path.resolve(process.env.STARMAP_BROWSER_TEST_ROOT ?? '')
   if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('starmap-browser-')) throw new Error('The dev-server warm-up requires the isolated synthetic browser fixture.')
   const { baseURL, launchOptions, viewport, locale } = config.projects[0].use
-  const before = await snapshot(root)
+  const before = { files: await snapshot(root), content: await fixtureHashes(root) }
   const started = performance.now()
   const browser = await chromium.launch(launchOptions)
   try {
@@ -62,7 +70,10 @@ export default async function warmDevServer(config) {
   } finally {
     await browser.close()
   }
-  const after = await snapshot(root)
-  const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((key) => before[key] !== after[key]).sort()
+  const after = { files: await snapshot(root), content: await fixtureHashes(root) }
+  const changed = [
+    ...[...new Set([...Object.keys(before.files), ...Object.keys(after.files)])].filter((key) => before.files[key] !== after.files[key]),
+    ...Object.keys(before.content).filter((key) => before.content[key] !== after.content[key]).map((key) => `store:${key}`),
+  ].sort()
   if (changed.length) throw new Error(`The dev-server warm-up changed the synthetic fixture: ${changed.join(', ')}`)
 }
