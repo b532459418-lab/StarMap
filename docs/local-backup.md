@@ -1,6 +1,6 @@
 # Local library backup and recovery
 
-Status: first offline implementation. A backup preserves the active V2 library and local media. In the experimental new-library mode (`data/store/world.sqlite`), `npm run backup -- create` uses the implementation of `npm run store:backup`, which backs up the new library with the same media: see [New library](#new-library-storebackup-storerestore). Recovery creates a **new private directory**; it does not replace or automatically activate the existing library. This format is an application backup, not the future World Graph Core interchange format.
+Status: first offline implementation. Personal data lives in the new library (`data/store/world.sqlite`) since 3C-4d: on such a root `npm run backup -- create` uses the implementation of `npm run store:backup`, which backs up the new library with its media: see [New library](#new-library-storebackup-storerestore). On a root that still holds the V2 files of an earlier version, it backs up those files and the media: take this backup before `npm run store:migrate -- --apply`. Recovery creates a **new private directory**; it does not replace or automatically activate the existing library. A V2 backup restores to a root that needs migrating (read-only until `npm run store:migrate -- --apply`). This format is an application backup, not the future World Graph Core interchange format.
 
 ## Scope
 
@@ -72,7 +72,7 @@ The existing library is the recovery-before copy because this first mode never o
 
 ## New library (`store:backup`, `store:restore`)
 
-In the experimental new-library mode (`<private-root>/data/store/world.sqlite` exists, see the root README) the library is one SQLite file plus the media. Back it up and restore it from `01_Web/` with:
+The new library (`<private-root>/data/store/world.sqlite`, see the root README) is one SQLite file plus the media. Back it up and restore it from `01_Web/` with:
 
 ```powershell
 npm run store:backup -- --out "D:/StarMap-backups/store-2026-10-15"

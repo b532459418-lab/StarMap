@@ -36,7 +36,7 @@ Country and city folders must refer to places that already exist in StarMap. Add
 
 ## How Folders Are Matched
 
-The importer matches folders against the place registry `<private-root>/data/v2/places.local.json`:
+The importer matches folders against the places of the new library (`<private-root>/data/store/world.sqlite`; on a root not migrated yet, `media:check` reads `data/v2/places.local.json` and `media:import` refuses until `npm run store:migrate -- --apply`):
 
 - **Country folder**, in this order: `place.json` (`{ "placeId": "<country place id>" }`); a legacy `country.json` whose `countryId` is an old country key of that place; the folder name, compared with the country's Chinese name, English name, or ISO code.
 - **City folder**, in this order: `place.json`, which must name a city of that country; the folder name, compared with the Chinese and English names of that country's cities.
@@ -65,14 +65,14 @@ A private folder that still holds legacy-format data it has not migrated cannot 
 2. Confirm that every file has a reliable existing country and city. For drone media, read embedded metadata first and confirm the media type, date, and resolution. Coordinates and altitude improve map behavior but are optional.
 3. If any country, city, media type, date, coordinate, privacy status, or intended use is missing or uncertain, ask the smallest necessary question and stop. Without a reliable answer, do not guess, copy, convert, catalog, or import that item.
 4. From `01_Web/`, run `npm run media:check`. Any `需要处理` result or warning caused by unresolved required data blocks the import, even if the command exits successfully.
-5. Only after a clean preflight, run `npm run media:import`. The importer creates hash-stable `thumb`, `preview`, and `original` tiers outside the Inbox; restart the preview and verify City Info, City Cards/Photos, Drone Media, and the 360 Viewer as applicable.
+5. Only after a clean preflight, run `npm run media:import`. It imports into the new library and creates content-addressed `thumb`, `preview`, and `original` tiers outside the Inbox; reload the preview and verify City Info, City Cards/Photos, Drone Media, and the 360 Viewer as applicable.
 6. Finish with `npm run privacy:check`, `npm run lint`, and `npm run build:personal`, then report imported counts and unresolved items. Before any public release, run `npm run release:check` separately from a clean source worktree.
 
 ## Source Preservation and Sidecars
 
-Original media in `MediaInbox` is immutable by default: never move, rename, overwrite, delete, or edit it. The only deletion exception is an explicit, confirmed **Delete hidden media** action in the local editor; it removes the selected hidden source files, their generated web variants, sidecar entries, and catalog records. Three private control files are the only Agent-writable exceptions:
+Original media in `MediaInbox` is immutable by default: never move, rename, overwrite, delete, or edit it. The only deletion exception is an explicit, confirmed **Delete hidden media** action in the local editor; it removes the selected hidden records and then their source files and the generated web variants no other record uses. Three private control files are the only Agent-writable exceptions:
 
-- `<country>/place.json` and `<country>/<city>/place.json` bind a folder to a place id (`{ "placeId": "…" }`). StarMap normally writes them itself: into a folder an upload creates (never into an existing folder), and on import once you confirm a binding found by name. Write one by hand only to resolve a reported ambiguity, with a place id taken from `data/v2/places.local.json`.
+- `<country>/place.json` and `<country>/<city>/place.json` bind a folder to a place id (`{ "placeId": "…" }`). StarMap normally writes them itself: into a folder an upload creates (never into an existing folder), and on import once you confirm a binding found by name. Write one by hand only to resolve a reported ambiguity, with a place id the preflight reports (or one from the `places.local.json` that `npm run store:export-v2` writes).
 - `<country>/country.json` maps an ambiguous country folder to an existing legacy `countryId`.
 - `<country>/<city>/media.json` records drone type and capture metadata using `media.example.json` as the shape reference. An entry may also carry `placeId` (a city place id) to assign one file to another city; the legacy `countryId` + `cityId` pair is still accepted. Giving both and having them disagree is an error.
 
@@ -90,7 +90,7 @@ These JSON files are metadata, not media derivatives. Converted, resized, optimi
 
 - `<private-root>/MediaInbox/<real-country>/`: private source delivery and sidecars; physically outside the source Git repository.
 - `<private-root>/media/user/`: generated website media; physically outside the source Git repository.
-- `<private-root>/data/`: personal travel data, editor state, and media catalogs in `data/v2/` (legacy-format `data/*.local.json` files, if any, are not read; they are migrated with the tool of commit `4fd32a9`, see [Legacy-format data](../../01_Web/README.md#legacy-format-data)); physically outside the source Git repository.
+- `<private-root>/data/`: personal travel data, editor state, and media records in the new library `data/store/world.sqlite` (the V2 files of `data/v2/` are only read, as the input of `npm run store:migrate`; legacy-format `data/*.local.json` files, if any, are not read; they are migrated with the tool of commit `4fd32a9`, see [Legacy-format data](../../01_Web/README.md#legacy-format-data)); physically outside the source Git repository.
 - `_country-template/`, rules, schema, and scripts: safe to publish with the open-source repository.
 
 Never place credentials, tickets, identity documents, hotel addresses, booking references, or private family material in the Inbox. Never add private Inbox files, generated user media, or local catalogs to Git.

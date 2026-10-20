@@ -56,7 +56,7 @@ original → 原图或 360 Viewer 按需加载
 
 ### 归属与媒体 id
 
-导入器按地点注册表 `<private-root>/data/v2/places.local.json` 解析文件夹，不读旧格式的 `travel-map.local.json`。私人目录里还有没迁移的旧格式数据时，`npm run media:check` 与 `npm run media:import` 拒绝运行（退出码 2）并说明怎么迁移（见 [Web 工作区说明](../01_Web/README.md#legacy-format-data)）。目录名的比对规则与上文相同（也忽略大小写、空格、`_` 与 `-`）：
+导入器按新库（`<private-root>/data/store/world.sqlite`）里的地点解析文件夹，不读旧格式的 `travel-map.local.json`；还没有迁移到新库的私人根，`npm run media:check` 读 `data/v2/places.local.json` 做只读预检，`npm run media:import` 以退出码 2 拒绝，直到运行 `npm run store:migrate -- --apply`。私人目录里还有没迁移的旧格式数据时，`npm run media:check` 与 `npm run media:import` 拒绝运行（退出码 2）并说明怎么迁移（见 [Web 工作区说明](../01_Web/README.md#legacy-format-data)）。目录名的比对规则与上文相同（也忽略大小写、空格、`_` 与 `-`）：
 
 - **国家文件夹**依次看：`place.json`（`{ "placeId": "<国家地点 id>" }`）；旧 `country.json` 的 `countryId`（按该地点保留的旧国家键解析）；文件夹名（与国家的中文名、英文名或 ISO 代码比对）。
 - **城市文件夹**依次看：`place.json`（必须是这个国家的城市）；文件夹名（与这个国家里城市的中英文名比对）。
@@ -89,7 +89,7 @@ original → 原图或 360 Viewer 按需加载
 
 `MediaInbox` 采用“原始媒体不可变”原则，而不是所有文件绝对只读。Agent 只能创建或更新以下三种私有 JSON 控制文件：
 
-- `<国家>/place.json`、`<国家>/<城市>/place.json`：把文件夹固定到地点 id（`{ "placeId": "…" }`）。通常由 StarMap 写入：上传新建文件夹时写入（上传不给已有的文件夹写）；按名字匹配的文件夹在绑定经用户确认后导入时写入；只有为了解决报告里的歧义时才手写，且地点 id 必须取自 `data/v2/places.local.json`。
+- `<国家>/place.json`、`<国家>/<城市>/place.json`：把文件夹固定到地点 id（`{ "placeId": "…" }`）。通常由 StarMap 写入：上传新建文件夹时写入（上传不给已有的文件夹写）；按名字匹配的文件夹在绑定经用户确认后导入时写入；只有为了解决报告里的歧义时才手写，且地点 id 必须取自预检报告（或者 `npm run store:export-v2` 导出的 `places.local.json`）。
 - `<国家>/country.json`：将有歧义的目录映射到既有的旧 `countryId`。
 - `<国家>/<城市>/media.json`：记录无人机媒体类型和拍摄元数据，结构参考模板中的 `media.example.json`。
 
@@ -138,7 +138,7 @@ original → 原图或 360 Viewer 按需加载
 
 - `<private-root>/MediaInbox/<真实国家>/`，包括私有控制文件。
 - `<private-root>/media/user/`。
-- `<private-root>/data/` 下的私人数据：`v2/`（V2 数据与媒体目录）、`migration/`（迁移清单与决定），以及可能残留的旧格式 `*.local.json`。
+- `<private-root>/data/` 下的私人数据：`store/world.sqlite`（新库：足迹、想去、编辑状态与媒体资料，3C-4d 起唯一的写入位置）、`v2/`（早期版本的 V2 数据与媒体目录，只作为 `store:migrate` 的输入读取）、`migration/`（迁移清单与决定），以及可能残留的旧格式 `*.local.json`。
 
 公开仓库只包含 `_country-template/`、导入脚本、本协议和 JSON Schema。个人原图、网页副本和媒体目录均在 Git 边界之外；公开示例图只能使用明确授权或专门生成的素材。
 
