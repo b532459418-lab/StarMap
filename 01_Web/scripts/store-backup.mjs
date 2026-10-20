@@ -81,7 +81,7 @@ const missing = (error) => error?.code === 'ENOENT'
 const SHA256 = /^[a-f0-9]{64}$/
 
 /** The privacy gate and "must not exist" for an output path; returns the absolute path. */
-function newOutput(target, label) {
+export function newOutput(target, label) {
   if (typeof target !== 'string' || !target.trim()) throw new StoreToolError('E_ARGUMENT', [`缺少 ${label}。`])
   const resolved = path.resolve(target)
   if (!isAllowedPrivateOutput(resolved)) {
@@ -118,14 +118,14 @@ async function syncFile(file) {
   try { await handle.sync() } finally { await handle.close() }
 }
 
-function requireStoreMode(privatePaths) {
+export function requireStoreMode(privatePaths) {
   if (privateDataSource(privatePaths) !== 'store') {
     throw new StoreToolError('E_NOT_STORE_MODE', ['这个私人根没有 data/store/world.sqlite（不是新库模式），没有可以处理的新库。'])
   }
 }
 
 /** Open the store read-only; an open diagnostic is a refusal. */
-function openReadOnly(file) {
+export function openReadOnly(file) {
   const handle = openStore(file, { readOnly: true, policy: OFFICIAL_POLICY })
   if (handle.diagnostic) {
     const { code } = handle.diagnostic
