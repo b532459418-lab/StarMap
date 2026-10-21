@@ -9,7 +9,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import * as notices from './privateDataNotice.ts'
-import { LEGACY_UNMIGRATED_NOTICE, privateDataNotice, STORE_READ_ONLY_NOTICE, V2_EMPTY_NOTICE } from './privateDataNotice.ts'
+import {
+  LEGACY_UNMIGRATED_NOTICE, privateDataNotice, STORE_MIGRATION_REQUIRED_NOTICE, STORE_READ_ONLY_NOTICE, STORE_RECOVERY_REQUIRED_NOTICE, V2_EMPTY_NOTICE,
+} from './privateDataNotice.ts'
 
 const EMPTY = { travelRecordCount: 0, wantToGoItemCount: 0 }
 
@@ -48,6 +50,25 @@ test('文案：空状态为决定 E 的完整文案；迁移提示说明旧数�
   assert.ok(text.includes('.local.json'))
   assert.doesNotMatch(text, /identity:check|数据模式|data-mode|--switch/)
   assert.ok(Object.isFrozen(LEGACY_UNMIGRATED_NOTICE))
+})
+
+test('待迁移与需要恢复（3C-4d）：在只读提示之后、旧格式提示与空状态之前；有数据也显示；文案与地图菜单的中英文资源一致', async () => {
+  const migration = { kind: 'store-migration-required', lines: STORE_MIGRATION_REQUIRED_NOTICE }
+  const recovery = { kind: 'store-recovery-required', lines: [STORE_RECOVERY_REQUIRED_NOTICE] }
+  for (const counts of [EMPTY, { travelRecordCount: 3, wantToGoItemCount: 2 }]) {
+    assert.deepEqual(privateDataNotice({ personal: true, legacyUnmigrated: false, storeMigrationRequired: true, ...counts }), migration)
+    assert.deepEqual(privateDataNotice({ personal: true, legacyUnmigrated: true, storeRecoveryRequired: true, ...counts }), recovery)
+    assert.deepEqual(privateDataNotice({ personal: true, legacyUnmigrated: false, storeMigrationRequired: true, storeRecoveryRequired: true, ...counts }), migration)
+    assert.equal(privateDataNotice({ personal: true, legacyUnmigrated: false, storeReadOnly: true, storeMigrationRequired: true, ...counts })?.kind, 'store-read-only')
+  }
+  assert.equal(privateDataNotice({ personal: false, legacyUnmigrated: false, storeMigrationRequired: true, storeRecoveryRequired: true, ...EMPTY }), undefined, '公开模式不显示')
+  assert.match(STORE_MIGRATION_REQUIRED_NOTICE.join('\n'), /npm run store:migrate -- --apply/)
+  assert.match(STORE_RECOVERY_REQUIRED_NOTICE, /npm run library:recover/)
+  const { mapMenuResources } = await import('../i18n/mapMenuResources.ts')
+  assert.deepEqual([mapMenuResources.zh.storeMigrationRequired, mapMenuResources.zh.storeMigrationSteps], [...STORE_MIGRATION_REQUIRED_NOTICE])
+  assert.equal(mapMenuResources.zh.storeRecoveryRequired, STORE_RECOVERY_REQUIRED_NOTICE)
+  assert.match(mapMenuResources.en.storeMigrationSteps, /npm run store:migrate -- --apply/)
+  assert.match(mapMenuResources.en.storeRecoveryRequired, /npm run library:recover/)
 })
 
 test('只读提示（3C-4b）：新库损坏、只读时优先于迁移提示与空状态；文案与地图菜单的中文资源相同，英文也有', async () => {

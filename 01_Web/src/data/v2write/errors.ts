@@ -152,8 +152,6 @@ export const V2_WRITE_MESSAGES = {
   E_LIBRARY_BUSY: () => '这个私人库正在处理另一项操作，或保留了中断操作的锁。请先核对当前操作，不要重复写入。',
   /** 新（第 1 批 D3）：库操作记录绑定的是私人根的旧路径（私人根被移动、改名或换了盘符）。 */
   E_LIBRARY_ROOT_MOVED: () => '私人根的路径与库操作记录里的不一致（私人根被移动、改名或换了盘符），已停止，没有写入。确认这就是原来的私人库后，在 01_Web 下运行 npm run library:rebind -- --confirm 重新绑定。',
-  /** 新（3C-3）：新库模式下，除「修改想去」之外的写入端点（含媒体与媒体待办）一律拒绝，什么都没写。 */
-  E_STORE_MODE_LIMITED: () => '新库模式（实验性）目前还不能编辑媒体（上传、导入、删除和媒体任务），会在后续接入。本次没有保存。',
   /** 新（3C-3）：新库打不开，或确认没有提交的失败（`params.code` 是新库的错误码）。 */
   E_STORE_FAILED: (params: V2ErrorParams) => `新库无法完成这次操作（${typeof params.code === 'string' ? params.code : '未知错误'}），本次没有保存。`,
   /** 新（3C-3）：新库在页面打开之后有了别的修改（请求的 base revision 过期，或页面早于新库模式），确认没有提交。 */
@@ -166,6 +164,10 @@ export const V2_WRITE_MESSAGES = {
   E_STORE_BUSY: () => '新库正在被另一个进程写入，本次没有保存。请稍后再试。',
   /** 新（3C-4b）：新库没有通过打开检查（或运行中发现损坏），只能读取；写入一律拒绝，确认没有提交。 */
   E_STORE_READ_ONLY: () => '新库可能已损坏，当前只读，本次没有保存。请从备份恢复：npm run store:restore（在 01_Web 下运行），步骤见 docs/local-backup.md。',
+  /** 3C-4d：私人根有 V2 数据、还没有新库：只读，写入一律被拒绝。 */
+  E_STORE_MIGRATION_REQUIRED: () => '个人数据还没有迁移到新库，现在只能查看，这次修改没有保存。请先按 docs/local-backup.md 备份（npm run backup -- create），再在 01_Web 下运行 npm run store:migrate（预演），确认之后运行 npm run store:migrate -- --apply。开发服务器开着时，迁移完成后页面会自动切换。',
+  /** 3C-4d：没有新库，data/store/ 下有残留（或空的私人根没能建立新库）。 */
+  E_STORE_RECOVERY_REQUIRED: () => '私人目录的 data/store/ 里有残留的文件，还没有可用的新库，现在只能查看，这次修改没有保存。请在 01_Web 下运行 npm run library:recover 查看并处理。',
   E_MEDIA_JOB_INVALID: () => '媒体待办请求或记录格式无效。',
   E_MEDIA_JOB_PENDING: () => '这个私人库还有未结媒体待办。请先核对并完成原任务，再开始其他媒体写入。',
   E_MEDIA_JOB_CONFLICT: () => '媒体待办的版本、库身份或操作意图已经改变。请重新核对，未执行本次写入。',

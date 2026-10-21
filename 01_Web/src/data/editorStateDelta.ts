@@ -2,7 +2,7 @@
  * 编辑器保存的增量合并（第 1 批 D1）。
  *
  * 草稿来自页面加载时的快照（`travelAtlasEditorState`），保存时服务端的 `current` 可能已经被别处改过：
- * 另一个标签页、媒体导入的恢复（restoreImportedMedia 把新导入的 id 移出隐藏列表）。所以保存只应用「这次编辑做了什么」，
+ * 另一个标签页、媒体导入的恢复（把新导入的 id 移出隐藏列表）。所以保存只应用「这次编辑做了什么」，
  * 不把整份草稿盖到 `current` 上。`updateLocalEditorState` 本身不变，变的是传给它的 updater。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。

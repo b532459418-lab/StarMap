@@ -1,6 +1,6 @@
 /**
- * The local editor plugin's side of the experimental new-library mode (3C-3, 3C-4a; design 3B §4.4, §4.7 and v1.1
- * §16.2-4).
+ * The local editor plugin's side of the new library (3C-3, 3C-4a; design 3B §4.4, §4.7 and v1.1 §16.2-4), the only way
+ * personal data is written since 3C-4d.
  *
  * Why a separate file: the plugin imports sharp / undici / world-countries and resolves the private root at module
  * scope, so it cannot be loaded under node --test as it is. Like ./v2-editor-store.mjs for V2, this file holds what the

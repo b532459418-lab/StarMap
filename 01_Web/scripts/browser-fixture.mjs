@@ -1,23 +1,54 @@
+/**
+ * The synthetic private root of the browser tests (`npm run test:browser`; tests/browser/). Only neutral tracked
+ * unit-test data (src/data/v2write/fixtures/migrated-files.json); no owner data or environment files.
+ *
+ * 3C-4d: the new library is the only write path, so the fixture is a store by default. Its five V2 files are written
+ * and migrated (`store:migrate --apply`) before the dev server starts. `mode: 'v2'` leaves the V2 files unmigrated (a
+ * root that needs migration: the `--migration` group). Cases read the fixture through the store's projection
+ * (readFixtureFiles) and change or reset it with store commits (resetFixture, patchFixture): the dev server keeps the
+ * store open, so the file is never replaced. After a commit the V2 files are rewritten too (they stay the migration's
+ * input), and that change under `data/v2/` makes the dev server reload its private data module; resetFixture then
+ * waits until the server serves the new revision.
+ *
+ * Media are store-native (3C-4c): diffV2ToCommands refuses a change to media items, so a reset keeps the store's media
+ * items as they are (review §7-1) and resets everything else, the media orders, hidden lists and covers included.
+ * Cases that need media import real images through the media service (importInboxMedia), as `media:import` does.
+ */
+import { existsSync } from 'node:fs'
 import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import http from 'node:http'
 import path from 'node:path'
-import { privateDataSource } from './private-data-source.mjs'
+import { setTimeout as delay } from 'node:timers/promises'
+import { createHash } from 'node:crypto'
+import { withLibraryOperation } from './library-operation-lock.mjs'
+import { createMediaService, handleMediaStore } from './media-service.mjs'
+import { privateDataSource, storeFileOf } from './private-data-source.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
+import { openStore } from './store-host.mjs'
 import { applyMigration } from './store-migrate.mjs'
+import { projectToV2Files } from './store-projection.mjs'
 import { rawConnection } from './store-sqlite.mjs'
+import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
+import { diffV2ToCommands } from '../src/data/store/diffV2.ts'
+import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { integrityProblems } from '../src/data/v2write/transaction.ts'
 
 export const fixtureIds = Object.freeze({
   iceland: '019b76da-a801-7000-8000-000000000001',
   reykjavik: '019b76da-a804-7000-8000-000000000004',
+  faroe: '019b76da-a802-7000-8000-000000000002',
   torshavn: '019b76da-a807-7000-8000-000000000007',
   nuuk: '019b76da-a80c-7000-8000-00000000000c',
 })
 export const fixtureFileNames = Object.freeze({ places: 'places.local.json', travel: 'travel-map.local.json', wantToGo: 'want-to-go.local.json', editorState: 'editor-state.local.json', media: 'user-media.local.json' })
-/** Data modes of the fixture: 'v2' (the default) and 'store', the experimental new-library mode (3C-3). */
-export const FIXTURE_MODES = Object.freeze(['v2', 'store'])
+/** Data modes of the fixture: 'store' (the default since 3C-4d) and 'v2' (V2 files that still need migrating). */
+export const FIXTURE_MODES = Object.freeze(['store', 'v2'])
+/** The dev server's private data module, as the page loads it. */
+export const PRIVATE_MODULE_PATH = '/@id/__x00__virtual:starmap-private-data'
+const DEV_SERVER = { host: '127.0.0.1', port: 5173 }
 
-/** The fixture's five V2 files. Only neutral tracked unit-test data; no owner data or environment files. */
-async function fixtureFiles({ large }) {
+/** The fixture's five V2 files. */
+export async function fixtureFiles({ large = false } = {}) {
   const files = JSON.parse(await readFile(new URL('../src/data/v2write/fixtures/migrated-files.json', import.meta.url), 'utf8'))
   files.media.items = []
   files.editorState.coverMediaByCity = {}
@@ -37,42 +68,181 @@ async function fixtureFiles({ large }) {
 
 async function writeFixtureFiles(root, files) {
   await mkdir(path.join(root, 'data', 'v2'), { recursive: true })
-  for (const [key, name] of Object.entries(fixtureFileNames)) await writeFile(path.join(root, 'data', 'v2', name), JSON.stringify(files[key], null, 2) + '\n')
+  for (const [key, name] of Object.entries(fixtureFileNames)) {
+    if (files[key] !== undefined) await writeFile(path.join(root, 'data', 'v2', name), JSON.stringify(files[key], null, 2) + '\n')
+  }
 }
 
+const pathsOf = (root) => getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
+
 /**
- * Write the fixture into `root`. `mode: 'store'` also migrates it into the new library (`store:migrate --apply`), so the
- * dev server starts in the new-library mode; the default stays 'v2'.
+ * Write the fixture into `root`. By default it is migrated into the new library, so the dev server starts on a store;
+ * `mode: 'v2'` leaves it as V2 files that need migrating. When `root` already holds a store (a case resetting the
+ * shared fixture), the store is reset to the fixture's content by a commit (resetFixture) instead.
  */
-export async function createBrowserFixture(root, { large = false, mode = 'v2' } = {}) {
+export async function createBrowserFixture(root, { large = false, mode = 'store' } = {}) {
   if (!FIXTURE_MODES.includes(mode)) throw new Error(`Unknown browser fixture mode: ${mode}`)
   const files = await fixtureFiles({ large })
+  if (privateDataSource(pathsOf(root)) === 'store') {
+    await resetFixture(root, files)
+    return files
+  }
   await writeFixtureFiles(root, files)
   await mkdir(path.join(root, 'config'), { recursive: true })
-  if (mode === 'store') await applyMigration(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root }))
+  if (mode === 'store') await applyMigration(pathsOf(root))
   return files
 }
 
+/** The fixture as the App reads it: the store's projection (read-only connection), or the V2 files of a 'v2' root. */
+export async function readFixtureFiles(root) {
+  const paths = pathsOf(root)
+  if (privateDataSource(paths) === 'store') {
+    const handle = openStore(storeFileOf(paths), { readOnly: true, policy: OFFICIAL_POLICY })
+    try { return projectToV2Files(handle.readRowsUnchecked()).files } finally { await handle.close() }
+  }
+  const files = {}
+  for (const [key, name] of Object.entries(fixtureFileNames)) {
+    const file = path.join(root, 'data', 'v2', name)
+    if (existsSync(file)) files[key] = JSON.parse(await readFile(file, 'utf8'))
+  }
+  return files
+}
+
+/** The store's revision (read-only connection); undefined for a root without a store. */
+export async function storeRevisionOf(root) {
+  const paths = pathsOf(root)
+  if (privateDataSource(paths) !== 'store') return undefined
+  const handle = openStore(storeFileOf(paths), { readOnly: true, policy: OFFICIAL_POLICY })
+  try { return handle.meta().revision } finally { await handle.close() }
+}
+
+/** A SHA-256 of each of the fixture's five values as the App reads them, and the store's revision: equal means unchanged. */
+export async function fixtureHashes(root) {
+  const files = await readFixtureFiles(root)
+  const hashes = Object.fromEntries(Object.keys(fixtureFileNames).map((key) => [key, createHash('sha256').update(JSON.stringify(files[key] ?? null)).digest('hex')]))
+  return { ...hashes, revision: await storeRevisionOf(root) }
+}
+
+/** The dev server's module text, or undefined when no server answers on 127.0.0.1:5173. Never through a proxy. */
+function servedModule() {
+  return new Promise((resolve, reject) => {
+    const request = http.get({ ...DEV_SERVER, path: PRIVATE_MODULE_PATH, agent: false }, (response) => {
+      let text = ''
+      response.setEncoding('utf8')
+      response.on('data', (chunk) => { text += chunk })
+      response.on('end', () => resolve(response.statusCode === 200 ? text : ''))
+    })
+    request.on('error', (error) => (error?.code === 'ECONNREFUSED' ? resolve(undefined) : reject(error)))
+    request.setTimeout(15000, () => request.destroy(new Error('The dev server did not answer within 15 s')))
+  })
+}
+
+/** How often waitForServedRevision nudges the dev server again while it still serves an older revision. */
+const RETOUCH_MS = 2000
+
 /**
- * Switch a running case's shared fixture into the new-library mode (3C-3): the V2 files are set back to the fixture's own
- * content (earlier cases may have edited them) and migrated into `data/store/world.sqlite`; the dev server picks the mode
- * up per request and reloads the page. Returns `leave()`, which removes the store and puts back the V2 files exactly as
- * they were, so later cases see what they would have seen without the switch.
- *
- * The dev server keeps the store open. Linux (CI) removes an open file; Windows refuses, so on Windows `leave()` keeps the
- * store, says so and the rest of that run stays in the new-library mode (run the new-library cases on their own there).
- * Entering again while a store is left over (a new worker after a failed case on Windows) keeps that store.
+ * Wait until the dev server (when one runs) serves `revision` in its private data module. `touch` (optional) makes the
+ * dev server reload the module: it runs first, and again every RETOUCH_MS while another revision is served, so one file
+ * event the watcher dropped or merged with an earlier one cannot leave the wait hanging (CI on Linux, two quick resets).
  */
+export async function waitForServedRevision(revision, { timeoutMs = 30000, touch } = {}) {
+  const deadline = Date.now() + timeoutMs
+  let nextTouch = 0
+  for (;;) {
+    if (touch && Date.now() >= nextTouch) {
+      await touch()
+      nextTouch = Date.now() + RETOUCH_MS
+    }
+    const text = await servedModule()
+    if (text === undefined) return
+    const current = /privateStoreRevision = (\w+)/.exec(text)?.[1]
+    if (current === String(revision)) return
+    // What the server last answered, for the failure message: a revision, or a response without one (an error page).
+    const served = current !== undefined ? `revision ${current}` : text === '' ? 'an error response' : 'a module without a revision'
+    if (Date.now() > deadline) throw new Error(`The dev server did not serve revision ${revision} within ${timeoutMs} ms (it last served ${served})`)
+    await delay(200)
+  }
+}
+
+/** Rewrite one V2 file with its own bytes: a change under data/v2/ makes the dev server reload its private data module. */
+async function touchV2Files(root) {
+  const file = path.join(root, 'data', 'v2', fixtureFileNames.places)
+  if (existsSync(file)) await writeFile(file, await readFile(file))
+}
+
 /**
- * Switch a running case's shared fixture into the new-library mode with a damaged store (3C-4b): the fixture's own V2
- * files are migrated in a staging root under `operations/`, the store is damaged there (the b-tree page header of
- * op_log's root page overwritten, a page the projection never reads) and its last writer session left unclosed, and only
- * then is it moved into `data/store/world.sqlite` in one rename, so the dev server never sees a healthy store. The next
- * open runs quick_check, fails it with E_STORE_CORRUPT and keeps the store read-only. The root's own V2 files are not
- * touched. Returns `leave()`, which removes the store (on Windows the dev server keeps it open: see enterStoreMode).
+ * Make the store hold `files` (the V2 shape) with one commit through a separate connection, under the library lease,
+ * as the editor writes do. Media items are kept as the store has them (diffV2ToCommands refuses a change to them; review
+ * §7-1); everything else follows `files`. Then the V2 files are rewritten with `files` (the dev server reloads its
+ * module) and, when a dev server runs, this waits until it serves the new revision. Resolves the revision.
+ */
+export async function resetFixture(root, files) {
+  const paths = pathsOf(root)
+  if (privateDataSource(paths) !== 'store') {
+    await writeFixtureFiles(root, files)
+    return undefined
+  }
+  const revision = await withLibraryOperation(paths, async (leaseToken) => {
+    const handle = openStore(storeFileOf(paths), { privatePaths: paths, policy: OFFICIAL_POLICY, writerSession: false })
+    try {
+      const rows = handle.readRowsUnchecked()
+      const before = projectToV2Files(rows).files
+      // A JSON round trip, as when the values were V2 files: undefined fields are left out.
+      const after = { ...JSON.parse(JSON.stringify(files)), media: before.media }
+      const now = new Date().toISOString()
+      const diff = handle.read((reader) => diffV2ToCommands(before, after, { reader, identity: reader.idMapping, now, allocateId: () => uuidv7() }))
+      if (diff.commands.length === 0) return rows.revision
+      const result = await handle.commit({
+        requestId: uuidv7(), baseRevision: rows.revision, kind: 'browser-fixture.reset', actor: 'browser-fixture', commands: diff.commands,
+      }, { leaseToken })
+      return result.revision
+    } finally { await handle.close() }
+  })
+  await writeFixtureFiles(root, { ...files, media: undefined })
+  await waitForServedRevision(revision, { touch: () => touchV2Files(root) })
+  return revision
+}
+
+/** Change one of the fixture's values as the App reads it (`change` edits it in place) and commit it (resetFixture). */
+export async function patchFixture(root, key, change) {
+  const files = await readFixtureFiles(root)
+  change(files[key])
+  return resetFixture(root, files)
+}
+
+/**
+ * Import what the Inbox holds into the store through the media service (as `npm run media:import -- --apply
+ * --accept-folder-bindings` does), then let the dev server reload its module and wait for the new revision. The
+ * folders should carry place.json. Resolves the revision.
+ */
+export async function importInboxMedia(root) {
+  const paths = pathsOf(root)
+  const revision = await withLibraryOperation(paths, async (leaseToken) => {
+    const handle = openStore(storeFileOf(paths), { privatePaths: paths, policy: OFFICIAL_POLICY, writerSession: false })
+    try {
+      const service = createMediaService({ privatePaths: paths, store: handleMediaStore(handle) })
+      const result = await service.importInbox({ requestId: uuidv7(), kind: 'starmap.media.cli-import', actor: 'browser-fixture', leaseToken, acceptFolderBindings: true, blockOnWarnings: false })
+      // Files imported before are no change (nothing to write); a blocked plan is an error.
+      if (result.blocked) throw new Error(`The browser fixture's media import was blocked: ${JSON.stringify(result.plan?.blockers ?? result.plan)}`)
+      return result.revision
+    } finally { await handle.close() }
+  })
+  await waitForServedRevision(revision, { touch: () => touchV2Files(root) })
+  return revision
+}
+
+/**
+ * A damaged new library for one case (3C-4b): the fixture's own V2 files are migrated in a staging root under
+ * `operations/`, the store is damaged there (the b-tree page header of op_log's root page overwritten, a page the
+ * projection never reads) and its last writer session left unclosed, and only then is it moved into
+ * `data/store/world.sqlite` in one rename, so the dev server never sees a healthy store. The next open runs quick_check,
+ * fails it with E_STORE_CORRUPT and keeps the store read-only. The root's own V2 files are not touched.
  *
- * The dev server must not hold an earlier store open (it would keep serving that one): load the virtual module in V2
- * mode first, which closes it.
+ * Since 3C-4d the root already holds the fixture's store, which the dev server keeps open: setStoreAside moves it away
+ * first (Linux renames an open file; Windows refuses, so there the case skips itself), and the dev server must load its
+ * module once without a store (which closes the old connection) before this is called. Returns `leave()`, which removes
+ * the damaged store (the dev server must then load its module without a store again, closing it) for the caller to put
+ * the original store back (setStoreAside's `restore`).
  */
 export async function enterDamagedStoreMode(root) {
   const staging = path.join(root, 'operations', 'store-staging')
@@ -94,28 +264,25 @@ export async function enterDamagedStoreMode(root) {
   await rename(staged, path.join(root, 'data', 'store', 'world.sqlite'))
   await rm(staging, { recursive: true, force: true, maxRetries: 3 })
   return async function leave() {
-    try { await rm(path.join(root, 'data', 'store'), { recursive: true, force: true, maxRetries: 3 }) } catch (error) {
-      if (process.platform !== 'win32' || !['EBUSY', 'EPERM'].includes(error?.code)) throw error
-      console.warn(`The dev server keeps the damaged new library open (${error.code}); on Windows this run stays in the new-library mode.`)
-    }
+    await rm(storeFileOf(pathsOf(root)), { force: true, maxRetries: 3 })
   }
 }
 
-export async function enterStoreMode(root) {
-  const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
-  const removeStore = async () => {
-    try { await rm(path.join(root, 'data', 'store'), { recursive: true, force: true, maxRetries: 3 }) } catch (error) {
-      if (process.platform !== 'win32' || !['EBUSY', 'EPERM'].includes(error?.code)) throw error
-      console.warn(`The dev server keeps the new library open (${error.code}); on Windows this run stays in the new-library mode.`)
-    }
+/**
+ * Move the root's store aside (to `operations/store-aside/world.sqlite`) so that a case can see the root without it.
+ * Refused on Windows while the dev server holds the store open (EBUSY or EPERM): resolves undefined then. Otherwise
+ * resolves `restore()`, which moves it back (the dev server must have closed any store it opened meanwhile).
+ */
+export async function setStoreAside(root) {
+  const file = storeFileOf(pathsOf(root))
+  const aside = path.join(root, 'operations', 'store-aside', 'world.sqlite')
+  await mkdir(path.dirname(aside), { recursive: true })
+  try { await rename(file, aside) } catch (error) {
+    if (process.platform === 'win32' && ['EBUSY', 'EPERM'].includes(error?.code)) return undefined
+    throw error
   }
-  if (privateDataSource(paths) === 'store') return removeStore
-  const saved = {}
-  for (const name of Object.values(fixtureFileNames)) saved[name] = await readFile(path.join(root, 'data', 'v2', name))
-  await writeFixtureFiles(root, await fixtureFiles({ large: false }))
-  await applyMigration(paths)
-  return async function leave() {
-    await removeStore()
-    for (const [name, bytes] of Object.entries(saved)) await writeFile(path.join(root, 'data', 'v2', name), bytes)
+  return async function restore() {
+    await rename(aside, file)
+    await rm(path.dirname(aside), { recursive: true, force: true, maxRetries: 3 })
   }
 }

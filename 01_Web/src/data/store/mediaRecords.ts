@@ -9,7 +9,7 @@
  *
  * - createMediaRecordCommands: assets and entities, each record's row at the end of the original media order, and for an
  *   explicit addition (an upload, a task's file) its row at the end of its city's photo or drone order (what
- *   restoreImportedMedia does in V2). The covers (`isCover`) of the cities whose photos change follow markCovers.
+ *   the V2 import did, removed in 3C-4d). The covers (`isCover`) of the cities whose photos change follow markCovers.
  * - removeMediaRecordCommands: every view row and setting that refers to the asset (orders, hidden lists, covers), then
  *   the entity and the asset (both tombstoned for good), and the covers of its city again.
  * - rereadMediaRecordCommands (「重新读取说明」, design v2 §5): the entity's city and title and the asset's described

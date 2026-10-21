@@ -1,7 +1,7 @@
 /**
  * Media tasks in the new-library mode (3C-4c, design v2 §6): what a task previews and imports, from the media service's
- * plan (./media-service.mjs planImport) instead of the V2 importer's (./media-import-plan.mjs). ./media-job-service.mjs
- * calls these with `storeMedia` (the plugin's session); V2 mode never reaches them.
+ * plan (./media-service.mjs planImport). ./media-job-service.mjs calls these with `storeMedia` (the plugin's session);
+ * since 3C-4d media tasks run in the new library only (the V2 importer's task plan is removed).
  *
  * - A task's files are explicit additions (review §8-3): each becomes a new record, appended to its city order.
  * - The plan digest covers the store ([library id, revision, registry digest]: a commit that only changes the registry,
@@ -82,7 +82,7 @@ export function storeTaskPlanOf({ plan, meta, job, selectedFileIds }) {
     const id = provisional.get(item.fact.pathKey)
     outputs.push({ id, path: files.original, sha256: item.fact.sha256 }, ...files.derivatives.map((derivative) => ({ id, path: derivative.file, sha256: null })))
   }
-  // A task's files are appended to their city's order (restoreImportedMedia in V2).
+  // A task's files are appended to their city's order (as the V2 import did; that code is removed in 3C-4d).
   const explicit = taskPathsOf(job, selectedFileIds).map((value) => pathKeyOf(value))
   const restoredMediaIds = explicit.map((key) => provisional.get(key)).filter(Boolean)
   const tables = { photos: structuredClone(plan.files.editorState?.mediaOrderByCity ?? {}), drone: structuredClone(plan.files.editorState?.droneOrderByCity ?? {}) }

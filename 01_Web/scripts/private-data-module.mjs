@@ -11,6 +11,10 @@
  *      V2 模式与公开模式为 undefined。
  *    - `privateStoreReadOnly`（3C-4b）：新库模式下新库没有通过打开检查（可能已损坏）、只能读取时为 true，页面显示只读提示
  *      （src/data/privateDataNotice.ts）；其余情况恒为 false。
+ *    - `privateStoreMigrationRequired`（3C-4d）：私人根有 V2 数据、还没有新库（./private-data-source.mjs 的
+ *      'migration-required'，原因 v2）时为 true：数据只读显示，页面提示运行 `npm run store:migrate -- --apply`。
+ *    - `privateStoreRecoveryRequired`（3C-4d）：没有新库、`data/store/` 下有残留（'needs-recovery'），或空的私人根没能建立
+ *      新库时为 true：页面提示运行 `npm run library:recover`。
  * 2. 私人数据目录的文件变化要不要处理（让虚拟模块失效、按原有条件整页刷新）：`data/v2/` 之内的新建、修改、删除，
  *    以及四个旧数据文件的新建与删除（它们的有无决定「未迁移」），以及新库文件 `data/store/world.sqlite` 的新建与删除
  *    （它的有无决定数据模式；它的修改是新库自己的提交，不处理）。这样迁移工具写出 V2 文件或新库、导入器更新媒体目录、
@@ -29,14 +33,15 @@ import { storeFileOf } from './private-data-source.mjs'
 import { V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 
 /** 虚拟模块的导出名（顺序即源码里的顺序）。 */
-export const PRIVATE_DATA_MODULE_EXPORTS = Object.freeze(['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly'])
+export const PRIVATE_DATA_MODULE_EXPORTS = Object.freeze(['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
 
 /**
  * 虚拟模块的全部导出。`v2Values` 是五个 V2 文件的值（键同 V2_PRIVATE_FILE_KEYS；文件不存在为 undefined），
  * `legacyUnmigrated` 是 ./legacy-data.mjs 的判定，`storeRevision` 是新库模式的全库修订号（V2 模式不传），
- * `storeReadOnly` 是新库模式下「库损坏、只读」的判定（./store-session.mjs）。公开模式忽略它们。
+ * `storeReadOnly` 是新库模式下「库损坏、只读」的判定（./store-session.mjs），`storeMigrationRequired` 与
+ * `storeRecoveryRequired` 是不是新库时的状态（3C-4d）。公开模式忽略它们。
  */
-export function privateDataModuleExports({ profile, v2Values = {}, legacyUnmigrated = false, storeRevision, storeReadOnly = false }) {
+export function privateDataModuleExports({ profile, v2Values = {}, legacyUnmigrated = false, storeRevision, storeReadOnly = false, storeMigrationRequired = false, storeRecoveryRequired = false }) {
   const personal = profile === 'personal'
   return {
     privateV2Files: personal
@@ -45,6 +50,8 @@ export function privateDataModuleExports({ profile, v2Values = {}, legacyUnmigra
     privateLegacyUnmigrated: personal && legacyUnmigrated === true,
     privateStoreRevision: personal && Number.isSafeInteger(storeRevision) && storeRevision >= 0 ? storeRevision : undefined,
     privateStoreReadOnly: personal && storeReadOnly === true,
+    privateStoreMigrationRequired: personal && storeMigrationRequired === true,
+    privateStoreRecoveryRequired: personal && storeRecoveryRequired === true,
   }
 }
 

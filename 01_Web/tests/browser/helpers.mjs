@@ -1,8 +1,8 @@
 import { test as base, expect } from '@playwright/test'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { fixtureFileNames } from '../../scripts/browser-fixture.mjs'
+import { readFixtureFiles } from '../../scripts/browser-fixture.mjs'
 
 const reloadObservations = new WeakMap()
 const mediaPhases = new WeakMap()
@@ -314,7 +314,8 @@ export const test = base.extend({
 })
 export { expect }
 
-export const readFixture = async (key) => JSON.parse(await readFile(path.join(process.env.STARMAP_BROWSER_TEST_ROOT, 'data', 'v2', fixtureFileNames[key]), 'utf8'))
+/** One of the fixture's five values as the App reads it: the store's projection (3C-4d), or a V2 file of a 'v2' root. */
+export const readFixture = async (key) => (await readFixtureFiles(process.env.STARMAP_BROWSER_TEST_ROOT))[key]
 export async function openMap(page) {
   await page.goto('/')
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()

@@ -9,7 +9,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { sha256File } from './file-hash.mjs'
 import { COLOR, PLACE, inboxFile, makeImage, syntheticPlaces, writeJson, writeSyntheticInbox } from './media-inbox.fixture.mjs'
-import { describeMediaFile, descriptionDigestOf, scanCacheEntriesOf, scanInbox } from './media-scan.mjs'
+import { IMPORT_BLOCKING_PATTERN, describeMediaFile, descriptionDigestOf, scanCacheEntriesOf, scanInbox } from './media-scan.mjs'
 import { pathKeyOf } from './store-media-registry.mjs'
 import { tempPrivateRoot } from './store-mode.fixture.mjs'
 
@@ -20,6 +20,13 @@ async function counted(paths, cache = []) {
   return { ...result, calls }
 }
 const cacheOf = (facts) => scanCacheEntriesOf(facts).map(({ path: pathValue, size, mtimeMs, sha256 }) => ({ pathKey: pathKeyOf(pathValue), size, mtimeMs, sha256 }))
+
+test('the page import blocks on every stop condition of the former editor importer, folder bindings to confirm included (moved here in 3C-4d)', () => {
+  for (const warning of ['需要处理', '缺少日期或分辨率', '缺少日期、分辨率或有效坐标', '无法读取', '找不到国家', '找不到城市', '待确认的文件夹绑定']) {
+    assert.match(`Synthland/Harbor Town：${warning}：待确认`, IMPORT_BLOCKING_PATTERN, warning)
+  }
+  for (const advisory of ['发现 1 个内容完全相同的重复文件', '预检通过']) assert.doesNotMatch(advisory, IMPORT_BLOCKING_PATTERN, advisory)
+})
 
 test('one fact per file in walk order, files of the same content kept apart, with their place, kind and sidecar entry', async (t) => {
   const { paths } = await tempPrivateRoot(t, 'starmap-media-scan-')

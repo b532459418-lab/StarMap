@@ -8,10 +8,13 @@ const performance = process.env.STARMAP_BROWSER_PERFORMANCE === '1'
 // `--public-smoke` checks the built public bundle (dist/) through `vite preview`, never the dev server. Its cases
 // live in *.smoke.mjs, so the default run (*.spec.mjs against the dev server) never picks them up.
 const publicSmoke = process.env.STARMAP_BROWSER_PUBLIC_SMOKE === '1'
+// 3C-4d: `--migration` runs *.migration.mjs against a fixture left unmigrated (V2 files only). Every other dev-server
+// group runs *.spec.mjs against a fixture migrated into the new library.
+const migration = process.env.STARMAP_BROWSER_MIGRATION === '1'
 const serverEnv = { STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '' }
 export default defineConfig({
   testDir: './tests/browser',
-  testMatch: performance ? '**/*.perf.mjs' : publicSmoke ? '**/*.smoke.mjs' : '**/*.spec.mjs',
+  testMatch: performance ? '**/*.perf.mjs' : publicSmoke ? '**/*.smoke.mjs' : migration ? '**/*.migration.mjs' : '**/*.spec.mjs',
   // Dev-server groups warm Vite once before their first case (see the file). The public smoke uses vite preview, and
   // the performance baseline keeps measuring the unwarmed first load it has always recorded.
   ...(performance || publicSmoke ? {} : { globalSetup: './tests/browser/dev-server-warmup.mjs' }),

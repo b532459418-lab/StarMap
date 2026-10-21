@@ -27,6 +27,16 @@ import { INBOX_PREFIX, pathKeyOf } from './store-media-registry.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
+/**
+ * 3C-4d: why a private root that is not a store cannot import, by state (./private-data-source.mjs). media:check prints it
+ * after its read-only preflight; media:import refuses with it (exit code 2).
+ */
+export const NOT_A_STORE_IMPORT_MESSAGES = Object.freeze({
+  'migration-required': '个人数据还没有迁移到新库，没有导入任何媒体。先按 docs/local-backup.md 备份（npm run backup -- create），再运行 npm run store:migrate -- --apply；之后再导入。',
+  'needs-recovery': '私人目录的 data/store/ 里有残留的文件，还没有可用的新库，没有导入任何媒体。请先运行 npm run library:recover。',
+  empty: '这个私人根还没有新库，没有导入任何媒体。启动一次个人开发服务器（npm run dev:personal）会建立空的新库；也可以运行 npm run store:migrate -- --apply。',
+})
+
 const VALUE_OPTIONS = Object.freeze(['--reread', '--reimport'])
 const FLAGS = Object.freeze(['--apply', '--verify', '--accept-folder-bindings', '--accept-source-matches'])
 

@@ -14,8 +14,26 @@ test('without options every spec case runs and nothing is passed to Playwright',
   assert.deepEqual(parseBrowserTestArgs([]), { group: null, shard: null, playwrightArgs: [] })
 })
 
+test('3C-4d (review §7-2): CI runs the --migration group in browser-checks, whose result Public checks requires', async () => {
+  const { readFile } = await import('node:fs/promises')
+  // Windows checkouts may hold CRLF line endings.
+  const workflow = (await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')).split(String.fromCharCode(13)).join('')
+  const job = (name) => {
+    const start = workflow.indexOf(`\n  ${name}:\n`)
+    assert.ok(start >= 0, name)
+    const next = workflow.slice(start + 1).search(/\n {2}[a-z-]+:\n/)
+    return next < 0 ? workflow.slice(start) : workflow.slice(start, start + 1 + next)
+  }
+  assert.match(job('browser-checks'), /- suite: migration\n\s+flag: --migration\n\s+shard: 1\n\s+shards: 1\n/)
+  assert.match(job('browser-checks'), /npm run test:browser -- \$\{\{ matrix\.flag \}\}/)
+  const required = job('public-checks')
+  assert.match(required, /needs: \[[^\]]*\bbrowser-checks\b[^\]]*\]/)
+  assert.match(required, /BROWSER_RESULT: \$\{\{ needs\['browser-checks'\]\.result \}\}/)
+  assert.match(required, /test "\$BROWSER_RESULT" = success/)
+})
+
 test('each group keeps its existing Playwright selection', () => {
-  assert.deepEqual(BROWSER_TEST_GROUPS, ['--performance', '--time-filters', '--critical-flows', '--media-recovery', '--media-lifecycle', '--public-smoke'])
+  assert.deepEqual(BROWSER_TEST_GROUPS, ['--performance', '--time-filters', '--critical-flows', '--media-recovery', '--media-lifecycle', '--public-smoke', '--migration'])
   const expected = {
     '--performance': [],
     '--time-filters': ['time-filter'],
@@ -24,6 +42,8 @@ test('each group keeps its existing Playwright selection', () => {
     '--media-lifecycle': ['media-recovery.spec.mjs', '--grep', 'lost responses, storage loss'],
     // The config selects *.smoke.mjs for this group (see playwright-config.test.mjs).
     '--public-smoke': [],
+    // 3C-4d: the config selects *.migration.mjs for this group.
+    '--migration': [],
   }
   for (const group of BROWSER_TEST_GROUPS) {
     assert.deepEqual(parseBrowserTestArgs([group]), { group, shard: null, playwrightArgs: expected[group] }, group)

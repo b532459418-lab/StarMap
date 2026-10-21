@@ -69,7 +69,7 @@ test('InfoCard city save: hidden cities hidden or restored elsewhere are not ove
 
 test('InfoCard photo save: photos restored by a media import after page load stay visible', () => {
   const update = photoDraftUpdater({ cityId: 'city-1', draftPhotoIds: ['m2', 'm1'], baselineHiddenPhotoIds: ['m-restored', 'm-old'], draftHiddenPhotoIds: ['m-restored', 'm-old', 'm-new'], draftCoverPhotoId: 'm2' })
-  // restoreImportedMedia removed m-restored from the hidden list after this page loaded.
+  // A media import removed m-restored from the hidden list after this page loaded.
   const current = state({ hiddenMediaIds: ['m-old', 'm-other-tab'], mediaOrderByCity: { 'city-1': ['m1', 'm2', 'm-restored'], 'city-2': ['m9'] }, coverMediaByCity: { 'city-2': 'm9' } })
   const next = update(current)
   assert.deepEqual(next.hiddenMediaIds, ['m-old', 'm-other-tab', 'm-new'])

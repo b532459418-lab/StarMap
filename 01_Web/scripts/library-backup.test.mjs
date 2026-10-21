@@ -30,7 +30,7 @@ async function fixture(t, { media = false } = {}) {
     await rm(resolved, { recursive: true, force: true })
   })
   const root = path.join(directory, 'private')
-  await createBrowserFixture(root)
+  await createBrowserFixture(root, { mode: 'v2' })
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
   if (media) {
     const city = path.join(paths.inboxRoot, 'Iceland', 'Reykjavik')
@@ -158,7 +158,7 @@ test('invalid schema versions and dangling place IDs refuse backup before publis
   original.items[0].placeId = '019b76da-ffff-7000-8000-000000000999'
   await writeJson(paths.v2FilePaths.wantToGo, original)
   await assert.rejects(createBackup(root, bundle), /E_BACKUP_INTEGRITY/)
-  await createBrowserFixture(root)
+  await createBrowserFixture(root, { mode: 'v2' })
   const places = await readJson(paths.v2FilePaths.places)
   places.schema_version = 999
   await writeJson(paths.v2FilePaths.places, places)

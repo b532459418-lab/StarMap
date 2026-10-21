@@ -63,8 +63,8 @@ test('getPrivatePaths：V2 文件在 data/v2/ 下，文件名与 v2Schema.ts 的
 // 虚拟模块
 // ---------------------------------------------------------------------------
 
-test('虚拟模块有四个导出：privateV2Files、privateLegacyUnmigrated、privateStoreRevision（3C-3）与 privateStoreReadOnly（3C-4b）；旧格式的四个导出与 privateDataMode 已删除', () => {
-  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly'])
+test('虚拟模块有六个导出：privateV2Files、privateLegacyUnmigrated、privateStoreRevision（3C-3）、privateStoreReadOnly（3C-4b）、privateStoreMigrationRequired 与 privateStoreRecoveryRequired（3C-4d）；旧格式的四个导出与 privateDataMode 已删除', () => {
+  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
   for (const profile of ['public', 'personal']) {
     const exports = privateDataModuleExports({ profile, v2Values: V2_VALUES, legacyUnmigrated: true })
     assert.deepEqual(Object.keys(exports), PRIVATE_DATA_MODULE_EXPORTS, profile)
@@ -72,12 +72,12 @@ test('虚拟模块有四个导出：privateV2Files、privateLegacyUnmigrated、p
   }
 })
 
-test('虚拟模块 · 公开模式：privateV2Files 与 privateStoreRevision 为 undefined，privateLegacyUnmigrated 与 privateStoreReadOnly 恒为 false；忽略传入的值', async () => {
-  const expected = { privateV2Files: undefined, privateLegacyUnmigrated: false, privateStoreRevision: undefined, privateStoreReadOnly: false }
+test('虚拟模块 · 公开模式：privateV2Files 与 privateStoreRevision 为 undefined，其余四个恒为 false；忽略传入的值', async () => {
+  const expected = { privateV2Files: undefined, privateLegacyUnmigrated: false, privateStoreRevision: undefined, privateStoreReadOnly: false, privateStoreMigrationRequired: false, privateStoreRecoveryRequired: false }
   assert.deepEqual(privateDataModuleExports({ profile: 'public' }), expected)
-  assert.deepEqual(privateDataModuleExports({ profile: 'public', v2Values: V2_VALUES, legacyUnmigrated: true, storeRevision: 7, storeReadOnly: true }), expected)
+  assert.deepEqual(privateDataModuleExports({ profile: 'public', v2Values: V2_VALUES, legacyUnmigrated: true, storeRevision: 7, storeReadOnly: true, storeMigrationRequired: true, storeRecoveryRequired: true }), expected)
   const source = renderPrivateDataModule(expected)
-  assert.equal(source, 'export const privateV2Files = undefined;\nexport const privateLegacyUnmigrated = false;\nexport const privateStoreRevision = undefined;\nexport const privateStoreReadOnly = false;')
+  assert.equal(source, 'export const privateV2Files = undefined;\nexport const privateLegacyUnmigrated = false;\nexport const privateStoreRevision = undefined;\nexport const privateStoreReadOnly = false;\nexport const privateStoreMigrationRequired = false;\nexport const privateStoreRecoveryRequired = false;')
   assert.deepEqual({ ...(await evaluateModule(source)) }, expected)
 })
 
@@ -122,6 +122,22 @@ test('虚拟模块 · 新库模式（3C-4b）：privateStoreReadOnly 只在库�
   assert.equal(privateDataModuleExports({ profile: 'personal', storeRevision: 3 }).privateStoreReadOnly, false)
   for (const value of [false, 'yes', 1, undefined]) {
     assert.equal(privateDataModuleExports({ profile: 'personal', storeReadOnly: value }).privateStoreReadOnly, false, String(value))
+  }
+})
+
+test('虚拟模块 · 不是新库（3C-4d）：privateStoreMigrationRequired 与 privateStoreRecoveryRequired 如实传出，只接受 true；数据照常导出', async () => {
+  const migration = await evaluateModule(renderPrivateDataModule(privateDataModuleExports({ profile: 'personal', v2Values: V2_VALUES, storeMigrationRequired: true })))
+  assert.equal(migration.privateStoreMigrationRequired, true)
+  assert.equal(migration.privateStoreRecoveryRequired, false)
+  assert.equal(migration.privateStoreRevision, undefined)
+  assert.deepEqual(Object.keys(migration.privateV2Files), ['places', 'wantToGo', 'media'])
+  const recovery = await evaluateModule(renderPrivateDataModule(privateDataModuleExports({ profile: 'personal', storeRecoveryRequired: true })))
+  assert.equal(recovery.privateStoreRecoveryRequired, true)
+  assert.equal(recovery.privateStoreMigrationRequired, false)
+  for (const value of [false, 'yes', 1, undefined]) {
+    const exports = privateDataModuleExports({ profile: 'personal', storeMigrationRequired: value, storeRecoveryRequired: value })
+    assert.equal(exports.privateStoreMigrationRequired, false, String(value))
+    assert.equal(exports.privateStoreRecoveryRequired, false, String(value))
   }
 })
 
@@ -296,28 +312,15 @@ test('插件只走 V2：不再 import 数据模式与旧格式的写入模块，
   }
 })
 
-test('写入：先过本机会话检查，再判「未迁移」（未迁移时按 legacyWriteRefusal 回 409，不进写入层），然后按数据模式交给新库（3C-3）或 V2 写入', () => {
+test('写入（3C-4d）：先过本机会话检查，再判「未迁移」（legacyWriteRefusal 回 409），再判「不是新库」（notWritableResponse 回 409），都在读请求体之前；之后只交给新库', () => {
   const source = pluginSource()
   const writeSection = sourceBetween(source, "if (!authorizeWrite(request)) return sendJson(response, 403", '} catch (error) {', false)
-  const refusal = writeSection.indexOf('const refusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))\n          if (refusal) return sendJson(response, refusal.status, refusal.body)')
-  const mutation = writeSection.indexOf('editorMutationDepth += 1')
-  const dispatch = writeSection.indexOf('return handleV2Write(request,url,leaseToken,input)')
-  assert.ok(refusal > 0, '有未迁移的拒绝')
-  assert.ok(mutation > refusal, '拒绝在进入写入之前（不算编辑器写入，也不抑制刷新）')
-  assert.ok(dispatch > mutation, '之后走 V2 写入')
-  const store = writeSection.indexOf('if (storeMode()) {')
-  assert.ok(store > refusal && store < mutation, '新库模式在「未迁移」之后、V2 写入之前分流')
-  assert.equal((source.match(/legacyWriteRefusal\(/g) ?? []).length, 1)
-  assert.match(source, /const route = v2EditorRoute\(request\.method, url\.pathname\)\n {2}if \(!route\) return \{ status: 404, body: v2ErrorBody\('E_UNKNOWN_ENDPOINT'\) \}/)
-})
-
-test('V2 写入分派：先看媒体路由（上传的请求体不按 JSON 读），再看非媒体路由；插件的辅助函数原样传给媒体端点复用', () => {
-  const source = pluginSource()
-  const handleV2Write = sourceBetween(source, 'const handleV2Write = async (request, url, leaseToken, input) => {', 'export function travelAtlasLocalEditor', false)
-  assert.match(handleV2Write, /^const handleV2Write = async \(request, url, leaseToken, input\) => \{\n {2}const mediaRoute = v2MediaRoute\(request\.method, url\.pathname\)\n {2}if \(mediaRoute\) return handleV2Media\(mediaRoute, request, url, leaseToken, input\)\n {2}const route = v2EditorRoute/)
-  const handleV2Media = sourceBetween(source, 'const handleV2Media = async (routeName, request, url, leaseToken, input) => {', 'const handleV2Write = async', false)
-  assert.doesNotMatch(handleV2Media, /readJsonBody/)
-  for (const name of ['safeSegment', 'reserveDestination', 'writeUpload', 'updateDroneSidecar', 'runImporter', 'normalizeInboxRelativePath', 'removeSidecarEntries', 'isPathInside']) {
-    assert.match(handleV2Media, new RegExp(`\\n {4}${name},\\n`), name)
-  }
+  const legacy = writeSection.indexOf('const legacyRefusal = legacyWriteRefusal(legacyDataStateOf(privatePaths))\n          if (legacyRefusal) return sendJson(response, legacyRefusal.status, legacyRefusal.body)')
+  const notStore = writeSection.indexOf('if (!storeMode()) {\n            const refused = notWritableResponse(dataState())\n            return sendJson(response, refused.status, refused.body)\n          }')
+  const session = writeSection.indexOf('const session = await storeSession()')
+  assert.ok(legacy > 0, '有未迁移的拒绝')
+  assert.ok(notStore > legacy, '不是新库的拒绝在其后')
+  assert.ok(session > notStore, '之后只有新库的写入')
+  assert.doesNotMatch(writeSection.slice(0, session), /readJsonBody|editorMutationDepth|withLibraryOperation/, '拒绝之前不读请求体、不取租约、不算编辑器写入')
+  assert.doesNotMatch(source, /handleV2Write|handleV2Media|runV2Write|runImporter|handleV2Import|handleV2MediaDelete|handleV2Upload|createLocalEditorImporter/)
 })

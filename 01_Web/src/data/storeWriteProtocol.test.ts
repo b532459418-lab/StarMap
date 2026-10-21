@@ -48,7 +48,7 @@ test('still unknown after the retry: the whole page must reload, and E_OUTCOME_U
 })
 
 test('confirmed failures are not retried and do not block the page', async () => {
-  for (const code of ['E_STALE', 'E_OPERATION_CONFLICT', 'E_LIBRARY_BUSY', 'E_STORE_BUSY', 'E_WTG_NOT_FOUND', 'E_STORE_MODE_LIMITED', 'E_EDITOR_RELOAD_REQUIRED']) {
+  for (const code of ['E_STALE', 'E_OPERATION_CONFLICT', 'E_LIBRARY_BUSY', 'E_STORE_BUSY', 'E_WTG_NOT_FOUND', 'E_STORE_MIGRATION_REQUIRED', 'E_STORE_RECOVERY_REQUIRED', 'E_EDITOR_RELOAD_REQUIRED']) {
     let attempts = 0
     await assert.rejects(
       sendStoreWrite(async () => { attempts++; throw error(code) }, { baseRevision: 1, onUnconfirmed: () => assert.fail(code) }),

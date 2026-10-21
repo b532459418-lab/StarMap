@@ -32,6 +32,13 @@ import { jsonKey } from '../src/worldgraph/store/primitives.ts'
 const toPosix = (value) => value.split(path.sep).join('/')
 const isPortable = (value) => { try { portablePath(value); return true } catch { return false } }
 
+/**
+ * The reminders of a scan that block an import from the page (unresolved information and problems to handle; batch 2A:
+ * folder bindings to confirm too). Moved here from the V2 editor importer (removed in 3C-4d); the media service
+ * (./media-service.mjs) applies it to the scan's reminders.
+ */
+export const IMPORT_BLOCKING_PATTERN = /需要处理|缺少日期或分辨率|缺少日期、分辨率或有效坐标|无法读取|找不到国家|找不到城市|待确认的文件夹绑定/
+
 /** A file or folder under the Inbox as a portable path `MediaInbox/…`. */
 export const inboxPathOf = (inboxRoot, target) => `${INBOX_PREFIX}${toPosix(path.relative(inboxRoot, target))}`
 

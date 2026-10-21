@@ -17,15 +17,12 @@ import {
   deletableMediaOf,
   droneUploadMetadataOf,
   generatedDirectoriesOf,
-  idsMissingFromSourceIndex,
   INBOX_FOLDER_CANDIDATE_COUNT,
   inboxFolderCandidates,
   inboxFolderDecision,
-  mediaSourcesOf,
   pickInboxFolder,
   placeFolderSuffix,
   removeMediaFromEditorState,
-  restoreImportedMedia,
   uploadKindOf,
   uploadTargetOf,
   type InboxFolderState,
@@ -232,61 +229,6 @@ test('上传 · 选文件夹的顺序（第 2D 批）：手放的文件夹（没
 })
 
 // ---------------------------------------------------------------------------
-// 导入之后
-// ---------------------------------------------------------------------------
-
-test('导入之后：按源文件索引找到新导入的条目，从隐藏表里恢复，追加到所在城市排序表末尾（照片与无人机分表，键为地点 id）', () => {
-  const files = contentFiles()
-  const reykjavik = placeNamed(files, 'Reykjavik', 'city').id
-  const torshavn = placeNamed(files, 'Torshavn', 'city').id
-  const sourceIndex = {
-    schemaVersion: 1,
-    sourcesById: {
-      [ID.p1]: ['Iceland/Reykjavik/photos/a.jpg'],
-      [ID.p2]: ['Iceland/Reykjavik/photos/b.jpg', 'Iceland/Reykjavik/photos/b-copy.jpg'],
-      [ID.d1]: ['Faroe Islands/Torshavn/drone/bay.jpg'],
-      [ID.v1]: ['Faroe Islands/Torshavn/drone/flight.mp4'],
-    },
-  }
-  const outcome = restoreImportedMedia(files, {
-    sourcePaths: ['iceland/reykjavik/photos/B-COPY.jpg', 'Faroe Islands\\Torshavn\\drone\\bay.jpg'],
-    sourceIndex,
-  }, testContext())
-  assert.deepEqual(outcome.result, { restoredMediaIds: [ID.p2, ID.d1] })
-  assert.deepEqual(writeOrder(outcome.writes), ['editorState'])
-  const after = applyWrites(files, outcome.writes)
-  assert.deepEqual(after.editorState.hiddenMediaIds, [])
-  assert.deepEqual(after.editorState.hiddenDroneMediaIds, [ID.v1])
-  assert.deepEqual(after.editorState.mediaOrderByCity, { [reykjavik]: [ID.p1, ID.p2] }, '已在表里的挪到末尾')
-  assert.deepEqual(after.editorState.droneOrderByCity, { [torshavn]: [ID.v1, ID.d1] })
-  assert.deepEqual(after.editorState.coverMediaByCity, files.editorState.coverMediaByCity, '封面不动')
-  assert.equal(after.editorState.updatedAt, WRITE_NOW.toISOString())
-  assertIntact(after)
-
-  // 城市还没有排序表时新建。
-  const fresh = contentFiles()
-  fresh.editorState.mediaOrderByCity = {}
-  const created = applyWrites(fresh, restoreImportedMedia(fresh, { sourcePaths: ['Iceland/Reykjavik/photos/a.jpg'], sourceIndex }, testContext()).writes)
-  assert.deepEqual(created.editorState.mediaOrderByCity, { [reykjavik]: [ID.p1] })
-})
-
-test('导入之后：没有上传文件时什么都不写；索引里找不到这些文件、或索引与目录不一致 → 报错（文案同旧），不写', () => {
-  const files = contentFiles()
-  assert.deepEqual(restoreImportedMedia(files, { sourcePaths: [], sourceIndex: undefined }, testContext()), { writes: [], result: { restoredMediaIds: [] } })
-  assertV2Error(
-    () => restoreImportedMedia(files, { sourcePaths: ['Iceland/Reykjavik/photos/new.jpg'], sourceIndex: { sourcesById: { [ID.p1]: ['Iceland/Reykjavik/photos/a.jpg'] } } }, testContext()),
-    'E_MEDIA_IMPORT_NO_RECORD',
-    '文件已经接收，但导入结果没有对应媒体记录。请保留当前页面并查看导入详情。',
-  )
-  assertV2Error(() => restoreImportedMedia(files, { sourcePaths: ['a.jpg'], sourceIndex: 'broken' }, testContext()), 'E_MEDIA_IMPORT_NO_RECORD')
-  assertV2Error(
-    () => restoreImportedMedia(files, { sourcePaths: ['x.jpg'], sourceIndex: { sourcesById: { [ID.x]: ['x.jpg'] } } }, testContext()),
-    'E_MEDIA_INDEX_MISMATCH',
-    '导入索引与媒体目录不一致，已停止刷新页面。',
-  )
-})
-
-// ---------------------------------------------------------------------------
 // 删除
 // ---------------------------------------------------------------------------
 
@@ -308,15 +250,6 @@ test('删除 · 能删哪些：该城市里已隐藏的照片或全景 / 航拍�
   assertV2Error(() => deletableMediaOf(files, { cityId: torshavn, ids: [ID.p2] }, WRITE_NOW), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden)
   assertV2Error(() => deletableMediaOf(files, { cityId: torshavn, ids: [ID.v1] }, WRITE_NOW), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden, (error) => assert.equal(error.params?.id, ID.v1))
   assertV2Error(() => deletableMediaOf(files, { cityId: reykjavik, ids: [ID.p2, 'ghost'] }, WRITE_NOW), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden)
-})
-
-test('删除 · 源文件：索引里缺哪些 id；每个 id 的全部源文件；缺了或为空 → 报错（文案同旧）', () => {
-  const index = { sourcesById: { [ID.p2]: ['Iceland/Reykjavik/photos/b.jpg', 'Iceland/Reykjavik/photos/b-copy.jpg'], [ID.d1]: [] } }
-  assert.deepEqual(idsMissingFromSourceIndex(index, [ID.p2, ID.d1, ID.p1]), [ID.p1])
-  assert.deepEqual(idsMissingFromSourceIndex(undefined, [ID.p2]), [ID.p2])
-  assert.deepEqual(mediaSourcesOf(index, [ID.p2]), ['Iceland/Reykjavik/photos/b.jpg', 'Iceland/Reykjavik/photos/b-copy.jpg'])
-  assertV2Error(() => mediaSourcesOf(index, [ID.p1]), 'E_MEDIA_SOURCE_MISSING', `找不到媒体 ${ID.p1} 对应的投递箱原图，已停止删除。`)
-  assertV2Error(() => mediaSourcesOf(index, [ID.d1]), 'E_MEDIA_SOURCE_MISSING')
 })
 
 test('删除 · 生成目录：由 src 定位到内容寻址的 media/user/<哈希>/（去重）；不是这种形状 → 一个都不删', () => {
