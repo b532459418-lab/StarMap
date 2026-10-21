@@ -60,8 +60,8 @@ test('getPrivatePaths：V2 文件在 data/v2/ 下，文件名与 v2Schema.ts 的
 // 虚拟模块
 // ---------------------------------------------------------------------------
 
-test('虚拟模块有六个导出：privateReadModel（3C-5B，取代 privateV2Files）、privateLegacyUnmigrated、privateStoreRevision（3C-3）、privateStoreReadOnly（3C-4b）、privateStoreMigrationRequired 与 privateStoreRecoveryRequired（3C-4d）；旧格式的四个导出与 privateDataMode 已删除', () => {
-  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateReadModel', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
+test('虚拟模块有七个导出：privateReadModel 与 privateReadModelUrl（3C-5B，取代 privateV2Files）、privateLegacyUnmigrated、privateStoreRevision（3C-3）、privateStoreReadOnly（3C-4b）、privateStoreMigrationRequired 与 privateStoreRecoveryRequired（3C-4d）；旧格式的四个导出与 privateDataMode 已删除', () => {
+  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateReadModel', 'privateReadModelUrl', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
   for (const profile of ['public', 'personal']) {
     const exports = privateDataModuleExports({ profile, readModel: READ_MODEL, legacyUnmigrated: true })
     assert.deepEqual(Object.keys(exports), PRIVATE_DATA_MODULE_EXPORTS, profile)
@@ -69,12 +69,12 @@ test('虚拟模块有六个导出：privateReadModel（3C-5B，取代 privateV2F
   }
 })
 
-test('虚拟模块 · 公开模式：privateReadModel 与 privateStoreRevision 为 undefined，其余四个恒为 false；忽略传入的值', async () => {
-  const expected = { privateReadModel: undefined, privateLegacyUnmigrated: false, privateStoreRevision: undefined, privateStoreReadOnly: false, privateStoreMigrationRequired: false, privateStoreRecoveryRequired: false }
+test('虚拟模块 · 公开模式：privateReadModel、privateReadModelUrl 与 privateStoreRevision 为 undefined，其余四个恒为 false；忽略传入的值', async () => {
+  const expected = { privateReadModel: undefined, privateReadModelUrl: undefined, privateLegacyUnmigrated: false, privateStoreRevision: undefined, privateStoreReadOnly: false, privateStoreMigrationRequired: false, privateStoreRecoveryRequired: false }
   assert.deepEqual(privateDataModuleExports({ profile: 'public' }), expected)
-  assert.deepEqual(privateDataModuleExports({ profile: 'public', readModel: READ_MODEL, legacyUnmigrated: true, storeRevision: 7, storeReadOnly: true, storeMigrationRequired: true, storeRecoveryRequired: true }), expected)
+  assert.deepEqual(privateDataModuleExports({ profile: 'public', readModel: READ_MODEL, readModelUrl: 'data/read-model.0123456789abcdef.json', legacyUnmigrated: true, storeRevision: 7, storeReadOnly: true, storeMigrationRequired: true, storeRecoveryRequired: true }), expected)
   const source = renderPrivateDataModule(expected)
-  assert.equal(source, 'export const privateReadModel = undefined;\nexport const privateLegacyUnmigrated = false;\nexport const privateStoreRevision = undefined;\nexport const privateStoreReadOnly = false;\nexport const privateStoreMigrationRequired = false;\nexport const privateStoreRecoveryRequired = false;')
+  assert.equal(source, 'export const privateReadModel = undefined;\nexport const privateReadModelUrl = undefined;\nexport const privateLegacyUnmigrated = false;\nexport const privateStoreRevision = undefined;\nexport const privateStoreReadOnly = false;\nexport const privateStoreMigrationRequired = false;\nexport const privateStoreRecoveryRequired = false;')
   assert.deepEqual({ ...(await evaluateModule(source)) }, expected)
 })
 
@@ -96,6 +96,16 @@ test('虚拟模块 · 个人模式：privateReadModel 是插件给出的读模�
   // V2 模式没有修订号。
   assert.equal(exports.privateStoreRevision, undefined)
   assert.equal(module.privateStoreRevision, undefined)
+})
+
+test('虚拟模块 · 个人构建（3C-5B）：不内联读模型，privateReadModelUrl 是数据文件的路径；只接受非空字符串', async () => {
+  const exports = privateDataModuleExports({ profile: 'personal', readModelUrl: 'data/read-model.0123456789abcdef.json', storeRevision: 4 })
+  const module = await evaluateModule(renderPrivateDataModule(exports))
+  assert.equal(module.privateReadModel, undefined)
+  assert.equal(module.privateReadModelUrl, 'data/read-model.0123456789abcdef.json')
+  assert.equal(module.privateStoreRevision, 4)
+  assert.equal(privateDataModuleExports({ profile: 'personal', readModel: READ_MODEL }).privateReadModelUrl, undefined, 'the dev server inlines')
+  for (const invalid of ['', 42, null]) assert.equal(privateDataModuleExports({ profile: 'personal', readModelUrl: invalid }).privateReadModelUrl, undefined, String(invalid))
 })
 
 test('虚拟模块 · 新库模式（3C-3）：privateStoreRevision 是全库修订号；只接受非负的安全整数', async () => {

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { copyFile, mkdir, stat } from 'node:fs/promises'
+import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { EnvHttpProxyAgent, fetch as proxyAwareFetch } from 'undici'
@@ -13,12 +13,12 @@ import {
   renderPrivateDataModule,
   shouldHandlePrivateDataChange,
 } from './private-data-module.mjs'
-import { filterForPersonalBuild } from './personal-build-filter.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { privateDataState } from './private-data-source.mjs'
 import { createV2WriteContext, readV2EditorState, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
 import { v2MediaRoute } from './v2-media-store.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { filterReadModelForPersonalBuild } from '../src/data/store/personalBuildReadModel.ts'
 import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 import { allowedOrigins, authorizeRead, crossSiteRequestGuard, isLoopbackRequest } from './local-editor-request-guard.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
@@ -457,14 +457,24 @@ export function travelAtlasLocalEditor(options = {}) {
   let outputRoot
   // Personal build only (batch 7, S3): the media files the filtered data still refers to, set when the virtual module loads.
   let buildMediaFiles = []
-  // `vite build` of the personal profile inlines only what its pages can show (./personal-build-filter.mjs); the dev
-  // server keeps everything, because the editor restores and deletes hidden entries. 3C-5B: the filtered V2 files are
-  // migrated in memory into the read model the build inlines (until the filter works on the read model itself).
-  const personalBuildReadModel = async (v2Values) => {
-    const { files, mediaFiles } = filterForPersonalBuild(v2Values)
+  // Personal build only (3C-5B spec §2.3): the data file closeBundle writes, { fileName, text }, set when the module loads.
+  let buildData
+  // The read model the module gives the App. The dev server inlines all of it, because the editor restores and deletes
+  // hidden entries. `vite build` of the personal profile does not inline it (3C-5B spec §2.3): it keeps only what its
+  // pages can show (src/data/store/personalBuildReadModel.ts, batch 7's S3 filter on the read model), closeBundle writes
+  // that as the content-hashed data file data/read-model.<sha256 prefix>.json next to the bundle, and the module gives
+  // the App its path; the App loads it at start-up and shows an error page when it cannot.
+  const readModelFor = (model) => {
+    if (command !== 'build') return { readModel: model }
+    const started = performance.now()
+    const { model: filtered, mediaFiles } = filterReadModelForPersonalBuild(model)
+    const filterMs = Math.round(performance.now() - started)
+    const text = JSON.stringify(filtered)
+    const fileName = `data/read-model.${createHash('sha256').update(text).digest('hex').slice(0, 16)}.json`
+    buildData = { fileName, text }
     buildMediaFiles = mediaFiles
-    const { migrationReadModel } = await import('./store-migrate.mjs')
-    return migrationReadModel(files).model
+    console.log(`[StarMap] 个人构建：读模型过滤 ${filterMs} ms；数据文件 ${fileName}（${(Buffer.byteLength(text) / 1048576).toFixed(1)} MB），媒体文件 ${mediaFiles.length} 个。`)
+    return { readModelUrl: fileName }
   }
   // 3C-5B: a root that is not a library yet (migration required, needs recovery, or an empty root that got none) gives
   // the App the read model of its data/v2/ files migrated in memory (./store-migrate.mjs migrationReadModel, nothing is
@@ -480,7 +490,7 @@ export function travelAtlasLocalEditor(options = {}) {
     if (unmigrated?.key === key) return unmigrated
     const { model, timings } = migrationReadModel(values)
     console.log(`[StarMap store] 还不是新库：data/v2/ 的文件在内存里迁移成读模型（migrateV2 ${timings.migrateMs} ms，规划 ${timings.planMs} ms，读模型 ${timings.readModelMs} ms）。`)
-    unmigrated = { key, values, model }
+    unmigrated = { key, model }
     return unmigrated
   }
   // 新库模式（3C-3）：这个插件实例的新库会话，第一次用到时才加载 ./store-session.mjs。整个进程只保留一个连接。
@@ -527,17 +537,16 @@ export function travelAtlasLocalEditor(options = {}) {
         // 3C-4b：库损坏但还能读（打开检查失败）时照常给出数据，另报 storeReadOnly，页面显示只读提示。
         const view = await (await storeSession()).moduleExports()
         const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
-        const readModel = command === 'build' ? await personalBuildReadModel(view.files) : view.model
-        return renderPrivateDataModule(privateDataModuleExports({ profile, readModel, legacyUnmigrated, storeRevision: view.revision, storeReadOnly: view.readOnly }))
+        return renderPrivateDataModule(privateDataModuleExports({ profile, ...readModelFor(view.model), legacyUnmigrated, storeRevision: view.revision, storeReadOnly: view.readOnly }))
       }
       // 不是新库（3C-4d）：早先的连接（新库文件被移走）正常关闭。data/v2/ 的五个 V2 文件在内存里迁移成读模型（3C-5B；缺的文件
       // 当作空文件），外加状态：待迁移、需要恢复、没迁移的旧格式数据（只看文件在不在，不读内容）。页面据此显示提示，写入一律被拒绝。
       await releaseStore()
-      const { values, model } = await unmigratedReadModel()
+      const { model } = await unmigratedReadModel()
       const state = dataState()
       const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
       return renderPrivateDataModule(privateDataModuleExports({
-        profile, readModel: command === 'build' ? await personalBuildReadModel(values) : model, legacyUnmigrated,
+        profile, ...readModelFor(model), legacyUnmigrated,
         storeMigrationRequired: state.state === 'migration-required' && state.reason === 'v2',
         storeRecoveryRequired: state.state === 'needs-recovery' || (state.state === 'empty' && initializationFailed),
       }))
@@ -721,7 +730,14 @@ export function travelAtlasLocalEditor(options = {}) {
       // The copy is for `build:personal` only. Vite's dev server also calls closeBundle when it shuts down (after
       // buildEnd), so without the command check every exit from `dev:personal` would quietly copy the private media
       // into the build output. The target is the resolved build.outDir (dist by default), not a hard-coded path.
-      if (command !== 'build' || profile !== 'personal' || !(await exists(userMediaRoot))) return
+      if (command !== 'build' || profile !== 'personal') return
+      // 3C-5B: the read model's data file, written next to the bundle (the module names it relative to the base URL).
+      if (buildData !== undefined) {
+        const target = path.join(outputRoot, ...buildData.fileName.split('/'))
+        await mkdir(path.dirname(target), { recursive: true })
+        await writeFile(target, buildData.text)
+      }
+      if (!(await exists(userMediaRoot))) return
       // Only the files the kept media items refer to (originals and their derivatives), never the whole folder: hidden
       // media stay out of the build (batch 7, S3). Links are refused as when the dev server serves media.
       const outputMediaRoot = path.join(outputRoot, 'media', 'user')

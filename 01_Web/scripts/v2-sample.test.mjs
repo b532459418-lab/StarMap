@@ -73,7 +73,7 @@ test('App 接线（3C-5B）：rawInputs.ts 不再 import V2 样例，公开模�
   assert.doesNotMatch(source, /from '\.\/v2-sample\//)
   assert.match(source, /^import sampleReadModelJson from '\.\/sample\/sample\.read-model\.json'$/m)
   assert.doesNotMatch(source, /want-to-go\.sample\.json|travel-map\.sample\.json/)
-  assert.match(source, /readReadModel\(useSampleData \? sampleReadModelJson : privateReadModel\)/)
+  assert.match(source, /if \(useSampleData\) return \{ model: readReadModel\(sampleReadModelJson\) \}/)
 })
 
 // ---------------------------------------------------------------------------

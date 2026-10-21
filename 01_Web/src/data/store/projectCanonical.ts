@@ -59,7 +59,8 @@ export interface Projection {
 }
 
 type Json = Record<string, JsonValue>
-type Role = 'footprint' | 'planned' | 'wish' | 'countryVisit'
+/** The Canonical record an official entry becomes. */
+export type OfficialEntryRole = 'footprint' | 'planned' | 'wish' | 'countryVisit'
 /** Without a v2:import header there is no generation time; serializeV2 still needs one. */
 const NO_GENERATION_TIME = '1970-01-01T00:00:00.000Z'
 const plain = (v: unknown): v is Json => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -74,8 +75,8 @@ const OFFICIAL_ROWS: readonly (readonly [FormalTable, string])[] = [
   ...OFFICIAL_DEFINITIONS.layers.map(r => ['layers', r.id] as const),
 ]
 
-/** Which Canonical record an official entry becomes, from its layer and source. */
-function roleOf(entry: LayerEntry): Role | undefined {
+/** Which Canonical record an official entry becomes, from its layer and source (shared with ./personalBuildReadModel.ts). */
+export function officialEntryRole(entry: LayerEntry): OfficialEntryRole | undefined {
   const sourceId = entry.source.sourceId
   if (entry.layerId === OFFICIAL.travel) {
     if (sourceId === V2_SOURCES.travel || sourceId === OFFICIAL.user) return 'footprint'
@@ -173,9 +174,9 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
   }
 
   // --- Entries.
-  const roles = new Map<string, Role>()
+  const roles = new Map<string, OfficialEntryRole>()
   for (const entry of state.entries) {
-    const role = roleOf(entry)
+    const role = officialEntryRole(entry)
     if (role !== undefined && isPlace(entry.entityId)) roles.set(entry.id, role)
   }
   const journeyOf = new Map<string, string>()

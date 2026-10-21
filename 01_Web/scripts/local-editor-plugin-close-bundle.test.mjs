@@ -1,6 +1,7 @@
 /**
- * The personal build (`vite build --mode personal`): the private-data virtual module carries only what the pages can
- * show, and closeBundle copies only the media files those kept media items refer to (batch 7, review S3). Vite's dev
+ * The personal build (`vite build --mode personal`): the read model it writes as its data file next to the bundle
+ * (3C-5B: no longer inlined in the private-data virtual module) carries only what the pages can show, and closeBundle
+ * copies only the media files those kept media items refer to (batch 7, review S3). Vite's dev
  * server also calls closeBundle when it shuts down, so the copy must run only for a build, and only in the personal
  * profile; the dev server's module keeps everything, because the editor restores and deletes hidden entries.
  * Everything lives in one owned OS temp directory (a temporary private root and temporary outDirs): the worktree's dist
@@ -79,10 +80,18 @@ test('personal build: the module carries only visible content and only its media
       assert.deepEqual(await readdir(outDir), [])
     })
 
-    await t.test('Personal build: the module has no hidden entry, and only the kept media files are copied, byte for byte', async () => {
+    await t.test('Personal build: neither the module nor its data file has a hidden entry, and only the kept media files are copied, byte for byte', async () => {
       const { outDir, code } = await runFor({ profile: 'personal', command: 'build' })
-      for (const id of [...REMOVED.records, ...REMOVED.wantToGo, ...REMOVED.media, ...REMOVED.places]) assert.ok(!code.includes(id), id)
-      for (const coordinate of REMOVED.coordinates) assert.ok(!code.includes(coordinate), coordinate)
+      const dataFiles = await listFiles(path.join(outDir, 'data'))
+      assert.equal(dataFiles.length, 1)
+      assert.match(dataFiles[0], /^read-model\.[0-9a-f]{16}\.json$/)
+      assert.ok(code.includes(`"data/${dataFiles[0]}"`), 'the module names the data file')
+      const data = await readFile(path.join(outDir, 'data', dataFiles[0]), 'utf8')
+      assert.ok(data.includes('r-a1'), 'the data file holds the visible records')
+      for (const text of [code, data]) {
+        for (const id of [...REMOVED.records, ...REMOVED.wantToGo, ...REMOVED.media, ...REMOVED.places]) assert.ok(!text.includes(id), id)
+        for (const coordinate of REMOVED.coordinates) assert.ok(!text.includes(coordinate), coordinate)
+      }
       const copied = await listFiles(path.join(outDir, 'media', 'user'))
       assert.deepEqual(copied, [
         '1111111111111111/original.jpg', '1111111111111111/preview.webp', '1111111111111111/thumb.webp',

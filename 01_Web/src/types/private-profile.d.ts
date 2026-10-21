@@ -6,6 +6,11 @@ declare module 'virtual:starmap-private-data' {
    */
   export const privateReadModel: unknown
   /**
+   * 3C-5B：只在个人构建里有值：过滤后的读模型数据文件相对于 BASE_URL 的路径（data/read-model.<sha256 前缀>.json），这时
+   * privateReadModel 为 undefined，App 启动时加载这个文件。开发服务器与公开模式为 undefined。
+   */
+  export const privateReadModelUrl: string | undefined
+  /**
    * 个人模式下私人目录有没迁移的旧数据（判定见 scripts/legacy-data.mjs：旧数据文件任一存在，且 data/v2/ 没有任何 V2 文件）。
    * 公开模式恒为 false。
    */

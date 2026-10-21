@@ -1,11 +1,14 @@
 /**
  * 本地编辑器插件里与私人数据有关的两件事，抽成纯函数以便单测（RFC-LOC-1 PR3b-1 规格 §2.2、§2.3；PR5a 规格 §4.1；3C-3）：
  *
- * 1. 虚拟模块 `virtual:starmap-private-data` 的内容（六个导出）：
+ * 1. 虚拟模块 `virtual:starmap-private-data` 的内容（七个导出）：
  *    - `privateReadModel`（3C-5B）：个人模式下是读模型 `starmap.read-model`（src/worldgraph/readModel/types.ts）；公开模式为
  *      undefined。新库模式（./private-data-source.mjs 的 'store'）下是新库的读模型（./store-session.mjs）；不是新库时，是
  *      `data/v2/` 的五个 V2 文件在内存里迁移一次得到的读模型（./store-migrate.mjs 的 migrationReadModel，什么都不写），
  *      没有文件时是空文件迁移出的读模型。App 只有一条读取路径：读模型 → 官方视图 → 派生；从不读旧格式的文件。
+ *      个人构建（`vite build --mode personal`）不内联读模型：它为 undefined，另见下一条。
+ *    - `privateReadModelUrl`（3C-5B）：只在个人构建里有值，是过滤后的读模型数据文件相对于站点根（BASE_URL）的路径
+ *      （`data/read-model.<sha256 前缀>.json`），App 启动时加载它；开发服务器与公开模式为 undefined。
  *    - `privateLegacyUnmigrated`：个人模式下私人目录有没迁移的旧数据（判定见 ./legacy-data.mjs）；公开模式恒为 false。
  *      为 true 时 App 显示迁移提示（src/data/privateDataNotice.ts）。新库模式下恒为 false。
  *    - `privateStoreRevision`（3C-3）：新库模式下是全库修订号（写入时作为 `x-starmap-base-revision`）；
@@ -33,18 +36,20 @@ import { mayBeInside } from './path-containment.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 
 /** 虚拟模块的导出名（顺序即源码里的顺序）。 */
-export const PRIVATE_DATA_MODULE_EXPORTS = Object.freeze(['privateReadModel', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
+export const PRIVATE_DATA_MODULE_EXPORTS = Object.freeze(['privateReadModel', 'privateReadModelUrl', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
 
 /**
- * 虚拟模块的全部导出。`readModel` 是读模型（插件在个人模式下总会给出；App 读之前过 readReadModel，缺了就显示错误），
+ * 虚拟模块的全部导出。`readModel` 是读模型（插件在个人模式下总会给出它或 `readModelUrl`；App 读之前过 readReadModel，缺了就
+ * 显示错误），`readModelUrl` 是个人构建的数据文件路径，
  * `legacyUnmigrated` 是 ./legacy-data.mjs 的判定，`storeRevision` 是新库模式的全库修订号（不是新库时不传），
  * `storeReadOnly` 是新库模式下「库损坏、只读」的判定（./store-session.mjs），`storeMigrationRequired` 与
  * `storeRecoveryRequired` 是不是新库时的状态（3C-4d）。公开模式忽略它们。
  */
-export function privateDataModuleExports({ profile, readModel, legacyUnmigrated = false, storeRevision, storeReadOnly = false, storeMigrationRequired = false, storeRecoveryRequired = false }) {
+export function privateDataModuleExports({ profile, readModel, readModelUrl, legacyUnmigrated = false, storeRevision, storeReadOnly = false, storeMigrationRequired = false, storeRecoveryRequired = false }) {
   const personal = profile === 'personal'
   return {
     privateReadModel: personal ? readModel : undefined,
+    privateReadModelUrl: personal && typeof readModelUrl === 'string' && readModelUrl !== '' ? readModelUrl : undefined,
     privateLegacyUnmigrated: personal && legacyUnmigrated === true,
     privateStoreRevision: personal && Number.isSafeInteger(storeRevision) && storeRevision >= 0 ? storeRevision : undefined,
     privateStoreReadOnly: personal && storeReadOnly === true,
