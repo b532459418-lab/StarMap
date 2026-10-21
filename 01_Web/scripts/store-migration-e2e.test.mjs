@@ -26,6 +26,7 @@ import { openStore } from './store-host.mjs'
 import { runStoreMediaCli } from './store-media-cli.mjs'
 import { runMigrateCli } from './store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './store-session.mjs'
+import { servedCanonical } from './private-read-model.fixture.mjs'
 import { authorizedHeaders, editorPrefix, quietly, requestTo, tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 
@@ -73,7 +74,7 @@ test('a V2 library with media: migration required, store:migrate --apply, writes
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreMigrationRequired, true)
       assert.equal(module.privateStoreRevision, undefined)
-      assert.deepEqual(module.privateV2Files, v2Files)
+      assert.deepEqual(servedCanonical(module), canonicalForInputs({ v2Files }), 'the V2 files, migrated in memory (3C-5B)')
       for (const [method, route] of [['POST', 'countries'], ['PUT', 'state'], ['POST', 'import'], ['POST', 'media/delete'], ['POST', 'upload'], ['GET', 'media/jobs'], ['POST', `media/jobs/${JOB_ID}/import`]]) {
         const result = await requestTo(server.handler, { url: editorPrefix + route, method, content: Buffer.from('{') })
         assert.equal(result.status, 409, `${method} ${route}`)
@@ -115,7 +116,7 @@ test('a V2 library with media: migration required, store:migrate --apply, writes
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, 1)
       assert.equal(module.privateStoreMigrationRequired, false)
-      assert.deepEqual(canonicalForInputs({ v2Files: module.privateV2Files }), canonicalForInputs({ v2Files }))
+      assert.deepEqual(servedCanonical(module), canonicalForInputs({ v2Files }))
     })
 
     await t.test('4. writes work: an editor write, a photo uploaded and imported', async () => {
@@ -139,7 +140,7 @@ test('a V2 library with media: migration required, store:migrate --apply, writes
       assert.equal(imported.body.revision, 3)
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, 3)
-      assert.equal(module.privateV2Files.media.items.length, v2Files.media.items.length + 1)
+      assert.equal(servedCanonical(module).media.items.length, v2Files.media.items.length + 1)
     })
 
     await t.test('5. the first scan of the migrated Inbox adds nothing', async () => {

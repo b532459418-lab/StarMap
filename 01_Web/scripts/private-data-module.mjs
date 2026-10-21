@@ -1,10 +1,11 @@
 /**
  * 本地编辑器插件里与私人数据有关的两件事，抽成纯函数以便单测（RFC-LOC-1 PR3b-1 规格 §2.2、§2.3；PR5a 规格 §4.1；3C-3）：
  *
- * 1. 虚拟模块 `virtual:starmap-private-data` 的内容（四个导出）：
- *    - `privateV2Files`：个人模式下是五个 V2 文件（缺的为 undefined）；公开模式为 undefined。V2 模式下是 `data/v2/`
- *      的文件；新库模式（3C-3，./private-data-source.mjs）下是新库经投影与 serializeV2 得到的五个文件
- *      （./store-session.mjs）。App 只读这五个文件，从不读旧格式的文件。
+ * 1. 虚拟模块 `virtual:starmap-private-data` 的内容（六个导出）：
+ *    - `privateReadModel`（3C-5B）：个人模式下是读模型 `starmap.read-model`（src/worldgraph/readModel/types.ts）；公开模式为
+ *      undefined。新库模式（./private-data-source.mjs 的 'store'）下是新库的读模型（./store-session.mjs）；不是新库时，是
+ *      `data/v2/` 的五个 V2 文件在内存里迁移一次得到的读模型（./store-migrate.mjs 的 migrationReadModel，什么都不写），
+ *      没有文件时是空文件迁移出的读模型。App 只有一条读取路径：读模型 → 官方视图 → 派生；从不读旧格式的文件。
  *    - `privateLegacyUnmigrated`：个人模式下私人目录有没迁移的旧数据（判定见 ./legacy-data.mjs）；公开模式恒为 false。
  *      为 true 时 App 显示迁移提示（src/data/privateDataNotice.ts）。新库模式下恒为 false。
  *    - `privateStoreRevision`（3C-3）：新库模式下是全库修订号（写入时作为 `x-starmap-base-revision`）；
@@ -30,23 +31,20 @@ import path from 'node:path'
 import { legacyDataPaths } from './legacy-data.mjs'
 import { mayBeInside } from './path-containment.mjs'
 import { storeFileOf } from './private-data-source.mjs'
-import { V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 
 /** 虚拟模块的导出名（顺序即源码里的顺序）。 */
-export const PRIVATE_DATA_MODULE_EXPORTS = Object.freeze(['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
+export const PRIVATE_DATA_MODULE_EXPORTS = Object.freeze(['privateReadModel', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
 
 /**
- * 虚拟模块的全部导出。`v2Values` 是五个 V2 文件的值（键同 V2_PRIVATE_FILE_KEYS；文件不存在为 undefined），
- * `legacyUnmigrated` 是 ./legacy-data.mjs 的判定，`storeRevision` 是新库模式的全库修订号（V2 模式不传），
+ * 虚拟模块的全部导出。`readModel` 是读模型（插件在个人模式下总会给出；App 读之前过 readReadModel，缺了就显示错误），
+ * `legacyUnmigrated` 是 ./legacy-data.mjs 的判定，`storeRevision` 是新库模式的全库修订号（不是新库时不传），
  * `storeReadOnly` 是新库模式下「库损坏、只读」的判定（./store-session.mjs），`storeMigrationRequired` 与
  * `storeRecoveryRequired` 是不是新库时的状态（3C-4d）。公开模式忽略它们。
  */
-export function privateDataModuleExports({ profile, v2Values = {}, legacyUnmigrated = false, storeRevision, storeReadOnly = false, storeMigrationRequired = false, storeRecoveryRequired = false }) {
+export function privateDataModuleExports({ profile, readModel, legacyUnmigrated = false, storeRevision, storeReadOnly = false, storeMigrationRequired = false, storeRecoveryRequired = false }) {
   const personal = profile === 'personal'
   return {
-    privateV2Files: personal
-      ? Object.fromEntries(V2_PRIVATE_FILE_KEYS.map((key) => [key, v2Values[key]]))
-      : undefined,
+    privateReadModel: personal ? readModel : undefined,
     privateLegacyUnmigrated: personal && legacyUnmigrated === true,
     privateStoreRevision: personal && Number.isSafeInteger(storeRevision) && storeRevision >= 0 ? storeRevision : undefined,
     privateStoreReadOnly: personal && storeReadOnly === true,

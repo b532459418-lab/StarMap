@@ -13,6 +13,7 @@ import { openStore } from './store-host.mjs'
 import { directoryOf, pathKeyOf } from './store-media-registry.mjs'
 import { applyMigration } from './store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './store-session.mjs'
+import { servedV2Files } from './private-read-model.fixture.mjs'
 import { authorizedHeaders, captureMiddleware, editorPrefix, moduleOf, requestTo, tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
@@ -48,7 +49,7 @@ export async function servedLibrary(t, prefix) {
     ...context, inbox, plugin, handler, nextId,
     async reading() {
       const module = await moduleOf(plugin)
-      return { revision: module.privateStoreRevision, files: module.privateV2Files }
+      return { revision: module.privateStoreRevision, files: servedV2Files(module) }
     },
     write: (route, input, base, id = nextId(), method = 'POST') => requestTo(handler, {
       url: editorPrefix + route, method, content: Buffer.from(JSON.stringify(input)),

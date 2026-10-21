@@ -15,6 +15,7 @@ import { withLibraryOperation } from './library-operation-lock.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { openStore } from './store-host.mjs'
 import { applyMigration } from './store-migrate.mjs'
+import { servedCanonical } from './private-read-model.fixture.mjs'
 import { rawConnection } from './store-sqlite.mjs'
 import {
   authorizedHeaders, captureMiddleware, editorPrefix, moduleOf, requestTo, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files,
@@ -44,11 +45,12 @@ test('Local editor plugin in the new-library mode', async (t) => {
   try {
     const { travelAtlasLocalEditor } = await import('./local-editor-plugin.mjs')
 
-    await t.test('V2 mode: no store revision, the V2 files as before', async () => {
+    await t.test('migration required: no store revision, the V2 files migrated in memory into the read model (3C-5B)', async () => {
       const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: root })
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, undefined)
-      assert.deepEqual(module.privateV2Files.wantToGo, files.wantToGo)
+      assert.equal(module.privateStoreMigrationRequired, true)
+      assert.deepEqual(servedCanonical(module), readV2(files))
     })
 
     await applyMigration(paths, { now: NOW })
@@ -57,11 +59,13 @@ test('Local editor plugin in the new-library mode', async (t) => {
     const captured = captureMiddleware(plugin, privateModule)
     const handler = captured.handlers[1]
 
-    await t.test('the virtual module carries the projected V2 files and the store revision', async () => {
+    await t.test('the virtual module carries the store\'s read model and revision (3C-5B)', async () => {
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, 1)
       assert.equal(module.privateLegacyUnmigrated, false)
-      assert.deepEqual(canonicalForInputs({ v2Files: module.privateV2Files }), readV2(files))
+      const reader = openStore(storeFileOf(paths), { privatePaths: paths, readOnly: true, policy: OFFICIAL_POLICY })
+      try { assert.deepEqual(module.privateReadModel, reader.readModel()) } finally { await reader.close() }
+      assert.deepEqual(servedCanonical(module), readV2(files))
     })
 
     await t.test('GET /editor/state reads the store model', async () => {
@@ -86,7 +90,7 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.equal(privateModule.transformResult, null, 'the module is invalidated')
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, 2)
-      assert.equal(module.privateV2Files.wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic plugin note')
+      assert.equal(servedCanonical(module).wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic plugin note')
       const replay = await update(protocol, { id: wish.id, note: 'Synthetic plugin note' })
       assert.equal(replay.body.duplicate, true)
       assert.equal((await moduleOf(plugin)).privateStoreRevision, 2)
@@ -102,9 +106,10 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.equal(country.body.revision, 3)
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, 3)
-      const added = module.privateV2Files.editorState.addedCountries.find((entry) => entry.placeId === country.body.countryId)
+      const canonical = servedCanonical(module)
+      const added = canonical.editorState.addedCountries.find((entry) => entry.placeId === country.body.countryId)
       assert.deepEqual(added, { placeId: country.body.countryId, region: 'Asia', visitedDate: '2026-04-01' })
-      assert.equal(module.privateV2Files.places.places.find((place) => place.id === country.body.countryId).externalIds.iso3166Alpha2, 'JP')
+      assert.equal(canonical.places.find((place) => place.id === country.body.countryId).externalIds.iso3166Alpha2, 'JP')
     })
 
     await t.test('media tasks reach the store-mode task service (3C-4c): the list reads, an unknown task is 404, nothing written', async () => {
@@ -143,7 +148,7 @@ test('Local editor plugin in the new-library mode', async (t) => {
           const built = await moduleOf(build)
           assert.equal(built.privateStoreRevision, served.privateStoreRevision)
           assert.equal(built.privateLegacyUnmigrated, false)
-          assert.deepEqual(canonicalForInputs({ v2Files: built.privateV2Files }), canonicalForInputs({ v2Files: served.privateV2Files }))
+          assert.deepEqual(servedCanonical(built), servedCanonical(served))
         })
       } finally { holder.exec('ROLLBACK'); holder.close() }
       await build.buildEnd()
@@ -222,7 +227,7 @@ test('a personal build in the new-library mode filters the store projection like
       for (const id of [...REMOVED.records, ...REMOVED.wantToGo, ...REMOVED.media, ...REMOVED.places]) assert.ok(!code.includes(id), id)
       const module = await import(`data:text/javascript,${encodeURIComponent(code)}`)
       assert.equal(module.privateStoreRevision, 1)
-      assert.deepEqual(canonicalForInputs({ v2Files: module.privateV2Files }), canonicalForInputs({ v2Files: filterForPersonalBuild(files).files }))
+      assert.deepEqual(servedCanonical(module), canonicalForInputs({ v2Files: filterForPersonalBuild(files).files }))
     } finally {
       await plugin.buildEnd()
     }

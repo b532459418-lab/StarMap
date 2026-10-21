@@ -16,7 +16,7 @@ import { serializeV2 } from '../canonical/v2Serializer.ts'
 import { buildBaseline, stableStringify } from '../derive/baseline.ts'
 import { deriveTimeQueryContext } from '../derive/timeQueryContext.ts'
 import { OFFICIAL_POLICY } from '../store/officialDefinitions.ts'
-import { projectStoreToCanonical } from '../store/projectCanonical.ts'
+import { officialViewOf, projectStoreToCanonical } from '../store/projectCanonical.ts'
 import { publicReadModelOf } from '../store/publicReadModel.ts'
 import { SAMPLE_READ_MODEL_FILE_NAME, buildSampleReadModel, sampleReadModelText } from './sampleBuild.ts'
 
@@ -35,6 +35,15 @@ test('the committed sample read model is what the source generates, byte for byt
 test('through the official view the sample derives the locked baseline 9b68b8ad…', () => {
   const text = stableStringify(buildBaseline(deriveAppDataFromCanonical(projection.canonical, { now: NOW }), { now: NOW }))
   assert.equal(createHash('sha256').update(`${text}\n`).digest('hex'), V2_SAMPLE_BASELINE_SHA256)
+})
+
+test('the public build reads it as ../rawInputs.ts does (3C-5B): the imported JSON → readReadModel → officialViewOf(…, sample) derives the locked baseline', () => {
+  const canonical = officialViewOf(readReadModel(JSON.parse(committed)), 'sample')
+  assert.deepEqual(canonical, projection.canonical)
+  const text = stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW }))
+  assert.equal(createHash('sha256').update(`${text}
+`).digest('hex'), V2_SAMPLE_BASELINE_SHA256)
+  assert.deepEqual(deriveTimeQueryContext(canonical), deriveTimeQueryContext(canonicalForInputs({ v2Files: publicBridgeFixture(), source: 'sample' })))
 })
 
 test('the official view equals the V2 sample read through readV2, with the same time query context; nothing is skipped', () => {

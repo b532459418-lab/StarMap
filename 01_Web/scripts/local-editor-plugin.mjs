@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { copyFile, mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -27,9 +28,10 @@ import { assertMediaJobsClear } from './media-job-store.mjs'
 import { mediaJobRoute, handleMediaJobRead, handleMediaJobPreview, handleMediaJobWrite } from './media-job-service.mjs'
 
 // 3C-4d：新库是私人数据唯一的写入方式。私人根的状态由 ./private-data-source.mjs 的 privateDataState 每次读写现判：
-// - store：App 读新库的投影（./store-session.mjs，按需加载，公开模式不加载 node:sqlite）；8 个编辑端点（3C-4a，V2 写入规则
-//   作为规则引擎）、3 个媒体端点与媒体任务（3C-4c，./store-media-endpoints.mjs、./media-service.mjs）都写新库。
-// - migration-required：有 V2 数据（或没迁移的旧格式数据）、还没有新库。只读显示 data/v2/ 的文件，页面提示运行迁移；
+// - store：App 读新库的读模型（3C-5B；./store-session.mjs，按需加载，公开模式不加载 node:sqlite）；8 个编辑端点（3C-4a，V2
+//   写入规则作为规则引擎）、3 个媒体端点与媒体任务（3C-4c，./store-media-endpoints.mjs、./media-service.mjs）都写新库。
+// - migration-required：有 V2 数据（或没迁移的旧格式数据）、还没有新库。只读显示 data/v2/ 的文件（3C-5B 起在内存里迁移成读模型
+//   再给 App），页面提示运行迁移；
 //   全部写入端点、媒体端点与媒体任务（含任务列表）返回 409 E_STORE_MIGRATION_REQUIRED（旧格式：E_LEGACY_UNMIGRATED）。
 // - needs-recovery：data/store/ 下有残留、没有新库。同样只读，409 E_STORE_RECOVERY_REQUIRED，提示 npm run library:recover。
 // - empty：开发服务器（个人、可写）启动时在库租约下建一个空的新库（./store-init.mjs），之后按 store 处理；构建不建库。
@@ -456,12 +458,30 @@ export function travelAtlasLocalEditor(options = {}) {
   // Personal build only (batch 7, S3): the media files the filtered data still refers to, set when the virtual module loads.
   let buildMediaFiles = []
   // `vite build` of the personal profile inlines only what its pages can show (./personal-build-filter.mjs); the dev
-  // server keeps everything, because the editor restores and deletes hidden entries.
-  const forThisCommand = (v2Values) => {
-    if (command !== 'build') return v2Values
+  // server keeps everything, because the editor restores and deletes hidden entries. 3C-5B: the filtered V2 files are
+  // migrated in memory into the read model the build inlines (until the filter works on the read model itself).
+  const personalBuildReadModel = async (v2Values) => {
     const { files, mediaFiles } = filterForPersonalBuild(v2Values)
     buildMediaFiles = mediaFiles
-    return files
+    const { migrationReadModel } = await import('./store-migrate.mjs')
+    return migrationReadModel(files).model
+  }
+  // 3C-5B: a root that is not a library yet (migration required, needs recovery, or an empty root that got none) gives
+  // the App the read model of its data/v2/ files migrated in memory (./store-migrate.mjs migrationReadModel, nothing is
+  // written), so the App has one read path. Cached by the files' bytes: a reload does not migrate again; a change of the
+  // files (the watcher invalidates the module) does.
+  let unmigrated
+  const unmigratedReadModel = async () => {
+    const { migrationReadModel, readV2Inputs } = await import('./store-migrate.mjs')
+    const { values, bytes } = await readV2Inputs(privatePaths)
+    const digest = createHash('sha256')
+    for (const key of V2_PRIVATE_FILE_KEYS) digest.update(bytes[key] === undefined ? `${key}:missing;` : `${key}:${bytes[key].length}:`).update(bytes[key] ?? '')
+    const key = digest.digest('hex')
+    if (unmigrated?.key === key) return unmigrated
+    const { model, timings } = migrationReadModel(values)
+    console.log(`[StarMap store] 还不是新库：data/v2/ 的文件在内存里迁移成读模型（migrateV2 ${timings.migrateMs} ms，规划 ${timings.planMs} ms，读模型 ${timings.readModelMs} ms）。`)
+    unmigrated = { key, values, model }
+    return unmigrated
   }
   // 新库模式（3C-3）：这个插件实例的新库会话，第一次用到时才加载 ./store-session.mjs。整个进程只保留一个连接。
   // 3C-4b：构建（build:personal）以只读方式打开新库：不写正常关闭标记、不取写锁，开发服务器开着新库时也能构建。
@@ -503,21 +523,21 @@ export function travelAtlasLocalEditor(options = {}) {
       if (profile !== 'personal') return renderPrivateDataModule(privateDataModuleExports({ profile }))
       await initialized()
       if (storeMode()) {
-        // 3C-3 新库模式：新库的投影经 serializeV2 得到的五个文件与全库修订号。打不开就抛错（App 显示），绝不回落到 V2 文件。
+        // 3C-3 新库模式；3C-5B 起给出新库的读模型与全库修订号。打不开就抛错（App 显示），绝不回落到 V2 文件。
         // 3C-4b：库损坏但还能读（打开检查失败）时照常给出数据，另报 storeReadOnly，页面显示只读提示。
-        const { files, revision, readOnly } = await (await storeSession()).moduleExports()
+        const view = await (await storeSession()).moduleExports()
         const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
-        return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: forThisCommand(files), legacyUnmigrated, storeRevision: revision, storeReadOnly: readOnly }))
+        const readModel = command === 'build' ? await personalBuildReadModel(view.files) : view.model
+        return renderPrivateDataModule(privateDataModuleExports({ profile, readModel, legacyUnmigrated, storeRevision: view.revision, storeReadOnly: view.readOnly }))
       }
-      // 不是新库（3C-4d）：早先的连接（新库文件被移走）正常关闭。只读 data/v2/ 的五个 V2 文件（缺的为 undefined），外加状态：
-      // 待迁移、需要恢复、没迁移的旧格式数据（只看文件在不在，不读内容）。页面据此显示提示，写入一律被拒绝。
+      // 不是新库（3C-4d）：早先的连接（新库文件被移走）正常关闭。data/v2/ 的五个 V2 文件在内存里迁移成读模型（3C-5B；缺的文件
+      // 当作空文件），外加状态：待迁移、需要恢复、没迁移的旧格式数据（只看文件在不在，不读内容）。页面据此显示提示，写入一律被拒绝。
       await releaseStore()
-      const v2Values = {}
-      for (const key of V2_PRIVATE_FILE_KEYS) v2Values[key] = await readJson(privatePaths.v2FilePaths[key], undefined)
+      const { values, model } = await unmigratedReadModel()
       const state = dataState()
       const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
       return renderPrivateDataModule(privateDataModuleExports({
-        profile, v2Values: forThisCommand(v2Values), legacyUnmigrated,
+        profile, readModel: command === 'build' ? await personalBuildReadModel(values) : model, legacyUnmigrated,
         storeMigrationRequired: state.state === 'migration-required' && state.reason === 'v2',
         storeRecoveryRequired: state.state === 'needs-recovery' || (state.state === 'empty' && initializationFailed),
       }))

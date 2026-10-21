@@ -1,30 +1,29 @@
 /**
- * App 的原始数据输入（RFC-LOC-1 PR2 规格 §2.7；PR3b-1 规格 §2.2；PR4 规格 §2.3；PR5a 规格 §4.1）：「读哪份数据」集中在这里。
+ * App 的原始数据输入（RFC-LOC-1 PR2 规格 §2.7；PR3b-1 规格 §2.2；PR4 规格 §2.3；PR5a 规格 §4.1；3C-5B 规格 §2.2、§2.3）：
+ * 「读哪份数据」集中在这里。
  *
  * 这里【不是】 StarMap Core：它 import 了 Vite 虚拟模块、样例 JSON 与 import.meta.env，只能在 Vite 里跑。
- * 结果交给 ./appData.ts：canonicalForInputs（V2 Reader）→ Canonical → 派生。
+ * 结果交给 ./appData.ts：读模型 → 官方视图（./store/projectCanonical.ts 的 officialViewOf）→ Canonical → 派生。
  * 脚本 scripts/baseline.mjs 按同一套规则在 Node 里选数据（公开样例：`--sample`；私人目录：默认）。
  *
- * PR5a 起只有两种输入，都是五个 V2 文件：
+ * 3C-5B 起只有一种输入：读模型 `starmap.read-model`（src/worldgraph/readModel/types.ts），读之前过 readReadModel（表头与
+ * 行的形状；格式不对就抛错，页面显示错误，不会是空白的地图）。来源有两种：
  * 1. 公开模式，以及任何模式下的强制样例（VITE_TRAVEL_ATLAS_DATA_MODE=sample、开发时 ?data=sample）
- *    → 公开样例的 V2 文件 src/data/v2-sample/，来源标为 'sample'。editor-state 与媒体也取样例里的
- *    （空文件），不叠加私人目录的值。强制样例是在个人配置里预览公开版，所以本地编辑器整个关闭：./editorState.ts 的
+ *    → 原生公开样例的读模型 ./sample/sample.read-model.json（3C-5A 生成），来源标为 'sample'。V2 样例 ./v2-sample/
+ *    只留作迁移与兼容测试的输入，App 不再读。强制样例是在个人配置里预览公开版，所以本地编辑器整个关闭：./editorState.ts 的
  *    `localEditorAvailable` 看下面导出的 `forceSampleData`（RFC-LOC-1 PR4 审查补修），页面与公开模式渲染一致，
  *    不会把写入落到私人目录。
- * 2. 个人模式 → 虚拟模块注入的私人目录 data/v2/ 的五个文件，来源 'local'；没有数据时为空，不回落到样例（决定 E）。
- *    旧格式的私人文件 App 不读。私人目录有没迁移的旧数据时，虚拟模块另报 `privateLegacyUnmigrated`，
- *    下面的 `legacyUnmigrated` 据此让页面显示迁移提示（./privateDataNotice.ts）。
+ * 2. 个人模式 → 虚拟模块注入的读模型，来源 'local'：新库的读模型；还不是新库时是 data/v2/ 的文件在内存里迁移一次得到的
+ *    读模型（没有数据时为空，不回落到样例，决定 E）。旧格式的私人文件 App 不读。私人目录有没迁移的旧数据时，虚拟模块另报
+ *    `privateLegacyUnmigrated`，下面的 `legacyUnmigrated` 据此让页面显示迁移提示（./privateDataNotice.ts）。
  */
 
-import v2SampleEditorState from './v2-sample/editor-state.json'
-import v2SampleMedia from './v2-sample/user-media.json'
-import v2SamplePlaces from './v2-sample/places.json'
-import v2SampleTravel from './v2-sample/travel-map.json'
-import v2SampleWantToGo from './v2-sample/want-to-go.json'
+import sampleReadModelJson from './sample/sample.read-model.json'
 import {
-  privateLegacyUnmigrated, privateStoreMigrationRequired, privateStoreReadOnly, privateStoreRecoveryRequired, privateStoreRevision, privateV2Files,
+  privateLegacyUnmigrated, privateReadModel, privateStoreMigrationRequired, privateStoreReadOnly, privateStoreRecoveryRequired, privateStoreRevision,
 } from 'virtual:starmap-private-data'
-import type { AppInputs, V2FileInputs } from './canonical/canonicalForInputs.ts'
+import { readReadModel } from '../worldgraph/readModel/check.ts'
+import type { ReadModel } from '../worldgraph/readModel/types.ts'
 
 /** 原 worldGraph.ts 的 worldGraphSessionNow：模块加载时固定一次，适配器要求 now 必填且不读时钟。 */
 export const sessionNow: string = new Date().toISOString()
@@ -41,19 +40,11 @@ export const forceSampleData: boolean = import.meta.env.VITE_TRAVEL_ATLAS_DATA_M
 /** 读公开样例：公开模式，或任何模式下的强制样例（上面第 1 条）。 */
 const useSampleData = forceSampleData || import.meta.env.MODE !== 'personal'
 
-/** 公开样例的五个 V2 文件（手工维护，scripts/v2-sample.mjs 列出文件名，npm run privacy:check 校验）。 */
-const v2SampleFiles: V2FileInputs = {
-  places: v2SamplePlaces,
-  travel: v2SampleTravel,
-  wantToGo: v2SampleWantToGo,
-  editorState: v2SampleEditorState,
-  media: v2SampleMedia,
-}
+/** 官方视图的来源（Canonical 的 `travel.source`、`wantToGo.source`）：公开样例为 'sample'，私人数据为 'local'。 */
+export const appDataSource: 'local' | 'sample' = useSampleData ? 'sample' : 'local'
 
-/** 交给 canonicalForInputs 的输入。 */
-export const appInputs: AppInputs = useSampleData
-  ? { v2Files: v2SampleFiles, source: 'sample' }
-  : { v2Files: privateV2Files }
+/** App 读的读模型（上面两种来源之一）。 */
+export const appReadModel: ReadModel = readReadModel(useSampleData ? sampleReadModelJson : privateReadModel)
 
 /**
  * 个人模式下私人目录有没迁移的旧数据（RFC-LOC-1 PR5a 决定 I；判定在 scripts/legacy-data.mjs，插件经虚拟模块注入）。
@@ -62,8 +53,8 @@ export const appInputs: AppInputs = useSampleData
 export const legacyUnmigrated: boolean = !useSampleData && privateLegacyUnmigrated === true
 
 /**
- * 新库（3C-3；3C-4d 起是唯一的写入方式）的全库修订号：私人根下有 data/store/world.sqlite 时，插件把新库投影成上面同样的
- * 五个 V2 文件，另外给出这个修订号；还不是新库（只读）、公开模式与强制样例下为 undefined。只有本地编辑器（经 ./localEditorClient.ts 的门）用它：
+ * 新库（3C-3；3C-4d 起是唯一的写入方式）的全库修订号：私人根下有 data/store/world.sqlite 时，插件给出新库的读模型
+ * 和这个修订号；还不是新库（只读）、公开模式与强制样例下为 undefined。只有本地编辑器（经 ./localEditorClient.ts 的门）用它：
  * 「修改想去」的请求带上它作为 x-starmap-base-revision。
  */
 export const storeRevision: number | undefined = useSampleData ? undefined : privateStoreRevision
