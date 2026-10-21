@@ -44,6 +44,7 @@ import type { EntityId } from '../worldgraph/types'
 import { resolveName } from '../worldgraph/localizedText'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
+import { droneMarkerName } from './droneMediaLabels.ts'
 import { createCameraCommandObserver } from './cameraCommandObservation'
 import type { CameraCommandObservation, CameraCommandState } from './cameraCommandObservation'
 import {
@@ -2000,7 +2001,7 @@ export function CesiumAtlasGlobe({
           return (
             <Entity
               key={item.id}
-              name={`${item.titleEn} ${item.fileName}`}
+              name={droneMarkerName(item)}
               show={showMapContent}
               position={droneMediaPosition(item)}
               onClick={() => onSelectDroneMediaItem(item)}
