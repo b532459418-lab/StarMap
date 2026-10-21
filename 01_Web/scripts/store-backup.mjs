@@ -26,8 +26,8 @@
  *   (format version 1, database only) is still restored, without media. After a restore the media registry and the
  *   media files correspond (checkRegistryFiles, 3C-4c); a backup of 3C-4b (a format-1 store with the media source index)
  *   is upgraded and its registry seeded from the restored files and index.
- * - `npm run store:export-v2 -- --out <new directory>`: the store's projection written as the five V2 files (the way
- *   back to V2 mode after edits). Rows V2 cannot express are listed. The directory must not exist. Media (3C-4c, design v2
+ * - `npm run store:export-v2 -- --out <new directory>`: the store's read model seen through the official view and written
+ *   as the five V2 files with serializeV2 (3C-5B; the way back to V2 mode after edits). Rows V2 cannot express are listed. The directory must not exist. Media (3C-4c, design v2
  *   §7): refused while files wait for deletion (pending_file_ops); a record created in the new library whose content no
  *   other record uses is exported under V2's content id (`media-<sha16>`, references in the editor state rewritten) so a
  *   V2 import finds it again, the others keep their ids; `media-source-index.local.json` is written from the registry
@@ -55,6 +55,9 @@ import { getPrivatePaths } from './private-profile.mjs'
 import { STORE_FILE_SEGMENTS, privateDataSource, storeFileOf } from './private-data-source.mjs'
 import { StoreToolError } from './store-migrate.mjs'
 import { projectToV2Files, skippedCounts } from './store-projection.mjs'
+import { serializeV2 } from '../src/data/canonical/v2Serializer.ts'
+import { projectStoreToCanonical } from '../src/data/store/projectCanonical.ts'
+import { formalStateOfReadModel, readModelOf } from '../src/worldgraph/readModel/build.ts'
 import { openStore } from './store-host.mjs'
 import { upgradeStore } from './store-upgrade.mjs'
 import { EMPTY_PLACES_GENERATED_AT } from '../src/data/canonical/canonicalForInputs.ts'
@@ -521,10 +524,15 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
 // ---------------------------------------------------------------------------
 
 /**
- * `store:export-v2`: the five V2 files of the store's projection in a new directory. Returns { out, files, skipped, lines }.
- * The rows come from readFormalState (the full check). A projection without file metadata of the places registry (no
- * `v2:import` source) gets the export time as its `generated_at` instead of the Unix epoch.
+ * `store:export-v2`: the five V2 files of the store in a new directory. Returns { out, files, skipped, lines }. The rows
+ * come from readFormalState (the full check) and become the read model; the official view of it (the projection with its
+ * skipped rows, which the export lists) is written with serializeV2 (3C-5B). A projection without file metadata of the
+ * places registry (no `v2:import` source) gets the export time as its `generated_at` instead of the Unix epoch.
  */
+export function exportedV2Of(model) {
+  const projection = projectStoreToCanonical(formalStateOfReadModel(model), { source: 'local' })
+  return { projection, files: serializeV2(projection.canonical, projection.v2Meta) }
+}
 /**
  * 3C-4c: the media ids of an export. A record created in the new library (an asset whose source is not `v2:media`) whose
  * content no other record uses gets V2's content id when no exported item has it yet; every reference in the editor state
@@ -603,7 +611,7 @@ export async function exportStoreV2(privatePaths, { out, now = new Date().toISOS
   try {
     state = handle.readFormalState()
     revision = state.revision
-    projected = projectToV2Files(state)
+    projected = exportedV2Of(readModelOf(state, { origin: 'local' }))
     registry = handle.mediaRegistry()
   } finally { await handle.close() }
   if (registry.pendingFileOps.length) {
