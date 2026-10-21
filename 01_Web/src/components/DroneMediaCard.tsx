@@ -6,8 +6,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Drone, GripVertical, Maximize2, X } from 'lucide-react'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
 import { allImportedMediaItems } from '../data/mediaCatalog'
-import { deleteHiddenLocalMedia, mediaJobs, reloadAfterLocalSave, updateLocalEditorState } from '../data/localEditorClient'
-import { droneDraftUpdater } from '../data/editorStateDelta'
+import { applyLocalViewOperations, deleteHiddenLocalMedia, mediaJobs, reloadAfterLocalSave } from '../data/localEditorClient'
+import { droneDraftOperations, hideIdsOperation, restoreHiddenOperation } from '../data/editorStateDelta'
 import { readDroneFileMetadata } from '../data/droneMetadata'
 import { cityById } from '../data/travelAtlas'
 import { isFinishedMediaJob } from '../data/mediaJobs'
@@ -153,8 +153,8 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
     setBusy(true)
     setNotice({ key: 'droneEditor:saving' })
     try {
-      await updateLocalEditorState(droneDraftUpdater({
-        cityId: city.id, draftItemIds, baselineHiddenIds, draftHiddenIds,
+      await applyLocalViewOperations(droneDraftOperations({
+        cityId: city.id, draftItemIds, baselineItemIds: travelAtlasEditorState.droneOrderByCity[city.id] ?? [], baselineHiddenIds, draftHiddenIds,
       }))
       reloadAfterLocalSave()
     } catch (error) {
@@ -428,10 +428,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
               onClick={() => {
                 if (busy || sessionLocked) return
                 setBusy(true)
-                void updateLocalEditorState((current) => ({
-                  ...current,
-                  hiddenDroneMediaIds: current.hiddenDroneMediaIds.filter((id) => !hiddenIdsForCity.includes(id)),
-                })).then(reloadAfterLocalSave).catch((error: unknown) => {
+                void applyLocalViewOperations([restoreHiddenOperation('drone', hiddenIdsForCity)]).then(reloadAfterLocalSave).catch((error: unknown) => {
                   setNotice(editorErrorNotice(error, 'droneEditor:restoreFailed'))
                   setBusy(false)
                 })
@@ -449,10 +446,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                 if (!confirmed) return
                 setBusy(true)
                 setNotice({ key: 'droneEditor:deleting' })
-                void updateLocalEditorState((current) => ({
-                  ...current,
-                  hiddenDroneMediaIds: [...new Set([...current.hiddenDroneMediaIds, ...hiddenIdsForCity])],
-                }))
+                void applyLocalViewOperations([hideIdsOperation('drone', hiddenIdsForCity)])
                   .then(() => deleteHiddenLocalMedia(city.id, hiddenIdsForCity))
                   .then(reloadAfterLocalSave)
                   .catch((error: unknown) => {

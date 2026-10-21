@@ -1,14 +1,20 @@
 /**
- * 编辑器保存的增量合并（第 1 批 D1）。
+ * 编辑器保存的增量合并（第 1 批 D1；3C-5 C1 起改为视图操作）。
  *
- * 草稿来自页面加载时的快照（`travelAtlasEditorState`），保存时服务端的 `current` 可能已经被别处改过：
- * 另一个标签页、媒体导入的恢复（把新导入的 id 移出隐藏列表）。所以保存只应用「这次编辑做了什么」，
- * 不把整份草稿盖到 `current` 上。`updateLocalEditorState` 本身不变，变的是传给它的 updater。
+ * 草稿来自页面加载时的快照（`travelAtlasEditorState`），保存时服务端的状态可能已经被别处改过：
+ * 另一个标签页、媒体导入的恢复（把新导入的 id 移出隐藏列表）。所以保存只发「这次编辑做了什么」——
+ * 3C-5 C1 起是视图操作（`POST /__travelatlas/editor/view`，./editor/rules/editorView.ts），由服务端在当前状态上合并，
+ * 不再「整份取回 → 改 → 整份写回」。下面的 `*Operations` 把各个编辑卡片的草稿变成操作；合并的语义同原来的 updater：
+ *
+ * - 国家顺序：`mergeOrder(当前, 草稿, 页面加载时的顺序)`；
+ * - 某个国家的城市顺序、某个城市的照片与航拍顺序：没有别处的修改时就是草稿（原来整份替换这个键）；别处新加的 id 保留在后；
+ * - 隐藏列表：只应用这次的增减（`applySetDelta` 的两半：`setDelta`）；「恢复隐藏」只移除列出的 id，「先隐藏再删除」只加入；
+ * - 封面：有封面时写这一项。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import type { TravelAtlasEditorState } from './derive/editorState.ts'
+import type { ViewListScope, ViewOperation } from './editor/rules/editorView.ts'
 
 /**
  * 集合的三方合并：这次新增 = `draft − baseline`，这次取消 = `baseline − draft`；
@@ -26,6 +32,12 @@ export function applySetDelta<T>(current: readonly T[], baseline: readonly T[], 
     present.add(id)
   }
   return result
+}
+
+/** `applySetDelta` 的两半：草稿相对 baseline 新增的（`add`，按草稿顺序）与取消的（`remove`）。 */
+export function setDelta<T>(baseline: readonly T[], draft: readonly T[]): { add: T[]; remove: T[] } {
+  const before = new Set(baseline), after = new Set(draft)
+  return { add: draft.filter((id) => !before.has(id)), remove: baseline.filter((id) => !after.has(id)) }
 }
 
 /**
@@ -55,49 +67,45 @@ export function mergeOrder<T>(currentOrder: readonly T[], draftOrder: readonly T
   return result
 }
 
-type EditorStateUpdater = (current: TravelAtlasEditorState) => TravelAtlasEditorState
-
-/** InfoCard 的「保存城市」：本国的城市顺序按作用域整份写；隐藏城市只应用本次增量。 */
-export const cityDraftUpdater = ({ countryId, draftCityIds, baselineHiddenCityIds, draftHiddenCityIds }: {
-  countryId: string; draftCityIds: string[]; baselineHiddenCityIds: readonly string[]; draftHiddenCityIds: readonly string[]
-}): EditorStateUpdater => (current) => ({
-  ...current,
-  cityOrderByCountry: { ...current.cityOrderByCountry, [countryId]: draftCityIds },
-  hiddenCityIds: applySetDelta(current.hiddenCityIds, baselineHiddenCityIds, draftHiddenCityIds),
-})
-
-/** InfoCard 的「保存照片」：本城市的照片顺序与封面按作用域写；隐藏照片只应用本次增量。 */
-export const photoDraftUpdater = ({ cityId, draftPhotoIds, baselineHiddenPhotoIds, draftHiddenPhotoIds, draftCoverPhotoId }: {
-  cityId: string; draftPhotoIds: string[]; baselineHiddenPhotoIds: readonly string[]; draftHiddenPhotoIds: readonly string[]; draftCoverPhotoId?: string
-}): EditorStateUpdater => (current) => ({
-  ...current,
-  mediaOrderByCity: { ...current.mediaOrderByCity, [cityId]: draftPhotoIds },
-  hiddenMediaIds: applySetDelta(current.hiddenMediaIds, baselineHiddenPhotoIds, draftHiddenPhotoIds),
-  coverMediaByCity: draftCoverPhotoId
-    ? { ...current.coverMediaByCity, [cityId]: draftCoverPhotoId }
-    : current.coverMediaByCity,
-})
+/** 隐藏列表的增量：草稿相对页面加载时的隐藏列表。 */
+const hideDraft = (scope: ViewListScope, baseline: readonly string[], draft: readonly string[]): ViewOperation => ({ op: 'hide', scope, ...setDelta(baseline, draft) })
 
 /** CountrySelector 的「保存国家」：国家顺序按草稿合并，隐藏国家只应用本次增量。 */
-export const countryDraftUpdater = ({ draftCountryIds, baselineCountryOrder, baselineHiddenCountryIds, draftHiddenCountryIds }: {
+export const countryDraftOperations = ({ draftCountryIds, baselineCountryOrder, baselineHiddenCountryIds, draftHiddenCountryIds }: {
   draftCountryIds: readonly string[]; baselineCountryOrder: readonly string[]; baselineHiddenCountryIds: readonly string[]; draftHiddenCountryIds: readonly string[]
-}): EditorStateUpdater => (current) => ({
-  ...current,
-  countryOrder: mergeOrder(current.countryOrder, draftCountryIds, baselineCountryOrder),
-  hiddenCountryIds: applySetDelta(current.hiddenCountryIds, baselineHiddenCountryIds, draftHiddenCountryIds),
-})
+}): ViewOperation[] => [
+  { op: 'order', scope: 'countries', ids: [...draftCountryIds], baseline: [...baselineCountryOrder] },
+  hideDraft('countries', baselineHiddenCountryIds, draftHiddenCountryIds),
+]
 
-/** DroneMediaCard 的保存：本城市的无人机影像顺序按作用域写；隐藏只应用本次增量。 */
-export const droneDraftUpdater = ({ cityId, draftItemIds, baselineHiddenIds, draftHiddenIds }: {
-  cityId: string; draftItemIds: string[]; baselineHiddenIds: readonly string[]; draftHiddenIds: readonly string[]
-}): EditorStateUpdater => (current) => ({
-  ...current,
-  droneOrderByCity: { ...current.droneOrderByCity, [cityId]: draftItemIds },
-  hiddenDroneMediaIds: applySetDelta(current.hiddenDroneMediaIds, baselineHiddenIds, draftHiddenIds),
-})
+/** InfoCard 的「保存城市」：本国的城市顺序；隐藏城市只应用本次增量。`baselineCityIds` 是页面加载时本国保存的顺序。 */
+export const cityDraftOperations = ({ countryId, draftCityIds, baselineCityIds, baselineHiddenCityIds, draftHiddenCityIds }: {
+  countryId: string; draftCityIds: readonly string[]; baselineCityIds: readonly string[]; baselineHiddenCityIds: readonly string[]; draftHiddenCityIds: readonly string[]
+}): ViewOperation[] => [
+  { op: 'order', scope: 'cities', key: countryId, ids: [...draftCityIds], baseline: [...baselineCityIds] },
+  hideDraft('cities', baselineHiddenCityIds, draftHiddenCityIds),
+]
+
+/** InfoCard 的「保存照片」：本城市的照片顺序与封面；隐藏照片只应用本次增量。`baselinePhotoIds` 是页面加载时本城市保存的顺序。 */
+export const photoDraftOperations = ({ cityId, draftPhotoIds, baselinePhotoIds, baselineHiddenPhotoIds, draftHiddenPhotoIds, draftCoverPhotoId }: {
+  cityId: string; draftPhotoIds: readonly string[]; baselinePhotoIds: readonly string[]; baselineHiddenPhotoIds: readonly string[]; draftHiddenPhotoIds: readonly string[]
+  draftCoverPhotoId?: string
+}): ViewOperation[] => [
+  { op: 'order', scope: 'media', key: cityId, ids: [...draftPhotoIds], baseline: [...baselinePhotoIds] },
+  hideDraft('media', baselineHiddenPhotoIds, draftHiddenPhotoIds),
+  ...(draftCoverPhotoId ? [{ op: 'cover', key: cityId, id: draftCoverPhotoId } as const] : []),
+]
+
+/** DroneMediaCard 的保存：本城市的无人机影像顺序；隐藏只应用本次增量。`baselineItemIds` 是页面加载时本城市保存的顺序。 */
+export const droneDraftOperations = ({ cityId, draftItemIds, baselineItemIds, baselineHiddenIds, draftHiddenIds }: {
+  cityId: string; draftItemIds: readonly string[]; baselineItemIds: readonly string[]; baselineHiddenIds: readonly string[]; draftHiddenIds: readonly string[]
+}): ViewOperation[] => [
+  { op: 'order', scope: 'drone', key: cityId, ids: [...draftItemIds], baseline: [...baselineItemIds] },
+  hideDraft('drone', baselineHiddenIds, draftHiddenIds),
+]
 
 /** 「恢复隐藏」：只恢复界面上列出的那些 id，别处后来隐藏的保持隐藏。 */
-export const withoutIds = <T>(current: readonly T[], shown: readonly T[]): T[] => {
-  const restored = new Set(shown)
-  return current.filter((id) => !restored.has(id))
-}
+export const restoreHiddenOperation = (scope: ViewListScope, shown: readonly string[]): ViewOperation => ({ op: 'hide', scope, add: [], remove: [...shown] })
+
+/** 「彻底删除」之前先隐藏：把列出的 id 加入隐藏列表（已在其中的不动）。 */
+export const hideIdsOperation = (scope: ViewListScope, ids: readonly string[]): ViewOperation => ({ op: 'hide', scope, add: [...ids], remove: [] })

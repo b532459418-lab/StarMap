@@ -93,10 +93,7 @@ export function mergeKeyedOrder(current: readonly string[], draft: readonly stri
 }
 
 /** The hide operation of a draft against its baseline: what the draft adds and what it removes (applySetDelta's halves). */
-export function hideDelta(baseline: readonly string[], draft: readonly string[]): { add: string[]; remove: string[] } {
-  const before = new Set(baseline), after = new Set(draft)
-  return { add: draft.filter((id) => !before.has(id)), remove: baseline.filter((id) => !after.has(id)) }
-}
+export { setDelta as hideDelta } from '../../editorStateDelta.ts'
 
 /**
  * The lists after the operations, applied in order to `current`. `isKnownMedia` (the native writes): media ids the

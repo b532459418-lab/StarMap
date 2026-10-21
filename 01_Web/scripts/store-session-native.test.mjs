@@ -35,14 +35,15 @@ const noteWrite = Object.freeze({
   },
 })
 
-async function nativeSession(t) {
+/** A session on the migrated fixture; `nativeWrites` replaces the native planners (null: the real ones). */
+async function nativeSession(t, nativeWrites = { [ROUTE]: noteWrite }) {
   const context = await tempPrivateRoot(t, 'starmap-store-native-')
   const files = migratedFiles()
   await writeV2Files(context.paths, files)
   await applyMigration(context.paths, { now: MIGRATED_AT })
   const output = quietly()
   const session = context.closeAfter(createStoreSession(context.paths, {
-    log: output.log, countryCatalog: TEST_CATALOG, newId: sequentialUuids(Date.UTC(2032, 0, 1)), verify: true, nativeWrites: { [ROUTE]: noteWrite },
+    log: output.log, countryCatalog: TEST_CATALOG, newId: sequentialUuids(Date.UTC(2032, 0, 1)), verify: true, ...(nativeWrites ? { nativeWrites } : {}),
   }))
   const write = (route, input, base, ctx, id) => session.writeRoute(...route.split(' '))({ headers: headers(base, id), input, ctx })
   const storeNow = async () => {
@@ -107,4 +108,47 @@ test('native and V2 writes share the cache: a V2 write after a native one sees i
   assert.deepEqual(session.lastSnapshot.model, await storeNow())
   const nuuk = placeNamed(files, 'Nuuk').id
   assert.ok(officialViewOf(session.lastSnapshot.model, 'local').places.some((place) => place.id === nuuk))
+})
+
+const VIEW = 'POST /__travelatlas/editor/view'
+
+test('POST /editor/view: the operations merged into the current lists; a drag writes one row; nothing to change commits nothing; refusals as PUT /state', async (t) => {
+  const { session, write, files, storeNow, output } = await nativeSession(t, null)
+  await session.moduleExports()
+  const lists = () => officialViewOf(session.lastSnapshot.model, 'local').editorState
+  const iceland = placeNamed(files, 'Iceland').id, norway = placeNamed(files, 'Norway').id
+  const before = lists()
+  const saved = await write(VIEW, { operations: [
+    { op: 'hide', scope: 'countries', add: [norway], remove: [] },
+    { op: 'order', scope: 'countries', ids: [...before.countryOrder].reverse(), baseline: before.countryOrder },
+    { op: 'hide', scope: 'media', add: ['synthetic-missing'], remove: [] },
+  ] }, 1, contextOf(1))
+  assert.equal(saved.status, 200, JSON.stringify(saved.body))
+  assert.equal(saved.body.revision, 2)
+  assert.deepEqual(lists().hiddenCountryIds, [...before.hiddenCountryIds, norway])
+  assert.deepEqual(lists().countryOrder, [...before.countryOrder].reverse())
+  assert.deepEqual(lists().hiddenMediaIds, before.hiddenMediaIds, 'a media id that is no asset is ignored')
+  assert.deepEqual(session.lastSnapshot.model, await storeNow(), 'the live index equals the store read again')
+  assert.match(output.lines.at(-1), /view（原生）：规划 [\d.]+ ms（\d+ 条命令），提交 [\d.]+ ms（修订号 2）/)
+
+  // A drag: the last country first; the others keep their positions, one row moves.
+  const order = lists().countryOrder
+  const dragged = await write(VIEW, { operations: [{ op: 'order', scope: 'countries', ids: [order.at(-1), ...order.slice(0, -1)], baseline: order }] }, 2, contextOf(2))
+  assert.equal(dragged.body.revision, 3)
+  assert.equal(session.lastNativeTimings.commands, 1)
+  assert.deepEqual(lists().countryOrder, [order.at(-1), ...order.slice(0, -1)])
+
+  // The same hide again: nothing to change, nothing committed, the same revision.
+  const same = await write(VIEW, { operations: [{ op: 'hide', scope: 'countries', add: [norway], remove: [] }] }, 3, contextOf(3))
+  assert.equal(same.status, 200)
+  assert.deepEqual({ ...same.body }, { ok: true, revision: 3, duplicate: false, unchanged: true })
+  assert.match(output.lines.at(-1), /没有改动，不提交（修订号 3）/)
+
+  // Refusals: the merged lists are checked as PUT /state checked the page's state; a malformed operation names its field.
+  const notCity = await write(VIEW, { operations: [{ op: 'hide', scope: 'cities', add: [iceland], remove: [] }] }, 3, contextOf(4))
+  assert.equal(notCity.status, 400); assert.equal(notCity.body.code, 'E_UNKNOWN_PLACE_REF')
+  assert.deepEqual(notCity.body.params, { field: 'hiddenCityIds', id: iceland, expected: 'city', actual: 'country' })
+  const malformed = await write(VIEW, { operations: [{ op: 'move' }] }, 3, contextOf(5))
+  assert.equal(malformed.status, 400); assert.equal(malformed.body.code, 'E_EDITOR_STATE_INVALID'); assert.deepEqual(malformed.body.params, { field: 'operations[0].op' })
+  assert.equal((await storeNow()).revision, 3)
 })

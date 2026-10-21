@@ -575,6 +575,12 @@ export function createStoreSession(privatePaths, {
             plan = native.plan(officialReader(live), input, { now: writeContext.now, newId, countryCatalog: writeContext.countryCatalog ?? countryCatalog })
           } catch (error) { return v2FailureResponse(error) }
           const planMs = ms(planning)
+          // A request that changes nothing commits nothing: no new revision, no receipt (a retry plans it again).
+          if (plan.commands.length === 0) {
+            lastTimings = Object.freeze({ route: label, commands: 0, indexMs, planMs, commitMs: 0, applyMs: 0, totalMs: ms(started) })
+            log(`[StarMap store] ${label}（原生）：规划 ${planMs} ms，没有改动，不提交（修订号 ${live.revision}）`)
+            return { status: native.status, body: { ok: true, ...plan.result, revision: live.revision, duplicate: false, unchanged: true } }
+          }
           const committing = performance.now()
           const result = await opened.commit({
             requestId: protocol.requestId, baseRevision: protocol.baseRevision, kind, actor: STORE_ACTOR, commands: plan.commands,

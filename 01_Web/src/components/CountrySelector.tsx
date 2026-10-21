@@ -7,8 +7,8 @@ import { Check, ChevronDown, Drone, GripVertical, MapPin, Plus, RotateCcw, Setti
 import { withoutListedCountries } from '../data/countrySearchFilter'
 import { hasDroneMedia } from '../data/droneMedia'
 import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
-import { addLocalCountry, deleteHiddenLocalCountries, reloadAfterLocalSave, searchLocalCountries, updateLocalEditorState } from '../data/localEditorClient'
-import { countryDraftUpdater, withoutIds } from '../data/editorStateDelta'
+import { addLocalCountry, applyLocalViewOperations, deleteHiddenLocalCountries, reloadAfterLocalSave, searchLocalCountries } from '../data/localEditorClient'
+import { countryDraftOperations, hideIdsOperation, restoreHiddenOperation } from '../data/editorStateDelta'
 import type { CountrySearchOption } from '../data/localEditorApi'
 import { countries, getCitiesForCountry, shouldHideCityFromNavigation } from '../data/travelAtlas'
 import type { CityId, CountryId } from '../types/travel'
@@ -123,7 +123,7 @@ export function CountrySelector({
     setIsSaving(true)
     setEditorNotice({ key: 'editor:saving' })
     try {
-      await updateLocalEditorState(countryDraftUpdater({
+      await applyLocalViewOperations(countryDraftOperations({
         draftCountryIds, baselineCountryOrder, baselineHiddenCountryIds, draftHiddenCountryIds,
       }))
       reloadAfterLocalSave()
@@ -138,7 +138,7 @@ export function CountrySelector({
     setIsSaving(true)
     try {
       // Only the countries listed here; a country hidden elsewhere after this page loaded stays hidden (D1).
-      await updateLocalEditorState((current) => ({ ...current, hiddenCountryIds: withoutIds(current.hiddenCountryIds, draftHiddenCountryIds) }))
+      await applyLocalViewOperations([restoreHiddenOperation('countries', draftHiddenCountryIds)])
       reloadAfterLocalSave()
     } catch (error) {
       setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
@@ -153,10 +153,7 @@ export function CountrySelector({
     setIsSaving(true)
     setEditorNotice({ key: 'editor:deletingCountries' })
     try {
-      await updateLocalEditorState((current) => ({
-        ...current,
-        hiddenCountryIds: [...new Set([...current.hiddenCountryIds, ...draftHiddenCountryIds])],
-      }))
+      await applyLocalViewOperations([hideIdsOperation('countries', draftHiddenCountryIds)])
       await deleteHiddenLocalCountries(draftHiddenCountryIds)
       reloadAfterLocalSave()
     } catch (error) {

@@ -3,6 +3,7 @@
  * 为真时动态加载，构建产物里没有本模块（第 5B 批）。组件不直接导入它（`import type` 除外）；单元测试直接导入。
  */
 import type { TravelAtlasEditorState } from './editorState'
+import type { ViewOperation } from './editor/rules/editorView.ts'
 import type { WantToGoItem } from './derive/wantToGo.ts'
 import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
@@ -111,7 +112,15 @@ export const readLocalEditorState = async () => {
 const parseEditorState = async (response: Response) => (await parseResponse<{ state: TravelAtlasEditorState; revision?: number }>(response))
 
 /**
- * 整份取回 → 改 → 整份写回。新库模式下请求体只算一次：结果不明而重试时发送同一份（同一个请求编号对应同一个意图）。
+ * 视图操作（3C-5 C1，`POST /__travelatlas/editor/view`）：排序、隐藏、封面只发这次编辑做了什么（./editorStateDelta.ts 的
+ * `*Operations`），服务端在当前的编辑状态上合并、只写变了的行。回答新的修订号（没有改动时是原来的修订号，什么都不提交）。
+ */
+export const applyLocalViewOperations = (operations: readonly ViewOperation[]) =>
+  editorWrite('/__travelatlas/editor/view', 'POST', { operations }, parseResponse<{ revision?: number; unchanged?: boolean }>)
+
+/**
+ * 整份取回 → 改 → 整份写回（`PUT /state`）。3C-5 C1 起页面改发视图操作（applyLocalViewOperations），不再调用它；
+ * 接口留到子批 E 与 `PUT /state` 一起删除。新库模式下请求体只算一次：结果不明而重试时发送同一份（同一个请求编号对应同一个意图）。
  */
 export const updateLocalEditorState = (
   update: (current: TravelAtlasEditorState) => TravelAtlasEditorState,

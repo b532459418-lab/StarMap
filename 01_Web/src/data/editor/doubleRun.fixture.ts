@@ -41,6 +41,8 @@ import type { V2WriteContext, V2WriteOutcome } from '../v2write/transaction.ts'
 import { TEST_CATALOG, WRITE_EPOCH_MS, WRITE_NOW } from '../v2write/v2write.fixture.ts'
 import type { NativeWrite } from './native/routes.ts'
 import { applyViewOperations, type ViewLists, type ViewOperation } from './rules/editorView.ts'
+import { applySetDelta, mergeOrder } from '../editorStateDelta.ts'
+import type { TravelAtlasEditorState } from '../derive/editorState.ts'
 
 export interface DoubleRunStore {
   state: FormalState
@@ -119,6 +121,8 @@ export function nativeEngineOf(write: NativeWrite): Engine {
     try {
       plan = write.plan(reader, structuredClone(step.input), { now: ctx.now, newId: ctx.newId, countryCatalog: ctx.countryCatalog })
     } catch (error) { return refused(error) }
+    // Nothing to change: nothing is committed (the host answers with the same revision).
+    if (plan.commands.length === 0) return { result: plan.result, state: store.state, commands: 0 }
     const now = ctx.now.toISOString()
     const changeSet = planCommands(memoryReader(store.state), plan.commands, { baseRevision: store.state.revision, now, policy: OFFICIAL_POLICY })
     return { result: plan.result, state: applyChangeSet(store.state, changeSet), commands: plan.commands.length }
@@ -249,15 +253,42 @@ export function sameRequest(label: string, route: string, run: (files: V2Files, 
   return { label, route, input, old: (files, ctx) => run(files, structuredClone(input), ctx) }
 }
 
-/** A view operation: the native endpoint's operations; the old engine PUTs the page's merged editor state (as before). */
-export function viewStep(label: string, operations: readonly ViewOperation[]): DoubleRunStep {
-  const put = (known: boolean) => (files: V2Files, ctx: V2WriteContext) => {
-    const current = readEditorStateV1(files, WRITE_NOW)
-    const media = new Set(files.media.items.map(item => item.id))
-    return putEditorState(files, { ...current, ...applyViewOperations(current as unknown as ViewLists, operations, known ? (id => media.has(id)) : undefined) }, ctx)
+/**
+ * The page's merge before 3C-5 C1 (../editorStateDelta.ts's updaters, on the state GET /state returned): the country
+ * order by mergeOrder, a city, photo or drone order replaced as a whole, a hidden list by applySetDelta (its additions
+ * and removals), a cover set.
+ */
+export function oldPageMerge(current: TravelAtlasEditorState, operations: readonly ViewOperation[]): TravelAtlasEditorState {
+  const hiddenField = { countries: 'hiddenCountryIds', cities: 'hiddenCityIds', media: 'hiddenMediaIds', drone: 'hiddenDroneMediaIds' } as const
+  const mapField = { cities: 'cityOrderByCountry', media: 'mediaOrderByCity', drone: 'droneOrderByCity' } as const
+  let next = current
+  for (const operation of operations) {
+    if (operation.op === 'order' && operation.scope === 'countries') next = { ...next, countryOrder: mergeOrder(next.countryOrder, operation.ids, operation.baseline) }
+    else if (operation.op === 'order') {
+      const field = mapField[operation.scope]
+      next = { ...next, [field]: { ...next[field], [operation.key]: [...operation.ids] } }
+    } else if (operation.op === 'hide') {
+      const field = hiddenField[operation.scope]
+      next = { ...next, [field]: applySetDelta<string>(next[field], operation.remove, operation.add) }
+    } else next = { ...next, coverMediaByCity: { ...next.coverMediaByCity, [operation.key]: operation.id } }
   }
-  // The stand-in ignores unknown media ids, as the native planner does.
-  return { label, route: VIEW_ROUTE, input: { operations }, old: put(false), standIn: put(true), compareResult: false }
+  return next
+}
+
+/**
+ * A view operation: the native endpoint's operations. The old engine PUTs what the page sent before (oldPageMerge); the
+ * stand-in PUTs the operations' own merge, unknown media ids left out, as the native planner does.
+ */
+export function viewStep(label: string, operations: readonly ViewOperation[]): DoubleRunStep {
+  return {
+    label, route: VIEW_ROUTE, input: { operations }, compareResult: false,
+    old: (files, ctx) => putEditorState(files, oldPageMerge(readEditorStateV1(files, WRITE_NOW), operations), ctx),
+    standIn: (files, ctx) => {
+      const current = readEditorStateV1(files, WRITE_NOW)
+      const media = new Set(files.media.items.map(item => item.id))
+      return putEditorState(files, { ...current, ...applyViewOperations(current as unknown as ViewLists, operations, id => media.has(id)) }, ctx)
+    },
+  }
 }
 
 /** The V2 write functions by endpoint (the old engine of the steps a random sequence draws). */
@@ -356,6 +387,9 @@ export function randomStep(rng: Random, files: V2Files): DoubleRunStep {
         operations.push({ op: 'hide', scope: 'drone', add: draft.slice(0, 1), remove: [] })
       }
       if (!operations.length) operations.push({ op: 'hide', scope: 'cities', add: [], remove: [] })
+      // Now and then a country among the hidden cities: refused (E_UNKNOWN_PLACE_REF), as PUT /state refused it.
+      const country2 = rng.chance(0.06) ? rng.pick(countries) : undefined
+      if (country2) operations.push({ op: 'hide', scope: 'cities', add: [country2.id], remove: [] })
       return viewStep('view/lists', operations)
     }
     case 5: case 6: {
@@ -373,7 +407,7 @@ export function randomStep(rng: Random, files: V2Files): DoubleRunStep {
     case 7: {
       const item = rng.pick(files.wantToGo.items)
       return sameRequest('wanttogo/update', R('wanttogo/update'), OLD_WRITES.wantToGoUpdate, {
-        id: item?.id ?? 'synthetic-missing', ...(rng.chance(0.6) ? { hidden: rng.chance(0.5) } : { note: rng.chance(0.7) ? `Synthetic ${rng.int(100)}` : '' }),
+        id: (rng.chance(0.08) ? undefined : item?.id) ?? 'synthetic-missing', ...(rng.chance(0.6) ? { hidden: rng.chance(0.5) } : { note: rng.chance(0.7) ? `Synthetic ${rng.int(100)}` : '' }),
       })
     }
     case 8: {
