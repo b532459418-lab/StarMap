@@ -2,6 +2,7 @@
  * planners ask, answered from maps built once (`indexReadModel`), never by scanning a table per question.
  *
  * - `get(table, id)`: one row;
+ * - `entitiesOfType(typeId)`: entities of one type, in id order (3C-5 C1);
  * - `entriesOfLayer(layerId)`, `entriesOfEntity(entityId)`: entries, in id order;
  * - `relationsTo(entityId, typeId?)`, `relationsFrom(entityId, typeId?)`: relations by either end, optionally of one
  *   type; the reverse part-of lookup is `relationsTo(country, partOfType)`;
@@ -14,12 +15,13 @@
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types).
  */
 import type { ViewItem, ViewSetting } from '../store/formal.ts'
-import type { LayerEntry, StoreAnchor, StoreRelation } from '../store/types.ts'
+import type { LayerEntry, StoreAnchor, StoreEntity, StoreRelation } from '../store/types.ts'
 import { READ_MODEL_TABLES, compareIds, type ReadModel, type ReadModelRow, type ReadModelTable } from './types.ts'
 
 export interface ReadModelIndex {
   readonly model: ReadModel
   get<T extends ReadModelTable>(table: T, id: string): ReadModelRow<T> | undefined
+  entitiesOfType(typeId: string): readonly StoreEntity[]
   entriesOfLayer(layerId: string): readonly LayerEntry[]
   entriesOfEntity(entityId: string): readonly LayerEntry[]
   relationsTo(entityId: string, typeId?: string): readonly StoreRelation[]
@@ -45,6 +47,7 @@ function grouped<T>(rows: readonly T[], keyOf: (row: T) => string): Map<string, 
 export function indexReadModel(model: ReadModel): ReadModelIndex {
   const rows = new Map<ReadModelTable, Map<string, ReadModelRow>>()
   for (const table of READ_MODEL_TABLES) rows.set(table, new Map((model[table] as readonly ReadModelRow[]).map((row) => [row.id, row] as const)))
+  const byType = grouped(model.entities, (entity) => entity.typeId)
   const byLayer = grouped(model.entries, (entry) => entry.layerId)
   const byEntity = grouped(model.entries, (entry) => entry.entityId)
   const relationsTo = grouped(model.relations, (relation) => relation.toEntityId)
@@ -60,6 +63,7 @@ export function indexReadModel(model: ReadModel): ReadModelIndex {
   return Object.freeze({
     model,
     get: <T extends ReadModelTable>(table: T, id: string) => rows.get(table)?.get(id) as ReadModelRow<T> | undefined,
+    entitiesOfType: (typeId: string) => byType.get(typeId) ?? NONE,
     entriesOfLayer: (layerId: string) => byLayer.get(layerId) ?? NONE,
     entriesOfEntity: (entityId: string) => byEntity.get(entityId) ?? NONE,
     relationsTo: (entityId: string, typeId?: string) => ofType(relationsTo.get(entityId), typeId),

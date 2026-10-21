@@ -35,6 +35,7 @@ import {
 } from '../canonical/v2Schema.ts'
 import { jsonClone } from '../canonical/v2Serializer.ts'
 import { V2WriteError } from './errors.ts'
+import { pruneUnreferencedPlaces } from '../editor/rules/places.ts'
 
 /** `data/v2/` 下五个文件的原始 JSON 值；缺的文件为 undefined（或不出现）。 */
 export type V2FilesOrEmpty = Partial<Record<V2FileKey, unknown>>
@@ -243,17 +244,14 @@ export function runV2Transaction<R>(
  * 从 `candidates` 里删掉不再被任何数据引用的地点（引用包括 `partOf`，所以删掉城市后，只被它引用的国家也会删）。
  * 只考虑候选地点，其他没人引用的地点不动。返回被删的 id（按删除的先后；同一轮内按注册表顺序）。
  */
-export const removeUnreferencedPlaces = (files: V2Files, candidates: Iterable<PlaceId>): PlaceId[] => {
-  const pending = new Set(candidates)
-  const removed: PlaceId[] = []
-  for (;;) {
+export const removeUnreferencedPlaces = (files: V2Files, candidates: Iterable<PlaceId>): PlaceId[] => pruneUnreferencedPlaces(
+  candidates,
+  (pending) => {
     const referenced = new Set(placeRefs(files).map((ref) => ref.id))
-    const removable = files.places.places.filter((place) => pending.has(place.id) && !referenced.has(place.id))
-    if (removable.length === 0) break
-    const ids = new Set(removable.map((place) => place.id))
+    return files.places.places.filter((place) => pending.has(place.id) && !referenced.has(place.id)).map((place) => place.id)
+  },
+  (removable) => {
+    const ids = new Set(removable)
     files.places.places = files.places.places.filter((place) => !ids.has(place.id))
-    for (const id of ids) pending.delete(id)
-    removed.push(...removable.map((place) => place.id))
-  }
-  return removed
-}
+  },
+)

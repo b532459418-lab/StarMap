@@ -9,75 +9,22 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import { findCityCandidates, resolveCountry } from '../canonical/placeResolver.ts'
 import { EN, ZH, namesOf } from '../canonical/reconstruct.ts'
+import { chooseCountry, requireNoCityCandidates } from '../editor/rules/places.ts'
 import type { CanonicalPlace, PlaceId } from '../canonical/types.ts'
 import type { V2Files, V2TravelRecord } from '../canonical/v2Schema.ts'
-import { V2WriteError, fail } from './errors.ts'
+import { fail } from './errors.ts'
+import { DATE_PATTERN } from '../editor/rules/input.ts'
 import type { V2Draft } from './transaction.ts'
 
 // ---------------------------------------------------------------------------
-// 输入校验（旧规则、旧文案）
+// 输入校验（旧规则、旧文案）：3C-5 C1 起在 ../editor/rules/input.ts，存储原生的写入共用
 // ---------------------------------------------------------------------------
 
-export const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-/** 请求体不是对象时按空对象处理（旧模式里 `input.x` 读到 undefined，报「请填写…」）。 */
-export const bodyOf = (input: unknown): Record<string, unknown> => (isObject(input) ? input : {})
-
-export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
-
-/** 旧 requireText：trim 后非空，否则 `请填写<字段>。`。 */
-export const requireText = (value: unknown, field: string): string => {
-  const text = typeof value === 'string' ? value.trim() : ''
-  if (!text) fail('E_REQUIRED', { field })
-  return text
-}
-
-/** trim 后的非空字符串，否则 undefined。 */
-export const optionalText = (value: unknown): string | undefined => {
-  const text = typeof value === 'string' ? value.trim() : ''
-  return text || undefined
-}
-
-/** 旧插件 numberInRange：缺值为 `请填写<字段>。`，不是数字或超出范围为 `<字段>无效。`。 */
-export const requiredNumberInRange = (value: unknown, min: number, max: number, field: string): number => {
-  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) fail('E_REQUIRED', { field })
-  const number = Number(value)
-  if (!Number.isFinite(number) || number < min || number > max) fail('E_NUMBER_INVALID', { field })
-  return number
-}
-
-/** 旧想去 store 的 numberInRange：只判断「是有限数字且在范围内」。 */
-export const numberInRange = (value: unknown, min: number, max: number, field: string): number => {
-  const number = Number(value)
-  if (!Number.isFinite(number) || number < min || number > max) fail('E_NUMBER_INVALID', { field })
-  return number
-}
-
-/** 旧 addTravelRecord / convert-to-travel（PR5 删除，规则留在这里）的日期规则：到访日期必填，结束日期可选，都是 YYYY-MM-DD，结束不早于开始。 */
-export const visitDates = (
-  start: unknown,
-  end: unknown,
-  fields: { start: string; end: string },
-): { start: string; end?: string } => {
-  const startDate = requireText(start, fields.start)
-  if (!DATE_PATTERN.test(startDate)) fail('E_DATE_FORMAT', { field: fields.start })
-  const endDate = optionalText(end)
-  if (endDate && !DATE_PATTERN.test(endDate)) fail('E_DATE_FORMAT', { field: fields.end })
-  if (endDate && endDate < startDate) fail('E_DATE_ORDER')
-  return endDate ? { start: startDate, end: endDate } : { start: startDate }
-}
-
-/** 两位英文字母的国家代码（大写）。 */
-export const COUNTRY_CODE_PATTERN = /^[A-Z]{2}$/
-
-/** 本地日期而不是 UTC 日期（同旧想去 store：加入日期是给人看的）。 */
-export const localDate = (date: Date): string => {
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
+export {
+  COUNTRY_CODE_PATTERN, DATE_PATTERN, bodyOf, createNewOf, isObject, localDate, numberInRange, optionalText, requireText, requiredNumberInRange,
+  visitDates,
+} from '../editor/rules/input.ts'
 
 // ---------------------------------------------------------------------------
 // 地点：国家按 ISO 先找后建；城市按名字只找候选，身份靠用户明确选择的地点 id（RFC ID-6，第 2A 批）
@@ -99,14 +46,9 @@ export interface EnsuredPlace {
  */
 export const ensureCountryPlace = (draft: V2Draft, iso: string): EnsuredPlace => {
   const places = draft.files.places.places
-  const resolution = resolveCountry(places, iso)
-  if (resolution.status === 'found') return { place: resolution.place, changed: false }
-  if (resolution.status === 'ambiguous') {
-    throw new V2WriteError('E_PLACE_AMBIGUOUS', { subtype: 'country', iso, candidates: resolution.candidates })
-  }
-  const code = iso.trim().toUpperCase()
-  const entry = draft.ctx.countryCatalog.get(code)
-  if (!entry) return fail('E_COUNTRY_NOT_IN_CATALOG', { iso: code })
+  const choice = chooseCountry(places, iso, draft.ctx.countryCatalog)
+  if ('found' in choice) return { place: choice.found, changed: false }
+  const { code, entry } = choice.create
   const place: CanonicalPlace = {
     id: draft.ctx.newId(),
     subtype: 'country',
@@ -118,14 +60,8 @@ export const ensureCountryPlace = (draft: V2Draft, iso: string): EnsuredPlace =>
   return { place, changed: true }
 }
 
-/** `E_PLACE_CHOICE_REQUIRED` 的一个候选（响应 `params.candidates` 的一项）：§3.1 的字段，再加地点的坐标，供界面显示。 */
-export interface PlaceChoiceCandidateParam {
-  placeId: PlaceId
-  names: Record<string, string>
-  location?: { lat: number; lng: number }
-  distanceKm?: number
-  strong: boolean
-}
+/** `E_PLACE_CHOICE_REQUIRED` 的一个候选：判定在 ../editor/rules/places.ts。 */
+export type { PlaceChoiceCandidateParam } from '../editor/rules/places.ts'
 
 /**
  * 按名字新增城市（第 2A 批，RFC ID-6「匹配提示 ≠ 身份」）：名字和坐标只用来找候选，不决定身份。
@@ -147,26 +83,7 @@ export const newOrChosenCityPlace = (
 ): EnsuredPlace => {
   const places = draft.files.places.places
   const { names, location } = input
-  if (!input.createNew) {
-    const candidates = findCityCandidates(places, countryId, input.matchNames ?? names, location)
-    if (candidates.length > 0) {
-      const placeById = new Map(places.map((place) => [place.id, place]))
-      throw new V2WriteError('E_PLACE_CHOICE_REQUIRED', {
-        subtype: 'city',
-        countryId,
-        candidates: candidates.map((candidate): PlaceChoiceCandidateParam => {
-          const found = placeById.get(candidate.placeId)?.location
-          return {
-            placeId: candidate.placeId,
-            names: { ...candidate.names },
-            ...(found !== undefined ? { location: { lat: found.lat, lng: found.lng } } : {}),
-            ...(candidate.distanceKm !== undefined ? { distanceKm: candidate.distanceKm } : {}),
-            strong: candidate.strong,
-          }
-        }),
-      })
-    }
-  }
+  requireNoCityCandidates(places, countryId, input)
   const place: CanonicalPlace = {
     id: draft.ctx.newId(),
     subtype: 'city',
@@ -192,15 +109,6 @@ export const referencedCityPlace = (
   const country = place?.subtype === 'city' && place.partOf !== undefined ? draft.placeById(place.partOf) : undefined
   if (!place || country?.subtype !== 'country') return fail('E_UNKNOWN_PLACE_REF', { placeId })
   return { place, country, changed: fillMissingLocation(place, location) }
-}
-
-/**
- * 请求里的 `createNew`：省略或 false 为不强制新建，true 为明确新建；其它值是错误的输入（`E_UNKNOWN_PLACE_REF`）。
- */
-export const createNewOf = (body: Record<string, unknown>): boolean => {
-  if (body.createNew === undefined || body.createNew === false) return false
-  if (body.createNew === true) return true
-  return fail('E_UNKNOWN_PLACE_REF')
 }
 
 /** 国家地点没有坐标、而输入带了坐标时补上（想去国家）。 */

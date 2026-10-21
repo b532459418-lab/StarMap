@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { NOW, entry, id, source, title } from '../store/store.fixture.ts'
 import { LAYER_SCOPE, formalFixture } from '../store/formal.fixture.ts'
 import type { FormalCommand, FormalRow, FormalState, FormalTable, ViewItem } from '../store/formal.ts'
-import { memoryReader } from '../store/reader.ts'
+import { memoryReader, referencesOf } from '../store/reader.ts'
 import { type ChangeSet, applyChangeSet, planCommands } from '../store/planner.ts'
 import { StoreError } from '../store/schema.ts'
 import type { EntrySequence, JsonObject, LayerEntry, StoreEntity } from '../store/types.ts'
@@ -14,6 +14,7 @@ import { formalStateOfReadModel, readModelOf } from './build.ts'
 import { readReadModel, validateReadModel } from './check.ts'
 import { applyReadModelDelta } from './delta.ts'
 import { indexReadModel } from './lookup.ts'
+import { liveReadModelIndex, type LiveReadModelIndex } from './liveIndex.ts'
 import { selectReadModel } from './select.ts'
 import { READ_MODEL_TABLES, compareIds, type ReadModel, type ReadModelRow, type ReadModelTable } from './types.ts'
 
@@ -286,4 +287,66 @@ test('selectReadModel: pruned tables keep only what a kept fact refers to; view 
   assert.doesNotThrow(() => validateReadModel(selected))
   // Keeping everything changes nothing.
   assert.deepEqual(selectReadModel(model, () => true), model)
+})
+
+// ---------------------------------------------------------------------------
+// The live index (3C-5 C1)
+// ---------------------------------------------------------------------------
+
+/** Every lookup of `live` answers as the index of `model` built from scratch. */
+function assertSameLookups(live: LiveReadModelIndex, model: ReadModel, label: string) {
+  const fresh = indexReadModel(model)
+  const rowIds = (rows: readonly { readonly id: string }[]) => rows.map((row) => row.id)
+  for (const table of READ_MODEL_TABLES) for (const row of model[table] as readonly ReadModelRow[]) assert.deepEqual(live.get(table, row.id), fresh.get(table, row.id), `${label} ${table}`)
+  for (const layerId of new Set(model.entries.map((row) => row.layerId))) assert.deepEqual(rowIds(live.entriesOfLayer(layerId)), rowIds(fresh.entriesOfLayer(layerId)), label)
+  for (const typeId of new Set(model.entities.map((row) => row.typeId))) assert.deepEqual(rowIds(live.entitiesOfType(typeId)), rowIds(fresh.entitiesOfType(typeId)), label)
+  for (const entityId of new Set([...model.entities.map((row) => row.id), ...model.entries.map((row) => row.entityId)])) {
+    assert.deepEqual(rowIds(live.entriesOfEntity(entityId)), rowIds(fresh.entriesOfEntity(entityId)), label)
+    assert.deepEqual(rowIds(live.relationsTo(entityId)), rowIds(fresh.relationsTo(entityId)), label)
+    assert.deepEqual(rowIds(live.relationsFrom(entityId, 'custom:related')), rowIds(fresh.relationsFrom(entityId, 'custom:related')), label)
+    assert.deepEqual(rowIds(live.anchorsOf(entityId)), rowIds(fresh.anchorsOf(entityId)), label)
+  }
+  for (const scope of new Set(model.viewItems.map((row) => row.scope))) assert.deepEqual(rowIds(live.viewItemsOf(scope)), rowIds(fresh.viewItemsOf(scope)), label)
+  for (const scope of new Set(model.viewSettings.map((row) => row.scope))) assert.deepEqual(rowIds(live.viewSettingsOf(scope)), rowIds(fresh.viewSettingsOf(scope)), label)
+  // Reverse references: every reference Core sees in the model, and no other.
+  const lookup = { get: (table: string, rowId: string) => fresh.get(table as ReadModelTable, rowId) as FormalRow | undefined }
+  const expected = new Map<string, string[]>()
+  for (const table of READ_MODEL_TABLES) for (const row of model[table] as readonly ReadModelRow[]) {
+    for (const ref of referencesOf(table, row as FormalRow, lookup)) {
+      const key = `${ref.toTable}/${ref.toId}`
+      expected.set(key, [...(expected.get(key) ?? []), `${ref.fromTable}/${ref.fromId}/${ref.field}`])
+    }
+  }
+  for (const table of READ_MODEL_TABLES) for (const row of model[table] as readonly ReadModelRow[]) {
+    const actual = live.referencesTo(table, row.id).map((ref) => `${ref.fromTable}/${ref.fromId}/${ref.field}`).sort()
+    assert.deepEqual(actual, (expected.get(`${table}/${row.id}`) ?? []).sort(), `${label} references to ${table}/${row.id}`)
+  }
+}
+
+for (const seed of [11, 4242]) test(`liveReadModelIndex: applied commit by commit, its lookups, references and model equal a fresh index of the read model read again (seed ${seed})`, () => {
+  const random = generator(seed)
+  let counter = 5000
+  const next = () => ++counter
+  let state = formalFixture()
+  const live = liveReadModelIndex(local(state))
+  assert.equal(live.referencesTo('entities', id(2)).length > 0, true, 'references built on first use')
+  let applied = 0
+  for (let step = 0; step < 160; step++) {
+    const batch = randomBatch(state, random, next)
+    if (!batch.length) continue
+    let changeSet: ChangeSet
+    try { changeSet = plan(state, batch) } catch (error) {
+      if (error instanceof StoreError) continue
+      throw error
+    }
+    state = applyChangeSet(state, changeSet)
+    live.apply({ baseRevision: changeSet.baseRevision, nextRevision: changeSet.nextRevision, upserts: changeSet.upserts, deletes: changeSet.deletes })
+    assert.equal(live.revision, state.revision)
+    if (step % 7 === 0) assert.deepEqual(live.model, local(state), `step ${step}: the model`)
+    assertSameLookups(live, local(state), `step ${step}`)
+    applied++
+  }
+  assert.deepEqual(live.model, local(state))
+  assert.ok(applied >= 50, `enough committed steps (${applied})`)
+  fails(() => live.apply({ baseRevision: live.revision + 1, nextRevision: live.revision + 2, upserts: [], deletes: [] }), 'E_STALE')
 })

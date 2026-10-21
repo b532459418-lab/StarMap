@@ -87,7 +87,107 @@ export function officialEntryRole(entry: LayerEntry): OfficialEntryRole | undefi
   }
   return undefined
 }
-const recordIdOf = (entry: LayerEntry): string => (entry.source.sourceId === OFFICIAL.user ? entry.id : entry.source.recordId)
+/** The V2 record id an official entry projects to: its source record, or its own id for a `starmap:user` entry. */
+export const recordIdOf = (entry: LayerEntry): string => (entry.source.sourceId === OFFICIAL.user ? entry.id : entry.source.recordId)
+
+/**
+ * A place's Canonical value from its entity: the verbatim V2 values, id, subtype, names (the title, unless it is empty
+ * and the V2 names were kept), originalLanguage and externalIds. `partOf` and `location` come from the part-of relation
+ * and the location anchor (the projection, and ./officialReader.ts, add them).
+ */
+export function placeValueOf(entity: StoreEntity): Json {
+  const { names, originalLanguage, externalIds, ...rest } = v2Of(entity)
+  const place: Json = { ...rest, id: entity.id, subtype: entity.fields.subtype }
+  // The title wins unless it is empty and the verbatim V2 names were kept instead.
+  const title = Object.keys(entity.title.names).length || names === undefined
+    ? { names: entity.title.names as Json, originalLanguage: entity.title.originalLanguage }
+    : { names, originalLanguage }
+  place.names = title.names
+  if (title.originalLanguage !== undefined) place.originalLanguage = title.originalLanguage
+  const iso = entity.fields.iso3166Alpha2
+  if (typeof iso === 'string' || externalIds !== undefined) {
+    place.externalIds = { ...(typeof iso === 'string' ? { iso3166Alpha2: iso } : {}), ...(plain(externalIds) ? externalIds : {}) }
+  }
+  return place
+}
+
+/** A want-to-go item's Canonical value from its entry (role 'wish') and its hidden flag. */
+export function wishValueOf(entry: LayerEntry, hidden: boolean | undefined): Json {
+  const value: Json = { ...v2Of(entry), id: recordIdOf(entry), placeId: entry.entityId }
+  const fields = entry.fields
+  if (typeof fields.note === 'string') value.note = fields.note
+  if (typeof fields.addedAt === 'string') value.addedAt = fields.addedAt
+  // An entry created without addedAt was added on the (UTC) day it was created.
+  else if (!Object.hasOwn(value, 'addedAt')) value.addedAt = entry.createdAt.slice(0, 10)
+  value.hidden = hidden ?? false
+  return value
+}
+
+/** The view rows of one scope, as the projection reads them (its own groups, or a read model index). */
+export interface ViewScopeAccess {
+  /** Items of a scope, in any order. */
+  items(scope: string): readonly ViewItem[]
+  /** Settings of a scope, in id order. */
+  settings(scope: string): readonly ViewSetting[]
+}
+const noConsume = () => {}
+
+/** A list scope: the items `valueOf` accepts and the unresolved elements, by position, then row id. */
+export function viewListOf(access: ViewScopeAccess, scope: string, valueOf: (item: ViewItem) => string | undefined,
+  consume: (table: FormalTable, id: string) => void = noConsume): JsonValue[] {
+  const elements: { position: string; id: string; table: FormalTable; value: JsonValue }[] = []
+  for (const item of access.items(scope)) {
+    const value = valueOf(item)
+    if (value !== undefined) elements.push({ position: item.position, id: item.id, table: 'viewItems', value })
+  }
+  for (const setting of access.settings(scope)) {
+    const v = setting.value
+    if (setting.key.startsWith(UNRESOLVED_KEY_PREFIX) && plain(v) && typeof v.position === 'string' && Object.hasOwn(v, 'id')) {
+      elements.push({ position: v.position, id: setting.id, table: 'viewSettings', value: v.id })
+    }
+  }
+  elements.sort((x, y) => compare(x.position, y.position) || compare(x.id, y.id))
+  for (const e of elements) consume(e.table, e.id)
+  return elements.map(e => e.value)
+}
+
+/**
+ * The editor state's lists, as the projection reads them: the editor list scopes, the three map scopes (one key setting
+ * per place, each key's list in its own scope) and the covers. `isPlace` and `isAsset` say which targets exist.
+ */
+export function editorListsOf(access: ViewScopeAccess, isPlace: (id: string) => boolean, isAsset: (id: string) => boolean,
+  consume: (table: FormalTable, id: string) => void = noConsume) {
+  const placeItem = (item: ViewItem) => (item.itemTable === 'entities' && isPlace(item.itemId) ? item.itemId : undefined)
+  const assetItem = (item: ViewItem) => (item.itemTable === 'assets' && isAsset(item.itemId) ? item.itemId : undefined)
+  const list = (scope: string, valueOf: (item: ViewItem) => string | undefined) => viewListOf(access, scope, valueOf, consume)
+  /** A map scope: one key setting per key, each key's list in its own scope. */
+  const map = (scope: string, valueOf: (item: ViewItem) => string | undefined): Record<string, JsonValue[]> => {
+    const result: Record<string, JsonValue[]> = {}
+    for (const setting of access.settings(scope)) {
+      if (setting.key.startsWith(UNRESOLVED_KEY_PREFIX) || !isPlace(setting.key)) continue
+      result[setting.key] = list(mapListScope(scope, setting.key), valueOf)
+      consume('viewSettings', setting.id)
+    }
+    return result
+  }
+  const covers: Record<string, string> = {}
+  for (const s of access.settings(VIEW_SCOPES.coverMediaByCity)) {
+    const cover = s.ref?.table === 'assets' ? s.ref.id : typeof s.value === 'string' ? s.value : undefined
+    if (cover === undefined || !isPlace(s.key)) continue
+    covers[s.key] = cover; consume('viewSettings', s.id)
+  }
+  return {
+    countryOrder: list(VIEW_SCOPES.countryOrder, placeItem),
+    hiddenCountryIds: list(VIEW_SCOPES.hiddenCountries, placeItem),
+    cityOrderByCountry: map(VIEW_SCOPES.cityOrderByCountry, placeItem),
+    hiddenCityIds: list(VIEW_SCOPES.hiddenCities, placeItem),
+    mediaOrderByCity: map(VIEW_SCOPES.mediaOrderByCity, assetItem),
+    hiddenMediaIds: list(VIEW_SCOPES.hiddenMedia, assetItem),
+    coverMediaByCity: covers,
+    droneOrderByCity: map(VIEW_SCOPES.droneOrderByCity, assetItem),
+    hiddenDroneMediaIds: list(VIEW_SCOPES.hiddenDroneMedia, assetItem),
+  }
+}
 
 /** Formal store -> the CanonicalData readV2 would produce, plus serializeV2's file metadata. */
 export function projectStoreToCanonical(state: FormalState, options: ProjectionOptions): Projection {
@@ -123,19 +223,7 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
   const locations = group(state.anchors, a => (a.kind === 'location' ? a.entityId : undefined))
   for (const entity of state.entities) {
     if (entity.typeId !== OFFICIAL.place) continue
-    const { names, originalLanguage, externalIds, ...rest } = v2Of(entity)
-    const place: Json = { ...rest, id: entity.id, subtype: entity.fields.subtype }
-    // The title wins unless it is empty and the verbatim V2 names were kept instead.
-    const title = Object.keys(entity.title.names).length || names === undefined
-      ? { names: entity.title.names as Json, originalLanguage: entity.title.originalLanguage }
-      : { names, originalLanguage }
-    place.names = title.names
-    if (title.originalLanguage !== undefined) place.originalLanguage = title.originalLanguage
-    const iso = entity.fields.iso3166Alpha2
-    if (typeof iso === 'string' || externalIds !== undefined) {
-      place.externalIds = { ...(typeof iso === 'string' ? { iso3166Alpha2: iso } : {}), ...(plain(externalIds) ? externalIds : {}) }
-    }
-    places.set(entity.id, place)
+    places.set(entity.id, placeValueOf(entity))
     consume('entities', entity.id)
   }
   for (const [placeId, place] of places) {
@@ -203,17 +291,12 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
     if (role === undefined) continue
     if (role === 'countryVisit') { if (entry.entityId === entry.source.recordId) visits.set(entry.source.recordId, entry); continue }
     consume('entries', entry.id)
-    const value: Json = { ...v2Of(entry), id: recordIdOf(entry), placeId: entry.entityId }
-    const fields = entry.fields
     if (role === 'wish') {
-      if (typeof fields.note === 'string') value.note = fields.note
-      if (typeof fields.addedAt === 'string') value.addedAt = fields.addedAt
-      // An entry created without addedAt was added on the (UTC) day it was created.
-      else if (!Object.hasOwn(value, 'addedAt')) value.addedAt = entry.createdAt.slice(0, 10)
-      value.hidden = wishHidden(entry.id) ?? false
-      wishes.push({ itemId: entry.id, value, after: [entry.createdAt, entry.id] })
+      wishes.push({ itemId: entry.id, value: wishValueOf(entry, wishHidden(entry.id)), after: [entry.createdAt, entry.id] })
       continue
     }
+    const value: Json = { ...v2Of(entry), id: recordIdOf(entry), placeId: entry.entityId }
+    const fields = entry.fields
     const raw = rawDates(fields.date)
     for (const [from, to] of [['startDate', 'start_date'], ['endDate', 'end_date'], ['year', 'year']] as const) if (Object.hasOwn(raw, from)) value[to] = raw[from]
     if (typeof fields.note === 'string') value.notes = fields.note
@@ -259,42 +342,10 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
   }
 
   // --- Lists of the editor state and the display.
+  const access: ViewScopeAccess = { items: (scope) => items.get(scope) ?? [], settings: (scope) => settings.get(scope) ?? [] }
   const placeItem = (item: ViewItem) => (item.itemTable === 'entities' && isPlace(item.itemId) ? item.itemId : undefined)
-  const assetItem = (item: ViewItem) => (item.itemTable === 'assets' && assets.has(item.itemId) ? item.itemId : undefined)
-  /** A list scope: its items and unresolved elements, by position. */
-  function list(scope: string, valueOf: (item: ViewItem) => string | undefined): JsonValue[] {
-    const elements: { position: string; id: string; table: FormalTable; value: JsonValue }[] = []
-    for (const item of items.get(scope) ?? []) {
-      const value = valueOf(item)
-      if (value !== undefined) elements.push({ position: item.position, id: item.id, table: 'viewItems', value })
-    }
-    for (const setting of settings.get(scope) ?? []) {
-      const v = setting.value
-      if (setting.key.startsWith(UNRESOLVED_KEY_PREFIX) && plain(v) && typeof v.position === 'string' && Object.hasOwn(v, 'id')) {
-        elements.push({ position: v.position, id: setting.id, table: 'viewSettings', value: v.id })
-      }
-    }
-    elements.sort((x, y) => compare(x.position, y.position) || compare(x.id, y.id))
-    for (const e of elements) consume(e.table, e.id)
-    return elements.map(e => e.value)
-  }
-  /** A map scope: one key setting per key, each key's list in its own scope. */
-  function map(scope: string, valueOf: (item: ViewItem) => string | undefined): Record<string, JsonValue[]> {
-    const result: Record<string, JsonValue[]> = {}
-    for (const setting of settings.get(scope) ?? []) {
-      if (setting.key.startsWith(UNRESOLVED_KEY_PREFIX) || !isPlace(setting.key)) continue
-      result[setting.key] = list(mapListScope(scope, setting.key), valueOf)
-      consume('viewSettings', setting.id)
-    }
-    return result
-  }
+  const list = (scope: string, valueOf: (item: ViewItem) => string | undefined): JsonValue[] => viewListOf(access, scope, valueOf, consume)
   const setting = (scope: string, settingKey: string): ViewSetting | undefined => settings.get(scope)?.find(s => s.key === settingKey)
-  const covers: Record<string, string> = {}
-  for (const s of settings.get(VIEW_SCOPES.coverMediaByCity) ?? []) {
-    const cover = s.ref?.table === 'assets' ? s.ref.id : typeof s.value === 'string' ? s.value : undefined
-    if (cover === undefined || !isPlace(s.key)) continue
-    covers[s.key] = cover; consume('viewSettings', s.id)
-  }
   const displaySetting = (settingKey: string) => {
     const s = setting(VIEW_SCOPES.display, settingKey)
     if (s && Object.hasOwn(s, 'value')) consume('viewSettings', s.id)
@@ -314,15 +365,7 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
     schemaVersion: EDITOR_STATE_SCHEMA_VERSION,
     ...headerOf('editorState'),
     addedCountries: ordered(VIEW_SCOPES.addedCountryOrder, 'entities', containers),
-    countryOrder: list(VIEW_SCOPES.countryOrder, placeItem),
-    hiddenCountryIds: list(VIEW_SCOPES.hiddenCountries, placeItem),
-    cityOrderByCountry: map(VIEW_SCOPES.cityOrderByCountry, placeItem),
-    hiddenCityIds: list(VIEW_SCOPES.hiddenCities, placeItem),
-    mediaOrderByCity: map(VIEW_SCOPES.mediaOrderByCity, assetItem),
-    hiddenMediaIds: list(VIEW_SCOPES.hiddenMedia, assetItem),
-    coverMediaByCity: covers,
-    droneOrderByCity: map(VIEW_SCOPES.droneOrderByCity, assetItem),
-    hiddenDroneMediaIds: list(VIEW_SCOPES.hiddenDroneMedia, assetItem),
+    ...editorListsOf(access, isPlace, (id) => assets.has(id), consume),
   } as unknown as CanonicalEditorState
 
   // --- File-level metadata (v2:import).
