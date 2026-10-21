@@ -28,6 +28,7 @@ import { PLACE, importedV2Library } from './media-inbox.fixture.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { applyMigration } from './store-migrate.mjs'
 import { ms, pluginFor, requestJson, serve, stats } from './store-mode-bench.mjs'
+import { servedModuleOf, servedV2Files } from './private-read-model.fixture.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 
 const NOW = '2026-10-16T00:00:00.000Z'
@@ -65,8 +66,8 @@ async function served(paths, mode) {
   const view = async () => {
     module.transformResult = null
     await load()
-    const read = await import(`data:text/javascript,${encodeURIComponent(module.transformResult.code)}`)
-    return { revision: read.privateStoreRevision, files: read.privateV2Files }
+    const read = await servedModuleOf(plugin, module.transformResult.code)
+    return { revision: read.privateStoreRevision, files: servedV2Files(read) }
   }
   let revision = (await view()).revision
   const write = async (route, input, method = 'POST') => {

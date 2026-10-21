@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { copyFile, mkdir, stat } from 'node:fs/promises'
+import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { EnvHttpProxyAgent, fetch as proxyAwareFetch } from 'undici'
@@ -12,12 +13,12 @@ import {
   renderPrivateDataModule,
   shouldHandlePrivateDataChange,
 } from './private-data-module.mjs'
-import { filterForPersonalBuild } from './personal-build-filter.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { privateDataState } from './private-data-source.mjs'
 import { createV2WriteContext, readV2EditorState, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
 import { v2MediaRoute } from './v2-media-store.mjs'
 import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { filterReadModelForPersonalBuild } from '../src/data/store/personalBuildReadModel.ts'
 import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 import { allowedOrigins, authorizeRead, crossSiteRequestGuard, isLoopbackRequest } from './local-editor-request-guard.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
@@ -27,13 +28,19 @@ import { assertMediaJobsClear } from './media-job-store.mjs'
 import { mediaJobRoute, handleMediaJobRead, handleMediaJobPreview, handleMediaJobWrite } from './media-job-service.mjs'
 
 // 3C-4d：新库是私人数据唯一的写入方式。私人根的状态由 ./private-data-source.mjs 的 privateDataState 每次读写现判：
-// - store：App 读新库的投影（./store-session.mjs，按需加载，公开模式不加载 node:sqlite）；8 个编辑端点（3C-4a，V2 写入规则
-//   作为规则引擎）、3 个媒体端点与媒体任务（3C-4c，./store-media-endpoints.mjs、./media-service.mjs）都写新库。
-// - migration-required：有 V2 数据（或没迁移的旧格式数据）、还没有新库。只读显示 data/v2/ 的文件，页面提示运行迁移；
+// - store：App 读新库的读模型（3C-5B；./store-session.mjs，按需加载，公开模式不加载 node:sqlite），经只读端点
+//   GET /__travelatlas/editor/read-model 取得，虚拟模块只给出它的地址；8 个编辑端点（3C-4a，V2
+//   写入规则作为规则引擎）、3 个媒体端点与媒体任务（3C-4c，./store-media-endpoints.mjs、./media-service.mjs）都写新库。
+// - migration-required：有 V2 数据（或没迁移的旧格式数据）、还没有新库。只读显示 data/v2/ 的文件（3C-5B 起在内存里迁移成读模型
+//   再给 App），页面提示运行迁移；
 //   全部写入端点、媒体端点与媒体任务（含任务列表）返回 409 E_STORE_MIGRATION_REQUIRED（旧格式：E_LEGACY_UNMIGRATED）。
 // - needs-recovery：data/store/ 下有残留、没有新库。同样只读，409 E_STORE_RECOVERY_REQUIRED，提示 npm run library:recover。
 // - empty：开发服务器（个人、可写）启动时在库租约下建一个空的新库（./store-init.mjs），之后按 store 处理；构建不建库。
 const virtualPrivateDataId = 'virtual:starmap-private-data'
+// 3C-5B (review of B): the read-only endpoint the dev server serves the read model from; the virtual module names it with
+// the revision (or, for a root that is not a library yet, the V2 files' digest), so a reload after a save asks for a new
+// address. It is an editor endpoint: the cross-site guard and the read authorization (#70) come first.
+export const READ_MODEL_PATH = '/__travelatlas/editor/read-model'
 const resolvedPrivateDataId = `\0${virtualPrivateDataId}`
 let privatePaths
 let privateRoot
@@ -455,13 +462,75 @@ export function travelAtlasLocalEditor(options = {}) {
   let outputRoot
   // Personal build only (batch 7, S3): the media files the filtered data still refers to, set when the virtual module loads.
   let buildMediaFiles = []
-  // `vite build` of the personal profile inlines only what its pages can show (./personal-build-filter.mjs); the dev
-  // server keeps everything, because the editor restores and deletes hidden entries.
-  const forThisCommand = (v2Values) => {
-    if (command !== 'build') return v2Values
-    const { files, mediaFiles } = filterForPersonalBuild(v2Values)
+  // Personal build only (3C-5B spec §2.3): the data file closeBundle writes, { fileName, text }, set when the module loads.
+  let buildData
+  // Where the App loads its read model from; the virtual module only names it (3C-5B), the App fetches it at start-up
+  // and shows an error page when it cannot.
+  // - The dev server: the endpoint READ_MODEL_PATH with the store revision (`?revision=N`) or the V2 files' digest
+  //   (`?v2=…`), all of the read model, because the editor restores and deletes hidden entries. Not inlining it keeps
+  //   18 MB of data out of Vite's module transform (review of 3C-5B: the dev first screen).
+  // - `vite build` of the personal profile (3C-5B spec §2.3): only what its pages can show (src/data/store/
+  //   personalBuildReadModel.ts, batch 7's S3 filter on the read model); closeBundle writes that as the content-hashed
+  //   data file data/read-model.<sha256 prefix>.json next to the bundle.
+  const devReadModelUrl = (query) => `${READ_MODEL_PATH.slice(1)}?${query}`
+  const buildReadModelUrl = (model) => {
+    const started = performance.now()
+    const { model: filtered, mediaFiles } = filterReadModelForPersonalBuild(model)
+    const filterMs = Math.round(performance.now() - started)
+    const text = JSON.stringify(filtered)
+    const fileName = `data/read-model.${createHash('sha256').update(text).digest('hex').slice(0, 16)}.json`
+    buildData = { fileName, text }
     buildMediaFiles = mediaFiles
-    return files
+    console.log(`[StarMap] 个人构建：读模型过滤 ${filterMs} ms；数据文件 ${fileName}（${(Buffer.byteLength(text) / 1048576).toFixed(1)} MB），媒体文件 ${mediaFiles.length} 个。`)
+    return fileName
+  }
+  // The endpoint's bytes per read model (the session hands out the same object for one revision): JSON once per revision.
+  const servedBytes = new WeakMap()
+  const bytesOf = (model) => {
+    let bytes = servedBytes.get(model)
+    if (bytes === undefined) { bytes = Buffer.from(JSON.stringify(model), 'utf8'); servedBytes.set(model, bytes) }
+    return bytes
+  }
+  /**
+   * The endpoint's answer: { status, body (Buffer), revision? }. The library's read model; for a root that is not a library
+   * yet the in-memory migration of its V2 files, and a migration that would be refused is 422 with its problems (codes,
+   * paths and rules, never values), so the App's error page can say what to fix.
+   */
+  const readModelResponse = async () => {
+    await initialized()
+    if (storeMode()) {
+      const view = await (await storeSession()).moduleExports()
+      return { status: 200, body: bytesOf(view.model), revision: view.revision }
+    }
+    try {
+      return { status: 200, body: bytesOf((await unmigratedReadModel()).model) }
+    } catch (error) {
+      if (!(error?.problems && typeof error.code === 'string')) throw error
+      console.error(`[StarMap store] data/v2/ 的文件不能迁移成读模型（${error.code}）：\n${error.problems.join('\n')}`)
+      return { status: 422, body: Buffer.from(JSON.stringify({ ok: false, code: error.code, problems: error.problems })) }
+    }
+  }
+  // 3C-5B: a root that is not a library yet (migration required, needs recovery, or an empty root that got none) gives
+  // the App the read model of its data/v2/ files migrated in memory (./store-migrate.mjs migrationReadModel, nothing is
+  // written), so the App has one read path. Cached by the files' bytes: a reload does not migrate again; a change of the
+  // files (the watcher invalidates the module) does.
+  let unmigrated
+  /** The V2 files as read (`values`) and the digest of their bytes (`key`), which names the migrated read model. */
+  const unmigratedInputs = async () => {
+    const { readV2Inputs } = await import('./store-migrate.mjs')
+    const { values, bytes } = await readV2Inputs(privatePaths)
+    const digest = createHash('sha256')
+    for (const key of V2_PRIVATE_FILE_KEYS) digest.update(bytes[key] === undefined ? `${key}:missing;` : `${key}:${bytes[key].length}:`).update(bytes[key] ?? '')
+    return { values, key: digest.digest('hex') }
+  }
+  const unmigratedReadModel = async () => {
+    const { migrationReadModel } = await import('./store-migrate.mjs')
+    const { values, key } = await unmigratedInputs()
+    if (unmigrated?.key === key) return unmigrated
+    const { model, timings } = migrationReadModel(values)
+    console.log(`[StarMap store] 还不是新库：data/v2/ 的文件在内存里迁移成读模型（migrateV2 ${timings.migrateMs} ms，规划 ${timings.planMs} ms，读模型 ${timings.readModelMs} ms）。`)
+    unmigrated = { key, model }
+    return unmigrated
   }
   // 新库模式（3C-3）：这个插件实例的新库会话，第一次用到时才加载 ./store-session.mjs。整个进程只保留一个连接。
   // 3C-4b：构建（build:personal）以只读方式打开新库：不写正常关闭标记、不取写锁，开发服务器开着新库时也能构建。
@@ -491,6 +560,8 @@ export function travelAtlasLocalEditor(options = {}) {
 
   return {
     name: 'travelatlas-local-editor',
+    // For tests and tools: what the read-model endpoint answers ({ status, body, revision? }), without an HTTP server.
+    api: { readModelResponse },
     configResolved(config) {
       command = config.command
       outputRoot = path.resolve(config.root, config.build.outDir)
@@ -503,21 +574,24 @@ export function travelAtlasLocalEditor(options = {}) {
       if (profile !== 'personal') return renderPrivateDataModule(privateDataModuleExports({ profile }))
       await initialized()
       if (storeMode()) {
-        // 3C-3 新库模式：新库的投影经 serializeV2 得到的五个文件与全库修订号。打不开就抛错（App 显示），绝不回落到 V2 文件。
+        // 3C-3 新库模式；3C-5B 起给出新库的读模型与全库修订号。打不开就抛错（App 显示），绝不回落到 V2 文件。
         // 3C-4b：库损坏但还能读（打开检查失败）时照常给出数据，另报 storeReadOnly，页面显示只读提示。
-        const { files, revision, readOnly } = await (await storeSession()).moduleExports()
+        const view = await (await storeSession()).moduleExports()
         const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
-        return renderPrivateDataModule(privateDataModuleExports({ profile, v2Values: forThisCommand(files), legacyUnmigrated, storeRevision: revision, storeReadOnly: readOnly }))
+        const readModelUrl = command === 'build' ? buildReadModelUrl(view.model) : devReadModelUrl(`revision=${view.revision}`)
+        return renderPrivateDataModule(privateDataModuleExports({ profile, readModelUrl, legacyUnmigrated, storeRevision: view.revision, storeReadOnly: view.readOnly }))
       }
-      // 不是新库（3C-4d）：早先的连接（新库文件被移走）正常关闭。只读 data/v2/ 的五个 V2 文件（缺的为 undefined），外加状态：
-      // 待迁移、需要恢复、没迁移的旧格式数据（只看文件在不在，不读内容）。页面据此显示提示，写入一律被拒绝。
+      // 不是新库（3C-4d）：早先的连接（新库文件被移走）正常关闭。data/v2/ 的五个 V2 文件在内存里迁移成读模型（3C-5B；缺的文件
+      // 当作空文件），外加状态：待迁移、需要恢复、没迁移的旧格式数据（只看文件在不在，不读内容）。页面据此显示提示，写入一律被拒绝。
       await releaseStore()
-      const v2Values = {}
-      for (const key of V2_PRIVATE_FILE_KEYS) v2Values[key] = await readJson(privatePaths.v2FilePaths[key], undefined)
+      // The dev server names the endpoint by the files' digest (it migrates when the App asks); a build migrates now.
+      const readModelUrl = command === 'build'
+        ? buildReadModelUrl((await unmigratedReadModel()).model)
+        : devReadModelUrl(`v2=${(await unmigratedInputs()).key.slice(0, 16)}`)
       const state = dataState()
       const legacyUnmigrated = isLegacyUnmigrated(legacyDataStateOf(privatePaths))
       return renderPrivateDataModule(privateDataModuleExports({
-        profile, v2Values: forThisCommand(v2Values), legacyUnmigrated,
+        profile, readModelUrl, legacyUnmigrated,
         storeMigrationRequired: state.state === 'migration-required' && state.reason === 'v2',
         storeRecoveryRequired: state.state === 'needs-recovery' || (state.state === 'empty' && initializationFailed),
       }))
@@ -596,6 +670,20 @@ export function travelAtlasLocalEditor(options = {}) {
             // RFC-LOC-1 PR3b-2：读 data/v2/ 的 editor-state，转成 V1 形状返回。
             const result = await readV2EditorState({ privatePaths })
             return sendJson(response, result.status, result.body)
+          }
+
+          // 3C-5B（审查）：App 启动时从这里取读模型（只读；增量接口与推送是子批 D 的事）。地址里的修订号只为让保存后的整页
+          // 刷新换一个地址；回答的总是当前的读模型，它的修订号在头里（x-starmap-revision），也在读模型本身的 revision 里。
+          if (request.method === 'GET' && url.pathname === READ_MODEL_PATH) {
+            if (!authorizeRead(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
+            const served = await readModelResponse()
+            response.statusCode = served.status
+            response.setHeader('content-type', 'application/json; charset=utf-8')
+            response.setHeader('cache-control', 'no-store')
+            response.setHeader('content-length', String(served.body.length))
+            if (served.revision !== undefined) response.setHeader('x-starmap-revision', String(served.revision))
+            response.end(served.body)
+            return
           }
 
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/catalog/countries') {
@@ -701,7 +789,14 @@ export function travelAtlasLocalEditor(options = {}) {
       // The copy is for `build:personal` only. Vite's dev server also calls closeBundle when it shuts down (after
       // buildEnd), so without the command check every exit from `dev:personal` would quietly copy the private media
       // into the build output. The target is the resolved build.outDir (dist by default), not a hard-coded path.
-      if (command !== 'build' || profile !== 'personal' || !(await exists(userMediaRoot))) return
+      if (command !== 'build' || profile !== 'personal') return
+      // 3C-5B: the read model's data file, written next to the bundle (the module names it relative to the base URL).
+      if (buildData !== undefined) {
+        const target = path.join(outputRoot, ...buildData.fileName.split('/'))
+        await mkdir(path.dirname(target), { recursive: true })
+        await writeFile(target, buildData.text)
+      }
+      if (!(await exists(userMediaRoot))) return
       // Only the files the kept media items refer to (originals and their derivatives), never the whole folder: hidden
       // media stay out of the build (batch 7, S3). Links are refused as when the dev server serves media.
       const outputMediaRoot = path.join(outputRoot, 'media', 'user')

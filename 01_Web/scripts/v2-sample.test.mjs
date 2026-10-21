@@ -5,7 +5,7 @@
  * 随迁移工具删除；派生结果由 src/data/canonical/derive.test.ts 的基线锁定钉住（RFC-LOC-1 Core-B 起是 @4 的 9b68b8ad…）。这里测：
  * - 已提交文件通过 validateV2Files，目录里只有五个文件；
  * - 行尾在任何检出里都是 LF；
- * - canonicalForInputs 的来源参数与 App 接线；
+ * - canonicalForInputs 的来源参数与 App 接线（3C-5B 起 App 不再读 V2 样例，读原生样例的读模型 src/data/sample/）；
  * - 隐私审计对 V2 样例的每条规则至少一个反例（在临时副本上改坏，不改已提交文件）。
  *
  * 运行方式：npm test。只读已提交文件；写入只发生在 fs.mkdtemp 建的临时目录里，用例结束时删除。
@@ -68,13 +68,12 @@ test('canonicalForInputs 的来源参数：缺省为 local（与 PR3b 相同）�
   assert.equal(empty.places.length, 0)
 })
 
-test('App 接线：rawInputs.ts 静态 import 五个 V2 样例文件（文件名同 V2_SAMPLE_FILE_NAMES），不再 import 任何旧样例（PR5a 起足迹样例也不）', () => {
+test('App 接线（3C-5B）：rawInputs.ts 不再 import V2 样例，公开模式读原生样例的读模型 ./sample/sample.read-model.json；V2 样例只留作迁移与兼容测试的输入', () => {
   const source = readFileSync(path.join(webRoot, 'src', 'data', 'rawInputs.ts'), 'utf8')
-  for (const name of Object.values(V2_SAMPLE_FILE_NAMES)) {
-    assert.match(source, new RegExp(`^import \\w+ from './v2-sample/${name.replace('.', '\\.')}'$`, 'm'), name)
-  }
+  assert.doesNotMatch(source, /from '\.\/v2-sample\//)
+  assert.match(source, /^import sampleReadModelJson from '\.\/sample\/sample\.read-model\.json'$/m)
   assert.doesNotMatch(source, /want-to-go\.sample\.json|travel-map\.sample\.json/)
-  assert.match(source, /\{ v2Files: v2SampleFiles, source: 'sample' \}/)
+  assert.match(source, /if \(useSampleData\) return \{ model: readReadModel\(sampleReadModelJson\) \}/)
 })
 
 // ---------------------------------------------------------------------------

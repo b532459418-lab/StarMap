@@ -20,10 +20,10 @@ import { backupStore, exportStoreV2, restoreStore } from './store-backup.mjs'
 import { openStore } from './store-host.mjs'
 import { applyMigration, previewMigration } from './store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './store-session.mjs'
+import { servedCanonical } from './private-read-model.fixture.mjs'
 import {
   authorizedHeaders, captureMiddleware, edgeV2Files, editorPrefix, moduleOf, requestTo, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files,
 } from './store-mode.fixture.mjs'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
@@ -63,7 +63,7 @@ for (const [name, filesOf, pickWish] of INPUTS) {
     })
     const reading = async () => {
       const module = await moduleOf(plugin)
-      return { revision: module.privateStoreRevision, canonical: canonicalForInputs({ v2Files: module.privateV2Files }) }
+      return { revision: module.privateStoreRevision, canonical: servedCanonical(module) }
     }
 
     await t.test('1. dry run, then --apply', async () => {

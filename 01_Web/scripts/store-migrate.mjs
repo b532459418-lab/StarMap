@@ -21,6 +21,8 @@
  *   6. reopens it read-only, projects `readRowsUnchecked()` and compares with `readV2` of the V2 files and with their
  *      derived baseline. Any difference deletes the new store again and the command fails.
  * - The V2 files are never written: their bytes are read once and checked again at the end.
+ * - `migrationReadModel` (3C-5B): the dry run's first steps only, for the plugin. A root that is not migrated yet is
+ *   migrated in memory once, and the App reads the resulting read model like a library's: one read path.
  * - A refused migration (invalid V2 files, records readV2 would skip, colliding source ids, …) writes nothing and lists
  *   every problem. Problems and reports carry rules, paths, keys and counts, never values from the files.
  *
@@ -44,6 +46,7 @@ import { V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { migrateV2 } from '../src/data/store/migrateV2.ts'
 import { FORMAL_TABLES, emptyFormalState } from '../src/worldgraph/store/formal.ts'
+import { readModelOf } from '../src/worldgraph/readModel/build.ts'
 import { memoryReader } from '../src/worldgraph/store/reader.ts'
 import { planCommands } from '../src/worldgraph/store/planner.ts'
 
@@ -115,6 +118,30 @@ function stateAfterFirstChangeSet(changeSet) {
   return state
 }
 
+/** The migration's commands planned on an empty store in memory (revision 0 → 1). */
+const firstChangeSet = (commands, now) => planCommands(memoryReader(emptyFormalState()), commands, { baseRevision: 0, now, policy: OFFICIAL_POLICY })
+const ms = (started) => Math.round((performance.now() - started) * 10) / 10
+
+/**
+ * 3C-5B: the read model the V2 files `values` become (missing ones completed as empty, like the App), migrated in
+ * memory (nothing is written): what the plugin gives the App for a root that is not migrated yet, so the App reads one
+ * shape whatever the root's state. Returns
+ * `{ model, timings: { migrateMs, planMs, readModelMs } }`; the model's revision is the migration's (1), its origin
+ * 'local'. A migration that `--apply` would refuse throws the same StoreToolError (E_MIGRATION_REFUSED with every
+ * problem): such files cannot be shown without losing records.
+ */
+export function migrationReadModel(values, { now = new Date().toISOString(), allocateId } = {}) {
+  let started = performance.now()
+  const result = migrationOf(completeV2Files(values), { now, allocateId })
+  const migrateMs = ms(started)
+  started = performance.now()
+  const changeSet = firstChangeSet(result.commands, now)
+  const planMs = ms(started)
+  started = performance.now()
+  const model = readModelOf(stateAfterFirstChangeSet(changeSet), { origin: 'local' })
+  return { model, timings: { migrateMs, planMs, readModelMs: ms(started) } }
+}
+
 /** Report lines shared by the preview and --apply: counts, extension keys, unresolved view elements. */
 function reportLines(report) {
   const lines = ['各类数量：']
@@ -157,7 +184,7 @@ export async function previewMigration(privatePaths, { now = new Date().toISOStr
   }
   const { values } = await readV2Inputs(privatePaths)
   const result = migrationOf(values, { now, allocateId })
-  const changeSet = planCommands(memoryReader(emptyFormalState()), result.commands, { baseRevision: 0, now, policy: OFFICIAL_POLICY })
+  const changeSet = firstChangeSet(result.commands, now)
   const { projection } = projectToV2Files(stateAfterFirstChangeSet(changeSet))
   const comparison = compareWithV2(projection, values)
   const storeExists = privateDataSource(privatePaths) === 'store'

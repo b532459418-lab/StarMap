@@ -26,12 +26,12 @@ dev:personal / build:personal
 dev:public / build:public
         ↓
 只加载 Git 跟踪的中性示例
-（src/data/v2-sample/ 的五个 V2 文件，手工维护）
+（3C-5B 起是原生样例 src/data/sample/ 的读模型；src/data/v2-sample/ 的五个 V2 文件只留作迁移与兼容测试的输入）
 ```
 
 个人配置只读写 `data/v2/`。私人目录里有还没迁移的旧格式文件（且 `data/v2/` 里没有 V2 文件）时，页面显示迁移提示，本地编辑器与媒体导入拒绝写入；当前版本不再带迁移工具，迁移要先检出提交 `4fd32a9`，迁移后回到最新版本；迁移之后，旧格式文件与早期版本的 `data/data-mode.local.json` 标记都不再读取。详见 [Web 工作区说明](../01_Web/README.md#private-data-format)。
 
-`build:personal` 只带页面显示得到的内容：被隐藏的国家、城市、想去条目、照片和航拍，连同只能经由它们到达的记录、媒体与地点，都不进入构建的数据；构建目录里也只复制保留下来的媒体条目引用到的原图与缩略图（`01_Web/scripts/personal-build-filter.mjs`）。`dev:personal` 照旧提供全部数据，供编辑器恢复或彻底删除隐藏的条目。
+`build:personal` 只带页面显示得到的内容：被隐藏的国家、城市、想去条目、照片和航拍，连同只能经由它们到达的记录、媒体与地点，都不进入构建的数据；构建目录里也只复制保留下来的媒体条目引用到的原图与缩略图（`01_Web/src/data/store/personalBuildReadModel.ts`，3C-5B 起在新库的读模型上过滤）。个人构建的数据不在 JS 包里，而是构建目录里单独的 `data/read-model.<hash>.json`，页面启动时加载。`dev:personal` 照旧提供全部数据，供编辑器恢复或彻底删除隐藏的条目。
 
 公共模式从不自动发现个人数据，即使私有层存在也不会读取。`npm run release:check` 还会只归档 Git 已跟踪文件，在系统临时目录中重新安装、Lint、运行测试和公共构建，确保检查过程看不到私有层。
 
@@ -40,7 +40,8 @@ dev:public / build:public
 | 内容 | 私人开发仓库 | 干净公开仓库 | 说明 |
 | --- | --- | --- | --- |
 | React / Cesium / UI 源码 | 保留 | 保留 | 产品主体 |
-| `src/data/v2-sample/` | 保留 | 保留 | 公开模式读取的中性示例：五个 V2 文件，手工维护，`privacy:check` 检查 |
+| `src/data/sample/` | 保留 | 保留 | 公开模式读取的中性示例（3C-5B 起）：源文件与生成的读模型，`privacy:check` 检查 |
+| `src/data/v2-sample/` | 保留 | 保留 | 同一个样例的五个 V2 文件，手工维护，只作迁移与兼容测试的输入，`privacy:check` 检查 |
 | `<private-root>/data/v2/` | 外置私有层 | 不包含 | 个人数据（App 只读写这里）：`places` / `travel-map` / `want-to-go` / `editor-state` / `user-media` 五个 `.local.json`，以及 `media-source-index.local.json` |
 | `<private-root>/data/migration/` | 外置私有层 | 不包含 | 旧数据迁移到 V2 时（提交 `4fd32a9` 的迁移工具）的迁移清单与决定文件 |
 | `<private-root>/data/data-mode.local.json` | 外置私有层 | 不包含 | 早期版本写下的数据模式标记，现已不再读取、不再写入，删留随意 |
@@ -71,7 +72,7 @@ GitHub 不包含个人照片和旅行数据。若个人网站本身部署到公�
 
 - 关闭 Vite 的 CORS（`server.cors: false`）：不向任何其他来源返回 `Access-Control-Allow-Origin`。
 - 跨站请求守卫：注册在 Vite 自己的中间件之前，私人数据虚拟模块、`/@fs/`、`/media/user/*` 与编辑接口都在它之后。浏览器标为 `Sec-Fetch-Site: cross-site` 或 `same-site`（例如另一个端口上的 `localhost` 页面）的请求，只要不是打开页面本身（`Sec-Fetch-Mode: navigate`），一律返回 403。别处的链接仍能打开页面，但不能读取、嵌入或导入其中的任何资源。
-- 只读接口（`GET /__travelatlas/editor/state`、`/__travelatlas/editor/catalog/*`）与 `/media/user/*`：要求本机 socket；带 Origin 时必须与本服务同源（同协议、同主机、同端口）；`Sec-Fetch-Site` 必须缺省、为 `same-origin` 或 `none`。媒体响应带 `Cross-Origin-Resource-Policy: same-origin` 与 `X-Content-Type-Options: nosniff`。
+- 只读接口（`GET /__travelatlas/editor/state`、`/__travelatlas/editor/read-model`（3C-5B：App 启动时从这里取私人数据的读模型）、`/__travelatlas/editor/catalog/*`）与 `/media/user/*`：要求本机 socket；带 Origin 时必须与本服务同源（同协议、同主机、同端口）；`Sec-Fetch-Site` 必须缺省、为 `same-origin` 或 `none`。媒体响应带 `Cross-Origin-Resource-Policy: same-origin` 与 `X-Content-Type-Options: nosniff`。
 - 写入接口与媒体任务接口：要求本机 socket；带 Origin 时必须与本服务同源；并且带请求头 `x-travelatlas-local-editor: 1`。自定义请求头会触发跨源预检，而个人配置不放行任何跨源预检。
 
 `vite preview`（`npm run preview`）直接服务 `dist`，而 `dist` 可能是包含私人数据与原图的个人构建，所以预览服务不论哪种模式都关闭 CORS（`preview.cors: false`），并在自己的中间件之前注册同一个跨站请求守卫；同源访问照常可用。

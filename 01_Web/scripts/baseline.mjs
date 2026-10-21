@@ -1,21 +1,22 @@
 /**
- * 派生基线工具（RFC-LOC-1 PR1 §3.3；PR5b 由 legacy-baseline.mjs 改名，只留 V2 的两种输入）。
+ * 派生基线工具（RFC-LOC-1 PR1 §3.3；PR5b 由 legacy-baseline.mjs 改名；3C-5B 规格 §2.7 起读读模型）。
  *
- * 把「App 从某份数据派生出的全部结果」固定成一份可逐字节比较的 JSON：
- * 五个 V2 文件 → src/data/canonical/canonicalForInputs.ts（V2 Reader）→ src/data/canonical/derive.ts 的
+ * 把「App 从某份数据派生出的全部结果」固定成一份可逐字节比较的 JSON，管线与 App 相同（src/data/appData.ts）：
+ * 读模型 → 官方视图（src/data/store/projectCanonical.ts 的 officialViewOf）→ src/data/canonical/derive.ts 的
  * deriveAppDataFromCanonical → src/data/derive/baseline.ts 的 buildBaseline / stableStringify。
  * 只读：除 --out 指定的文件外不写任何东西。
  *
- *   node scripts/baseline.mjs --sample --out <file>        公开模式：已提交的公开样例 src/data/v2-sample/
- *   node scripts/baseline.mjs --out <file>                 个人模式：私人目录 data/v2/ 的五个 V2 文件
+ *   node scripts/baseline.mjs --sample --out <file>        公开模式：已提交的原生样例 src/data/sample/sample.read-model.json
+ *   node scripts/baseline.mjs --out <file>                 个人模式：私人根的新库（还不是新库时：data/v2/ 在内存里迁移）
  *   node scripts/baseline.mjs --compare <a.json> <b.json>  逐字节比较；不同时列出前 50 处差异的 JSON 路径
  *
- * 数据的选择与 App 在对应模式下的实际选择一致（src/data/rawInputs.ts）：
- * - 公开模式（--sample）：公开样例的五个 V2 文件，来源标为 sample——与 App 在公开模式和强制样例下读的输入相同。
- *   不读任何私人文件，所以没有隐私门。
- * - 个人模式：与虚拟模块相同，五个 V2 文件都用 readJson(path, undefined) 读——不存在为 undefined，按空处理
- *   （五个都缺时是空数据，不回落到样例）；不是有效 JSON、或没通过 V2 校验，报错退出（App 此时同样加载失败）。
- *   地点 id 是 UUID，不做映射。旧格式的私人文件与 PR4 的数据模式标记都不读。
+ * 数据的选择与 App 在对应模式下的实际选择一致（src/data/rawInputs.ts 与 scripts/local-editor-plugin.mjs）：
+ * - 公开模式（--sample）：原生公开样例的读模型，来源标为 sample——与 App 在公开模式和强制样例下读的输入相同（派生结果
+ *   与 V2 样例的相同，锁 9b68b8ad…）。不读任何私人文件，所以没有隐私门。
+ * - 个人模式：私人根是新库时读新库的读模型（只读打开，开发服务器开着也可以；库没有通过打开检查时照常读取并提示，
+ *   与 App 的只读模式相同），不读 data/v2/（3C-4d 起那里的文件可能早已过时）。还不是新库时，与插件相同：data/v2/ 的
+ *   五个文件（缺的按空处理，都缺时是空数据，不回落到样例）在内存里迁移一次得到读模型；文件不是有效 JSON、或迁移会拒绝
+ *   （不合法、有 readV2 会跳过的记录），报错退出（App 此时同样加载失败）。旧格式的私人文件与 PR4 的数据模式标记都不读。
  * - 不模拟强制样例模式（VITE_TRAVEL_ATLAS_DATA_MODE=sample、?data=sample）：它读的就是 --sample 的输入。
  * - now 固定为 2000-01-01T00:00:00.000Z；基线里恰好等于 now 的字符串都会被替换成 "<now>"。
  *
@@ -31,13 +32,18 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { readJson } from './json-file.mjs'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { isAllowedPrivateOutput } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot } from './private-profile.mjs'
-import { readV2SampleFiles, V2_SAMPLE_DIRECTORY } from './v2-sample.mjs'
+import { privateDataState, storeFileOf } from './private-data-source.mjs'
+import { openStore } from './store-host.mjs'
+import { StoreToolError, migrationReadModel, readV2Inputs } from './store-migrate.mjs'
 import { baselineDifferences, buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
-import { canonicalForInputs, V2FilesInvalidError } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
+import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
+import { readReadModel } from '../src/worldgraph/readModel/check.ts'
 
 const BASELINE_NOW = '2000-01-01T00:00:00.000Z'
 const MAX_REPORTED_DIFFERENCES = 50
@@ -84,28 +90,33 @@ const describeReadFailure = (error) => {
   return error?.code ?? error?.name ?? '未知错误'
 }
 
-const readPrivateJson = async (filePath) => {
-  try {
-    return await readJson(filePath, undefined)
-  } catch (error) {
-    throw new ReadError(`读取失败：${filePath}（${describeReadFailure(error)}）`)
+/**
+ * 个人模式：与 App 相同的读模型。新库：只读打开，读它的读模型；还不是新库：data/v2/ 的五个文件在内存里迁移
+ * （scripts/store-migrate.mjs 的 readV2Inputs 与 migrationReadModel，与插件相同）。先报出读的是哪一种。
+ */
+const loadPrivateReadModel = async () => {
+  const paths = getPrivatePaths()
+  if (privateDataState(paths).state === 'store') {
+    const handle = openStore(storeFileOf(paths), { privatePaths: paths, readOnly: true, policy: OFFICIAL_POLICY })
+    try {
+      if (handle.diagnostic) console.error(`[baseline] 新库没有通过打开检查（${handle.diagnostic.code}），与 App 一样按只读读取。`)
+      const model = handle.readModel()
+      console.error(`[baseline] 读新库：修订号 ${model.revision}（不读 data/v2/）。`)
+      return model
+    } finally { await handle.close() }
   }
+  const { values } = await readV2Inputs(paths)
+  console.error('[baseline] 还不是新库：data/v2/ 的文件在内存里迁移成读模型（与开发服务器相同）。')
+  return migrationReadModel(values).model
 }
 
-/** 个人模式：私人目录 data/v2/ 的五个 V2 文件（不存在为 undefined，按空处理）。与虚拟模块读的相同。 */
-const loadPrivateInputs = async () => {
-  const { v2FilePaths } = getPrivatePaths()
-  const v2Files = {}
-  for (const [key, filePath] of Object.entries(v2FilePaths)) v2Files[key] = await readPrivateJson(filePath)
-  return { v2Files }
-}
-
-/** 公开模式：已提交的公开样例，来源标为 sample——与 App 在公开模式和强制样例下读的输入相同（src/data/rawInputs.ts）。 */
-const loadSampleInputs = () => {
+/** 公开模式：已提交的原生样例读模型，来源标为 sample——与 App 在公开模式和强制样例下读的输入相同（src/data/rawInputs.ts）。 */
+const SAMPLE_READ_MODEL = fileURLToPath(new URL('../src/data/sample/sample.read-model.json', import.meta.url))
+const loadSampleReadModel = () => {
   try {
-    return { v2Files: readV2SampleFiles(), source: 'sample' }
+    return readReadModel(JSON.parse(readFileSync(SAMPLE_READ_MODEL, 'utf8')))
   } catch (error) {
-    throw new ReadError(`读取失败：${V2_SAMPLE_DIRECTORY}（${describeReadFailure(error)}）`)
+    throw new ReadError(`读取失败：${SAMPLE_READ_MODEL}（${describeReadFailure(error)}）`)
   }
 }
 
@@ -171,9 +182,9 @@ const checkPrivacyGate = (mode, target) => {
   }
 }
 
-/** canonicalForInputs（V2 Reader）→ deriveAppDataFromCanonical → 基线，末尾换行。与 App 的管线相同。 */
-const baselineText = (inputs) =>
-  `${stableStringify(buildBaseline(deriveAppDataFromCanonical(canonicalForInputs(inputs), { now: BASELINE_NOW }), { now: BASELINE_NOW }))}\n`
+/** 读模型 → 官方视图 → deriveAppDataFromCanonical → 基线，末尾换行。与 App 的管线相同（src/data/appData.ts）。 */
+const baselineTextOf = (model, source) =>
+  `${stableStringify(buildBaseline(deriveAppDataFromCanonical(officialViewOf(model, source), { now: BASELINE_NOW }), { now: BASELINE_NOW }))}\n`
 
 const writeText = async (filePath, text) => {
   const outPath = path.resolve(filePath)
@@ -186,7 +197,7 @@ const describeText = (text) => `${Buffer.byteLength(text, 'utf8')} 字节，sha2
 
 const generate = async ({ mode, out }) => {
   checkPrivacyGate(mode, out)
-  const text = baselineText(mode === 'sample' ? loadSampleInputs() : await loadPrivateInputs())
+  const text = mode === 'sample' ? baselineTextOf(loadSampleReadModel(), 'sample') : baselineTextOf(await loadPrivateReadModel(), 'local')
   const outPath = await writeText(out, text)
   console.log(`已写入 ${outPath}（${describeText(text)}）。`)
   return 0
@@ -204,9 +215,9 @@ try {
   } else if (error instanceof UsageError) {
     console.error(`[baseline] ${error.message}\n${usage}`)
     process.exitCode = 1
-  } else if (error instanceof ReadError || error instanceof V2FilesInvalidError) {
-    // V2FilesInvalidError 的消息只列文件、JSON 路径与问题类别，不含字段的值。
-    console.error(`[baseline] ${error.message}`)
+  } else if (error instanceof ReadError || error instanceof StoreToolError || error?.code?.startsWith?.('E_STORE')) {
+    // StoreToolError（读不了的 V2 文件、会被拒绝的迁移）只列文件、JSON 路径与问题类别，不含字段的值；新库的错误只有代码。
+    console.error(`[baseline] ${error instanceof StoreToolError || error instanceof ReadError ? error.message : error.code}`)
     process.exitCode = 1
   } else {
     // 走到这里的是派生或写出时的程序错误，不含文件内容。

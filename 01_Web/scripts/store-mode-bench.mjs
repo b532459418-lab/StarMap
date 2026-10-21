@@ -39,6 +39,7 @@ import { pathToFileURL } from 'node:url'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { applyMigration, previewMigration } from './store-migrate.mjs'
 import { projectToV2Files } from './store-projection.mjs'
+import { servedModuleOf, servedV2Files } from './private-read-model.fixture.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
@@ -233,7 +234,7 @@ export async function httpSegment(dir, scale) {
     const { server, url } = await serve(handlers)
     try {
       await load()
-      const read = await import(`data:text/javascript,${encodeURIComponent((await plugin.load(plugin.resolveId('virtual:starmap-private-data'))))}`)
+      const read = await servedModuleOf(plugin)
       let revision = read.privateStoreRevision
       const endToEnd = [], reloads = []
       for (let n = 0; n < scale.updates; n++) {
@@ -292,11 +293,11 @@ export async function editorsSegment(dir, scale) {
     const timings = {}
     let requestCount = 0
     try {
-      const read = await import(`data:text/javascript,${encodeURIComponent((await plugin.load(plugin.resolveId('virtual:starmap-private-data'))))}`)
+      const read = await servedModuleOf(plugin)
       let revision = read.privateStoreRevision
       // The hidden want-to-go items to delete, from the first read (no write before the deletions touches them). The module
       // is not imported again: every data: import stays in the module map for the life of the process.
-      const hidden = read.privateV2Files.wantToGo.items.filter((item) => item.hidden).map((item) => item.id).slice(0, scale.updates)
+      const hidden = servedV2Files(read).wantToGo.items.filter((item) => item.hidden).map((item) => item.id).slice(0, scale.updates)
       const send = async (label, method, route, input) => {
         const headers = { 'content-type': 'application/json', 'x-travelatlas-local-editor': '1' }
         if (mode === 'store') {

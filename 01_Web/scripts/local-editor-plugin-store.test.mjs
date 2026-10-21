@@ -9,19 +9,21 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { openStore } from './store-host.mjs'
 import { applyMigration } from './store-migrate.mjs'
+import { servedCanonical } from './private-read-model.fixture.mjs'
 import { rawConnection } from './store-sqlite.mjs'
 import {
   authorizedHeaders, captureMiddleware, editorPrefix, moduleOf, requestTo, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files,
 } from './store-mode.fixture.mjs'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { filterReadModelForPersonalBuild } from '../src/data/store/personalBuildReadModel.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
 const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
@@ -44,11 +46,12 @@ test('Local editor plugin in the new-library mode', async (t) => {
   try {
     const { travelAtlasLocalEditor } = await import('./local-editor-plugin.mjs')
 
-    await t.test('V2 mode: no store revision, the V2 files as before', async () => {
+    await t.test('migration required: no store revision, the V2 files migrated in memory into the read model (3C-5B)', async () => {
       const plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: root })
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, undefined)
-      assert.deepEqual(module.privateV2Files.wantToGo, files.wantToGo)
+      assert.equal(module.privateStoreMigrationRequired, true)
+      assert.deepEqual(servedCanonical(module), readV2(files))
     })
 
     await applyMigration(paths, { now: NOW })
@@ -57,11 +60,13 @@ test('Local editor plugin in the new-library mode', async (t) => {
     const captured = captureMiddleware(plugin, privateModule)
     const handler = captured.handlers[1]
 
-    await t.test('the virtual module carries the projected V2 files and the store revision', async () => {
+    await t.test('the virtual module carries the store\'s read model and revision (3C-5B)', async () => {
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, 1)
       assert.equal(module.privateLegacyUnmigrated, false)
-      assert.deepEqual(canonicalForInputs({ v2Files: module.privateV2Files }), readV2(files))
+      const reader = openStore(storeFileOf(paths), { privatePaths: paths, readOnly: true, policy: OFFICIAL_POLICY })
+      try { assert.deepEqual(module.privateReadModel, reader.readModel()) } finally { await reader.close() }
+      assert.deepEqual(servedCanonical(module), readV2(files))
     })
 
     await t.test('GET /editor/state reads the store model', async () => {
@@ -86,7 +91,7 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.equal(privateModule.transformResult, null, 'the module is invalidated')
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, 2)
-      assert.equal(module.privateV2Files.wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic plugin note')
+      assert.equal(servedCanonical(module).wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic plugin note')
       const replay = await update(protocol, { id: wish.id, note: 'Synthetic plugin note' })
       assert.equal(replay.body.duplicate, true)
       assert.equal((await moduleOf(plugin)).privateStoreRevision, 2)
@@ -102,9 +107,10 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.equal(country.body.revision, 3)
       const module = await moduleOf(plugin)
       assert.equal(module.privateStoreRevision, 3)
-      const added = module.privateV2Files.editorState.addedCountries.find((entry) => entry.placeId === country.body.countryId)
+      const canonical = servedCanonical(module)
+      const added = canonical.editorState.addedCountries.find((entry) => entry.placeId === country.body.countryId)
       assert.deepEqual(added, { placeId: country.body.countryId, region: 'Asia', visitedDate: '2026-04-01' })
-      assert.equal(module.privateV2Files.places.places.find((place) => place.id === country.body.countryId).externalIds.iso3166Alpha2, 'JP')
+      assert.equal(canonical.places.find((place) => place.id === country.body.countryId).externalIds.iso3166Alpha2, 'JP')
     })
 
     await t.test('media tasks reach the store-mode task service (3C-4c): the list reads, an unknown task is 404, nothing written', async () => {
@@ -143,7 +149,12 @@ test('Local editor plugin in the new-library mode', async (t) => {
           const built = await moduleOf(build)
           assert.equal(built.privateStoreRevision, served.privateStoreRevision)
           assert.equal(built.privateLegacyUnmigrated, false)
-          assert.deepEqual(canonicalForInputs({ v2Files: built.privateV2Files }), canonicalForInputs({ v2Files: served.privateV2Files }))
+          // 3C-5B: the build names its data file instead of inlining the read model; nothing is hidden here, so it
+          // reads as what the dev server serves.
+          assert.equal(built.privateReadModel, undefined)
+          await build.closeBundle()
+          const data = JSON.parse(await readFile(path.join(directory, 'dist', ...built.privateReadModelUrl.split('/')), 'utf8'))
+          assert.deepEqual(officialViewOf(data, 'local'), servedCanonical(served))
         })
       } finally { holder.exec('ROLLBACK'); holder.close() }
       await build.buildEnd()
@@ -204,10 +215,9 @@ async function withGeneratedFiles(paths, files) {
   return result
 }
 
-test('a personal build in the new-library mode filters the store projection like the V2 files (batch 7, S3)', async (t) => {
+test('a personal build in the new-library mode writes the store read model, filtered for the build, as its data file, not inlined (batch 7, S3; 3C-5B)', async (t) => {
   const { root, paths } = await tempPrivateRoot(t, 'starmap-plugin-store-build-')
   const { hiddenContentFixture, REMOVED } = await import('./personal-build-filter.fixture.mjs')
-  const { filterForPersonalBuild } = await import('./personal-build-filter.mjs')
   const files = await withGeneratedFiles(paths, hiddenContentFixture())
   await writeV2Files(paths, files)
   await applyMigration(paths, { now: NOW })
@@ -219,10 +229,16 @@ test('a personal build in the new-library mode filters the store projection like
     plugin.configResolved({ command: 'build', root, build: { outDir: 'dist' } })
     try {
       const code = await plugin.load(plugin.resolveId('virtual:starmap-private-data'))
-      for (const id of [...REMOVED.records, ...REMOVED.wantToGo, ...REMOVED.media, ...REMOVED.places]) assert.ok(!code.includes(id), id)
       const module = await import(`data:text/javascript,${encodeURIComponent(code)}`)
       assert.equal(module.privateStoreRevision, 1)
-      assert.deepEqual(canonicalForInputs({ v2Files: module.privateV2Files }), canonicalForInputs({ v2Files: filterForPersonalBuild(files).files }))
+      assert.equal(module.privateReadModel, undefined, 'the read model is not inlined')
+      assert.match(module.privateReadModelUrl, /^data\/read-model\.[0-9a-f]{16}\.json$/)
+      await plugin.closeBundle()
+      const text = await readFile(path.join(root, 'dist', ...module.privateReadModelUrl.split('/')), 'utf8')
+      assert.equal(module.privateReadModelUrl, `data/read-model.${createHash('sha256').update(text).digest('hex').slice(0, 16)}.json`, 'named by its content')
+      for (const id of [...REMOVED.records, ...REMOVED.wantToGo, ...REMOVED.media, ...REMOVED.places]) assert.ok(!text.includes(id) && !code.includes(id), id)
+      const reader = openStore(storeFileOf(paths), { privatePaths: paths, readOnly: true, policy: OFFICIAL_POLICY })
+      try { assert.deepEqual(JSON.parse(text), filterReadModelForPersonalBuild(reader.readModel()).model) } finally { await reader.close() }
     } finally {
       await plugin.buildEnd()
     }

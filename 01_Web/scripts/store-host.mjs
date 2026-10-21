@@ -599,7 +599,10 @@ function applyRequest(db, request, digest, at, settings, phase) {
       baseRevision: request.baseRevision, revision: changeSet.nextRevision, counts: receipt.counts,
       ...(mediaCounts === undefined ? {} : { media: mediaCounts }),
     }))
-  return deepFreeze(receipt)
+  // 3C-5B: the rows this request changed (the planner's change set without its tombstones and references), for a
+  // caller that keeps a read model up to date (applyReadModelDelta). Never stored: the receipt stays as it was.
+  const changes = { baseRevision: changeSet.baseRevision, nextRevision: changeSet.nextRevision, upserts: changeSet.upserts, deletes: changeSet.deletes }
+  return { receipt: deepFreeze(receipt), changes: deepFreeze(changes) }
 }
 
 /** A failure with what happened to the request: confirmed not committed, or unknown. */
@@ -1047,11 +1050,11 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
         connection.exec('ROLLBACK')
         return Object.freeze({ status: 'duplicate', revision: receipt.revision, receipt })
       }
-      const receipt = applyRequest(connection, request, digest, hostTime(settings), settings, hook)
+      const { receipt, changes } = applyRequest(connection, request, digest, hostTime(settings), settings, hook)
       hook('before-commit')
       commitIssued = true
       connection.exec('COMMIT')
-      result = Object.freeze({ status: 'committed', revision: receipt.revision, receipt })
+      result = Object.freeze({ status: 'committed', revision: receipt.revision, receipt, changes })
     } catch (error) {
       throw corruptionSeen(settleFailure(connection, error, commitIssued, discard))
     }
@@ -1205,8 +1208,10 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
     },
     /**
      * Commit one request `{ requestId, baseRevision, kind, actor, commands }` (design 3B §4.4).
-     * Resolves `{ status: 'committed', revision, receipt }`, or `{ status: 'duplicate', … }` with
-     * the original receipt when the same request was already committed. Rejects with a
+     * Resolves `{ status: 'committed', revision, receipt, changes }`, or `{ status: 'duplicate', … }` with
+     * the original receipt (and no changes) when the same request was already committed. `changes` (3C-5B) are the
+     * rows the commit changed: `{ baseRevision, nextRevision, upserts: [{ table, row }], deletes: [{ table, id }] }`,
+     * the planner's change set as applyReadModelDelta takes it. Rejects with a
      * StoreHostError whose `outcome` is 'not_committed', or 'unknown' (E_OUTCOME_UNKNOWN: look
      * the request up with lookup(requestId), or retry with the same requestId).
      *
@@ -1457,7 +1462,7 @@ export async function upgradeStoreFile(file, options = {}) {
         db.exec('BEGIN IMMEDIATE')
         if (currentRevision(db) !== state.revision) fail('E_STALE', { path: 'revision' })
         for (const statement of migration.statements) db.exec(statement)
-        const receipt = applyRequest(db, request, requestDigest(request), at, settings, () => {})
+        const { receipt } = applyRequest(db, request, requestDigest(request), at, settings, () => {})
         db.exec(`PRAGMA user_version = ${migration.to}`)
         if (db.prepare('UPDATE store_meta SET format_version = ? WHERE singleton = 1').run(migration.to).changes !== 1) inconsistent('store_meta')
         const upgraded = formatDiagnostic(db, migration.to)

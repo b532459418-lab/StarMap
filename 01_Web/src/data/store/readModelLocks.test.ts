@@ -9,13 +9,17 @@
  * Not covered, because they cannot be migrated: the old-id-space canonicals (their place ids are old keys, not store
  * ids) and the V2-space `countryOfCity` (not valid V2: its editor state hides a city the registry does not have).
  * The 3C-1b tests themselves are unchanged.
+ *
+ * 3C-5B: the App's own path is checked too: the read model as the virtual module inlines it (JSON), read with
+ * readReadModel and seen through officialViewOf (./projectCanonical.ts; ../appData.ts and ../rawInputs.ts make exactly
+ * these calls). Its derived baseline must hit the same locks and its time query context must equal the readV2 path's.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { formalStateOfReadModel, readModelOf } from '../../worldgraph/readModel/build.ts'
-import { validateReadModel } from '../../worldgraph/readModel/check.ts'
+import { readReadModel, validateReadModel } from '../../worldgraph/readModel/check.ts'
 import { MIGRATED_LOCKS, V2_FILES_LOCKS, V2_SAMPLE_BASELINE_SHA256, V2_SPACE_LOCKS, lockedFixtureUrl } from '../canonical/baselineLocks.fixture.ts'
 import { canonicalForInputs } from '../canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../canonical/derive.ts'
@@ -24,7 +28,7 @@ import type { V2Files } from '../canonical/v2Schema.ts'
 import { buildBaseline, stableStringify } from '../derive/baseline.ts'
 import { deriveTimeQueryContext } from '../derive/timeQueryContext.ts'
 import { OFFICIAL_POLICY } from './officialDefinitions.ts'
-import { projectStoreToCanonical } from './projectCanonical.ts'
+import { officialViewOf, projectStoreToCanonical } from './projectCanonical.ts'
 import { migrateIntoEmptyStore, migrationInputs } from './v2Store.fixture.ts'
 
 const NOW = '2000-01-01T00:00:00.000Z'
@@ -61,4 +65,15 @@ for (const [name, files, source, lock] of inputs) test(`migration → read model
   assert.equal(text, baselineText(viaV2))
   if (lock !== undefined) assert.equal(lockOf(text), lock)
   assert.deepEqual(deriveTimeQueryContext(viaReadModel), deriveTimeQueryContext(viaV2))
+})
+
+for (const [name, files, source, lock] of inputs) test(`the App's path (3C-5B): the inlined read model → readReadModel → officialViewOf derives the locked baseline and the same time query context: ${name}`, () => {
+  const viaV2 = canonicalForInputs({ v2Files: files(), source })
+  const inlined = JSON.parse(JSON.stringify(readModelOf(migrateIntoEmptyStore(files()).state, { origin: source === 'sample' ? 'sample' : 'local' })))
+  const viaApp = officialViewOf(readReadModel(inlined), source)
+  assert.deepEqual(viaApp, viaV2)
+  const text = baselineText(viaApp)
+  assert.equal(text, baselineText(viaV2))
+  if (lock !== undefined) assert.equal(lockOf(text), lock)
+  assert.deepEqual(deriveTimeQueryContext(viaApp), deriveTimeQueryContext(viaV2))
 })

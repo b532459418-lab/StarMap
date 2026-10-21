@@ -7,6 +7,7 @@ import type { DroneMediaItem } from '../data/droneMedia'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { DEFAULT_UI_LOCALE } from '../data/uiLocale'
 import { panoramaCaption, panoramaLanguageKeys } from '../i18n/mediaViewerOptions.ts'
+import { droneMediaMetaLine } from './droneMediaLabels.ts'
 import { panoramaLoadUrl } from './panoramaLoadUrl.ts'
 import { useDialogFocus } from './useDialogFocus'
 
@@ -147,7 +148,7 @@ export function DronePanoramaModal({ item, onClose }: DronePanoramaModalProps) {
               {title}
             </h2>
             <p className="drone-panorama-meta mt-1 text-sm">
-              {item.fileName} · {item.resolution}
+              {droneMediaMetaLine(item, title, t(item.type === 'panorama360' ? 'dronePanorama' : 'droneAerialPhoto'))}
             </p>
           </div>
           <button

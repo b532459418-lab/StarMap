@@ -18,11 +18,15 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { getPrivatePaths } from './private-profile.mjs'
+import { applyMigration } from './store-migrate.mjs'
 import { readV2SampleFiles } from './v2-sample.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
 import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
+import { readReadModel } from '../src/worldgraph/readModel/check.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = path.join(webRoot, 'scripts', 'baseline.mjs')
@@ -85,9 +89,12 @@ const readV2FilesFrom = async (root) => Object.fromEntries(await Promise.all(V2_
   return [key, existsSync(filePath) ? JSON.parse(await readFile(filePath, 'utf8')) : undefined]
 })))
 
-/** 与 App 相同的管线（canonicalForInputs → 派生 → 基线），在测试进程里算一遍。 */
+/** 3C-5B 之前的管线（canonicalForInputs → 派生 → 基线），在测试进程里算一遍：读模型的结果必须与它相同。 */
 const expectedBaseline = (inputs) =>
   `${stableStringify(buildBaseline(deriveAppDataFromCanonical(canonicalForInputs(inputs), { now: NOW }), { now: NOW }))}\n`
+/** App 的管线（读模型 → 官方视图 → 派生 → 基线）。 */
+const readModelBaseline = (model, source) =>
+  `${stableStringify(buildBaseline(deriveAppDataFromCanonical(officialViewOf(model, source), { now: NOW }), { now: NOW }))}\n`
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
@@ -95,7 +102,7 @@ const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 // --sample：公开 V2 样例
 // ---------------------------------------------------------------------------
 
-test('--sample：读已提交的 src/data/v2-sample/（来源 sample），两次输出逐字节相同、末尾换行，等于进程内的同一条管线，sha256 为公布的 9b68b8ad…', () => withTemp(async ({ root, out }) => {
+test('--sample（3C-5B）：读已提交的原生样例读模型 src/data/sample/sample.read-model.json（来源 sample），两次输出逐字节相同、末尾换行，等于进程内的同一条管线与 V2 样例的旧管线，sha256 为公布的 9b68b8ad…', () => withTemp(async ({ root, out }) => {
   const first = path.join(out, 'a.json')
   const second = path.join(out, 'b.json')
   const runFirst = runCli(['--sample', '--out', first], root)
@@ -107,6 +114,8 @@ test('--sample：读已提交的 src/data/v2-sample/（来源 sample），两次
   assert.equal(text, await readFile(second, 'utf8'))
   assert.ok(text.endsWith('}\n'))
   assert.match(runFirst.stdout, /已写入 .*a\.json（\d+ 字节，sha256 [0-9a-f]{64}）/)
+  const sample = readReadModel(JSON.parse(readFileSync(path.join(webRoot, 'src', 'data', 'sample', 'sample.read-model.json'), 'utf8')))
+  assert.equal(text, readModelBaseline(sample, 'sample'))
   assert.equal(text, expectedBaseline({ v2Files: readV2SampleFiles(), source: 'sample' }))
   assert.equal(sha256(text), V2_SAMPLE_BASELINE_SHA256)
 
@@ -193,12 +202,13 @@ test('--compare：文件读不到为 1', () => withTemp(async ({ root, out }) =>
 // 个人模式：私人目录 data/v2/
 // ---------------------------------------------------------------------------
 
-test('个人模式：读 data/v2/ 的五个文件 → V2 Reader → 派生 → 基线，等于同一份文件在 canonicalForInputs 管线上的结果；地点 id 是 UUID', () => withTemp(async ({ root, out }) => {
+test('个人模式，还不是新库（3C-5B）：data/v2/ 的五个文件在内存里迁移成读模型 → 官方视图 → 派生 → 基线，等于同一份文件在 canonicalForInputs 管线上的结果；地点 id 是 UUID', () => withTemp(async ({ root, out }) => {
   await prepareV2Root(root)
   const target = path.join(out, 'v2.json')
   const result = runCli(['--out', target], root)
   assert.equal(result.status, 0, result.stderr)
   assert.ok(result.stderr.includes(`私人根目录：${path.resolve(root)}`), result.stderr)
+  assert.match(result.stderr, /还不是新库：data\/v2\/ 的文件在内存里迁移成读模型/)
   const text = await readFile(target, 'utf8')
   const v2Files = await readV2FilesFrom(root)
   assert.equal(text, expectedBaseline({ v2Files }))
@@ -213,6 +223,21 @@ test('个人模式：读 data/v2/ 的五个文件 → V2 Reader → 派生 → �
   assert.ok(UUID_V7.test(vik))
   assert.deepEqual(modules.travelAtlas.countryIdOfCity.find(([cityId]) => cityId === vik), [vik, iceland])
   assert.equal(modules.travelAtlas.cities.some((city) => city.id === vik), false)
+}))
+
+test('个人模式，新库（3C-5B 规格 §2.7）：读新库的读模型，不读 data/v2/，即使那里的文件已经过时或不在了', () => withTemp(async ({ root, out }) => {
+  await prepareV2Root(root)
+  const v2Files = await readV2FilesFrom(root)
+  await applyMigration(getPrivatePaths({ STARMAP_PRIVATE_ROOT: root }), { now: '2026-10-21T00:00:00.000Z' })
+  // The V2 files are left behind as the migration's backup; here they go stale (removed), as after edits in the library.
+  await rm(path.join(root, 'data', 'v2'), { recursive: true })
+  const target = path.join(out, 'store.json')
+  const result = runCli(['--out', target], root)
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stderr, /读新库：修订号 1（不读 data\/v2\/）/)
+  const text = await readFile(target, 'utf8')
+  assert.equal(text, expectedBaseline({ v2Files }), 'the library holds what the V2 files held when it was migrated')
+  assert.ok(JSON.parse(text).modules.travelAtlas.cities.length > 0)
 }))
 
 test('个人模式：缺的文件按空处理，data/v2/ 不存在时是空数据（不回落到样例）', () => withTemp(async ({ root, out }) => {
@@ -247,15 +272,15 @@ test('个人模式：V2 文件不合法 → 退出码 1，只报文件、路径�
   await writeFile(placesPath, JSON.stringify(places), 'utf8')
   const invalid = runCli(['--out', path.join(out, 'x.json')], root)
   assert.equal(invalid.status, 1, invalid.stderr)
-  assert.match(invalid.stderr, /V2 数据文件没有通过校验/)
-  assert.match(invalid.stderr, /data\/v2\/places\.local\.json \$\.places\[0\]\.names/)
+  assert.match(invalid.stderr, /E_MIGRATION_REFUSED/)
+  assert.match(invalid.stderr, /E_V2_INVALID places\.local\.json \$\.places\[0\]\.names/)
   assert.ok(!invalid.stderr.includes(secretName))
   assert.doesNotMatch(invalid.stderr, /\n\s+at /)
 
   await writeFile(v2FilePath(root, 'editorState'), '{ "secretPlace": oops }', 'utf8')
   const unreadable = runCli(['--out', path.join(out, 'y.json')], root)
   assert.equal(unreadable.status, 1)
-  assert.match(unreadable.stderr, /读取失败：.*editor-state\.local\.json（不是有效的 JSON）/)
+  assert.match(unreadable.stderr, /E_V2_UNREADABLE\ndata\/v2\/editor-state\.local\.json：不是合法的 JSON/)
   assert.doesNotMatch(unreadable.stderr, /secretPlace|oops/)
   assert.deepEqual(await readdir(out), [])
 }))

@@ -8,12 +8,14 @@ import { Readable } from 'node:stream'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { crossSiteRequestGuard } from './local-editor-request-guard.mjs'
 import { privateDataState, storeFileOf } from './private-data-source.mjs'
+import { servedCanonical, servedModuleOf, servedV2Files } from './private-read-model.fixture.mjs'
 import { applyMigration } from './store-migrate.mjs'
 import { sampleV2Files, treeDigest } from './store-mode.fixture.mjs'
 import { V2_EDITOR_ROUTES } from './v2-editor-store.mjs'
 import { V2_MEDIA_ROUTES } from './v2-media-store.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 
 const editorPrefix = '/__travelatlas/editor/'
 const authorizedHeaders = {
@@ -123,7 +125,7 @@ function assertError(result, status, code, params) {
 
 const moduleOf = async (plugin) => {
   const code = await plugin.load(plugin.resolveId('virtual:starmap-private-data'))
-  return { code, exports: await import(`data:text/javascript,${encodeURIComponent(code)}`) }
+  return { code, exports: await servedModuleOf(plugin, code) }
 }
 
 // The plugin keeps paths/cache at module scope: each plugin is used right after it is created, before the next one.
@@ -154,7 +156,8 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.deepEqual(captured.handlers, [])
       assert.deepEqual(captured.watched, [])
       assert.equal(captured.watcherCallbacks.size, 0)
-      assert.equal((await moduleOf(plugin)).exports.privateV2Files, undefined)
+      // No read-model address and no endpoint (3C-5B review): the public page reads the tracked sample.
+      assert.equal((await moduleOf(plugin)).exports.privateReadModelUrl, undefined)
       assert.deepEqual(await readdir(root), [])
     })
     await t.test('Forced sample profile registers only the cross-site guard: no private task endpoints, no watcher, no library', async () => {
@@ -193,8 +196,8 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.equal(exports.privateStoreRevision, 1)
       assert.equal(exports.privateStoreMigrationRequired, false)
       assert.equal(exports.privateStoreRecoveryRequired, false)
-      assert.deepEqual(exports.privateV2Files.places.places, [])
-      assert.deepEqual(exports.privateV2Files.media.items, [])
+      assert.deepEqual(servedCanonical(exports).places, [])
+      assert.deepEqual(servedCanonical(exports).media.items, [])
       assert.equal(existsSync(paths.v2DataRoot), false, 'no V2 file is made up')
       assert.deepEqual(captured.invalidations, [])
     })
@@ -282,6 +285,41 @@ test('Local editor middleware preserves authorization, error codes and private f
       }
     })
 
+    await t.test('The read-model endpoint (3C-5B review): a same-origin read gets the store read model, uncached and with its revision; another origin or site is refused, by the endpoint and by the global guard', async () => {
+      const { exports } = await moduleOf(plugin)
+      assert.equal(exports.privateReadModelUrl, `__travelatlas/editor/read-model?revision=${exports.privateStoreRevision}`)
+      for (const headers of [{}, { host: '127.0.0.1:5173', 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors' }, { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173' }]) {
+        const result = await requestTo(handler, { url: `/${exports.privateReadModelUrl}`, method: 'GET', headers })
+        assert.equal(result.status, 200, JSON.stringify(headers))
+        assert.equal(result.headers.get('content-type'), 'application/json; charset=utf-8')
+        assert.equal(result.headers.get('cache-control'), 'no-store')
+        assert.equal(result.headers.get('x-starmap-revision'), String(exports.privateStoreRevision))
+        assert.equal(result.body.format, 'starmap.read-model')
+        assert.equal(result.body.revision, exports.privateStoreRevision)
+        assert.deepEqual(result.body, exports.privateReadModel)
+        assert.equal(result.bodyReads, 0)
+      }
+      const crossSite = [
+        { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:9999' },
+        { host: '127.0.0.1:5173', origin: 'http://localhost:5999', 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors' },
+        { host: '127.0.0.1:5173', origin: 'https://example.com', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' },
+        { host: '127.0.0.1:5173', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors' },
+      ]
+      for (const headers of crossSite) {
+        const result = await requestTo(handler, { url: `/${exports.privateReadModelUrl}`, method: 'GET', headers })
+        assertError(result, 403, 'E_EDITOR_READ_FORBIDDEN')
+      }
+      // The guard registered ahead of every Vite middleware stops a page of another site or port before the endpoint.
+      for (const headers of crossSite.slice(1)) {
+        let status = 200, text = '', passed = false
+        crossSiteRequestGuard({ url: `/${exports.privateReadModelUrl}`, method: 'GET', headers, socket: { remoteAddress: '127.0.0.1' } },
+          { set statusCode(value) { status = value }, get statusCode() { return status }, setHeader: () => {}, end: (body) => { text = body } }, () => { passed = true })
+        assert.deepEqual([status, text, passed], [403, 'Forbidden', false], JSON.stringify(headers))
+      }
+      // A read endpoint: not answered to another address.
+      assertError(await requestTo(handler, { url: `/${exports.privateReadModelUrl}`, method: 'GET', headers: {}, address: '203.0.113.10' }), 403, 'E_EDITOR_READ_FORBIDDEN')
+    })
+
     await t.test('Writes reject address, missing header and disallowed Origin before malformed JSON', async () => {
       for (const overrides of [
         { address: '203.0.113.10' },
@@ -353,7 +391,7 @@ test('Local editor middleware preserves authorization, error codes and private f
     await t.test('First writes go to the empty library and invalidate the cached module without watcher events or page reloads', async () => {
       const cachedFiles = async () => {
         privateModule.transformResult ??= { code: await plugin.load(privateModule.id) }
-        return (await import(`data:text/javascript,${encodeURIComponent(privateModule.transformResult.code)}`)).privateV2Files
+        return servedV2Files(await servedModuleOf(plugin, privateModule.transformResult.code))
       }
       privateModule.transformResult = null
       assert.deepEqual((await cachedFiles()).places.places, [])
@@ -425,9 +463,9 @@ test('Local editor middleware preserves authorization, error codes and private f
         .map(({ id, region, visitedDate, countryCode }) => ({ id, region, visitedDate, countryCode })), [{
         id: converted.body.countryId, region: 'Europe', visitedDate: '2026-10-03', countryCode: 'is',
       }])
-      const { privateV2Files } = (await moduleOf(plugin)).exports
-      assert.deepEqual(privateV2Files.wantToGo.items, [])
-      assert.deepEqual(privateV2Files.travel.records
+      const canonical = servedCanonical((await moduleOf(plugin)).exports)
+      assert.deepEqual(canonical.wantToGo.items, [])
+      assert.deepEqual(canonical.travel.records
         .filter(({ start_date }) => start_date === '2026-10-03')
         .map(({ start_date, end_date }) => ({ start_date, end_date })), [{
         start_date: '2026-10-03', end_date: '2026-10-04',
@@ -473,6 +511,26 @@ test('Local editor middleware preserves authorization, error codes and private f
       return { privateRoot, paths: rootPaths }
     }
 
+    await t.test('A V2 root whose files cannot be migrated (3C-5B review): the module still loads, the read-model endpoint answers 422 with the migration problems and no value, nothing is written', async () => {
+      const broken = structuredClone(v2Fixture)
+      const secret = broken.places.places[0].names.en
+      broken.places.places[0].names = { en: secret, '': 'x' }
+      const { privateRoot } = await privateRootWith('migration-refused', { v2: true, v2Files: broken })
+      const before = await treeDigest(privateRoot)
+      const refusedPlugin = personal(privateRoot)
+      const refusedHandler = captureMiddleware(refusedPlugin, { id: refusedPlugin.resolveId('virtual:starmap-private-data'), transformResult: null }).handlers[1]
+      const { exports } = await moduleOf(refusedPlugin)
+      assert.equal(exports.privateStoreMigrationRequired, true)
+      assert.equal(exports.privateReadModel, undefined)
+      const result = await requestTo(refusedHandler, { url: `/${exports.privateReadModelUrl}`, method: 'GET', headers: {} })
+      assert.equal(result.status, 422)
+      assert.equal(result.body.code, 'E_MIGRATION_REFUSED')
+      assert.ok(result.body.problems.some((problem) => /places\.local\.json \$\.places\[0\]\.names/.test(problem)), result.body.problems.join('\n'))
+      assert.ok(!JSON.stringify(result.body).includes(secret))
+      assert.deepEqual(await treeDigest(privateRoot), before)
+      await refusedPlugin.buildEnd()
+    })
+
     await t.test('A V2 root needs migration (3C-4d, review §8-2): every write, media and task route answers 409 E_STORE_MIGRATION_REQUIRED before reading its body; reads still answer; nothing is written', async () => {
       const { privateRoot, paths: rootPaths } = await privateRootWith('migration-required', { v2: true })
       const before = await treeDigest(privateRoot)
@@ -481,7 +539,7 @@ test('Local editor middleware preserves authorization, error codes and private f
       const v2Captured = captureMiddleware(v2Plugin, v2Module)
       const v2Handler = v2Captured.handlers[1]
       const { exports } = await moduleOf(v2Plugin)
-      assert.deepEqual(exports.privateV2Files, v2Fixture)
+      assert.deepEqual(servedCanonical(exports), canonicalForInputs({ v2Files: v2Fixture }), 'the V2 files, migrated in memory (3C-5B)')
       assert.equal(exports.privateStoreMigrationRequired, true)
       assert.equal(exports.privateStoreRecoveryRequired, false)
       assert.equal(exports.privateStoreRevision, undefined)
@@ -496,6 +554,12 @@ test('Local editor middleware preserves authorization, error codes and private f
       const state = await requestTo(v2Handler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
       assert.equal(state.status, 200, JSON.stringify(state.body))
       assert.deepEqual(state.body.state.countryOrder, v2Fixture.editorState.countryOrder)
+      // 3C-5B: the read-model endpoint answers with the V2 files migrated in memory; the address names their digest.
+      assert.match(exports.privateReadModelUrl, /^__travelatlas\/editor\/read-model\?v2=[0-9a-f]{16}$/)
+      const served = await requestTo(v2Handler, { url: `/${exports.privateReadModelUrl}`, method: 'GET', headers: {} })
+      assert.equal(served.status, 200)
+      assert.equal(served.headers.get('x-starmap-revision'), undefined)
+      assert.deepEqual(officialViewOf(served.body, 'local'), canonicalForInputs({ v2Files: v2Fixture }))
       const countries = await requestTo(v2Handler, { url: editorPrefix + 'catalog/countries?q=Iceland', method: 'GET', headers: {} })
       assert.equal(countries.status, 200)
       assert.deepEqual(await treeDigest(privateRoot), before, 'no file written, no library, no lease')
@@ -524,7 +588,7 @@ test('Local editor middleware preserves authorization, error codes and private f
       const { exports } = await moduleOf(livePlugin)
       assert.equal(exports.privateStoreRevision, 1)
       assert.equal(exports.privateStoreMigrationRequired, false)
-      assert.deepEqual(canonicalForInputs({ v2Files: exports.privateV2Files }), readV2(files))
+      assert.deepEqual(servedCanonical(exports), readV2(files))
       const jobs = await requestTo(liveHandler, { url: editorPrefix + 'media/jobs', method: 'GET' })
       assert.equal(jobs.status, 200, JSON.stringify(jobs.body))
       const written = await requestTo(liveHandler, { url: editorPrefix + 'countries', headers: storeProtocol(1), content: Buffer.from(JSON.stringify({ countryCode: 'JP', visitedDate: '2026-05-01' })) })
@@ -666,23 +730,23 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.deepEqual(await get('/media/user/plain/thumb.webp', linked.handlers[1]), { status: 403, text: 'Forbidden' })
     })
 
-    await t.test('The private data module: personal reads only the five V2 files plus the state flags; public reads nothing', async () => {
+    await t.test('The private data module: personal reads only the five V2 files (migrated in memory, 3C-5B) plus the state flags; public reads nothing', async () => {
       const both = await privateRootWith('module-v2-and-legacy', { v2: true, legacy: true })
       const personalModule = await moduleOf(personal(both.privateRoot))
-      assert.deepEqual(personalModule.exports.privateV2Files, v2Fixture)
+      assert.deepEqual(servedCanonical(personalModule.exports), canonicalForInputs({ v2Files: v2Fixture }))
       assert.equal(personalModule.exports.privateLegacyUnmigrated, false, 'V2 files present: the legacy file is a leftover')
       assert.equal(personalModule.exports.privateStoreMigrationRequired, true)
       assert.ok(!personalModule.code.includes('7f3c'), 'the legacy file is never read')
 
       const legacyOnly = await privateRootWith('module-legacy-only', { legacy: true })
       const unmigrated = await moduleOf(personal(legacyOnly.privateRoot))
-      assert.deepEqual(unmigrated.exports.privateV2Files, {})
+      assert.deepEqual(servedCanonical(unmigrated.exports), canonicalForInputs({ v2Files: undefined }), 'no V2 file: the read model of empty files')
       assert.equal(unmigrated.exports.privateLegacyUnmigrated, true)
       assert.equal(unmigrated.exports.privateStoreMigrationRequired, false, 'the legacy notice comes first')
       assert.ok(!unmigrated.code.includes('7f3c'))
 
       const publicModule = await moduleOf(travelAtlasLocalEditor({ profile: 'public', privateRoot: both.privateRoot }))
-      assert.equal(publicModule.exports.privateV2Files, undefined)
+      assert.equal(publicModule.exports.privateReadModelUrl, undefined)
       assert.equal(publicModule.exports.privateLegacyUnmigrated, false)
       assert.equal(publicModule.exports.privateStoreMigrationRequired, false)
       assert.ok(!publicModule.code.includes(v2Fixture.places.places[0].id), 'no private file is read for the public profile')

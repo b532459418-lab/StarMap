@@ -24,9 +24,9 @@ import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 
 import { hasLegacyData, hasV2Data, isLegacyUnmigrated, legacyDataStateOf, legacyWriteRefusal } from './legacy-data.mjs'
-import { privateDataModuleExports } from './private-data-module.mjs'
-import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
+import { getPrivatePaths } from './private-profile.mjs'
 import { atomicJsonWrite } from './json-file.mjs'
+import { readV2Inputs } from './store-migrate.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState } from './v2-editor-store.mjs'
 import { runV2MediaImport } from './v2-media-import.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
@@ -156,9 +156,8 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
     // 旧文件还在（迁移不动它们）、V2 文件也在：残留，不算未迁移。
     assert.equal(legacyDataStateOf(paths).v2Files.length, 5, label)
     assert.equal(isLegacyUnmigrated(legacyDataStateOf(paths)), false, label)
-    // 虚拟模块（local-editor-plugin.mjs 的 load）只读这五个确切的路径。
-    const v2Values = Object.fromEntries(await Promise.all(V2_PRIVATE_FILE_KEYS.map(async (key) => [key, JSON.parse(await readFile(paths.v2FilePaths[key], 'utf8'))])))
-    assert.deepEqual(privateDataModuleExports({ profile: 'personal', v2Values }).privateV2Files, files, label)
+    // 虚拟模块（local-editor-plugin.mjs 的 load，3C-5B 起在内存里迁移它们）只读这五个确切的路径（store-migrate.mjs 的 readV2Inputs）。
+    assert.deepEqual((await readV2Inputs(paths)).values, files, label)
     assert.deepEqual(await readV2EditorState({ privatePaths: paths }), expectedState, label)
     const target = path.join(out, `${label}.json`)
     const result = runScript('baseline.mjs', ['--out', target], root)

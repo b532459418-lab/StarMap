@@ -31,13 +31,10 @@ const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const root = path.join(tmpdir(), 'starmap-virtual-module-test')
 const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
 
-const V2_VALUES = {
-  places: { schema_version: 1, generated_at: '2026-09-27', places: [] },
-  travel: undefined,
-  wantToGo: { schema_version: 2, items: [] },
-  editorState: undefined,
-  media: { schemaVersion: 3, items: [] },
-}
+/** 3C-5B：虚拟模块给出的读模型地址：开发服务器的只读端点（新库带修订号，还不是新库带 V2 文件的摘要），个人构建的数据文件。 */
+const DEV_URL = '__travelatlas/editor/read-model?revision=42'
+const V2_URL = '__travelatlas/editor/read-model?v2=0123456789abcdef'
+const BUILD_URL = 'data/read-model.0123456789abcdef.json'
 const LEGACY_EXPORT_NAMES = ['privateEditorState', 'privateMediaCatalog', 'privateTravelMap', 'privateWantToGo', 'privateDataMode']
 
 /** 在 Node 里执行渲染出的模块源码，拿到导出（等价于浏览器 import 虚拟模块）。 */
@@ -63,49 +60,53 @@ test('getPrivatePaths：V2 文件在 data/v2/ 下，文件名与 v2Schema.ts 的
 // 虚拟模块
 // ---------------------------------------------------------------------------
 
-test('虚拟模块有六个导出：privateV2Files、privateLegacyUnmigrated、privateStoreRevision（3C-3）、privateStoreReadOnly（3C-4b）、privateStoreMigrationRequired 与 privateStoreRecoveryRequired（3C-4d）；旧格式的四个导出与 privateDataMode 已删除', () => {
-  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateV2Files', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
+test('虚拟模块有六个导出：privateReadModelUrl（3C-5B：读模型的地址，读模型从不内联）、privateLegacyUnmigrated、privateStoreRevision（3C-3）、privateStoreReadOnly（3C-4b）、privateStoreMigrationRequired 与 privateStoreRecoveryRequired（3C-4d）；没有 privateV2Files、privateReadModel、旧格式的四个导出与 privateDataMode', () => {
+  assert.deepEqual(PRIVATE_DATA_MODULE_EXPORTS, ['privateReadModelUrl', 'privateLegacyUnmigrated', 'privateStoreRevision', 'privateStoreReadOnly', 'privateStoreMigrationRequired', 'privateStoreRecoveryRequired'])
   for (const profile of ['public', 'personal']) {
-    const exports = privateDataModuleExports({ profile, v2Values: V2_VALUES, legacyUnmigrated: true })
+    const exports = privateDataModuleExports({ profile, readModelUrl: DEV_URL, legacyUnmigrated: true })
     assert.deepEqual(Object.keys(exports), PRIVATE_DATA_MODULE_EXPORTS, profile)
-    for (const name of LEGACY_EXPORT_NAMES) assert.equal(Object.hasOwn(exports, name), false, `${profile} ${name}`)
+    for (const name of [...LEGACY_EXPORT_NAMES, 'privateV2Files', 'privateReadModel']) assert.equal(Object.hasOwn(exports, name), false, `${profile} ${name}`)
   }
 })
 
-test('虚拟模块 · 公开模式：privateV2Files 与 privateStoreRevision 为 undefined，其余四个恒为 false；忽略传入的值', async () => {
-  const expected = { privateV2Files: undefined, privateLegacyUnmigrated: false, privateStoreRevision: undefined, privateStoreReadOnly: false, privateStoreMigrationRequired: false, privateStoreRecoveryRequired: false }
+test('虚拟模块 · 公开模式：privateReadModelUrl 与 privateStoreRevision 为 undefined，其余四个恒为 false；忽略传入的值', async () => {
+  const expected = { privateReadModelUrl: undefined, privateLegacyUnmigrated: false, privateStoreRevision: undefined, privateStoreReadOnly: false, privateStoreMigrationRequired: false, privateStoreRecoveryRequired: false }
   assert.deepEqual(privateDataModuleExports({ profile: 'public' }), expected)
-  assert.deepEqual(privateDataModuleExports({ profile: 'public', v2Values: V2_VALUES, legacyUnmigrated: true, storeRevision: 7, storeReadOnly: true, storeMigrationRequired: true, storeRecoveryRequired: true }), expected)
+  assert.deepEqual(privateDataModuleExports({ profile: 'public', readModelUrl: BUILD_URL, legacyUnmigrated: true, storeRevision: 7, storeReadOnly: true, storeMigrationRequired: true, storeRecoveryRequired: true }), expected)
   const source = renderPrivateDataModule(expected)
-  assert.equal(source, 'export const privateV2Files = undefined;\nexport const privateLegacyUnmigrated = false;\nexport const privateStoreRevision = undefined;\nexport const privateStoreReadOnly = false;\nexport const privateStoreMigrationRequired = false;\nexport const privateStoreRecoveryRequired = false;')
+  assert.equal(source, 'export const privateReadModelUrl = undefined;\nexport const privateLegacyUnmigrated = false;\nexport const privateStoreRevision = undefined;\nexport const privateStoreReadOnly = false;\nexport const privateStoreMigrationRequired = false;\nexport const privateStoreRecoveryRequired = false;')
   assert.deepEqual({ ...(await evaluateModule(source)) }, expected)
 })
 
-test('虚拟模块 · 个人模式：privateV2Files 是五个 V2 文件（缺的为 undefined，浏览器里不出现）；privateLegacyUnmigrated 如实传出', async () => {
-  const exports = privateDataModuleExports({ profile: 'personal', v2Values: V2_VALUES, legacyUnmigrated: false })
-  assert.deepEqual(Object.keys(exports.privateV2Files), V2_FILE_KEYS)
-  assert.deepEqual(exports.privateV2Files, V2_VALUES)
+test('虚拟模块 · 个人模式（3C-5B）：只给出读模型的地址，数据不进模块；privateLegacyUnmigrated 如实传出', async () => {
+  const exports = privateDataModuleExports({ profile: 'personal', readModelUrl: DEV_URL, legacyUnmigrated: false })
+  assert.equal(exports.privateReadModelUrl, DEV_URL)
   assert.equal(exports.privateLegacyUnmigrated, false)
-
-  const module = await evaluateModule(renderPrivateDataModule(exports))
-  assert.deepEqual(Object.keys(module.privateV2Files), ['places', 'wantToGo', 'media'])
-  assert.equal(module.privateV2Files.travel, undefined)
+  const source = renderPrivateDataModule(exports)
+  assert.ok(source.length < 400, 'six short exports, no data')
+  const module = await evaluateModule(source)
+  assert.equal(module.privateReadModelUrl, DEV_URL)
   assert.equal(module.privateLegacyUnmigrated, false)
 
-  // 未迁移：data/v2/ 里没有文件（五个都缺），另报 privateLegacyUnmigrated。
-  const unmigrated = await evaluateModule(renderPrivateDataModule(privateDataModuleExports({ profile: 'personal', legacyUnmigrated: true })))
-  assert.deepEqual(unmigrated.privateV2Files, {})
+  // 未迁移的旧格式数据：还不是新库，地址带 V2 文件的摘要（没有文件时是空文件迁移出的读模型）；另报 privateLegacyUnmigrated。
+  const unmigrated = await evaluateModule(renderPrivateDataModule(privateDataModuleExports({ profile: 'personal', readModelUrl: V2_URL, legacyUnmigrated: true })))
+  assert.equal(unmigrated.privateReadModelUrl, V2_URL)
   assert.equal(unmigrated.privateLegacyUnmigrated, true)
   // 只接受 true：别的真值不算。
   assert.equal(privateDataModuleExports({ profile: 'personal', legacyUnmigrated: 'yes' }).privateLegacyUnmigrated, false)
-  // V2 模式没有修订号。
-  assert.equal(exports.privateStoreRevision, undefined)
-  assert.equal(module.privateStoreRevision, undefined)
+  // 只接受非空字符串的地址。
+  for (const invalid of ['', 42, null, undefined]) assert.equal(privateDataModuleExports({ profile: 'personal', readModelUrl: invalid }).privateReadModelUrl, undefined, String(invalid))
+})
+
+test('虚拟模块 · 个人构建（3C-5B）：地址是过滤后的数据文件', async () => {
+  const module = await evaluateModule(renderPrivateDataModule(privateDataModuleExports({ profile: 'personal', readModelUrl: BUILD_URL, storeRevision: 4 })))
+  assert.equal(module.privateReadModelUrl, BUILD_URL)
+  assert.equal(module.privateStoreRevision, 4)
 })
 
 test('虚拟模块 · 新库模式（3C-3）：privateStoreRevision 是全库修订号；只接受非负的安全整数', async () => {
-  const exports = privateDataModuleExports({ profile: 'personal', v2Values: V2_VALUES, storeRevision: 42 })
-  assert.deepEqual(exports.privateV2Files, V2_VALUES)
+  const exports = privateDataModuleExports({ profile: 'personal', readModelUrl: DEV_URL, storeRevision: 42 })
+  assert.equal(exports.privateReadModelUrl, DEV_URL)
   assert.equal((await evaluateModule(renderPrivateDataModule(exports))).privateStoreRevision, 42)
   assert.equal(privateDataModuleExports({ profile: 'personal', storeRevision: 0 }).privateStoreRevision, 0)
   for (const invalid of [-1, 1.5, '3', null, Number.MAX_SAFE_INTEGER + 1]) {
@@ -113,25 +114,25 @@ test('虚拟模块 · 新库模式（3C-3）：privateStoreRevision 是全库修
   }
 })
 
-test('虚拟模块 · 新库模式（3C-4b）：privateStoreReadOnly 只在库损坏、只读时为 true，数据照常导出；只接受 true', async () => {
-  const exports = privateDataModuleExports({ profile: 'personal', v2Values: V2_VALUES, storeRevision: 3, storeReadOnly: true })
+test('虚拟模块 · 新库模式（3C-4b）：privateStoreReadOnly 只在库损坏、只读时为 true，数据照常给出；只接受 true', async () => {
+  const exports = privateDataModuleExports({ profile: 'personal', readModelUrl: DEV_URL, storeRevision: 3, storeReadOnly: true })
   const module = await evaluateModule(renderPrivateDataModule(exports))
   assert.equal(module.privateStoreReadOnly, true)
   assert.equal(module.privateStoreRevision, 3)
-  assert.deepEqual(Object.keys(module.privateV2Files), ['places', 'wantToGo', 'media'])
+  assert.equal(module.privateReadModelUrl, DEV_URL)
   assert.equal(privateDataModuleExports({ profile: 'personal', storeRevision: 3 }).privateStoreReadOnly, false)
   for (const value of [false, 'yes', 1, undefined]) {
     assert.equal(privateDataModuleExports({ profile: 'personal', storeReadOnly: value }).privateStoreReadOnly, false, String(value))
   }
 })
 
-test('虚拟模块 · 不是新库（3C-4d）：privateStoreMigrationRequired 与 privateStoreRecoveryRequired 如实传出，只接受 true；数据照常导出', async () => {
-  const migration = await evaluateModule(renderPrivateDataModule(privateDataModuleExports({ profile: 'personal', v2Values: V2_VALUES, storeMigrationRequired: true })))
+test('虚拟模块 · 不是新库（3C-4d）：privateStoreMigrationRequired 与 privateStoreRecoveryRequired 如实传出，只接受 true；数据照常给出', async () => {
+  const migration = await evaluateModule(renderPrivateDataModule(privateDataModuleExports({ profile: 'personal', readModelUrl: V2_URL, storeMigrationRequired: true })))
   assert.equal(migration.privateStoreMigrationRequired, true)
   assert.equal(migration.privateStoreRecoveryRequired, false)
   assert.equal(migration.privateStoreRevision, undefined)
-  assert.deepEqual(Object.keys(migration.privateV2Files), ['places', 'wantToGo', 'media'])
-  const recovery = await evaluateModule(renderPrivateDataModule(privateDataModuleExports({ profile: 'personal', storeRecoveryRequired: true })))
+  assert.equal(migration.privateReadModelUrl, V2_URL)
+  const recovery = await evaluateModule(renderPrivateDataModule(privateDataModuleExports({ profile: 'personal', readModelUrl: V2_URL, storeRecoveryRequired: true })))
   assert.equal(recovery.privateStoreRecoveryRequired, true)
   assert.equal(recovery.privateStoreMigrationRequired, false)
   for (const value of [false, 'yes', 1, undefined]) {

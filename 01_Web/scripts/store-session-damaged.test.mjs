@@ -16,6 +16,7 @@ import { checkStoreFile } from './store-host.mjs'
 import { applyMigration } from './store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, createStoreSession } from './store-session.mjs'
 import { pragmaValue, rawConnection } from './store-sqlite.mjs'
+import { servedCanonical } from './private-read-model.fixture.mjs'
 import {
   authorizedHeaders, captureMiddleware, editorPrefix, moduleOf, requestTo, sampleV2Files, tempPrivateRoot, writeV2Files,
 } from './store-mode.fixture.mjs'
@@ -148,7 +149,7 @@ test('the plugin: the virtual module exports privateStoreReadOnly, every write e
     const module = await moduleOf(plugin)
     assert.equal(module.privateStoreReadOnly, true)
     assert.equal(module.privateStoreRevision, 1)
-    assert.deepEqual(readV2(module.privateV2Files), readV2(context.files))
+    assert.deepEqual(servedCanonical(module), readV2(context.files))
     const handler = captureMiddleware(plugin).handlers[1]
     const state = await requestTo(handler, { url: `${editorPrefix}state`, method: 'GET', headers: {} })
     assert.equal(state.status, 200)

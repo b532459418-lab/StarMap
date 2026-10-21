@@ -13,7 +13,7 @@ import { createMediaJobStore } from './media-job-store.mjs'
 import { getPrivatePaths, webRoot } from './private-profile.mjs'
 import { privateDataSource, storeFileOf } from './private-data-source.mjs'
 import {
-  BACKUP_FILES, backupStore, exportStoreV2, mediaCopyInProgress, restoreStore, runStoreBackupCli, verifyBackup,
+  BACKUP_FILES, backupStore, exportStoreV2, exportedV2Of, mediaCopyInProgress, restoreStore, runStoreBackupCli, verifyBackup,
 } from './store-backup.mjs'
 import { runV2MediaImport } from './v2-media-import.mjs'
 import { openStore } from './store-host.mjs'
@@ -23,6 +23,8 @@ import { edgeV2Files, quietly, sampleV2Files, tempPrivateRoot, treeDigest, write
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { migrateIntoEmptyStore, migrationInputs } from '../src/data/store/v2Store.fixture.ts'
+import { readModelOf } from '../src/worldgraph/readModel/build.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
 const backupScript = fileURLToPath(new URL('./store-backup.mjs', import.meta.url))
@@ -139,9 +141,25 @@ test('store:export-v2 writes the five V2 files of the projection, lists what V2 
   assert.deepEqual((await readdir(out)).sort(), [...Object.values(V2_FILE_NAMES), 'media-source-index.local.json'].sort())
   const written = Object.fromEntries(await Promise.all(V2_FILE_KEYS.map(async (key) => [key, JSON.parse(await readFile(path.join(out, V2_FILE_NAMES[key]), 'utf8'))])))
   assert.deepEqual(readV2(written), readV2(files))
+  // 3C-5B: read model → official view → serializeV2 exports what the projection of the rows exported before, to the byte.
+  const reader = openStore(storeFileOf(paths), { readOnly: true, policy: OFFICIAL_POLICY })
+  try {
+    const before = projectToV2Files(reader.readFormalState()).files
+    for (const key of V2_FILE_KEYS) assert.equal(await readFile(path.join(out, V2_FILE_NAMES[key]), 'utf8'), `${JSON.stringify(before[key], null, 2)}\n`, key)
+  } finally { await reader.close() }
   assert.deepEqual(result.skipped, [{ table: 'sources', id: 'synthetic:source' }])
   assert.ok(result.lines.some((line) => line === '  sources synthetic:source'))
   await assert.rejects(exportStoreV2(paths, { out }), { code: 'E_TARGET_EXISTS' })
+})
+
+test('store:export-v2 through the read model (3C-5B): the same JSON as the projection of the rows, for every migration input', () => {
+  for (const [name, files] of migrationInputs()) {
+    const { state } = migrateIntoEmptyStore(files())
+    const viaReadModel = exportedV2Of(readModelOf(state, { origin: 'local' }))
+    const viaRows = projectToV2Files(state)
+    assert.equal(JSON.stringify(viaReadModel.files), JSON.stringify(viaRows.files), name)
+    assert.deepEqual(viaReadModel.projection.skipped, viaRows.projection.skipped, name)
+  }
 })
 
 test('store:export-v2 gives a store migrated without a places file the export time as generated_at', async (t) => {

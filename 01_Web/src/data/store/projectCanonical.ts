@@ -21,6 +21,11 @@
  * Pure: the input is never modified, and nothing but the rows themselves is read;
  * the result does not depend on the order of rows within a table.
  *
+ * The official view (3C-5B, design 3C-5 §2 option 1): the App reads the read model through this same function, with
+ * two options that only drop work, never change the result: `track: false` lists no skipped rows (the App does not
+ * need them; export-v2 does), and `freeze: false` returns the result without a deep frozen copy, so it shares row values
+ * with its input and its callers must not modify it. `officialViewOf(model, source)` is that call on a read model.
+ *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative
  * imports with `.ts`, `import type` for types).
  */
@@ -29,6 +34,8 @@ import type { AssetReference, Evidence, JsonValue, LayerEntry, StoreEntity } fro
 import { freezeCopy } from '../../worldgraph/store/schema.ts'
 import type { CanonicalData, CanonicalDisplay, CanonicalEditorState, CanonicalTravelMeta } from '../canonical/types.ts'
 import type { V2FileMeta } from '../canonical/v2Serializer.ts'
+import { formalStateOfReadModel } from '../../worldgraph/readModel/build.ts'
+import type { ReadModel } from '../../worldgraph/readModel/types.ts'
 import { EDITOR_STATE_SCHEMA_VERSION, TRAVEL_SCHEMA_VERSION } from '../canonical/v2Schema.ts'
 import {
   DISPLAY_SETTING_KEYS, OFFICIAL, OFFICIAL_DEFINITIONS, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES, mapListScope,
@@ -37,6 +44,10 @@ import {
 export interface ProjectionOptions {
   /** Runtime field of the App: which data the caller chose (`travel.source`, `wantToGo.source`). */
   readonly source: 'local' | 'sample'
+  /** List the rows Canonical cannot express in `skipped` (default true); false leaves `skipped` empty. */
+  readonly track?: boolean
+  /** Return a deep frozen copy (default true); false returns the result as built, sharing values with the input. */
+  readonly freeze?: boolean
 }
 export interface SkippedRow { readonly table: FormalTable; readonly id: string }
 export interface Projection {
@@ -48,7 +59,8 @@ export interface Projection {
 }
 
 type Json = Record<string, JsonValue>
-type Role = 'footprint' | 'planned' | 'wish' | 'countryVisit'
+/** The Canonical record an official entry becomes. */
+export type OfficialEntryRole = 'footprint' | 'planned' | 'wish' | 'countryVisit'
 /** Without a v2:import header there is no generation time; serializeV2 still needs one. */
 const NO_GENERATION_TIME = '1970-01-01T00:00:00.000Z'
 const plain = (v: unknown): v is Json => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -63,8 +75,8 @@ const OFFICIAL_ROWS: readonly (readonly [FormalTable, string])[] = [
   ...OFFICIAL_DEFINITIONS.layers.map(r => ['layers', r.id] as const),
 ]
 
-/** Which Canonical record an official entry becomes, from its layer and source. */
-function roleOf(entry: LayerEntry): Role | undefined {
+/** Which Canonical record an official entry becomes, from its layer and source (shared with ./personalBuildReadModel.ts). */
+export function officialEntryRole(entry: LayerEntry): OfficialEntryRole | undefined {
   const sourceId = entry.source.sourceId
   if (entry.layerId === OFFICIAL.travel) {
     if (sourceId === V2_SOURCES.travel || sourceId === OFFICIAL.user) return 'footprint'
@@ -79,9 +91,10 @@ const recordIdOf = (entry: LayerEntry): string => (entry.source.sourceId === OFF
 
 /** Formal store -> the CanonicalData readV2 would produce, plus serializeV2's file metadata. */
 export function projectStoreToCanonical(state: FormalState, options: ProjectionOptions): Projection {
+  const track = options.track !== false
   const used = new Set<string>()
   const key = (table: FormalTable, id: string) => JSON.stringify([table, id])
-  const consume = (table: FormalTable, id: string) => { used.add(key(table, id)) }
+  const consume = track ? (table: FormalTable, id: string) => { used.add(key(table, id)) } : () => {}
   const byId = <T extends { readonly id: string }>(rows: readonly T[]) => new Map(rows.map(r => [r.id, r] as const))
   const group = <T, K>(rows: readonly T[], keyOf: (row: T) => K | undefined) => {
     const groups = new Map<K, T[]>()
@@ -95,7 +108,7 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
     for (const list of groups.values()) list.sort((a, b) => compare((a as { id: string }).id, (b as { id: string }).id))
     return groups
   }
-  for (const [table, id] of OFFICIAL_ROWS) if (state[table].some(r => r.id === id)) consume(table, id)
+  if (track) for (const [table, id] of OFFICIAL_ROWS) if (state[table].some(r => r.id === id)) consume(table, id)
 
   const header = state.sources.find(s => s.id === V2_SOURCES.import)
   const headers = plain(header?.extensions?.v2) ? header.extensions.v2 : {}
@@ -161,9 +174,9 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
   }
 
   // --- Entries.
-  const roles = new Map<string, Role>()
+  const roles = new Map<string, OfficialEntryRole>()
   for (const entry of state.entries) {
-    const role = roleOf(entry)
+    const role = officialEntryRole(entry)
     if (role !== undefined && isPlace(entry.entityId)) roles.set(entry.id, role)
   }
   const journeyOf = new Map<string, string>()
@@ -336,8 +349,16 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
   } as unknown as CanonicalData
 
   const skipped: SkippedRow[] = []
-  for (const table of FORMAL_TABLES) {
-    for (const row of [...state[table]].sort((a, b) => compare(a.id, b.id))) if (!used.has(key(table, row.id))) skipped.push({ table, id: row.id })
+  if (track) {
+    for (const table of FORMAL_TABLES) {
+      for (const row of [...state[table]].sort((a, b) => compare(a.id, b.id))) if (!used.has(key(table, row.id))) skipped.push({ table, id: row.id })
+    }
   }
-  return freezeCopy({ canonical, v2Meta, skipped })
+  const projection = { canonical, v2Meta, skipped }
+  return options.freeze === false ? projection : freezeCopy(projection)
+}
+
+/** The official view of a read model (3C-5B): Canonical for the App's derivation, without skipped rows or a frozen copy. */
+export function officialViewOf(model: ReadModel, source: 'local' | 'sample'): CanonicalData {
+  return projectStoreToCanonical(formalStateOfReadModel(model), { source, track: false, freeze: false }).canonical
 }

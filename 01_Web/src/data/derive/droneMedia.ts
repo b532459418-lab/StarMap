@@ -26,7 +26,9 @@ export type DroneMediaItem = {
   date: string
   resolution: string
   captureType: string
-  fileName: string
+  /** The asset's `originalFileName`; missing where an export dropped it (a public export always does). The UI falls
+   * back to the title (../../components/droneMediaLabels.ts). */
+  fileName?: string
   city: string
   country: string
   description?: string
