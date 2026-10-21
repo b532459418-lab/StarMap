@@ -72,12 +72,18 @@ places, 10,000 entries and 10,000 media entities, where the targets apply) and
 `npm run store:bench -- --dir <absolute work directory> --scale real|stress --segment load|validate|copy|commit|cold|age|prune|modes`
 (see the header of `scripts/store-bench.mjs`). The new library itself is
 measured on the plugin path with synthetic V2 data migrated at the real scale (since 3C-4d its write segments measure
-the store only): `npm run store:bench:mode -- --dir <absolute work directory> --segment generate|read|http|pipeline|editors|media|backup|restore`
-(see the header of `scripts/store-mode-bench.mjs`; `npm test` runs a tiny scale). In the new library the eight
-editor writes run V2's write functions on the read model and commit only the records that changed
-(`src/data/store/diffV2.ts`); after a commit the files after the write are the next read model, without reading
-the store again. `STARMAP_STORE_VERIFY=1` makes the dev server project the store after every commit and compare it
-with that read model (development and tests). Every connection to a store file, tests and benchmarks included, is
+the store only): `npm run store:bench:mode -- --dir <absolute work directory> --segment generate|read|http|pipeline|editors|native|media|backup|restore`
+(see the header of `scripts/store-mode-bench.mjs`; `npm test` runs a tiny scale). Since 3C-5 C1 the view operations
+(`POST /__travelatlas/editor/view`: orders, hidden lists and covers, which the page sends instead of `GET` + `PUT /state`)
+and the three Want to Go endpoints are store-native: the host plans their commands on its live read-model index through
+the official reader (`src/data/store/officialReader.ts`) with the decision layer the V2 write functions also use
+(`src/data/editor/rules/`, planners in `src/data/editor/native/`), commits once, and moves the index on with the
+commit's changed rows; new rows are `starmap:user` rows. The other editor writes (records, countries, country deletion,
+conversion, and `PUT /state`, which the page no longer sends) still run V2's write functions on the read model's V2
+view and commit only the records that changed (`src/data/store/diffV2.ts`). A test-only double run
+(`src/data/editor/doubleRun.fixture.ts`) runs a request in both engines from the same store and compares refusals and
+the derived baseline. `STARMAP_STORE_VERIFY=1` makes the dev server read the store after every commit and compare it
+with its cache (development and tests). Every connection to a store file, tests and benchmarks included, is
 opened through `scripts/store-sqlite.mjs` in the same TRUNCATE journal mode: on Windows a connection in SQLite's
 default DELETE mode cannot commit while the dev server has the store open. The dev server's session prunes receipts
 and `op_log` (`pruneLogs`) when it opens the store and after every 200 commits, one small step at a time after the
@@ -98,7 +104,7 @@ The read model `starmap.read-model` (3C-5A) is a read-only copy of the store's r
 the host builds it with `readModel()`, without tombstones, review receipts or the host's own tables, and
 `npm run store:export-read-model -- --out <new file> [--public]` writes it (`--public`: `src/data/store/publicReadModel.ts`;
 the coordinate of the map's default camera is published, media assets lose their original file names).
-The App does not read it yet (3C-5B).
+The App reads it since 3C-5B.
 `npm run library:recover` clears a library operation lock left by a crashed
 writer after checking the data; see the root README.
 

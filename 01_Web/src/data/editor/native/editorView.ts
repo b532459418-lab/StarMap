@@ -26,7 +26,7 @@ export const editorViewWrite = Object.freeze<NativeWrite>({
     checkEditorStatePlaces(after, (id) => reader.subtypeOf(id))
     const batch = commandBatch()
     const { rows, sink } = viewListAccess(reader, batch, ctx.newId)
-    const place = (id: unknown): ViewTarget | undefined => (typeof id === 'string' && reader.place(id) ? { table: 'entities', id } : undefined)
+    const place = (id: unknown): ViewTarget | undefined => (typeof id === 'string' && reader.isPlace(id) ? { table: 'entities', id } : undefined)
     const media = (id: unknown): ViewTarget | undefined => (typeof id === 'string' && isAsset(id) ? { table: 'assets', id } : undefined)
     writeEditorLists(viewListWriter(rows, sink), before, after, { before: place, after: place }, media)
     return { commands: batch.commands(), result: {} }

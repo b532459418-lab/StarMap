@@ -40,6 +40,8 @@ export type EditorLists = Omit<CanonicalEditorState, 'schemaVersion' | 'addedCou
 export interface OfficialReader {
   readonly index: OfficialReaderIndex
   place(id: string): CanonicalPlace | undefined
+  /** True when `id` is a place (an entity of the place type): place(id) is defined. */
+  isPlace(id: string): boolean
   subtypeOf(id: string): 'country' | 'city' | undefined
   /** Every country, in the official order. */
   countries(): readonly CanonicalPlace[]
@@ -105,7 +107,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     }
     const byId = new Map<string, OfficialWish>(), byPlace = new Map<string, OfficialWish[]>()
     for (const entry of index.entriesOfLayer(OFFICIAL.wantToGo)) {
-      if (officialEntryRole(entry) !== 'wish' || !place(entry.entityId)) continue
+      if (officialEntryRole(entry) !== 'wish' || !isPlaceEntity(entry.entityId)) continue
       const hiddenRow = hidden.get(entry.id)
       const wish: OfficialWish = { entry, item: wishValueOf(entry, hiddenRow?.hidden) as unknown as CanonicalWantToGoItem, ...(hiddenRow ? { hiddenRow } : {}) }
       // The projection keeps every entry; two with one V2 id would both show. The first by entry id answers here.
@@ -120,8 +122,11 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
   return {
     index,
     place,
+    isPlace: isPlaceEntity,
+    // The place's subtype field (what place(id).subtype is), without building the place.
     subtypeOf: (id) => {
-      const subtype = place(id)?.subtype
+      const entity = index.get('entities', id) as StoreEntity | undefined
+      const subtype = entity?.typeId === OFFICIAL.place ? entity.fields.subtype : undefined
       return subtype === 'country' || subtype === 'city' ? subtype : undefined
     },
     countries() {
@@ -137,7 +142,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     wish: (id) => wishIndex().byId.get(id),
     wishesOn: (placeId) => wishIndex().byPlace.get(placeId) ?? [],
     editorLists() {
-      lists ??= editorListsOf(scopeAccess, (id) => place(id) !== undefined, (id) => index.get('assets', id) !== undefined) as unknown as EditorLists
+      lists ??= editorListsOf(scopeAccess, isPlaceEntity, (id) => index.get('assets', id) !== undefined) as unknown as EditorLists
       return lists
     },
     scope: (scope) => ({ items: index.viewItemsOf(scope), settings: index.viewSettingsOf(scope) }),
