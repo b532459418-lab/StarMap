@@ -137,14 +137,29 @@ function servedModule() {
   })
 }
 
-/** Wait until the dev server (when one runs) serves `revision` in its private data module. */
-export async function waitForServedRevision(revision, { timeoutMs = 30000 } = {}) {
+/** How often waitForServedRevision nudges the dev server again while it still serves an older revision. */
+const RETOUCH_MS = 2000
+
+/**
+ * Wait until the dev server (when one runs) serves `revision` in its private data module. `touch` (optional) makes the
+ * dev server reload the module: it runs first, and again every RETOUCH_MS while another revision is served, so one file
+ * event the watcher dropped or merged with an earlier one cannot leave the wait hanging (CI on Linux, two quick resets).
+ */
+export async function waitForServedRevision(revision, { timeoutMs = 30000, touch } = {}) {
   const deadline = Date.now() + timeoutMs
+  let nextTouch = 0
   for (;;) {
+    if (touch && Date.now() >= nextTouch) {
+      await touch()
+      nextTouch = Date.now() + RETOUCH_MS
+    }
     const text = await servedModule()
     if (text === undefined) return
-    if (/privateStoreRevision = (\w+)/.exec(text)?.[1] === String(revision)) return
-    if (Date.now() > deadline) throw new Error(`The dev server did not serve revision ${revision} within ${timeoutMs} ms`)
+    const current = /privateStoreRevision = (\w+)/.exec(text)?.[1]
+    if (current === String(revision)) return
+    // What the server last answered, for the failure message: a revision, or a response without one (an error page).
+    const served = current !== undefined ? `revision ${current}` : text === '' ? 'an error response' : 'a module without a revision'
+    if (Date.now() > deadline) throw new Error(`The dev server did not serve revision ${revision} within ${timeoutMs} ms (it last served ${served})`)
     await delay(200)
   }
 }
@@ -184,8 +199,7 @@ export async function resetFixture(root, files) {
     } finally { await handle.close() }
   })
   await writeFixtureFiles(root, { ...files, media: undefined })
-  await touchV2Files(root)
-  await waitForServedRevision(revision)
+  await waitForServedRevision(revision, { touch: () => touchV2Files(root) })
   return revision
 }
 
@@ -213,8 +227,7 @@ export async function importInboxMedia(root) {
       return result.revision
     } finally { await handle.close() }
   })
-  await touchV2Files(root)
-  await waitForServedRevision(revision)
+  await waitForServedRevision(revision, { touch: () => touchV2Files(root) })
   return revision
 }
 
