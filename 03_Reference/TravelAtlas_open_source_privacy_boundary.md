@@ -72,7 +72,7 @@ GitHub 不包含个人照片和旅行数据。若个人网站本身部署到公�
 
 - 关闭 Vite 的 CORS（`server.cors: false`）：不向任何其他来源返回 `Access-Control-Allow-Origin`。
 - 跨站请求守卫：注册在 Vite 自己的中间件之前，私人数据虚拟模块、`/@fs/`、`/media/user/*` 与编辑接口都在它之后。浏览器标为 `Sec-Fetch-Site: cross-site` 或 `same-site`（例如另一个端口上的 `localhost` 页面）的请求，只要不是打开页面本身（`Sec-Fetch-Mode: navigate`），一律返回 403。别处的链接仍能打开页面，但不能读取、嵌入或导入其中的任何资源。
-- 只读接口（`GET /__travelatlas/editor/state`、`/__travelatlas/editor/catalog/*`）与 `/media/user/*`：要求本机 socket；带 Origin 时必须与本服务同源（同协议、同主机、同端口）；`Sec-Fetch-Site` 必须缺省、为 `same-origin` 或 `none`。媒体响应带 `Cross-Origin-Resource-Policy: same-origin` 与 `X-Content-Type-Options: nosniff`。
+- 只读接口（`GET /__travelatlas/editor/state`、`/__travelatlas/editor/read-model`（3C-5B：App 启动时从这里取私人数据的读模型）、`/__travelatlas/editor/catalog/*`）与 `/media/user/*`：要求本机 socket；带 Origin 时必须与本服务同源（同协议、同主机、同端口）；`Sec-Fetch-Site` 必须缺省、为 `same-origin` 或 `none`。媒体响应带 `Cross-Origin-Resource-Policy: same-origin` 与 `X-Content-Type-Options: nosniff`。
 - 写入接口与媒体任务接口：要求本机 socket；带 Origin 时必须与本服务同源；并且带请求头 `x-travelatlas-local-editor: 1`。自定义请求头会触发跨源预检，而个人配置不放行任何跨源预检。
 
 `vite preview`（`npm run preview`）直接服务 `dist`，而 `dist` 可能是包含私人数据与原图的个人构建，所以预览服务不论哪种模式都关闭 CORS（`preview.cors: false`），并在自己的中间件之前注册同一个跨站请求守卫；同源访问照常可用。

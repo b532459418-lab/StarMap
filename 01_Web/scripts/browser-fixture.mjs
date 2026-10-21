@@ -137,13 +137,21 @@ function servedModule() {
   })
 }
 
-/** How often waitForServedRevision nudges the dev server again while it still serves an older revision. */
-const RETOUCH_MS = 2000
+/**
+ * How often waitForServedRevision nudges the dev server again while it still serves an older revision: just past the
+ * watcher's 50 ms window (see below), and often enough that a dropped event costs a quarter of a second, not seconds.
+ */
+const RETOUCH_MS = 250
 
 /**
  * Wait until the dev server (when one runs) serves `revision` in its private data module. `touch` (optional) makes the
- * dev server reload the module: it runs first, and again every RETOUCH_MS while another revision is served, so one file
- * event the watcher dropped or merged with an earlier one cannot leave the wait hanging (CI on Linux, two quick resets).
+ * dev server reload the module: it runs first, and again every RETOUCH_MS while another revision is served.
+ *
+ * Why the retouch is needed (found in 3C-5B): Vite 8's bundled chokidar throttles `change` events per file to one in
+ * 50 ms (`_emit`: `if (!this._throttle(EV_CHANGE, path, 50)) return this`). A later event inside the window is dropped,
+ * and nothing is emitted when the window ends. So when two resets rewrite the V2 files within 50 ms (CI on Linux, where
+ * inotify reports at once and a commit takes milliseconds), the second change never reaches the plugin, the private
+ * data module is not invalidated, and the dev server keeps serving the old revision until another change arrives.
  */
 export async function waitForServedRevision(revision, { timeoutMs = 30000, touch } = {}) {
   const deadline = Date.now() + timeoutMs

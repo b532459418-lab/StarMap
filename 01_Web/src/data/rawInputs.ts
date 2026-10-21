@@ -13,18 +13,18 @@
  *    只留作迁移与兼容测试的输入，App 不再读。强制样例是在个人配置里预览公开版，所以本地编辑器整个关闭：./editorState.ts 的
  *    `localEditorAvailable` 看下面导出的 `forceSampleData`（RFC-LOC-1 PR4 审查补修），页面与公开模式渲染一致，
  *    不会把写入落到私人目录。
- * 2. 个人模式 → 虚拟模块注入的读模型，来源 'local'：新库的读模型；还不是新库时是 data/v2/ 的文件在内存里迁移一次得到的
+ * 2. 个人模式 → 私人数据的读模型，来源 'local'：新库的读模型；还不是新库时是 data/v2/ 的文件在内存里迁移一次得到的
  *    读模型（没有数据时为空，不回落到样例，决定 E）。旧格式的私人文件 App 不读。私人目录有没迁移的旧数据时，虚拟模块另报
  *    `privateLegacyUnmigrated`，下面的 `legacyUnmigrated` 据此让页面显示迁移提示（./privateDataNotice.ts）。
- *    个人构建不内联读模型（3C-5B 规格 §2.3）：虚拟模块只给出数据文件的路径 `privateReadModelUrl`，这里在模块加载时
- *    （顶层 await）取回它。读不到或格式不对时，`appDataLoadError` 说明是哪个文件、为什么，../main.tsx 显示错误页
- *    （../components/DataLoadError.tsx），数据当作空的读模型，页面不会是一片空白。
+ *    读模型从不内联在虚拟模块里（3C-5B）：模块只给出地址 `privateReadModelUrl`，这里在模块加载时（顶层 await）取回它。
+ *    开发服务器是只读端点 `/__travelatlas/editor/read-model?revision=N`，个人构建是数据文件 `data/read-model.<hash>.json`。
+ *    读不到或格式不对时，`appDataLoadError` 说明是哪个地址、为什么（端点拒绝时带它的错误代码与问题），../main.tsx 显示
+ *    错误页（../components/DataLoadError.tsx），数据当作空的读模型，页面不会是一片空白。
  */
 
 import sampleReadModelJson from './sample/sample.read-model.json'
 import {
-  privateLegacyUnmigrated, privateReadModel, privateReadModelUrl, privateStoreMigrationRequired, privateStoreReadOnly, privateStoreRecoveryRequired,
-  privateStoreRevision,
+  privateLegacyUnmigrated, privateReadModelUrl, privateStoreMigrationRequired, privateStoreReadOnly, privateStoreRecoveryRequired, privateStoreRevision,
 } from 'virtual:starmap-private-data'
 import { readModelOf } from '../worldgraph/readModel/build.ts'
 import { readReadModel } from '../worldgraph/readModel/check.ts'
@@ -49,20 +49,48 @@ const useSampleData = forceSampleData || import.meta.env.MODE !== 'personal'
 /** 官方视图的来源（Canonical 的 `travel.source`、`wantToGo.source`）：公开样例为 'sample'，私人数据为 'local'。 */
 export const appDataSource: 'local' | 'sample' = useSampleData ? 'sample' : 'local'
 
-/** App 的数据没有加载成功：哪个文件（个人构建的数据文件，或样例、虚拟模块），为什么。 */
+/**
+ * App 的数据没有加载成功：哪个地址（开发服务器的端点、个人构建的数据文件，或样例），为什么；开发服务器的端点拒绝时还有它的
+ * 错误代码与问题（例如 E_MIGRATION_REFUSED：data/v2/ 的文件不能迁移，问题只列文件、路径与规则，不含值）。
+ */
 export interface AppDataLoadError {
   readonly file: string
   readonly reason: string
+  readonly code?: string
+  readonly problems?: readonly string[]
+}
+
+class DataLoadFailure extends Error {
+  readonly code?: string
+  readonly problems?: readonly string[]
+  constructor(message: string, code?: string, problems?: readonly string[]) {
+    super(message)
+    this.code = code
+    this.problems = problems
+  }
+}
+
+/** The endpoint's refusal body `{ code, problems }`, or nothing for any other answer. */
+const refusalOf = (body: unknown): { code?: string; problems?: readonly string[] } => {
+  if (body === null || typeof body !== 'object') return {}
+  const { code, problems } = body as { code?: unknown; problems?: unknown }
+  return {
+    ...(typeof code === 'string' ? { code } : {}),
+    ...(Array.isArray(problems) ? { problems: problems.filter((problem): problem is string => typeof problem === 'string') } : {}),
+  }
 }
 
 /** 上面两种来源之一的读模型；读不到或格式不对时是空的读模型加上原因。 */
 async function loadAppReadModel(): Promise<{ readonly model: ReadModel; readonly error?: AppDataLoadError }> {
-  const file = useSampleData ? 'sample/sample.read-model.json' : privateReadModelUrl ?? 'virtual:starmap-private-data'
+  const file = useSampleData ? 'sample/sample.read-model.json' : (privateReadModelUrl ?? 'virtual:starmap-private-data').replace(/\?.*$/, '')
   try {
     if (useSampleData) return { model: readReadModel(sampleReadModelJson) }
-    if (privateReadModelUrl === undefined) return { model: readReadModel(privateReadModel) }
-    const response = await fetch(`${import.meta.env.BASE_URL}${privateReadModelUrl}`)
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    if (privateReadModelUrl === undefined) throw new Error('the private data module names no read model')
+    const response = await fetch(`${import.meta.env.BASE_URL}${privateReadModelUrl}`, { cache: 'no-store' })
+    if (!response.ok) {
+      const { code, problems } = refusalOf(await response.json().catch(() => undefined))
+      throw new DataLoadFailure(`HTTP ${response.status}${code ? ` ${code}` : ''}`, code, problems)
+    }
     // A static server without the file often answers 200 with its index.html (an SPA fallback): say so plainly.
     const value: unknown = await response.json().catch(() => {
       throw new Error(`HTTP ${response.status}, ${response.headers.get('content-type') ?? 'no content type'}: not JSON`)
@@ -70,7 +98,8 @@ async function loadAppReadModel(): Promise<{ readonly model: ReadModel; readonly
     return { model: readReadModel(value) }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
-    return { model: readModelOf(emptyFormalState(), { origin: useSampleData ? 'sample' : 'local' }), error: { file, reason } }
+    const refusal = error instanceof DataLoadFailure ? { ...(error.code ? { code: error.code } : {}), ...(error.problems ? { problems: error.problems } : {}) } : {}
+    return { model: readModelOf(emptyFormalState(), { origin: useSampleData ? 'sample' : 'local' }), error: { file, reason, ...refusal } }
   }
 }
 const loaded = await loadAppReadModel()
@@ -92,7 +121,11 @@ export const legacyUnmigrated: boolean = !useSampleData && privateLegacyUnmigrat
  * 和这个修订号；还不是新库（只读）、公开模式与强制样例下为 undefined。只有本地编辑器（经 ./localEditorClient.ts 的门）用它：
  * 「修改想去」的请求带上它作为 x-starmap-base-revision。
  */
-export const storeRevision: number | undefined = useSampleData ? undefined : privateStoreRevision
+export const storeRevision: number | undefined = useSampleData || privateStoreRevision === undefined
+  ? undefined
+  // 3C-5B: the revision of the read model the App actually shows (the endpoint answers with the current one), so the base
+  // revision of a write always matches the data on the page.
+  : loaded.error ? privateStoreRevision : appReadModel.revision
 
 /**
  * 新库模式（3C-4b）：新库没有通过打开检查（可能已损坏），只能读取。数据照常显示，写入一律被拒绝（E_STORE_READ_ONLY）；

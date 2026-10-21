@@ -66,12 +66,15 @@ test('personal build: the module carries only visible content and only its media
       if (command) plugin.configResolved({ command, root: projectRoot, build: { outDir: 'dist' } })
       const code = load ? await plugin.load(plugin.resolveId('virtual:starmap-private-data')) : undefined
       await plugin.closeBundle()
-      return { outDir, code }
+      return { outDir, code, plugin }
     }
 
-    await t.test('Dev server (command serve): the module keeps the hidden entries for the editor, and shutdown copies nothing', async () => {
-      const { outDir, code } = await runFor({ profile: 'personal', command: 'serve' })
-      for (const id of [...REMOVED.records, ...REMOVED.wantToGo, ...REMOVED.media]) assert.ok(code.includes(id), id)
+    await t.test('Dev server (command serve): its read-model endpoint keeps the hidden entries for the editor, and shutdown copies nothing', async () => {
+      const { outDir, code, plugin } = await runFor({ profile: 'personal', command: 'serve' })
+      // 3C-5B: the module only names the endpoint; the data comes from it.
+      assert.match(code, /export const privateReadModelUrl = "__travelatlas\/editor\/read-model\?v2=[0-9a-f]{16}";/)
+      const served = (await plugin.api.readModelResponse()).body.toString('utf8')
+      for (const id of [...REMOVED.records, ...REMOVED.wantToGo, ...REMOVED.media]) assert.ok(served.includes(id) && !code.includes(id), id)
       assert.deepEqual(await readdir(outDir), [])
     })
 

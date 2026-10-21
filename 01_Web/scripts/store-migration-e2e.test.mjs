@@ -26,7 +26,7 @@ import { openStore } from './store-host.mjs'
 import { runStoreMediaCli } from './store-media-cli.mjs'
 import { runMigrateCli } from './store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './store-session.mjs'
-import { servedCanonical } from './private-read-model.fixture.mjs'
+import { servedCanonical, servedModuleOf } from './private-read-model.fixture.mjs'
 import { authorizedHeaders, editorPrefix, quietly, requestTo, tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 
@@ -52,7 +52,7 @@ function served(plugin) {
   })
   return { handler: handlers[1], reloads, invalidations, events, privateModule }
 }
-const moduleOf = async (plugin) => import(`data:text/javascript,${encodeURIComponent(await plugin.load(plugin.resolveId('virtual:starmap-private-data')))}`)
+const moduleOf = (plugin) => servedModuleOf(plugin)
 
 test('a V2 library with media: migration required, store:migrate --apply, writes work, the first scan adds nothing, export-v2 writes it back', async (t) => {
   const { directory, root, paths } = await tempPrivateRoot(t, 'starmap-store-migration-e2e-')

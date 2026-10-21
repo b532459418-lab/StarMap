@@ -13,6 +13,7 @@ import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { rawConnection } from './store-sqlite.mjs'
 import { readV2SampleFiles } from './v2-sample.mjs'
 import { edgeCaseFixture } from '../src/data/store/v2Store.fixture.ts'
+import { servedModuleOf } from './private-read-model.fixture.mjs'
 
 /**
  * A temporary directory `<tmp>/<prefix>…` holding `private/` (the private root), removed after the test. `closeAfter`
@@ -119,5 +120,5 @@ export async function requestTo(handler, { url, method = 'POST', headers = autho
   } finally { request.destroy() }
 }
 
-/** The plugin's virtual module, evaluated: its exports. */
-export const moduleOf = async (plugin) => import(`data:text/javascript,${encodeURIComponent(await plugin.load(plugin.resolveId('virtual:starmap-private-data')))}`)
+/** The served private-data module, with the read model its endpoint answers (./private-read-model.fixture.mjs). */
+export const moduleOf = (plugin) => servedModuleOf(plugin)

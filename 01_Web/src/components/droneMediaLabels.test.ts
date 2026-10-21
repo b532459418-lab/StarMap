@@ -13,10 +13,12 @@ test('with a file name both labels are what they were: "<file> · <resolution>" 
   assert.equal(droneMarkerName(withFile), 'Harbor at dawn DJI_0042.JPG')
 })
 
-test('without a file name the viewer shows the title, or else the type name, with the resolution; never undefined or a lone "· resolution"', () => {
+test('without a file name the viewer shows the resolution alone under a title (no repeated heading), or the type name with the resolution without one; never undefined or a lone "· resolution"', () => {
   for (const fileName of [undefined, '']) {
     const item = { ...withoutFile, fileName }
-    assert.equal(droneMediaMetaLine(item, '黎明的港口', '无人机航拍照片'), '黎明的港口 · 4000x3000')
+    // The heading already says the title (a drone item without a title of its own falls back to its city).
+    assert.equal(droneMediaMetaLine(item, '黎明的港口', '无人机航拍照片'), '4000x3000')
+    assert.equal(droneMediaMetaLine(item, 'Torshavn', 'Drone Aerial Photo'), '4000x3000')
     assert.equal(droneMediaMetaLine(item, '', 'Drone 360° Panorama'), 'Drone 360° Panorama · 4000x3000')
     assert.equal(droneMediaMetaLine({ ...item, resolution: '' }, '', 'Drone Aerial Photo'), 'Drone Aerial Photo')
     for (const text of [droneMediaMetaLine(item, '', 'Drone Aerial Photo'), droneMarkerName(item)]) {

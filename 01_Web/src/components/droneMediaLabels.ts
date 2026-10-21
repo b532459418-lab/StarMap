@@ -6,11 +6,14 @@
 import type { DroneMediaItem } from '../data/derive/droneMedia.ts'
 
 /**
- * The line under the viewer's title: the file name, or else the title, or else the type name ("Drone Aerial Photo",
- * "Drone 360° Panorama"), then " · " and the resolution when there is one.
+ * The line under the viewer's title (`title`, the heading): "<file name> · <resolution>". Without a file name the
+ * fallback would be the title, which the heading already shows (review of 3C-5B: a drone item without a title of its
+ * own falls back to its city), so the line is the resolution alone; only without a title it is the type name ("Drone
+ * Aerial Photo", "Drone 360° Panorama") and the resolution.
  */
 export function droneMediaMetaLine(item: Pick<DroneMediaItem, 'fileName' | 'resolution'>, title: string, typeName: string): string {
-  const name = item.fileName || title || typeName
+  if (!item.fileName && title) return item.resolution || title
+  const name = item.fileName || typeName
   return item.resolution ? `${name} · ${item.resolution}` : name
 }
 

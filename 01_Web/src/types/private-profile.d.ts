@@ -1,13 +1,9 @@
 declare module 'virtual:starmap-private-data' {
   /**
-   * 3C-5B：个人模式下为读模型 `starmap.read-model`（src/worldgraph/readModel/types.ts）：新库的读模型；还不是新库时是
-   * data/v2/ 的五个 V2 文件在内存里迁移一次得到的读模型。公开模式为 undefined。App 读它之前先过 readReadModel（表头与
-   * 行的形状）。旧格式的私人文件不注入。插件：scripts/local-editor-plugin.mjs。
-   */
-  export const privateReadModel: unknown
-  /**
-   * 3C-5B：只在个人构建里有值：过滤后的读模型数据文件相对于 BASE_URL 的路径（data/read-model.<sha256 前缀>.json），这时
-   * privateReadModel 为 undefined，App 启动时加载这个文件。开发服务器与公开模式为 undefined。
+   * 3C-5B：个人模式下读模型 `starmap.read-model` 的地址，相对于 BASE_URL；App 启动时取回它，先过 readReadModel（表头与行的
+   * 形状）。开发服务器是只读端点 `__travelatlas/editor/read-model?revision=N`（新库的读模型；还不是新库时是 data/v2/ 在内存里
+   * 迁移的读模型，`?v2=…`）；个人构建是数据文件 `data/read-model.<sha256 前缀>.json`。公开模式为 undefined。
+   * 旧格式的私人文件不注入。插件：scripts/local-editor-plugin.mjs。
    */
   export const privateReadModelUrl: string | undefined
   /**
