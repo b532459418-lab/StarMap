@@ -12,6 +12,8 @@ import { quietly, sampleV2Files, tempPrivateRoot, writeV2Files } from './store-m
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
+import { readModelOf } from '../src/worldgraph/readModel/build.ts'
 import { readEditorStateV1 } from '../src/data/v2write/index.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
@@ -71,22 +73,31 @@ test('a store that fails its open checks is an error with the check code, never 
   assert.equal(garbage?.code, 'E_STORE_CORRUPT')
 })
 
-test('the read model is the store projected into the five V2 files, cached per revision, with timed steps', async (t) => {
+test('the read model is the store\'s read model, cached per revision with timed steps; its V2 view is built on first use', async (t) => {
   const { files, paths, file } = await migratedRoot(t)
   const output = quietly()
   const session = createStoreSession(paths, { log: output.log })
   try {
     const first = await session.moduleExports()
     assert.equal(first.revision, 1)
-    assert.deepEqual(canonicalForInputs({ v2Files: first.files }), readV2(files))
+    const reader = openStore(file, { privatePaths: paths, readOnly: true, policy: OFFICIAL_POLICY })
+    try { assert.deepEqual(first.model, readModelOf(reader.readFormalState(), { origin: 'local' })) } finally { await reader.close() }
+    assert.deepEqual(officialViewOf(first.model, 'local'), readV2(files))
     const snapshot = session.lastSnapshot
-    for (const step of ['openMs', 'readMs', 'projectMs', 'serializeMs']) assert.equal(typeof snapshot.timings[step], 'number', step)
+    for (const step of ['openMs', 'readMs']) assert.equal(typeof snapshot.timings[step], 'number', step)
+    assert.equal(snapshot.hasFiles, false, 'no V2 view until something asks for it')
     assert.equal(output.lines.length, 1)
-    assert.match(output.lines[0], /^\[StarMap store\] 读模型（修订号 1）：打开 [\d.]+ ms，readRowsUnchecked [\d.]+ ms，投影 [\d.]+ ms，serializeV2 [\d.]+ ms$/)
-    // Same revision: the cached model, no new log line.
+    assert.match(output.lines[0], /^\[StarMap store\] 读模型（修订号 1）：打开 [\d.]+ ms，readModel [\d.]+ ms$/)
+    // The V2 view, built from the read model when asked for (the V2 write functions and the media service use it).
+    assert.deepEqual(canonicalForInputs({ v2Files: first.files }), readV2(files))
+    assert.equal(snapshot.hasFiles, true)
+    assert.match(output.lines[1], /^\[StarMap store\] V2 视图（修订号 1）：投影与 serializeV2 [\d.]+ ms$/)
+    assert.equal(snapshot.index.get('entities', files.places.places[0].id)?.id, files.places.places[0].id)
+    // Same revision: the cached model and view, no new log line.
     const again = await session.moduleExports()
+    assert.equal(again.model, first.model)
     assert.equal(again.files, first.files)
-    assert.equal(output.lines.length, 1)
+    assert.equal(output.lines.length, 2)
     // GET /editor/state reads the same model.
     const state = await session.readEditorState(new Date(NOW))
     assert.deepEqual(state, { status: 200, body: { ok: true, state: readEditorStateV1(files, new Date(NOW)) } })
@@ -112,8 +123,12 @@ test('rows the projection cannot express are counted in the log, not an error', 
   const output = quietly()
   const session = createStoreSession(paths, { log: output.log })
   try {
-    assert.equal((await session.moduleExports()).revision, 2)
-    assert.match(output.lines[0], /；投影跳过 2 行（sources 1，entityTypes 1）$/)
+    const read = await session.moduleExports()
+    assert.equal(read.revision, 2)
+    // The read model keeps every row; only the V2 view cannot express them.
+    assert.ok(read.model.sources.some((row) => row.id === 'synthetic:source') && read.model.entityTypes.some((row) => row.id === 'synthetic:type'))
+    assert.ok(read.files)
+    assert.match(output.lines[1], /；投影跳过 2 行（sources 1，entityTypes 1）$/)
   } finally { await session.close() }
 })
 

@@ -42,7 +42,7 @@ async function sampleStore(t) {
   return context
 }
 
-for (const seed of [3, 47]) test(`readModel(): after every committed random batch it equals the previous read model plus the batch's change set (seed ${seed})`, async (t) => {
+for (const seed of [3, 47]) test(`readModel(): after every committed random batch it equals the previous read model plus the changes the commit returns (seed ${seed})`, async (t) => {
   const { directory, closeAfter } = await tempPrivateRoot(t, 'starmap-read-model-')
   const file = path.join(directory, 'world.sqlite')
   const handle = closeAfter(await createStore(file, { libraryId: LIBRARY_ID, now: () => NOW, lock: withoutLibraryLock }))
@@ -65,11 +65,19 @@ for (const seed of [3, 47]) test(`readModel(): after every committed random batc
       await assert.rejects(handle.commit({ requestId: requestId(), baseRevision: state.revision, kind: 'test.random', actor: 'test', commands }))
       continue
     }
-    const result = await handle.commit({ requestId: requestId(), baseRevision: state.revision, kind: 'test.random', actor: 'test', commands })
+    const id = requestId()
+    const result = await handle.commit({ requestId: id, baseRevision: state.revision, kind: 'test.random', actor: 'test', commands })
     assert.equal(result.status, 'committed')
+    // 3C-5B: the commit returns the rows it changed, the planner's change set without tombstones and references.
+    assert.deepEqual(result.changes, {
+      baseRevision: changeSet.baseRevision, nextRevision: changeSet.nextRevision, upserts: changeSet.upserts, deletes: changeSet.deletes,
+    })
     state = applyChangeSet(state, changeSet)
-    model = applyReadModelDelta(model, changeSet)
+    model = applyReadModelDelta(model, result.changes)
     assert.deepEqual(model, handle.readModel(), `step ${step}`)
+    // A replay of the same request answers with its receipt and no changes.
+    const replay = await handle.commit({ requestId: id, baseRevision: changeSet.baseRevision, kind: 'test.random', actor: 'test', commands })
+    assert.equal(replay.status, 'duplicate'); assert.equal(replay.changes, undefined)
     committed++
   }
   assert.ok(committed >= 10, `enough committed steps (${committed})`)
