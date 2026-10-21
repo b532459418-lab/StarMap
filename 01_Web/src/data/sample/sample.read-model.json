@@ -1,0 +1,1203 @@
+{
+  "format": "starmap.read-model",
+  "formatVersion": 1,
+  "revision": 1,
+  "origin": "sample",
+  "sources": [
+    {
+      "id": "starmap:user",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "StarMap",
+          "zh-Hans": "StarMap"
+        }
+      },
+      "origin": "user"
+    },
+    {
+      "id": "v2:import",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "V2 file metadata",
+          "zh-Hans": "V2 文件元信息"
+        }
+      },
+      "origin": "import",
+      "extensions": {
+        "v2": {
+          "places": {
+            "schema_version": 1,
+            "generated_at": "2026-08-12T00:00:00.000Z"
+          },
+          "travel": {
+            "schema_version": 2,
+            "generated_at": "2026-08-12",
+            "privacy_level": "public-sample",
+            "intended_use": "Neutral open-source StarMap demonstration data.",
+            "safety_notes": [
+              "Fictional itinerary assembled from public geographic facts.",
+              "Replace this sample with generated/travel-map.local.json for personal use."
+            ]
+          },
+          "wantToGo": {
+            "schema_version": 2,
+            "generated_at": "2026-08-12T00:00:00.000Z",
+            "privacy_level": "public-sample",
+            "intended_use": "Neutral open-source StarMap demonstration data."
+          },
+          "editorState": {
+            "schemaVersion": 2
+          },
+          "media": {
+            "schemaVersion": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "v2:journey",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "V2 journeys",
+          "zh-Hans": "V2 行程"
+        }
+      },
+      "origin": "import"
+    },
+    {
+      "id": "v2:place",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "V2 places",
+          "zh-Hans": "V2 地点"
+        }
+      },
+      "origin": "import"
+    },
+    {
+      "id": "v2:travel",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "V2 footprint records",
+          "zh-Hans": "V2 足迹记录"
+        }
+      },
+      "origin": "import"
+    },
+    {
+      "id": "v2:want-to-go",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "V2 want-to-go items",
+          "zh-Hans": "V2 想去条目"
+        }
+      },
+      "origin": "import"
+    }
+  ],
+  "evidence": [],
+  "entityTypes": [
+    {
+      "id": "starmap:journey",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "Journey",
+          "zh-Hans": "行程"
+        }
+      },
+      "schemaVersion": 1,
+      "fields": []
+    },
+    {
+      "id": "starmap:media",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "Media",
+          "zh-Hans": "媒体"
+        }
+      },
+      "schemaVersion": 1,
+      "fields": [
+        {
+          "key": "place",
+          "kind": "entity_ref",
+          "required": true
+        },
+        {
+          "key": "asset",
+          "kind": "asset_ref",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "starmap:place",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "Place",
+          "zh-Hans": "地点"
+        }
+      },
+      "schemaVersion": 1,
+      "fields": [
+        {
+          "key": "subtype",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "key": "iso3166Alpha2",
+          "kind": "text"
+        }
+      ]
+    }
+  ],
+  "layers": [
+    {
+      "id": "starmap:travel",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "Footprints",
+          "zh-Hans": "足迹"
+        }
+      },
+      "schemaVersion": 1,
+      "systemKey": "travel",
+      "acceptedEntityTypes": [
+        "starmap:place"
+      ],
+      "entryFields": [
+        {
+          "key": "date",
+          "kind": "date_evidence",
+          "required": true
+        },
+        {
+          "key": "note",
+          "kind": "text"
+        },
+        {
+          "key": "tripTitle",
+          "kind": "text"
+        }
+      ]
+    },
+    {
+      "id": "starmap:want-to-go",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "Want to Go",
+          "zh-Hans": "想去"
+        }
+      },
+      "schemaVersion": 1,
+      "systemKey": "want_to_go",
+      "acceptedEntityTypes": [
+        "starmap:place"
+      ],
+      "entryFields": [
+        {
+          "key": "date",
+          "kind": "date_evidence"
+        },
+        {
+          "key": "addedAt",
+          "kind": "date"
+        },
+        {
+          "key": "note",
+          "kind": "text"
+        },
+        {
+          "key": "tripTitle",
+          "kind": "text"
+        }
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "id": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "冰岛",
+          "en": "Iceland"
+        }
+      },
+      "fields": {
+        "subtype": "country",
+        "iso3166Alpha2": "IS"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+        "evidenceIds": []
+      },
+      "visibility": "public",
+      "extensions": {
+        "v2": {
+          "legacyKeys": [
+            "country:iceland"
+          ]
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f47-772d-946a-07690eff25e1",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "法罗群岛",
+          "en": "Faroe Islands"
+        }
+      },
+      "fields": {
+        "subtype": "country",
+        "iso3166Alpha2": "FO"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f47-772d-946a-07690eff25e1",
+        "evidenceIds": []
+      },
+      "visibility": "public",
+      "extensions": {
+        "v2": {
+          "legacyKeys": [
+            "country:faroe-islands"
+          ]
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "雷克雅未克",
+          "en": "Reykjavik"
+        }
+      },
+      "fields": {
+        "subtype": "city"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+        "evidenceIds": []
+      },
+      "visibility": "public",
+      "extensions": {
+        "v2": {
+          "legacyKeys": [
+            "city:iceland__reykjavik"
+          ]
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "努克",
+          "en": "Nuuk"
+        }
+      },
+      "fields": {
+        "subtype": "city"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+        "evidenceIds": []
+      },
+      "visibility": "public"
+    },
+    {
+      "id": "01a0ed02-3f48-72d6-8d06-2972508952dc",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "格陵兰",
+          "en": "Greenland"
+        }
+      },
+      "fields": {
+        "subtype": "country",
+        "iso3166Alpha2": "GL"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-72d6-8d06-2972508952dc",
+        "evidenceIds": []
+      },
+      "visibility": "public"
+    },
+    {
+      "id": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "维克",
+          "en": "Vik"
+        }
+      },
+      "fields": {
+        "subtype": "city"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+        "evidenceIds": []
+      },
+      "visibility": "public",
+      "extensions": {
+        "v2": {
+          "legacyKeys": [
+            "city:iceland__vik"
+          ]
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "特罗姆瑟",
+          "en": "Tromsø"
+        }
+      },
+      "fields": {
+        "subtype": "city"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+        "evidenceIds": []
+      },
+      "visibility": "public"
+    },
+    {
+      "id": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "杰格夫",
+          "en": "Gjogv"
+        }
+      },
+      "fields": {
+        "subtype": "city"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+        "evidenceIds": []
+      },
+      "visibility": "public",
+      "extensions": {
+        "v2": {
+          "legacyKeys": [
+            "city:faroe-islands__gjogv"
+          ]
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "托尔斯港",
+          "en": "Torshavn"
+        }
+      },
+      "fields": {
+        "subtype": "city"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+        "evidenceIds": []
+      },
+      "visibility": "public",
+      "extensions": {
+        "v2": {
+          "legacyKeys": [
+            "city:faroe-islands__torshavn"
+          ]
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f48-7c63-a473-3c1e3c94883d",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "挪威",
+          "en": "Norway"
+        }
+      },
+      "fields": {
+        "subtype": "country",
+        "iso3166Alpha2": "NO"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7c63-a473-3c1e3c94883d",
+        "evidenceIds": []
+      },
+      "visibility": "public"
+    },
+    {
+      "id": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "revision": 0,
+      "typeId": "starmap:place",
+      "title": {
+        "names": {
+          "zh-Hans": "阿克雷里",
+          "en": "Akureyri"
+        }
+      },
+      "fields": {
+        "subtype": "city"
+      },
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+        "evidenceIds": []
+      },
+      "visibility": "public",
+      "extensions": {
+        "v2": {
+          "legacyKeys": [
+            "city:iceland__akureyri"
+          ]
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f49-7000-8000-000000000100",
+      "revision": 0,
+      "typeId": "starmap:journey",
+      "title": {
+        "names": {}
+      },
+      "fields": {},
+      "source": {
+        "sourceId": "v2:journey",
+        "recordId": "2025-north-atlantic-demo",
+        "evidenceIds": []
+      },
+      "visibility": "public"
+    }
+  ],
+  "entries": [
+    {
+      "id": "01a0ed02-3f49-7000-8000-000000000001",
+      "revision": 0,
+      "layerId": "starmap:travel",
+      "entityId": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+      "fields": {
+        "date": {
+          "raw": {
+            "startDate": "2025-06-01",
+            "endDate": "2025-06-02",
+            "year": 2025
+          }
+        },
+        "note": "Sample city record.",
+        "tripTitle": "2025 North Atlantic Demo"
+      },
+      "source": {
+        "sourceId": "v2:travel",
+        "recordId": "sample_reykjavik",
+        "evidenceIds": []
+      },
+      "createdAt": "2026-08-12T00:00:00.000Z",
+      "updatedAt": "2026-08-12T00:00:00.000Z",
+      "extensions": {
+        "v2": {
+          "region": "North Atlantic",
+          "type": "city",
+          "status": "visited",
+          "source": "StarMap public sample"
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f49-7000-8000-000000000002",
+      "revision": 0,
+      "layerId": "starmap:travel",
+      "entityId": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+      "fields": {
+        "date": {
+          "raw": {
+            "startDate": "2025-06-03",
+            "endDate": "2025-06-03",
+            "year": 2025
+          }
+        },
+        "note": "Sample landscape stop.",
+        "tripTitle": "2025 North Atlantic Demo"
+      },
+      "source": {
+        "sourceId": "v2:travel",
+        "recordId": "sample_vik",
+        "evidenceIds": []
+      },
+      "createdAt": "2026-08-12T00:00:00.000Z",
+      "updatedAt": "2026-08-12T00:00:00.000Z",
+      "extensions": {
+        "v2": {
+          "region": "North Atlantic",
+          "type": "daytrip",
+          "status": "visited",
+          "source": "StarMap public sample"
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f49-7000-8000-000000000003",
+      "revision": 0,
+      "layerId": "starmap:travel",
+      "entityId": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "fields": {
+        "date": {
+          "raw": {
+            "startDate": "2025-06-04",
+            "endDate": "2025-06-05",
+            "year": 2025
+          }
+        },
+        "note": "Sample northern city record.",
+        "tripTitle": "2025 North Atlantic Demo"
+      },
+      "source": {
+        "sourceId": "v2:travel",
+        "recordId": "sample_akureyri",
+        "evidenceIds": []
+      },
+      "createdAt": "2026-08-12T00:00:00.000Z",
+      "updatedAt": "2026-08-12T00:00:00.000Z",
+      "extensions": {
+        "v2": {
+          "region": "North Atlantic",
+          "type": "city",
+          "status": "visited",
+          "source": "StarMap public sample"
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f49-7000-8000-000000000004",
+      "revision": 0,
+      "layerId": "starmap:travel",
+      "entityId": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+      "fields": {
+        "date": {
+          "raw": {
+            "startDate": "2025-06-06",
+            "endDate": "2025-06-07",
+            "year": 2025
+          }
+        },
+        "note": "Sample island capital record.",
+        "tripTitle": "2025 North Atlantic Demo"
+      },
+      "source": {
+        "sourceId": "v2:travel",
+        "recordId": "sample_torshavn",
+        "evidenceIds": []
+      },
+      "createdAt": "2026-08-12T00:00:00.000Z",
+      "updatedAt": "2026-08-12T00:00:00.000Z",
+      "extensions": {
+        "v2": {
+          "region": "North Atlantic",
+          "type": "city",
+          "status": "visited",
+          "source": "StarMap public sample"
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f49-7000-8000-000000000005",
+      "revision": 0,
+      "layerId": "starmap:travel",
+      "entityId": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+      "fields": {
+        "date": {
+          "raw": {
+            "startDate": "2025-06-08",
+            "endDate": "2025-06-08",
+            "year": 2025
+          }
+        },
+        "note": "Sample coastal village record.",
+        "tripTitle": "2025 North Atlantic Demo"
+      },
+      "source": {
+        "sourceId": "v2:travel",
+        "recordId": "sample_gjogv",
+        "evidenceIds": []
+      },
+      "createdAt": "2026-08-12T00:00:00.000Z",
+      "updatedAt": "2026-08-12T00:00:00.000Z",
+      "extensions": {
+        "v2": {
+          "region": "North Atlantic",
+          "type": "daytrip",
+          "status": "visited",
+          "source": "StarMap public sample"
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f49-7000-8000-000000000011",
+      "revision": 0,
+      "layerId": "starmap:want-to-go",
+      "entityId": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+      "fields": {
+        "note": "格陵兰的首府，坐落在峡湾入海口，是世界上最北的首府之一。",
+        "addedAt": "2026-08-12"
+      },
+      "source": {
+        "sourceId": "v2:want-to-go",
+        "recordId": "wtg_2026-08-12_nuuk",
+        "evidenceIds": []
+      },
+      "createdAt": "2026-08-12T00:00:00.000Z",
+      "updatedAt": "2026-08-12T00:00:00.000Z",
+      "extensions": {
+        "v2": {
+          "source": "sample"
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f49-7000-8000-000000000012",
+      "revision": 0,
+      "layerId": "starmap:want-to-go",
+      "entityId": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+      "fields": {
+        "note": "北极圈以北的城市，冬季可以看极光，夏季有午夜阳光。",
+        "addedAt": "2026-08-12"
+      },
+      "source": {
+        "sourceId": "v2:want-to-go",
+        "recordId": "wtg_2026-08-12_tromso",
+        "evidenceIds": []
+      },
+      "createdAt": "2026-08-12T00:00:00.000Z",
+      "updatedAt": "2026-08-12T00:00:00.000Z",
+      "extensions": {
+        "v2": {
+          "source": "sample"
+        }
+      }
+    },
+    {
+      "id": "01a0ed02-3f49-7000-8000-000000000013",
+      "revision": 0,
+      "layerId": "starmap:want-to-go",
+      "entityId": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "fields": {
+        "note": "冰岛北部最大的城镇，位于埃亚峡湾的深处。",
+        "addedAt": "2026-08-12"
+      },
+      "source": {
+        "sourceId": "v2:want-to-go",
+        "recordId": "wtg_2026-08-12_akureyri",
+        "evidenceIds": []
+      },
+      "createdAt": "2026-08-12T00:00:00.000Z",
+      "updatedAt": "2026-08-12T00:00:00.000Z",
+      "extensions": {
+        "v2": {
+          "source": "sample"
+        }
+      }
+    }
+  ],
+  "relationTypes": [
+    {
+      "id": "starmap:part-of",
+      "revision": 0,
+      "title": {
+        "names": {
+          "en": "Part of",
+          "zh-Hans": "属于"
+        }
+      },
+      "schemaVersion": 1,
+      "fromTypes": [
+        "starmap:place"
+      ],
+      "toTypes": [
+        "starmap:place"
+      ],
+      "fields": []
+    }
+  ],
+  "relations": [
+    {
+      "id": "v2:part-of:01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+      "revision": 0,
+      "typeId": "starmap:part-of",
+      "fromEntityId": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+      "toEntityId": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "fields": {},
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+        "evidenceIds": []
+      }
+    },
+    {
+      "id": "v2:part-of:01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+      "revision": 0,
+      "typeId": "starmap:part-of",
+      "fromEntityId": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+      "toEntityId": "01a0ed02-3f48-72d6-8d06-2972508952dc",
+      "fields": {},
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+        "evidenceIds": []
+      }
+    },
+    {
+      "id": "v2:part-of:01a0ed02-3f48-74aa-9bea-237f235aac61",
+      "revision": 0,
+      "typeId": "starmap:part-of",
+      "fromEntityId": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+      "toEntityId": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "fields": {},
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+        "evidenceIds": []
+      }
+    },
+    {
+      "id": "v2:part-of:01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+      "revision": 0,
+      "typeId": "starmap:part-of",
+      "fromEntityId": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+      "toEntityId": "01a0ed02-3f48-7c63-a473-3c1e3c94883d",
+      "fields": {},
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+        "evidenceIds": []
+      }
+    },
+    {
+      "id": "v2:part-of:01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+      "revision": 0,
+      "typeId": "starmap:part-of",
+      "fromEntityId": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+      "toEntityId": "01a0ed02-3f47-772d-946a-07690eff25e1",
+      "fields": {},
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+        "evidenceIds": []
+      }
+    },
+    {
+      "id": "v2:part-of:01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+      "revision": 0,
+      "typeId": "starmap:part-of",
+      "fromEntityId": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+      "toEntityId": "01a0ed02-3f47-772d-946a-07690eff25e1",
+      "fields": {},
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+        "evidenceIds": []
+      }
+    },
+    {
+      "id": "v2:part-of:01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "revision": 0,
+      "typeId": "starmap:part-of",
+      "fromEntityId": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "toEntityId": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "fields": {},
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+        "evidenceIds": []
+      }
+    }
+  ],
+  "anchors": [
+    {
+      "id": "v2:place-location:01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "revision": 0,
+      "entityId": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+        "evidenceIds": []
+      },
+      "kind": "location",
+      "lat": 64.4179,
+      "lng": -19.691599999999998,
+      "precision": "region"
+    },
+    {
+      "id": "v2:place-location:01a0ed02-3f47-772d-946a-07690eff25e1",
+      "revision": 0,
+      "entityId": "01a0ed02-3f47-772d-946a-07690eff25e1",
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f47-772d-946a-07690eff25e1",
+        "evidenceIds": []
+      },
+      "kind": "location",
+      "lat": 62.16645,
+      "lng": -6.865,
+      "precision": "region"
+    },
+    {
+      "id": "v2:place-location:01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+      "revision": 0,
+      "entityId": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+        "evidenceIds": []
+      },
+      "kind": "location",
+      "lat": 64.1466,
+      "lng": -21.9426,
+      "precision": "city"
+    },
+    {
+      "id": "v2:place-location:01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+      "revision": 0,
+      "entityId": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+        "evidenceIds": []
+      },
+      "kind": "location",
+      "lat": 64.1814,
+      "lng": -51.6941,
+      "precision": "city"
+    },
+    {
+      "id": "v2:place-location:01a0ed02-3f48-74aa-9bea-237f235aac61",
+      "revision": 0,
+      "entityId": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+        "evidenceIds": []
+      },
+      "kind": "location",
+      "lat": 63.4186,
+      "lng": -19.006,
+      "precision": "city"
+    },
+    {
+      "id": "v2:place-location:01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+      "revision": 0,
+      "entityId": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+        "evidenceIds": []
+      },
+      "kind": "location",
+      "lat": 69.6492,
+      "lng": 18.9553,
+      "precision": "city"
+    },
+    {
+      "id": "v2:place-location:01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+      "revision": 0,
+      "entityId": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+        "evidenceIds": []
+      },
+      "kind": "location",
+      "lat": 62.325,
+      "lng": -6.94,
+      "precision": "city"
+    },
+    {
+      "id": "v2:place-location:01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+      "revision": 0,
+      "entityId": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+        "evidenceIds": []
+      },
+      "kind": "location",
+      "lat": 62.0079,
+      "lng": -6.79,
+      "precision": "city"
+    },
+    {
+      "id": "v2:place-location:01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "revision": 0,
+      "entityId": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "source": {
+        "sourceId": "v2:place",
+        "recordId": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+        "evidenceIds": []
+      },
+      "kind": "location",
+      "lat": 65.6885,
+      "lng": -18.1262,
+      "precision": "city"
+    }
+  ],
+  "assets": [],
+  "sequences": [
+    {
+      "id": "v2:journey-sequence:01a0ed02-3f49-7000-8000-000000000100",
+      "revision": 0,
+      "entityId": "01a0ed02-3f49-7000-8000-000000000100",
+      "entryIds": [
+        "01a0ed02-3f49-7000-8000-000000000001",
+        "01a0ed02-3f49-7000-8000-000000000002",
+        "01a0ed02-3f49-7000-8000-000000000003",
+        "01a0ed02-3f49-7000-8000-000000000004",
+        "01a0ed02-3f49-7000-8000-000000000005"
+      ],
+      "source": {
+        "sourceId": "v2:journey",
+        "recordId": "2025-north-atlantic-demo",
+        "evidenceIds": []
+      }
+    }
+  ],
+  "viewItems": [
+    {
+      "id": "starmap:order/places#0",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f45-7743-8aec-d757b6c28eba",
+      "position": "T",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#1",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f47-772d-946a-07690eff25e1",
+      "position": "TV",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#10",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f48-7581-bb37-85d4ee0268e9",
+      "position": "Y",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#2",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f48-70a0-9146-47667ddcbf4e",
+      "position": "U",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#3",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f48-74aa-9bea-237f235aac61",
+      "position": "UV",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#4",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f48-7cdd-8d8c-70c026b27a4c",
+      "position": "UW",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#5",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f48-7c35-9d1d-07a1ef8a6859",
+      "position": "V",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#6",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f48-79cd-bd98-8d0e4590fffa",
+      "position": "VV",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#7",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f48-72d6-8d06-2972508952dc",
+      "position": "VW",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#8",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f48-71aa-b906-9ae1d71822b8",
+      "position": "W",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/places#9",
+      "revision": 0,
+      "scope": "starmap:order/places",
+      "itemTable": "entities",
+      "itemId": "01a0ed02-3f48-7c63-a473-3c1e3c94883d",
+      "position": "X",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/travel-records#0",
+      "revision": 0,
+      "scope": "starmap:order/travel-records",
+      "itemTable": "entries",
+      "itemId": "01a0ed02-3f49-7000-8000-000000000001",
+      "position": "U",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/travel-records#1",
+      "revision": 0,
+      "scope": "starmap:order/travel-records",
+      "itemTable": "entries",
+      "itemId": "01a0ed02-3f49-7000-8000-000000000002",
+      "position": "UV",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/travel-records#2",
+      "revision": 0,
+      "scope": "starmap:order/travel-records",
+      "itemTable": "entries",
+      "itemId": "01a0ed02-3f49-7000-8000-000000000003",
+      "position": "V",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/travel-records#3",
+      "revision": 0,
+      "scope": "starmap:order/travel-records",
+      "itemTable": "entries",
+      "itemId": "01a0ed02-3f49-7000-8000-000000000004",
+      "position": "W",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/travel-records#4",
+      "revision": 0,
+      "scope": "starmap:order/travel-records",
+      "itemTable": "entries",
+      "itemId": "01a0ed02-3f49-7000-8000-000000000005",
+      "position": "X",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/want-to-go#0",
+      "revision": 0,
+      "scope": "starmap:order/want-to-go",
+      "itemTable": "entries",
+      "itemId": "01a0ed02-3f49-7000-8000-000000000011",
+      "layerId": "starmap:want-to-go",
+      "position": "U",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/want-to-go#1",
+      "revision": 0,
+      "scope": "starmap:order/want-to-go",
+      "itemTable": "entries",
+      "itemId": "01a0ed02-3f49-7000-8000-000000000012",
+      "layerId": "starmap:want-to-go",
+      "position": "V",
+      "hidden": false
+    },
+    {
+      "id": "starmap:order/want-to-go#2",
+      "revision": 0,
+      "scope": "starmap:order/want-to-go",
+      "itemTable": "entries",
+      "itemId": "01a0ed02-3f49-7000-8000-000000000013",
+      "layerId": "starmap:want-to-go",
+      "position": "W",
+      "hidden": false
+    }
+  ],
+  "viewSettings": [
+    {
+      "id": "starmap:display#overviewTarget",
+      "revision": 0,
+      "scope": "starmap:display",
+      "key": "overviewTarget",
+      "value": {
+        "lat": 64,
+        "lng": -13
+      }
+    },
+    {
+      "id": "starmap:display#regionIncludes",
+      "revision": 0,
+      "scope": "starmap:display",
+      "key": "regionIncludes",
+      "value": []
+    }
+  ]
+}

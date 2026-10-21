@@ -94,6 +94,11 @@ plugin path (see its header; `npm test` runs a tiny scale). 3C-4d: `scripts/priv
 needs recovery (leftovers under `data/store/`) or is empty; only a store is written, an empty root gets its empty
 library from the dev server (`scripts/store-init.mjs`), and everything else answers `E_STORE_MIGRATION_REQUIRED`,
 `E_LEGACY_UNMIGRATED` or `E_STORE_RECOVERY_REQUIRED` before reading a request body.
+The read model `starmap.read-model` (3C-5A) is a read-only copy of the store's rows (Core `src/worldgraph/readModel/`):
+the host builds it with `readModel()`, without tombstones, review receipts or the host's own tables, and
+`npm run store:export-read-model -- --out <new file> [--public]` writes it (`--public`: `src/data/store/publicReadModel.ts`;
+the coordinate of the map's default camera is published, media assets lose their original file names).
+The App does not read it yet (3C-5B).
 `npm run library:recover` clears a library operation lock left by a crashed
 writer after checking the data; see the root README.
 
@@ -185,7 +190,11 @@ Media keep their catalog entries through the migration. The first media import a
 
 ### Edit the V2 sample
 
-The five V2 files in `src/data/v2-sample/` are the only source of the public sample and are maintained by hand; no tool generates them. After editing them, run `npm run privacy:check`: it checks that the directory holds only these five files, that they pass the V2 validation, and that the sample stays neutral (`privacy_level` is `public-sample`, Want to Go ids start with `wtg_`, no hidden or editor-written items). New places need new UUIDv7 ids. `npm test` also pins the sample's derived baseline (`node scripts/baseline.mjs --sample`), so a deliberate change to the sample updates that lock in `src/data/canonical/derive.test.ts` too.
+The five V2 files in `src/data/v2-sample/` are what the public build reads (until 3C-5B) and are maintained by hand; no tool generates them. After editing them, run `npm run privacy:check`: it checks that the directory holds only these five files, that they pass the V2 validation, and that the sample stays neutral (`privacy_level` is `public-sample`, Want to Go ids start with `wtg_`, no hidden or editor-written items). New places need new UUIDv7 ids. `npm test` also pins the sample's derived baseline (`node scripts/baseline.mjs --sample`), so a deliberate change to the sample updates that lock in `src/data/canonical/baselineLocks.fixture.ts` too.
+
+### Edit the native sample
+
+`src/data/sample/sampleSource.ts` is the public sample in the new library's own format: its places, footprint records, Want to Go items and journey, one line each, laid out as the store's rows with fixed ids, time and order (the file's header says how the first version was made from the V2 sample). `npm run sample:build` plans those rows with Core's planner on an empty store and writes the read model `src/data/sample/sample.read-model.json`; commit the source and the generated file together, and never edit the generated file by hand. `npm run privacy:check` applies the V2 sample's rules to it (public-sample marks, runnable and neutral entries, nothing hidden or editor-written, no local path) and requires the committed file to be exactly what the source generates (`npm run sample:build -- --check` checks only that). `npm test` also requires that the sample, through the official view, derives the locked public baseline and gives back the five V2 sample files when exported as V2: until the public build reads the native sample (3C-5B), a change to the sample is made in both, and the two must stay equal.
 
 Run `npm run privacy:check` before every public release. See the [open-source privacy boundary](../03_Reference/TravelAtlas_open_source_privacy_boundary.md) for the boundary table and deployment options.
 

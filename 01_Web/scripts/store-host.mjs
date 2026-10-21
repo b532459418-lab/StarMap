@@ -24,6 +24,7 @@ import {
 import { FORMAL_TABLES, readFormalState as readFormalStateCore } from '../src/worldgraph/store/formal.ts'
 import { memoryReader, refKey, referencesOf } from '../src/worldgraph/store/reader.ts'
 import { planCommands } from '../src/worldgraph/store/planner.ts'
+import { readModelOf } from '../src/worldgraph/readModel/build.ts'
 import {
   StoreError, freezeCopy, jsonKey, opaqueId, reject, revision, shape, utcTimestamp, uuid, validateJson,
 } from '../src/worldgraph/store/primitives.ts'
@@ -1166,6 +1167,15 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
      */
     readRowsUnchecked() {
       return readTransaction((connection) => formalStateValue(connection))
+    },
+    /**
+     * The read model `starmap.read-model` (3C-5A; Core ../src/worldgraph/readModel/): the rows of readRowsUnchecked and
+     * their revision in one read transaction, with the header (`origin` 'local' unless given). Unvalidated like
+     * readRowsUnchecked: callers must not modify it. Tombstones, review receipts and the host's own tables (receipts,
+     * op_log, id_map, pending_file_ops, the media registry with its Inbox paths and hashes) are never in it.
+     */
+    readModel({ origin = 'local' } = {}) {
+      return readTransaction((connection) => readModelOf(formalStateValue(connection), { origin }))
     },
     /**
      * Full consistency check (recovery, the check command, tests): quick_check plus Core's full

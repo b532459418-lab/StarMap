@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { isPrivateTrackedPath } from './privacy-paths.mjs'
+import { auditPublicSampleDirectory } from './public-sample.mjs'
 import { auditV2SampleDirectory, V2_SAMPLE_FILE_NAMES } from './v2-sample.mjs'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -62,8 +63,11 @@ if (unexpectedWantToGoFiles.length > 0) {
 // RFC-LOC-1 PR4: public mode reads the V2 sample in src/data/v2-sample/. The checks: privacy_level, runnable records
 // and items, wtg_ ids, no hidden or local-editor items, only the five V2 files in the directory (PR5b removed the
 // identity manifest), and the five files must pass validateV2Files. PR5b removed the legacy samples and their checks;
-// the V2 sample is now the only source and is maintained by hand.
+// the V2 sample is maintained by hand. 3C-5A: the native sample in src/data/sample/ (the source of the public sample in
+// the new library's format, and the read model generated from it) gets the same rules (./public-sample.mjs); the public
+// build reads the V2 sample until 3C-5B.
 errors.push(...auditV2SampleDirectory())
+errors.push(...auditPublicSampleDirectory())
 
 // The drone media derivation lives in src/data/derive/droneMedia.ts (RFC-LOC-1 PR1);
 // src/data/droneMedia.ts only re-exports it. Both files get the same check.
@@ -82,6 +86,7 @@ if (errors.length > 0) {
   console.log('StarMap privacy audit passed.')
   console.log(`Tracked and unignored public files checked: ${publicFiles.length}`)
   console.log('V2 public sample (src/data/v2-sample/) passed its checks.')
+  console.log('Native public sample (src/data/sample/) passed its checks.')
   console.log('Required .gitignore safeguards are present.')
   console.log('Private Inbox, generated media, local catalogs, local travel data, and environment files are outside the tracked public boundary.')
   console.log('Note: this checks the current tree. Publish from a clean repository so earlier private Git history is not inherited.')
