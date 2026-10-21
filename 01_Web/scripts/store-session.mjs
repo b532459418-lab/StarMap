@@ -582,9 +582,18 @@ export function createStoreSession(privatePaths, {
             return { status: native.status, body: { ok: true, ...plan.result, revision: live.revision, duplicate: false, unchanged: true } }
           }
           const committing = performance.now()
-          const result = await opened.commit({
-            requestId: protocol.requestId, baseRevision: protocol.baseRevision, kind, actor: STORE_ACTOR, commands: plan.commands,
-          })
+          let result
+          try {
+            result = await opened.commit({
+              requestId: protocol.requestId, baseRevision: protocol.baseRevision, kind, actor: STORE_ACTOR, commands: plan.commands,
+            })
+          } catch (error) {
+            // The store refused a plan made on the live index at its own revision (Core's check inside BEGIN IMMEDIATE):
+            // the index no longer matches the store (a change behind the host's back). Nothing was written; the cache
+            // is dropped and the store read again (as E_VIEW_MISMATCH does for the V2 writes).
+            if (error?.outcome === 'not_committed' && !Object.hasOwn(CLIENT_CODES, error.code)) cache = undefined
+            throw error
+          }
           const commitMs = ms(committing)
           const applying = performance.now()
           advanceCache(opened, view, result)

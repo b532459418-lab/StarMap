@@ -397,10 +397,14 @@ export function randomStep(rng: Random, files: V2Files): DoubleRunStep {
       if (place && rng.chance(0.5)) return sameRequest('wanttogo/placeId', R('wanttogo'), OLD_WRITES.wantToGo, { placeId: place.id, ...(rng.chance(0.5) ? { note: 'Synthetic' } : {}) })
       const kind = rng.chance(0.7) ? 'city' : 'country'
       const existing = rng.pick(cities)
-      // Sometimes the name of a city that exists (a place choice), sometimes a new one.
-      const nameEn = existing && rng.chance(0.3) ? existing.names.en ?? 'Alpha' : `${rng.pick(CITY_NAMES)} ${rng.int(1000)}`
+      // Sometimes the name of a city that exists, in its own country (a place choice: the candidates and their order),
+      // sometimes near it, sometimes a new one.
+      const reuse = existing && rng.chance(0.35)
+      const nameEn = reuse ? existing.names.en ?? 'Alpha' : `${rng.pick(CITY_NAMES)} ${rng.int(1000)}`
+      const ownCountry = reuse ? countries.find(c => c.id === existing.partOf)?.externalIds?.iso3166Alpha2 : undefined
+      const near = reuse && existing.location && rng.chance(0.5) ? { lat: existing.location.lat + 0.01, lng: existing.location.lng } : undefined
       return sameRequest('wanttogo/named', R('wanttogo'), OLD_WRITES.wantToGo, {
-        place: { kind, nameEn, countryCode: rng.pick(COUNTRY_CODES), ...(rng.chance(0.5) ? { lat: rng.int(80), lng: rng.int(170) } : {}) },
+        place: { kind, nameEn, countryCode: ownCountry ?? rng.pick(COUNTRY_CODES), ...(near ?? (rng.chance(0.5) ? { lat: rng.int(80), lng: rng.int(170) } : {})) },
         ...(rng.chance(0.4) ? { createNew: true } : {}),
       })
     }

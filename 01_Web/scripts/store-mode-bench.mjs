@@ -269,6 +269,8 @@ const BENCH_COUNTRY_CODES = Object.freeze([
 ])
 
 /** The host's line of one store write (store-session.mjs): V2 write, diff, commit and total milliseconds. */
+/** 3C-5 C1: a store-native write (the view operations and the want-to-go endpoints): plan, commit, index update, total. */
+const NATIVE_LINE = /（原生）：规划 ([\d.]+) ms（(\d+) 条命令），提交 ([\d.]+) ms（修订号 \d+），更新索引 ([\d.]+) ms，共 ([\d.]+) ms$/
 const HOST_LINE = /：V2 写入 ([\d.]+) ms，差异 ([\d.]+) ms（(\d+) 条命令(?:，重新编号 \d+ 个 scope)?），提交 ([\d.]+) ms（修订号 \d+），共 ([\d.]+) ms$/
 
 /**
@@ -310,12 +312,17 @@ export async function editorsSegment(dir, scale) {
         const endToEnd = ms(started)
         if (!body.ok) throw new Error(`${mode} ${label} failed: ${body.code}`)
         if (mode === 'store') revision = body.revision
-        const entry = timings[label] ??= { endToEnd: [], v2Write: [], diff: [], commands: [], commit: [], host: [] }
+        const entry = timings[label] ??= { endToEnd: [], v2Write: [], diff: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [] }
         entry.endToEnd.push(endToEnd)
         const host = lines.slice(before).map((line) => HOST_LINE.exec(line)).find(Boolean)
         if (host) {
           entry.v2Write.push(Number(host[1])); entry.diff.push(Number(host[2])); entry.commands.push(Number(host[3]))
           entry.commit.push(Number(host[4])); entry.host.push(Number(host[5]))
+        }
+        const native = lines.slice(before).map((line) => NATIVE_LINE.exec(line)).find(Boolean)
+        if (native) {
+          entry.plan.push(Number(native[1])); entry.commands.push(Number(native[2])); entry.commit.push(Number(native[3]))
+          entry.indexUpdate.push(Number(native[4])); entry.host.push(Number(native[5]))
         }
         await load()
         return body

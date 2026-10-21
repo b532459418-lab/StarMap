@@ -13,6 +13,7 @@ import type { FormalCommand } from '../../../worldgraph/store/formal.ts'
 import type { OfficialReader } from '../../store/officialReader.ts'
 import type { CatalogCountry } from '../../v2write/transaction.ts'
 import { editorViewWrite } from './editorView.ts'
+import { addWantToGoWrite, deleteWantToGoWrite, updateWantToGoWrite } from './wantToGo.ts'
 
 export interface NativeWriteContext {
   /** This write's time: createdAt / updatedAt of new and changed entries, the default date of a want-to-go item. */
@@ -34,4 +35,7 @@ export interface NativeWrite {
 /** The store-native endpoints by `METHOD /path` (filled in by the commits of 3C-5 C1). */
 export const NATIVE_WRITES: Readonly<Record<string, NativeWrite>> = Object.freeze({
   'POST /__travelatlas/editor/view': editorViewWrite,
+  'POST /__travelatlas/editor/wanttogo': addWantToGoWrite,
+  'POST /__travelatlas/editor/wanttogo/update': updateWantToGoWrite,
+  'POST /__travelatlas/editor/wanttogo/delete': deleteWantToGoWrite,
 })

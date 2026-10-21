@@ -225,7 +225,8 @@ export function diffV2ToCommands(before: V2Files, after: V2Files, context: DiffC
       }
       if (text(old) === text(place)) continue
       const entity = get<StoreEntity>('entities', id) ?? mismatch('places')
-      update('places', 'entities', entity, placeEntity(place))
+      // The source is the row's identity: a place the store-native writes created (starmap:user, 3C-5 C1) keeps its own.
+      update('places', 'entities', entity, { ...placeEntity(place), source: entity.source })
       const parts = partsOf(id)
       placePart('anchors', parts.anchor, (rowId) => placeAnchor(place, rowId), placeAnchorId(id))
       placePart('relations', parts.relation, (rowId) => placeRelation(place, rowId), placeRelationId(id))
@@ -233,7 +234,7 @@ export function diffV2ToCommands(before: V2Files, after: V2Files, context: DiffC
   }
   function placePart<T extends StoreAnchor | StoreRelation>(table: 'anchors' | 'relations', current: T | undefined, desiredOf: (id: string) => T | undefined, base: string) {
     const desired = desiredOf(current?.id ?? freshId(table, base))
-    if (current && desired) update('placeParts', table, current, desired)
+    if (current && desired) update('placeParts', table, current, { ...desired, source: current.source })
     else if (current) remove('placeParts', table, current)
     else if (desired) create('placeParts', table, desired)
   }
