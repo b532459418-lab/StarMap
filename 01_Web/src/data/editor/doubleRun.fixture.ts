@@ -347,7 +347,10 @@ export function randomStep(rng: Random, files: V2Files): DoubleRunStep {
       const title = rng.pick(TITLES)
       const journeys = [...new Set(files.travel.records.filter(r => r.status !== 'planned' && r.trip_title === title && r.journeyId).map(r => r.journeyId as string))]
       const choice = journeys.length && rng.chance(0.5) ? { journeyId: rng.pick(journeys)! } : rng.chance(0.3) ? { newJourney: true } : {}
-      const city = rng.pick(cities)
+      // Half the time a city without records (a want-to-go city): a city with records is E_CITY_EXISTS (3C-5 C2, so that
+      // records by id also save and join journeys).
+      const unrecorded = cities.filter(c => !files.travel.records.some(r => r.placeId === c.id))
+      const city = unrecorded.length && rng.chance(0.5) ? rng.pick(unrecorded) : rng.pick(cities)
       if (city && rng.chance(0.4)) return sameRequest('records/placeId', R('records'), OLD_WRITES.records, { placeId: city.id, start_date: dateOf(rng), lat: 10, lng: 20, trip_title: title, ...choice })
       const code = rng.pick(COUNTRY_CODES)!
       return sameRequest('records/named', R('records'), OLD_WRITES.records, {
@@ -434,9 +437,12 @@ export function randomStep(rng: Random, files: V2Files): DoubleRunStep {
       const convertible = files.wantToGo.items.filter(i => !i.hidden && placeOf.get(i.placeId)?.subtype === 'city' && placeOf.get(i.placeId)?.location
         && !files.travel.records.some(r => r.placeId === i.placeId))
       const item = rng.pick(convertible.length && rng.chance(0.8) ? convertible : files.wantToGo.items)
+      const tripTitle = rng.pick(TITLES)
+      // Now and then one of the journeys of that title (3C-5 C2: conversions that join a journey save too).
+      const journeys = [...new Set(files.travel.records.filter(r => r.status !== 'planned' && r.trip_title === tripTitle && r.journeyId).map(r => r.journeyId as string))]
+      const choice = journeys.length && rng.chance(0.4) ? { journeyId: rng.pick(journeys)! } : rng.chance(0.4) ? { newJourney: true } : {}
       return sameRequest('convert/want-to-go', R('wanttogo/convert'), OLD_WRITES.convert, {
-        source: 'want-to-go', id: item?.id ?? 'synthetic-missing', startDate: dateOf(rng), tripTitle: rng.pick(TITLES), keepWantToGo: rng.chance(0.3),
-        ...(rng.chance(0.4) ? { newJourney: true } : {}),
+        source: 'want-to-go', id: item?.id ?? 'synthetic-missing', startDate: dateOf(rng), tripTitle, keepWantToGo: rng.chance(0.3), ...choice,
       })
     }
   }
