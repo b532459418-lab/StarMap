@@ -149,12 +149,12 @@ jobs:
       # `import.meta.env.DEV && localEditorAvailable`, so no build, and no chunk of it,
       # may contain it (5B). The smoke cases below also check the endpoint at runtime.
       # flagcdn.com is the third-party flag host the app used before batch 7 bundled the flags. starmapRevision
-      # (<html data-starmap-revision>) and starmap:revision (the revision push) belong to the development-only
-      # incremental refresh of 3C-5 D: no build may contain them.
+      # (<html data-starmap-revision>), starmap:revision (the revision push) and __travelAtlasDebugRenderLoop (the
+      # map pause's test API) belong to the development-only incremental refresh of 3C-5 D: no build may contain them.
       - name: Refuse server-only and local editor code in the public bundle
         run: |
           found=0
-          for marker in STARMAP_PRIVATE_ROOT 06_private operations/media-import /__travelatlas/editor flagcdn.com starmapRevision starmap:revision; do
+          for marker in STARMAP_PRIVATE_ROOT 06_private operations/media-import /__travelatlas/editor flagcdn.com starmapRevision starmap:revision __travelAtlasDebugRenderLoop; do
             if grep -rlF --include='*.js' -e "$marker" dist; then
               echo "::error::The public bundle contains the forbidden marker $marker"
               found=1

@@ -248,12 +248,16 @@ try {
       const card = page.locator('.collection-card').filter({ has: page.getByRole('button', { name: `Edit note for ${name}`, exact: true }) })
       await card.getByRole('button', { name: `View on map: ${name}`, exact: true }).click()
       await page.locator('.atlas-wtg-card .atlas-wtg-card-hide').waitFor()
-      // The camera has arrived and the badge is on the map before the save.
-      await page.waitForFunction((id) => window.__travelAtlasDebugRenderLoop?.entityShowing(id).badge, entityId, { timeout: 20_000 })
+      // The camera has arrived and the badge is on the map before the save (a version without the debug API, before
+      // 3C-5 D: the card is enough; the page reloads after the save).
+      await page.waitForFunction((id) => !window.__travelAtlasDebugRenderLoop || window.__travelAtlasDebugRenderLoop.entityShowing(id).badge, entityId, { timeout: 20_000 })
       await page.waitForTimeout(500)
       record('maphide', await measure('maphide', 'css:.atlas-wtg-card .atlas-wtg-card-hide', ({ entityId }) => {
         const loop = window.__travelAtlasDebugRenderLoop
-        return Boolean(!document.querySelector('.atlas-wtg-card') && loop && !loop.entityShowing(entityId).badge)
+        // The map page is usable (its country list and editor toggle are there: after a reload too) and the card is gone.
+        const edit = document.querySelector('button[aria-label="Edit visited countries"]')
+        const usable = Boolean(edit && !edit.disabled && document.querySelector('.atlas-country-list [data-country-sort-id]'))
+        return usable && !document.querySelector('.atlas-wtg-card') && (!loop || !loop.entityShowing(entityId).badge)
       }, { entityId }))
     }
   }
