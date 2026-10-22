@@ -20,7 +20,7 @@
  * Constraint: browser only (it reads the page's data store).
  */
 import { useCallback, useMemo, useState } from 'react'
-import { appStore, useAppSnapshot } from './appStore.ts'
+import { appStore, useAppSelector } from './appStore.ts'
 import type { AppSnapshot } from './appStoreCore.ts'
 import type { EditorWriteOptions } from './localEditorApi.ts'
 
@@ -54,18 +54,27 @@ interface DraftState<V> {
 }
 
 const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+/** The selected JSON when the record is gone (JSON.stringify(undefined) is undefined), and without a draft. */
+const GONE = 'starmap:draft:gone'
+const NO_DRAFT = 'starmap:draft:none'
 
 /** `open`: the draft starts with the component (a dialog that is itself the draft). */
 export function useDraft<V>(probe: DraftProbe<V>, { open = false }: { readonly open?: boolean } = {}): Draft<V> {
-  // Subscribed, so the component renders again (and the status is checked) when the data move on.
-  const snapshot = useAppSnapshot()
-  const [state, setState] = useState<DraftState<V> | undefined>(() => (open ? { baseRevision: snapshot.revision, baseValue: probe(snapshot) } : undefined))
+  const [state, setState] = useState<DraftState<V> | undefined>(() => {
+    if (!open) return undefined
+    const now = appStore.getSnapshot()
+    return { baseRevision: now.revision, baseValue: probe(now) }
+  })
+  // Subscribed only while a draft is open, and only to what it concerns (as JSON): an editor without a draft does not
+  // render again when the data move on, and one with a draft only when its record changes.
+  const selectCurrent = useCallback((snapshot: AppSnapshot) => (state ? JSON.stringify(probe(snapshot)) ?? GONE : NO_DRAFT), [state, probe])
+  const currentJson = useAppSelector(selectCurrent)
   const start = useCallback(() => {
     const now = appStore.getSnapshot()
     setState({ baseRevision: now.revision, baseValue: probe(now) })
   }, [probe])
   const end = useCallback(() => setState(undefined), [])
-  const current = useMemo(() => (state ? probe(snapshot) : undefined), [state, probe, snapshot])
+  const current = useMemo(() => (currentJson === GONE || currentJson === NO_DRAFT ? undefined : JSON.parse(currentJson) as V), [currentJson])
   const status: DraftStatus | undefined = !state ? undefined
     : current === undefined && state.baseValue !== undefined ? 'deleted'
       : sameValue(current, state.baseValue) ? 'editing' : 'changed'

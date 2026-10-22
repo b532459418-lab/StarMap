@@ -1,8 +1,8 @@
 import { usePlaceNames } from '../i18n/usePlaceNames'
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CalendarDays, MapPin } from 'lucide-react'
-import { useTravelAtlas } from '../data/travelAtlas'
+import type { useTravelAtlas } from '../data/travelAtlas'
 import type { City, Country } from '../types/travel'
 import { buildBrowseTimeProjection, journeyTimeContext, type BrowseTimeProjection } from '../data/derive/browseTimeProjection'
 import type { MatchedTimeRecord } from '../worldgraph/timeQuery'
@@ -22,7 +22,7 @@ type YearGroup = {
   countries: CountryYearGroup[]
 }
 
-type TravelAtlas = ReturnType<typeof useTravelAtlas>
+type TravelAtlas = Pick<ReturnType<typeof useTravelAtlas>, 'cityById' | 'countryById' | 'journeyDays' | 'shouldHideCityFromNavigation'>
 
 const buildYearGroups = (projection: BrowseTimeProjection, { cityById, countryById, shouldHideCityFromNavigation }: TravelAtlas): YearGroup[] => {
   const sources = [...projection.journeyYears, ...(projection.uncertainJourneyRecords.length
@@ -54,10 +54,10 @@ const buildYearGroups = (projection: BrowseTimeProjection, { cityById, countryBy
   }).filter(group => group.countries.length > 0)
 }
 
-export function JourneyYearCards({ projection }: { projection?: BrowseTimeProjection } = {}) {
+/** 3C-5 D: the travel data come from the App (held while the journey page is hidden), not read here. */
+export const JourneyYearCards = memo(function JourneyYearCards({ projection, travel: travelAtlas }: { projection?: BrowseTimeProjection; travel: TravelAtlas }) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
-  const travelAtlas = useTravelAtlas()
   const yearGroups = useMemo(
     () => buildYearGroups(projection ?? buildBrowseTimeProjection(journeyTimeContext(travelAtlas.journeyDays, travelAtlas.cityById), {}), travelAtlas),
     [projection, travelAtlas],
@@ -151,4 +151,4 @@ export function JourneyYearCards({ projection }: { projection?: BrowseTimeProjec
       </div>
     </section>
   )
-}
+})

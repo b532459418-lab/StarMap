@@ -1,4 +1,4 @@
-import { useAppData } from './appStore.ts'
+import { useAppSection } from './appStore.ts'
 import { sessionNow } from './rawInputs.ts'
 
 /**
@@ -17,4 +17,4 @@ import { sessionNow } from './rawInputs.ts'
 export const worldGraphSessionNow: string = sessionNow
 
 /** travelSnapshot、wantToGoSnapshot、plannedSnapshot 与合并后的 worldGraphSnapshot（说明见 ./derive/worldGraph.ts）。 */
-export const useWorldGraph = () => useAppData().worldGraph
+export const useWorldGraph = () => useAppSection('worldGraph')

@@ -11,7 +11,7 @@ import { liveReadModelIndex } from '../worldgraph/readModel/liveIndex.ts'
 import { applyChangeSet, planCommands, type ChangeSet } from '../worldgraph/store/planner.ts'
 import { memoryReader } from '../worldgraph/store/reader.ts'
 import type { FormalState } from '../worldgraph/store/formal.ts'
-import { computeSnapshot, createAppStore, type AppSnapshot, type ReadModelChanges } from './appStoreCore.ts'
+import { computeSnapshot, createAppStore, createHeldSource, type AppSnapshot, type ReadModelChanges } from './appStoreCore.ts'
 import { buildBaseline, stableStringify } from './derive/baseline.ts'
 import { doubleRunStore, random, randomStep, stepContext } from './editor/doubleRun.fixture.ts'
 import { NATIVE_WRITES } from './editor/native/routes.ts'
@@ -105,4 +105,44 @@ test('a changed row without the shape every row shares is refused, and the snaps
 test('the time query context is computed when first asked for, once', () => {
   const snapshot = snapshotOf(doubleRunStore(migratedFiles()).state)
   assert.equal(snapshot.timeQueryContext(), snapshot.timeQueryContext())
+})
+
+test('the same data again keep every section of the derived data and the time query context (structural sharing)', () => {
+  const state = doubleRunStore(migratedFiles()).state
+  const store = createAppStore(snapshotOf(state), OPTIONS)
+  // The first replace fills the store's derivation cache; from then on equal data give the same objects.
+  store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
+  const before = store.getSnapshot()
+  const after = store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
+  assert.notEqual(after, before)
+  for (const key of Object.keys(before.canonical) as (keyof AppSnapshot['canonical'])[]) assert.equal(after.canonical[key], before.canonical[key], `official view: ${key}`)
+  for (const key of Object.keys(before.appData) as (keyof AppSnapshot['appData'])[]) assert.equal(after.appData[key], before.appData[key], `derived data: ${key}`)
+  assert.equal(after.timeQueryContext(), before.timeQueryContext())
+})
+
+test('a held source keeps its snapshot without notices; let go, it follows the store again and tells once', () => {
+  const state = doubleRunStore(migratedFiles()).state
+  const store = createAppStore(snapshotOf(state), OPTIONS)
+  const source = createHeldSource(store)
+  let told = 0
+  const stop = source.subscribe(() => { told++ })
+  store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
+  assert.equal(told, 1, 'not held: every notice of the store')
+  assert.equal(source.getSnapshot(), store.getSnapshot())
+  source.hold(true)
+  const held = source.getSnapshot()
+  store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
+  store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
+  assert.equal(told, 1, 'held: no notices')
+  assert.equal(source.getSnapshot(), held)
+  assert.notEqual(store.getSnapshot(), held)
+  source.hold(false)
+  assert.equal(told, 2, 'let go after the store moved on: one notice')
+  assert.equal(source.getSnapshot(), store.getSnapshot())
+  source.hold(true)
+  source.hold(false)
+  assert.equal(told, 2, 'nothing moved meanwhile: no notice')
+  stop()
+  store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
+  assert.equal(told, 2, 'no listener: detached from the store')
 })

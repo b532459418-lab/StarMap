@@ -17,7 +17,8 @@
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types),
  * so it has no Vite import: ./appStore.ts wires it to the page's data source.
  */
-import { deriveAppDataFromCanonical, type AppData } from './canonical/derive.ts'
+import { createDeriveCache, deriveAppDataFromCanonical, type AppData, type DeriveCache } from './canonical/derive.ts'
+import { reconcile } from './reconcile.ts'
 import type { CanonicalData } from './canonical/types.ts'
 import { deriveTimeQueryContext } from './derive/timeQueryContext.ts'
 import { officialViewOf } from './store/projectCanonical.ts'
@@ -65,13 +66,53 @@ export interface AppSnapshot {
   readonly appData: AppData
   /** The time query context of the same official view, computed when first asked for. */
   readonly timeQueryContext: () => TimeQueryContext
+  /** How long this snapshot took (ms): applying the changed rows (after a commit), the official view, the derived data, and
+   * the time query context once it was asked for. For measurements (3C-5 D, design §1: the target is ≤400 ms in all). */
+  readonly timings: SnapshotTimings
 }
+
+export interface SnapshotTimings {
+  /** When the changes began to be applied (performance.now() of the page), for the save-to-usable measurement. */
+  startedAt?: number
+  deltaMs?: number
+  officialMs: number
+  /** Keeping the unchanged sections of the official view (structural sharing with the previous snapshot). */
+  reconcileMs?: number
+  deriveMs: number
+  timeContextMs?: number
+}
+
+const elapsed = (started: number) => Math.round((performance.now() - started) * 10) / 10
 
 export interface SnapshotOptions {
   /** The official view's source ('sample' for the public sample, 'local' for private data). */
   readonly source: 'local' | 'sample'
   /** The session time the derivations use (fixed for a page). */
   readonly now: string
+  /**
+   * The store's derivation cache (createAppStore keeps one): with the previous snapshot, the sections of the official
+   * view that did not change keep their objects, the derivation steps whose inputs did not change are not run again, and
+   * the App's data keep the identity of what did not change (the components that read only that do not render again).
+   */
+  readonly cache?: SnapshotCache
+}
+
+/** What the store keeps between snapshots: the derivation steps, and the time query context with its inputs. */
+export interface SnapshotCache {
+  readonly derive: DeriveCache
+  timeContext?: { readonly inputs: readonly unknown[]; readonly value: TimeQueryContext }
+}
+export const createSnapshotCache = (): SnapshotCache => ({ derive: createDeriveCache() })
+
+/** The official view with every section that equals the previous one's replaced by it (and the whole view when all do). */
+function shareSections(previous: CanonicalData, next: CanonicalData): CanonicalData {
+  const merged: Record<string, unknown> = {}
+  let same = true
+  for (const key of Object.keys(next) as (keyof CanonicalData)[]) {
+    merged[key] = reconcile(previous[key], next[key])
+    if (merged[key] !== previous[key]) same = false
+  }
+  return same ? previous : merged as unknown as CanonicalData
 }
 
 const isReadModelTable = (table: string): table is ReadModelTable => (READ_MODEL_TABLES as readonly string[]).includes(table)
@@ -88,10 +129,21 @@ function lazy<T>(compute: () => T): () => T {
 /** Everything the App reads, from a read model. */
 export function computeSnapshot(
   model: ReadModel,
-  options: SnapshotOptions & { readonly identity?: StoreIdentity; readonly status?: AppSnapshot['status']; readonly error?: AppDataLoadError },
+  options: SnapshotOptions & { readonly identity?: StoreIdentity; readonly status?: AppSnapshot['status']; readonly error?: AppDataLoadError; readonly deltaMs?: number; readonly startedAt?: number; readonly previous?: AppSnapshot },
 ): AppSnapshot {
-  const canonical = officialViewOf(model, options.source)
-  const appData = deriveAppDataFromCanonical(canonical, { now: options.now })
+  let started = performance.now()
+  const fresh = officialViewOf(model, options.source)
+  const officialMs = elapsed(started)
+  started = performance.now()
+  const previous = options.cache && options.previous?.status === 'ready' ? options.previous.canonical : undefined
+  const canonical = previous ? shareSections(previous, fresh) : fresh
+  const reconcileMs = previous ? elapsed(started) : undefined
+  started = performance.now()
+  const appData = deriveAppDataFromCanonical(canonical, { now: options.now }, options.cache?.derive)
+  const timings: SnapshotTimings = {
+    ...(options.startedAt !== undefined ? { startedAt: options.startedAt } : {}), ...(options.deltaMs !== undefined ? { deltaMs: options.deltaMs } : {}), officialMs, ...(reconcileMs !== undefined ? { reconcileMs } : {}), deriveMs: elapsed(started),
+  }
+  const cache = options.cache
   return Object.freeze({
     status: options.status ?? 'ready',
     ...(options.error ? { error: options.error } : {}),
@@ -100,7 +152,18 @@ export function computeSnapshot(
     model,
     canonical,
     appData,
-    timeQueryContext: lazy(() => deriveTimeQueryContext(canonical)),
+    timeQueryContext: lazy(() => {
+      // It reads the editor state, the places, the travel records and the want-to-go items (not the media).
+      const inputs = [canonical.editorState, canonical.places, canonical.travel, canonical.wantToGo]
+      const last = cache?.timeContext
+      if (last && last.inputs.every((input, index) => input === inputs[index])) return last.value
+      const begun = performance.now()
+      const context = deriveTimeQueryContext(canonical)
+      timings.timeContextMs = elapsed(begun)
+      if (cache) cache.timeContext = { inputs, value: context }
+      return context
+    }),
+    timings,
   })
 }
 
@@ -120,6 +183,7 @@ export function snapshotAfter(snapshot: AppSnapshot, changes: ReadModelChanges, 
   if (changes.from !== snapshot.revision || changes.to < changes.from) return undefined
   // Nothing committed (a write without changes answers with the same revision).
   if (changes.to === changes.from && changes.upserts.length === 0 && changes.deletes.length === 0) return snapshot
+  const started = performance.now()
   for (const { table, row } of changes.upserts) if (isReadModelTable(table)) validateRowBase(table, row)
   const model = applyReadModelDelta(snapshot.model, {
     baseRevision: changes.from,
@@ -129,7 +193,7 @@ export function snapshotAfter(snapshot: AppSnapshot, changes: ReadModelChanges, 
     deletes: changes.deletes as never,
   })
   const next = changes.to === model.revision ? model : { ...model, revision: changes.to }
-  return computeSnapshot(next, { ...options, ...(snapshot.identity ? { identity: snapshot.identity } : {}) })
+  return computeSnapshot(next, { ...options, ...(snapshot.identity ? { identity: snapshot.identity } : {}), deltaMs: elapsed(started), startedAt: Math.round(started), previous: snapshot })
 }
 
 export interface AppStore {
@@ -143,7 +207,51 @@ export interface AppStore {
   fail(model: ReadModel, error: AppDataLoadError): AppSnapshot
 }
 
-export function createAppStore(initial: AppSnapshot, options: SnapshotOptions): AppStore {
+/** Where components read the snapshots from (../data/appStore.ts): the store, or a held source. */
+export type SnapshotSource = Pick<AppStore, 'subscribe' | 'getSnapshot'>
+
+/**
+ * 3C-5 D: `store` as seen by a part of the page that is not shown (../data/appStore.ts `HoldDataWhileHidden`). While
+ * `hold(true)` is on, the snapshot of that moment and no notices (its components do not render again after a save);
+ * `hold(false)` goes back to the store and, when the store moved on meanwhile, tells the listeners once.
+ */
+export function createHeldSource(store: SnapshotSource): SnapshotSource & { hold(on: boolean): void } {
+  let held: AppSnapshot | undefined
+  const listeners = new Set<() => void>()
+  let detach: (() => void) | undefined
+  const notify = () => {
+    for (const listener of [...listeners]) listener()
+  }
+  return {
+    subscribe(listener) {
+      listeners.add(listener)
+      detach ??= store.subscribe(() => {
+        if (!held) notify()
+      })
+      return () => {
+        listeners.delete(listener)
+        if (listeners.size === 0) {
+          detach?.()
+          detach = undefined
+        }
+      }
+    },
+    getSnapshot: () => held ?? store.getSnapshot(),
+    hold(on) {
+      if (on) {
+        held ??= store.getSnapshot()
+        return
+      }
+      const was = held
+      held = undefined
+      if (was && was !== store.getSnapshot()) notify()
+    },
+  }
+}
+
+export function createAppStore(initial: AppSnapshot, storeOptions: SnapshotOptions): AppStore {
+  // One derivation cache for the store (3C-5 D): see SnapshotOptions.cache.
+  const options: SnapshotOptions = { ...storeOptions, cache: storeOptions.cache ?? createSnapshotCache() }
   let snapshot = initial
   const listeners = new Set<() => void>()
   const publish = (next: AppSnapshot) => {
@@ -157,7 +265,7 @@ export function createAppStore(initial: AppSnapshot, options: SnapshotOptions): 
       listeners.add(listener)
       return () => { listeners.delete(listener) }
     },
-    replace: (model: ReadModel, identity?: StoreIdentity) => publish(computeSnapshot(model, { ...options, ...(identity ? { identity } : {}) })),
+    replace: (model: ReadModel, identity?: StoreIdentity) => publish(computeSnapshot(model, { ...options, ...(identity ? { identity } : {}), previous: snapshot })),
     apply(changes: ReadModelChanges) {
       const next = snapshotAfter(snapshot, changes, options)
       if (!next) return false

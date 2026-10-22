@@ -416,36 +416,59 @@ const plannedRecordInputOf = (record: CanonicalTravelRecord): PlannedRecordInput
 }
 
 /**
- * Canonical → App 今天的全部导出（与 PR1 旧派生 `deriveAppData` 同名、同形状）。依赖顺序与 PR1 相同：
- * editor-state → 足迹 → 媒体 → 无人机 → 想去 → World Graph。
+ * 3C-5 D: the steps of a derivation remembered with their inputs (by identity). Passed to deriveAppDataFromCanonical
+ * again with a Canonical whose unchanged sections are the same objects (../appStoreCore.ts), a step whose inputs did
+ * not change gives its previous result: less work after a save, and the sections of the App's data that did not change
+ * keep their identity (the components that read only them do not render again).
  */
-export function deriveAppDataFromCanonical(canonical: CanonicalData, options: CanonicalDeriveOptions): AppData {
-  const places = indexPlaces(canonical.places)
-  const travelAtlasEditorState = reconstructEditorState(canonical.editorState, places)
-  const travelAtlas = deriveTravelAtlasFromCanonical(canonical, places, travelAtlasEditorState)
-  const mediaCatalog = deriveMediaCatalog(
+export interface DeriveCache {
+  readonly steps: Map<string, { readonly inputs: readonly unknown[]; readonly output: unknown }>
+}
+export const createDeriveCache = (): DeriveCache => ({ steps: new Map() })
+
+function step<T>(cache: DeriveCache | undefined, name: string, inputs: readonly unknown[], compute: () => T): T {
+  if (!cache) return compute()
+  const last = cache.steps.get(name)
+  if (last && last.inputs.length === inputs.length && last.inputs.every((input, index) => Object.is(input, inputs[index]))) return last.output as T
+  const output = compute()
+  cache.steps.set(name, { inputs, output })
+  return output
+}
+
+/**
+ * Canonical → App 今天的全部导出（与 PR1 旧派生 `deriveAppData` 同名、同形状）。依赖顺序与 PR1 相同：
+ * editor-state → 足迹 → 媒体 → 无人机 → 想去 → World Graph。`cache`（3C-5 D）见上。
+ */
+export function deriveAppDataFromCanonical(canonical: CanonicalData, options: CanonicalDeriveOptions, cache?: DeriveCache): AppData {
+  const places = step(cache, 'places', [canonical.places], () => indexPlaces(canonical.places))
+  const travelAtlasEditorState = step(cache, 'editorState', [canonical.editorState, places], () => reconstructEditorState(canonical.editorState, places))
+  const travelAtlas = step(cache, 'travelAtlas', [canonical.travel, places, travelAtlasEditorState], () => deriveTravelAtlasFromCanonical(canonical, places, travelAtlasEditorState))
+  const mediaCatalog = step(cache, 'mediaCatalog', [canonical.media, places, travelAtlasEditorState], () => deriveMediaCatalog(
     { schemaVersion: 2, items: canonical.media.items.map((item) => reconstructMediaItem(item, places)) },
     travelAtlasEditorState,
-  )
-  const droneMedia = deriveDroneMedia(mediaCatalog.importedDroneMediaCatalogItems)
-  const canonicalPlannedRecords = canonical.travel.records.filter((record) => record.status === 'planned')
-  const wantToGo = deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas, convertRules(convertRuleDataOfCanonical(canonical)))
-  const worldGraph = deriveWorldGraph({
-    places: canonical.places.map((place) => placeInputOf(place, places)),
-    countries: travelAtlas.countries,
-    cities: travelAtlas.cities,
-    journeyDays: travelAtlas.journeyDays,
-    routes: travelAtlas.routes,
-    wantToGoItems: canonical.wantToGo.items,
-    plannedRecords: canonicalPlannedRecords.map(plannedRecordInputOf),
-  }, options.now)
+  ))
+  const droneMedia = step(cache, 'droneMedia', [mediaCatalog], () => deriveDroneMedia(mediaCatalog.importedDroneMediaCatalogItems))
+  const wantToGo = step(cache, 'wantToGo', [canonical.wantToGo, canonical.places, canonical.travel, places, travelAtlas],
+    () => deriveWantToGoFromCanonical(canonical.wantToGo, places, travelAtlas, convertRules(convertRuleDataOfCanonical(canonical))))
+  const worldGraph = step(cache, 'worldGraph', [canonical.places, canonical.travel, canonical.wantToGo, places, travelAtlas, options.now], () => {
+    const canonicalPlannedRecords = canonical.travel.records.filter((record) => record.status === 'planned')
+    return deriveWorldGraph({
+      places: canonical.places.map((place) => placeInputOf(place, places)),
+      countries: travelAtlas.countries,
+      cities: travelAtlas.cities,
+      journeyDays: travelAtlas.journeyDays,
+      routes: travelAtlas.routes,
+      wantToGoItems: canonical.wantToGo.items,
+      plannedRecords: canonicalPlannedRecords.map(plannedRecordInputOf),
+    }, options.now)
+  })
 
   return {
-    travelAtlas: { travelAtlasDataSource: canonical.travel.source, ...travelAtlas },
-    editorState: { travelAtlasEditorState, orderBySavedIds },
-    mediaCatalog: { getMediaSource, ...mediaCatalog },
+    travelAtlas: step(cache, 'travelAtlasSection', [canonical.travel.source, travelAtlas], () => ({ travelAtlasDataSource: canonical.travel.source, ...travelAtlas })),
+    editorState: step(cache, 'editorStateSection', [travelAtlasEditorState], () => ({ travelAtlasEditorState, orderBySavedIds })),
+    mediaCatalog: step(cache, 'mediaCatalogSection', [mediaCatalog], () => ({ getMediaSource, ...mediaCatalog })),
     droneMedia,
-    wantToGo: { wantToGoDataSource: canonical.wantToGo.source, ...wantToGo },
-    worldGraph: { worldGraphSessionNow: options.now, ...worldGraph },
+    wantToGo: step(cache, 'wantToGoSection', [canonical.wantToGo.source, wantToGo], () => ({ wantToGoDataSource: canonical.wantToGo.source, ...wantToGo })),
+    worldGraph: step(cache, 'worldGraphSection', [options.now, worldGraph], () => ({ worldGraphSessionNow: options.now, ...worldGraph })),
   }
 }

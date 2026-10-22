@@ -22,7 +22,7 @@
  * 这是 localEditorAvailable 之外的另一层门控。
  */
 
-import { useAppData } from './appStore.ts'
+import { useAppSection } from './appStore.ts'
 
 // 3C-5 D: the data are no module constants any more: components read them through the hook below (./appStore.ts), so a
 // save moves them on without a reload and react-hooks/exhaustive-deps sees every dependency on them. 
@@ -32,4 +32,4 @@ import { useAppData } from './appStore.ts'
  * wantToGoItemById、plannedRecordById，以及「想去 → 足迹」（PR9）的前置条件 wantToGoConvertBlockReason、
  * plannedConvertBlockReason（返回 undefined 表示可以转换；规则与写入端点共用 ./canonical/convertRules.ts，审查 C2）。
  */
-export const useWantToGo = () => useAppData().wantToGo
+export const useWantToGo = () => useAppSection('wantToGo')

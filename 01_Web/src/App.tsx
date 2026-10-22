@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { UIEvent } from 'react'
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { AtlasHeader } from './components/AtlasHeader'
@@ -22,13 +22,16 @@ import { WantToGoCard } from './components/WantToGoCard'
 import { JourneyViewToggle } from './components/JourneyViewToggle'
 import type { JourneyViewMode } from './components/JourneyViewToggle'
 import { JourneyYearCards } from './components/JourneyYearCards'
+import { useStableCallback } from './components/useStableCallback'
+import { useHeldWhileHidden } from './components/useHeldWhileHidden'
 import type { DroneMediaItem } from './data/droneMedia'
 import { useDroneMedia } from './data/droneMedia'
 import { localEditorAvailable } from './data/editorState'
 import type { LocalConvertToTravelResult } from './data/localEditorApi'
 import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
 import { readLayerTimeFilters, rememberLayerTimeFilters } from './data/layerTimeFilters'
-import { useTimeQueryContext } from './data/appStore'
+import { HoldDataWhileHidden, useTimeQueryContext } from './data/appStore'
+import { PausedWhileHidden } from './components/PausedWhileHidden'
 import { buildBrowseTimeProjection, includedBrowseRecordKeys, countMappedTravelRecords } from './data/derive/browseTimeProjection'
 import { coordinateForRecord } from './data/derive/travelAtlas'
 import { wantToGoCardRecordOf, type WantToGoCardRecord } from './data/derive/wantToGo'
@@ -109,7 +112,7 @@ const cameraScaleForDistance = (distance: number): CameraScale => {
 function App() {
   const { locale, t } = useUiLocale()
   // 3C-5 D: the data of the page, through hooks (a save moves them on without a reload).
-  const { cityById, countryById, getCitiesForCountry, journeyDays, travelAtlasDisplay } = useTravelAtlas()
+  const { cityById, countryById, getCitiesForCountry, journeyDays, shouldHideCityFromNavigation, travelAtlasDisplay } = useTravelAtlas()
   const { droneMediaById, hasDroneMedia } = useDroneMedia()
   const { worldGraphSnapshot } = useWorldGraph()
   const { hiddenWantToGoItems } = useWantToGo()
@@ -200,10 +203,11 @@ function App() {
   const [city3DEnabled, setCity3DEnabled] = useState(() => resolveInitialCity3DEnabled(googleConfigured))
   // The globe hides itself while City 3D is on, so what it receives is gated by the Google key too.
   const city3DActive = googleConfigured && city3DEnabled
-  const disableCity3D = () => {
+  // 3C-5 D: stable (the globe is memoized).
+  const disableCity3D = useCallback(() => {
     setCity3DEnabled(false)
     rememberCity3DEnabled(false)
-  }
+  }, [])
   const [mapLabelsEnabled, setMapLabelsEnabled] = useState(getInitialMapLabelsEnabled)
   const [layerVisibility, setLayerVisibility] = useState(getInitialLayerVisibility)
   const [restoredTimeFilters] = useState(readLayerTimeFilters)
@@ -601,6 +605,10 @@ function App() {
     setSidebarsOpen(true)
   }
 
+  // 3C-5 D: stable handlers for the memoized Collection cards.
+  const stableViewOnMap = useStableCallback(viewOnMap)
+  const openAddWantToGo = useStableCallback(() => setIsAddWantToGoOpen(true))
+
   const selectDroneMedia = (cityId: CityId) => {
     const city = cityById[cityId]
     if (!city || !hasDroneMedia(cityId)) return
@@ -683,6 +691,8 @@ function App() {
     setGlobeDistance(distance)
   }
 
+  // 3C-5 D: the journey's lists get the travel data as props (memoized: they render only when these change).
+  const journeyTravel = useMemo(() => ({ cityById, countryById, journeyDays, shouldHideCityFromNavigation }), [cityById, countryById, journeyDays, shouldHideCityFromNavigation])
   const selectDay = (day: JourneyDay) => {
     openMobileDetails()
     // 城市焦点的优先级低于 place 焦点：凡是"选中一个城市"的入口都要清掉 Collection 的镜头目标。
@@ -695,6 +705,16 @@ function App() {
     setSelectionMode('city')
     setGlobeDistance(cityDistance)
   }
+  const selectDayStable = useStableCallback(selectDay)
+  // 3C-5 D: the globe is memoized; with these stable, and its places held while another page is up (they are not shown
+  // there), a save on another page does not render it again. Its camera still follows the selection there.
+  const selectCityStable = useStableCallback(selectCity)
+  const selectWantToGoPlaceStable = useStableCallback(selectWantToGoPlace)
+  const selectDroneMediaItemStable = useStableCallback(selectDroneMediaItem)
+  const selectDroneMediaStable = useStableCallback(selectDroneMedia)
+  const mapLayerData = useHeldWhileHidden(layerData, activePage === 'map')
+  const [overviewLat, overviewLng] = [overviewTarget.lat, overviewTarget.lng]
+  const overviewTargetStable = useMemo(() => ({ lat: overviewLat, lng: overviewLng }), [overviewLat, overviewLng])
 
   return (
     <main className="theme-night relative h-[100dvh] overflow-clip bg-[#010409] text-slate-950">
@@ -731,6 +751,7 @@ function App() {
           {activePage === 'map' && (travelTimeActive || wantTimeActive) && visibleLayerIds.length > 0 && layerData.places.length === 0
             ? <p className="atlas-time-map-empty" role="status">{t('timeFilter:noMapResults')}</p> : null}
           <div className="absolute inset-0 z-0">
+            <HoldDataWhileHidden visible={activePage === 'map'}>
             <CesiumAtlasGlobe
               hoveredCountryId={hoveredCountryId}
               imageryBrightness={imageryTuning.brightness}
@@ -742,21 +763,22 @@ function App() {
               showLabelsOverlay={mapLabelsEnabled}
               selectedCountryId={selectedCountryId}
               selectedCityId={selectedCityId}
-              overviewTarget={overviewTarget}
+              overviewTarget={overviewTargetStable}
               selectedCity={selectedCityFocus}
               selectedCountry={selectedCountryFocus}
               selectionMode={selectionMode}
               globeScale={globeDistance}
               resetVersion={globeResetVersion}
               showMapContent={activePage === 'map'}
-              layerData={layerData}
+              layerData={mapLayerData}
               activeDroneMediaCityId={activeDroneMediaCityId}
               activeDroneMediaItemId={activeDroneMediaItemId}
-              onSelectCity={selectCity}
-              onSelectWantToGoPlace={selectWantToGoPlace}
-              onSelectDroneMediaItem={selectDroneMediaItem}
+              onSelectCity={selectCityStable}
+              onSelectWantToGoPlace={selectWantToGoPlaceStable}
+              onSelectDroneMediaItem={selectDroneMediaItemStable}
               focusPlace={mapFocusPlace}
             />
+            </HoldDataWhileHidden>
           </div>
 
           <div className="pointer-events-none absolute inset-0 z-20">
@@ -783,6 +805,7 @@ function App() {
                 </button>
               </div>
               <div id="atlas-country-panel" className="atlas-country-stack" ref={countryPanelRef} aria-hidden={countriesHidden} inert={countriesHidden}>
+                <PausedWhileHidden visible={activePage === 'map'}>
                 <CountrySelector
                 browse={travelBrowse}
                 selectedCountryId={selectedCountryId}
@@ -798,11 +821,12 @@ function App() {
                 onResetImageryTuning={resetImageryTuning}
                 onSaturationChange={(value) => updateImageryTuning('saturation', value)}
                 onSelectCountry={selectCountry}
-                onSelectCity={selectCity}
-                onSelectDroneMedia={selectDroneMedia}
+                onSelectCity={selectCityStable}
+                onSelectDroneMedia={selectDroneMediaStable}
                 onDistanceChange={changeGlobeDistance}
                 onResetView={resetOverview}
               />
+                </PausedWhileHidden>
               </div>
 
               <div
@@ -814,6 +838,7 @@ function App() {
                   shouldShowDronePanel ? 'atlas-right-stack-with-drone' : ''
                 }`}
               >
+                <PausedWhileHidden visible={activePage === 'map'}>
                 {selectedWantToGoEntityId ? (
                   <WantToGoCard
                     key={`want-to-go-${selectedWantToGoEntityId}`}
@@ -850,6 +875,7 @@ function App() {
                 ) : null}
 
                 <MouseControlGuide />
+                </PausedWhileHidden>
               </div>
 
             </div>
@@ -925,6 +951,8 @@ function App() {
             className="atlas-journey-stage absolute inset-0 z-30"
             aria-hidden={activePage !== 'journey'}
           >
+            {/* 3C-5 D: not shown, the page does not render again after every save (PausedWhileHidden); its scroll position stays. */}
+            <PausedWhileHidden visible={activePage === 'journey'}>
             <div className="atlas-journey-scroll selector-scrollbar h-full overflow-y-auto overscroll-contain">
               <div className="atlas-journey-shell mx-auto w-full max-w-7xl px-5 pb-20 sm:px-8">
                 <section className="journey-command-panel">
@@ -963,14 +991,16 @@ function App() {
                 {journeyViewMode === 'timeline' ? (
                   <Timeline
                     projection={browseProjection}
+                    travel={journeyTravel}
                     selectedDayId={selectedDayId}
-                    onSelectDay={selectDay}
+                    onSelectDay={selectDayStable}
                   />
                 ) : (
-                  <JourneyYearCards projection={browseProjection} />
+                  <JourneyYearCards projection={browseProjection} travel={journeyTravel} />
                 )}
               </div>
             </div>
+            </PausedWhileHidden>
           </div>
 
           <div
@@ -979,16 +1009,18 @@ function App() {
             aria-hidden={activePage !== 'collection'}
           >
             {/* 舞台本身常驻（切页的淡入淡出在舞台上）；页面加载期间舞台为空，淡入过程中出现。 */}
+            <PausedWhileHidden visible={activePage === 'collection'}>
             {visitedPages.has('collection') ? (
               <Suspense fallback={null}>
                 <CollectionPage
                   entries={collectionEntries}
-                  onViewOnMap={viewOnMap}
-                  onAddWantToGo={() => setIsAddWantToGoOpen(true)}
+                  onViewOnMap={stableViewOnMap}
+                  onAddWantToGo={openAddWantToGo}
                   onConvertToTravel={setConvertTarget}
                 />
               </Suspense>
             ) : null}
+            </PausedWhileHidden>
           </div>
 
           <div

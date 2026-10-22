@@ -1,4 +1,4 @@
-import { useAppData } from './appStore.ts'
+import { useAppSection } from './appStore.ts'
 import { isLocalEditorAvailable } from './localEditorAvailability.ts'
 import { forceSampleData } from './rawInputs'
 
@@ -9,7 +9,7 @@ export type { LocalEditorCountry, TravelAtlasEditorState } from './derive/editor
 export { orderBySavedIds } from './derive/editorState.ts'
 
 /** 编辑状态（各列表的顺序、隐藏、封面）。 */
-export const useTravelAtlasEditorState = () => useAppData().editorState.travelAtlasEditorState
+export const useTravelAtlasEditorState = () => useAppSection('editorState').travelAtlasEditorState
 
 // 本地编辑只在开发服务器的个人配置下、且不是强制样例时可用（规则见 ./localEditorAvailability.ts）。
 // 公开构建与强制样例下恒为 false：编辑控件根本不渲染，不靠 CSS 隐藏。

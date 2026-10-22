@@ -15,7 +15,8 @@ export function AppRoot() {
   useEffect(() => {
     if (!import.meta.env.DEV || snapshot.status !== 'ready') return
     document.documentElement.dataset.starmapRevision = String(snapshot.revision)
-  }, [snapshot.status, snapshot.revision])
+    ;(window as { __starmapTimings?: unknown }).__starmapTimings = { ...snapshot.timings, committedAt: Math.round(performance.now()) }
+  }, [snapshot.status, snapshot.revision, snapshot.timings])
   if (snapshot.status === 'loading') return <div className="min-h-screen" aria-busy="true" />
   if (snapshot.status === 'error' && snapshot.error) return <DataLoadError error={snapshot.error} />
   return <App />

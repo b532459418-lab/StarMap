@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArcType,
   BoundingSphere,
@@ -44,6 +44,8 @@ import type { EntityId } from '../worldgraph/types'
 import { resolveName } from '../worldgraph/localizedText'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
+import { useStableCallback } from './useStableCallback'
+import { useElementCache } from './useElementCache'
 import { droneMarkerName } from './droneMediaLabels.ts'
 import { createCameraCommandObserver } from './cameraCommandObservation'
 import type { CameraCommandObservation, CameraCommandState } from './cameraCommandObservation'
@@ -593,7 +595,216 @@ const installDebugCameraApi = (
   return debugCamera
 }
 
-export function CesiumAtlasGlobe({
+// 3C-5 D: the map's place, badge and route entities as memoized components with plain props. A save no longer reloads
+// the page, so the globe renders again after every change of the data; only the entities whose own values changed render
+// (and so update their Cesium entity). Titles are compared as JSON (the data store makes new objects).
+const sameEntityProps = <P extends object>(a: P, b: P) => (Object.keys(a) as (keyof P)[]).every((key) => key === 'title'
+  ? a[key] === b[key] || JSON.stringify(a[key]) === JSON.stringify(b[key])
+  : Object.is(a[key], b[key]))
+
+type TravelCityEntityProps = {
+  sourceId: string
+  entityId: string
+  title: LayerPlace['title']
+  locale: string
+  /** The entity's label suffix (translated by the globe: the number of visit records). */
+  visitLabel: string
+  show: boolean
+  lng: number
+  lat: number
+  accent: string
+  isSelected: boolean
+  isCountryCity: boolean
+  isMuted: boolean
+  showHoverGlow: boolean
+  onSelect: (sourceId: string) => void
+}
+const TravelCityEntity = memo(function TravelCityEntity({
+  sourceId, entityId, title, locale, visitLabel, show, lng, lat, accent, isSelected, isCountryCity, isMuted, showHoverGlow, onSelect,
+}: TravelCityEntityProps) {
+  const titleText = resolveName(title, locale) || sourceId
+  const corePixelSize = isCountryCity ? 12 : 7
+  const properties = useMemo(() => ({ entityId }), [entityId])
+  const position = useMemo(() => cityPosition(lng, lat), [lng, lat])
+  const onClick = useCallback(() => onSelect(sourceId), [onSelect, sourceId])
+  const billboard = useMemo(() => (showHoverGlow ? {
+    color: Color.WHITE,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    height: 38,
+    image: cityHoverMarkerImage(accent, corePixelSize),
+    width: 38,
+  } : undefined), [showHoverGlow, accent, corePixelSize])
+  const point = useMemo(() => (showHoverGlow ? undefined : {
+    color: Color.fromCssColorString(accent).withAlpha(isMuted ? 0.28 : 1),
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    outlineColor: Color.WHITE.withAlpha(isMuted ? 0.36 : 0.94),
+    outlineWidth: isSelected ? 3 : 2,
+    pixelSize: isSelected ? 18 : corePixelSize,
+  }), [showHoverGlow, accent, isMuted, isSelected, corePixelSize])
+  const label = useMemo(() => ({
+    backgroundColor: Color.fromCssColorString(isSelected ? accent : '#0f172a').withAlpha(isSelected ? 0.9 : 0.72),
+    fillColor: Color.WHITE,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    font: isSelected ? '700 15px Inter, sans-serif' : '600 13px Inter, sans-serif',
+    outlineColor: Color.BLACK,
+    outlineWidth: 2,
+    pixelOffset: new Cartesian2(0, -28),
+    show: isSelected || isCountryCity,
+    showBackground: true,
+    style: LabelStyle.FILL_AND_OUTLINE,
+    text: titleText,
+  }), [isSelected, isCountryCity, accent, titleText])
+  const ellipse = useMemo(() => (isSelected ? {
+    height: 300,
+    material: Color.fromCssColorString(accent).withAlpha(0.14),
+    outline: true,
+    outlineColor: Color.fromCssColorString(accent).withAlpha(0.88),
+    semiMajorAxis: 42_000,
+    semiMinorAxis: 42_000,
+  } : undefined), [isSelected, accent])
+  return (
+    <Entity
+      name={`${titleText} · ${visitLabel}`}
+      properties={properties}
+      show={show}
+      position={position}
+      onClick={onClick}
+      billboard={billboard}
+      point={point}
+      label={label}
+      ellipse={ellipse}
+    />
+  )
+}, sameEntityProps)
+
+type WantToGoPlaceEntityProps = {
+  sourceId: string
+  entityId: string
+  title: LayerPlace['title']
+  locale: string
+  /** The entity's label suffix (translated by the globe). */
+  wantToGoLabel: string
+  show: boolean
+  lng: number
+  lat: number
+  isMuted: boolean
+  onSelect: (entityId: string) => void
+}
+// 纯想去地点（FR-MR-4 / PRD §9.3）：与足迹城市同尺寸的空心圆，想去 accent 描边。
+// 不参与国家高亮、悬停光晕与 isCountryCity 放大；非总览时与其他非本国城市一样变淡。
+// 点击只打开详情卡（FR-WTG-4），sourceId 就是它的 entityId（地点 id），半球裁剪照常生效。
+const WantToGoPlaceEntity = memo(function WantToGoPlaceEntity({ sourceId, entityId, title, locale, wantToGoLabel, show, lng, lat, isMuted, onSelect }: WantToGoPlaceEntityProps) {
+  const titleText = resolveName(title, locale) || sourceId
+  const properties = useMemo(() => ({ entityId }), [entityId])
+  const position = useMemo(() => cityPosition(lng, lat), [lng, lat])
+  const onClick = useCallback(() => onSelect(entityId), [onSelect, entityId])
+  const point = useMemo(() => ({
+    color: Color.fromCssColorString(wantToGoAccent).withAlpha(isMuted ? 0.05 : 0.18),
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    outlineColor: Color.fromCssColorString(wantToGoAccent).withAlpha(isMuted ? 0.36 : 1),
+    outlineWidth: 2,
+    pixelSize: 7,
+  }), [isMuted])
+  const label = useMemo(() => ({
+    backgroundColor: Color.fromCssColorString('#0f172a').withAlpha(0.72),
+    fillColor: Color.WHITE,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    font: '600 13px Inter, sans-serif',
+    outlineColor: Color.BLACK,
+    outlineWidth: 2,
+    pixelOffset: new Cartesian2(0, -28),
+    // 足迹的标签只在"选中城市 / 当前国家的城市"上显示；纯想去地点两者都不是。
+    show: false,
+    showBackground: true,
+    style: LabelStyle.FILL_AND_OUTLINE,
+    text: titleText,
+  }), [titleText])
+  return (
+    <Entity name={`${titleText} · ${wantToGoLabel}`} properties={properties} show={show} position={position} onClick={onClick} point={point} label={label} />
+  )
+}, sameEntityProps)
+
+type WantToGoBadgeEntityProps = {
+  sourceId: string
+  entityId: string
+  title: LayerPlace['title']
+  locale: string
+  /** The entity's label suffix (translated by the globe). */
+  wantToGoLabel: string
+  show: boolean
+  lng: number
+  lat: number
+  isMuted: boolean
+  hasLabel: boolean
+  markerPixelSize: number
+  onSelect: (sourceId: string) => void
+}
+// FR-MR-5：足迹 + 想去同一地点。足迹标记一字不改，另起一个独立 Entity 在右上角叠心形徽标；显隐条件与所属标记相同。
+// 已知限制：Cesium 把"关闭深度测试"实现为把顶点推到近平面，point 用 LEQUAL、billboard 用 LESS，所以徽标与【相邻城市】的点
+// 重叠时总在点的下面（世界视角下的冰岛）。默认（7px、无标签）偏移 (9, -9)。标记放大且显示城市名时（选中 / 当前国家的城市），
+// 标签底边约在 -15px，徽标改贴标记右侧、略高于中心，免得被标签盖住（同上面的深度限制）。
+const WantToGoBadgeEntity = memo(function WantToGoBadgeEntity({
+  sourceId, entityId, title, locale, wantToGoLabel, show, lng, lat, isMuted, hasLabel, markerPixelSize, onSelect,
+}: WantToGoBadgeEntityProps) {
+  const titleText = resolveName(title, locale) || sourceId
+  const properties = useMemo(() => ({ badgeForEntityId: entityId }), [entityId])
+  const position = useMemo(() => cityPosition(lng, lat), [lng, lat])
+  // 徽标属于足迹地点：点它与点足迹标记一样进入城市。
+  const onClick = useCallback(() => onSelect(sourceId), [onSelect, sourceId])
+  const billboard = useMemo(() => ({
+    color: Color.WHITE.withAlpha(isMuted ? 0.36 : 1),
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    height: 14,
+    image: wantToGoBadgeImage(wantToGoAccent),
+    pixelOffset: hasLabel ? new Cartesian2(markerPixelSize / 2 + 7, -6) : new Cartesian2(9, -9),
+    width: 14,
+  }), [isMuted, hasLabel, markerPixelSize])
+  return <Entity name={`${titleText} · ${wantToGoLabel}`} properties={properties} show={show} position={position} onClick={onClick} billboard={billboard} />
+}, sameEntityProps)
+
+type RouteEntityProps = {
+  name: string
+  show: boolean
+  dashed: boolean
+  isActive: boolean
+  isMuted: boolean
+  selectedAccent: string
+  positions: Cartesian3[]
+}
+const sameRouteProps = (a: RouteEntityProps, b: RouteEntityProps) => (Object.keys(a) as (keyof RouteEntityProps)[]).every((key) => Object.is(a[key], b[key]))
+const RouteEntity = memo(function RouteEntity({ name, show, dashed, isActive, isMuted, selectedAccent, positions }: RouteEntityProps) {
+  const polyline = useMemo(() => {
+    const routeColor = Color.fromCssColorString(isActive ? selectedAccent : '#bae6fd').withAlpha(isActive ? 0.94 : isMuted ? 0.1 : 0.42)
+    const routeOutlineColor = Color.fromCssColorString(isActive ? '#f8fafc' : '#38bdf8').withAlpha(isActive ? 0.58 : isMuted ? 0.04 : 0.22)
+    return {
+      arcType: ArcType.NONE,
+      clampToGround: false,
+      material: dashed ? new PolylineDashMaterialProperty({ color: routeColor, dashLength: 16 }) : new PolylineOutlineMaterialProperty({
+        color: routeColor,
+        outlineColor: routeOutlineColor,
+        outlineWidth: isActive ? 1.2 : 0.8,
+      }),
+      positions,
+      width: isActive ? 4 : isMuted ? 1 : 2,
+    }
+  }, [dashed, isActive, isMuted, selectedAccent, positions])
+  return <Entity name={name} show={show} polyline={polyline} />
+}, sameRouteProps)
+
+/** Route positions by their ends and kind: the same arrays after a save (a route entity updates only when it moved). */
+const routePositionsCache = new Map<string, Cartesian3[]>()
+const cachedRoutePositions = (fromLng: number, fromLat: number, toLng: number, toLat: number, kind: Parameters<typeof createRoutePositions>[4]) => {
+  const key = `${fromLng},${fromLat},${toLng},${toLat},${kind}`
+  let positions = routePositionsCache.get(key)
+  if (!positions) {
+    positions = createRoutePositions(fromLng, fromLat, toLng, toLat, kind)
+    routePositionsCache.set(key, positions)
+  }
+  return positions
+}
+
+// 3C-5 D: memoized (App passes stable callbacks; see App.tsx).
+export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
   hoveredCountryId,
   imageryBrightness,
   imageryContrast,
@@ -621,6 +832,16 @@ export function CesiumAtlasGlobe({
 }: CesiumAtlasGlobeProps) {
   const { locale, t } = useUiLocale()
   const { droneMediaById, droneMediaItems } = useDroneMedia()
+  // 3C-5 D: stable handlers and labels for the memoized entities.
+  const selectCityStable = useStableCallback((cityId: string) => onSelectCity(cityId))
+  const selectWantToGoPlaceStable = useStableCallback((entityId: string) => onSelectWantToGoPlace?.(entityId))
+  const uncertainDateLabel = t('journey:uncertainDate')
+  const wantToGoLabel = t('wantToGo')
+  // 3C-5 D: the entities' elements, kept while their props are the same (a save creates only the changed ones).
+  const routeElements = useElementCache<RouteEntityProps>(sameRouteProps)
+  const travelElements = useElementCache<TravelCityEntityProps>(sameEntityProps)
+  const wantToGoElements = useElementCache<WantToGoPlaceEntityProps>(sameEntityProps)
+  const badgeElements = useElementCache<WantToGoBadgeEntityProps>(sameEntityProps)
   // The debug camera API reads the current drone media through this ref, so new data do not reinstall it.
   const droneMediaByIdRef = useRef(droneMediaById)
   useEffect(() => { droneMediaByIdRef.current = droneMediaById }, [droneMediaById])
@@ -901,15 +1122,7 @@ export function CesiumAtlasGlobe({
   const mappedCities = useMemo<LayerPlace[]>(() => layerData.places, [layerData])
   // RFC-LOC-1 Core-A：每个地点标记在 Cesium Entity 的 properties 上带它的实体 id（地点 id），
   // 按实体 id 比较地图上的标记集合（AC-8 的语义键）就不必依赖名字。心形徽标是同一地点的附属标记，
-  // 用另一个键 badgeForEntityId，不与地点标记混在一起计数。按地点缓存，引用随 layerData 稳定。
-  const placeMarkerProperties = useMemo(
-    () => new Map(mappedCities.map((city) => [city.entityId, { entityId: city.entityId }])),
-    [mappedCities],
-  )
-  const wantToGoBadgeProperties = useMemo(
-    () => new Map(mappedCities.map((city) => [city.entityId, { badgeForEntityId: city.entityId }])),
-    [mappedCities],
-  )
+  // 用另一个键 badgeForEntityId，不与地点标记混在一起计数。3C-5 D：每个标记组件按自己的实体 id 记住它（TravelCityEntity 等）。
   // 状态药丸：足迹数字只数足迹地点，与 PR3 口径一致；想去数含同时在足迹层的地点（FR-MR-5 按身份合并）。
   const travelPlaceCount = useMemo(
     () => mappedCities.filter((city) => city.layerIds.includes(TRAVEL_LAYER_ID)).length,
@@ -927,7 +1140,7 @@ export function CesiumAtlasGlobe({
         fromCityId: route.fromSourceId,
         toCityId: route.toSourceId,
         type: route.kind,
-        positions: createRoutePositions(
+        positions: cachedRoutePositions(
           route.fromLng,
           route.fromLat,
           route.toLng,
@@ -1734,6 +1947,10 @@ export function CesiumAtlasGlobe({
     viewerReadyVersion,
   ])
 
+  routeElements.begin()
+  travelElements.begin()
+  wantToGoElements.begin()
+  badgeElements.begin()
   return (
     <div
       ref={globeShellRef}
@@ -1825,76 +2042,34 @@ export function CesiumAtlasGlobe({
             cameraFocus.type !== 'droneItem' &&
             (visibleRouteIds?.has(route.id) ?? true) &&
             (selectionMode !== 'city' || isCityRoute)
-          const routeColor = Color.fromCssColorString(
-            isActive ? selectedAccent : '#bae6fd',
-          ).withAlpha(
-            isActive ? 0.94 : isMuted ? 0.1 : 0.42,
-          )
-          const routeOutlineColor = Color.fromCssColorString(
-            isActive ? '#f8fafc' : '#38bdf8',
-          ).withAlpha(
-            isActive ? 0.58 : isMuted ? 0.04 : 0.22,
-          )
-
-          return (
-            <Entity
-              key={route.id}
-              name={`${route.journeyId}: ${route.fromCityId} to ${route.toCityId}${route.dateMatch === 'uncertain' ? ` · ${t('journey:uncertainDate')}` : ''}`}
-              show={showMapContent && isVisible}
-              polyline={{
-                arcType: ArcType.NONE,
-                clampToGround: false,
-                material: route.dateMatch === 'uncertain' ? new PolylineDashMaterialProperty({ color: routeColor, dashLength: 16 }) : new PolylineOutlineMaterialProperty({
-                  color: routeColor,
-                  outlineColor: routeOutlineColor,
-                  outlineWidth: isActive ? 1.2 : 0.8,
-                }),
-                positions: route.positions,
-                width: isActive ? 4 : isMuted ? 1 : 2,
-              }}
-            />
-          )
+          const props: RouteEntityProps = {
+            name: `${route.journeyId}: ${route.fromCityId} to ${route.toCityId}${route.dateMatch === 'uncertain' ? ` · ${uncertainDateLabel}` : ''}`,
+            show: showMapContent && isVisible,
+            dashed: route.dateMatch === 'uncertain',
+            isActive,
+            isMuted,
+            selectedAccent,
+            positions: route.positions,
+          }
+          return routeElements.element(route.id, props, () => <RouteEntity key={route.id} {...props} />)
         })}
 
         {mappedCities.map((city) => {
-          // 纯想去地点（FR-MR-4 / PRD §9.3）：与足迹城市同尺寸的空心圆，想去 accent 描边。
-          // 不参与国家高亮、悬停光晕与 isCountryCity 放大；非总览时与其他非本国城市一样变淡。
-          // 点击只打开详情卡（FR-WTG-4），sourceId 就是它的 entityId（地点 id），半球裁剪照常生效。
+          const show = showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)
           if (!city.layerIds.includes(TRAVEL_LAYER_ID)) {
-            const isMuted = selectionMode !== 'overview'
-            const title = resolveName(city.title, locale) || city.sourceId
-
-            return (
-              <Entity
-                key={city.sourceId}
-                name={`${title} · ${t('wantToGo')}`}
-                properties={placeMarkerProperties.get(city.entityId)}
-                show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
-                position={cityPosition(city.lng, city.lat)}
-                onClick={() => onSelectWantToGoPlace?.(city.entityId)}
-                point={{
-                  color: Color.fromCssColorString(wantToGoAccent).withAlpha(isMuted ? 0.05 : 0.18),
-                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                  outlineColor: Color.fromCssColorString(wantToGoAccent).withAlpha(isMuted ? 0.36 : 1),
-                  outlineWidth: 2,
-                  pixelSize: 7,
-                }}
-                label={{
-                  backgroundColor: Color.fromCssColorString('#0f172a').withAlpha(0.72),
-                  fillColor: Color.WHITE,
-                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                  font: '600 13px Inter, sans-serif',
-                  outlineColor: Color.BLACK,
-                  outlineWidth: 2,
-                  pixelOffset: new Cartesian2(0, -28),
-                  // 足迹的标签只在"选中城市 / 当前国家的城市"上显示；纯想去地点两者都不是。
-                  show: false,
-                  showBackground: true,
-                  style: LabelStyle.FILL_AND_OUTLINE,
-                  text: title,
-                }}
-              />
-            )
+            const props: WantToGoPlaceEntityProps = {
+              sourceId: city.sourceId,
+              entityId: city.entityId,
+              title: city.title,
+              locale,
+              wantToGoLabel,
+              show,
+              lng: city.lng,
+              lat: city.lat,
+              isMuted: selectionMode !== 'overview',
+              onSelect: selectWantToGoPlaceStable,
+            }
+            return wantToGoElements.element(city.sourceId, props, () => <WantToGoPlaceEntity key={city.sourceId} {...props} />)
           }
 
           const isSelected = city.sourceId === selectedCityId
@@ -1902,103 +2077,49 @@ export function CesiumAtlasGlobe({
             hoveredCountryId !== undefined && city.countryId === hoveredCountryId
           const isCountryCity =
             selectedCountryId !== undefined && city.countryId === selectedCountryId
-          const accent = city.accent ?? '#38bdf8'
-          // 保持原 `?? 1` 的显示语义：没有到访记录时也显示 1（对等测试按此约定）。
-          const visitCount = city.visitCount || 1
-          const isMuted =
-            selectionMode !== 'overview' && !isSelected && !isCountryCity
-          const corePixelSize = isCountryCity ? 12 : 7
-          const showHoverGlow = isHoveredCountryCity && !isSelected
-
-          return (
-            <Entity
-              key={city.sourceId}
-              name={`${resolveName(city.title, locale) || city.sourceId} · ${t('visitRecords', { count: visitCount })}`}
-              properties={placeMarkerProperties.get(city.entityId)}
-              show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
-              position={cityPosition(city.lng, city.lat)}
-              onClick={() => onSelectCity(city.sourceId)}
-              billboard={showHoverGlow ? {
-                color: Color.WHITE,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                height: 38,
-                image: cityHoverMarkerImage(accent, corePixelSize),
-                width: 38,
-              } : undefined}
-              point={showHoverGlow ? undefined : {
-                color: Color.fromCssColorString(accent).withAlpha(isMuted ? 0.28 : 1),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                outlineColor: Color.WHITE.withAlpha(isMuted ? 0.36 : 0.94),
-                outlineWidth: isSelected ? 3 : 2,
-                pixelSize: isSelected ? 18 : corePixelSize,
-              }}
-              label={{
-                backgroundColor: Color.fromCssColorString(
-                  isSelected ? accent : '#0f172a',
-                ).withAlpha(isSelected ? 0.9 : 0.72),
-                fillColor: Color.WHITE,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                font: isSelected ? '700 15px Inter, sans-serif' : '600 13px Inter, sans-serif',
-                outlineColor: Color.BLACK,
-                outlineWidth: 2,
-                pixelOffset: new Cartesian2(0, -28),
-                show: isSelected || isCountryCity,
-                showBackground: true,
-                style: LabelStyle.FILL_AND_OUTLINE,
-                text: resolveName(city.title, locale) || city.sourceId,
-              }}
-              ellipse={isSelected ? {
-                height: 300,
-                material: Color.fromCssColorString(accent).withAlpha(0.14),
-                outline: true,
-                outlineColor: Color.fromCssColorString(accent).withAlpha(0.88),
-                semiMajorAxis: 42_000,
-                semiMinorAxis: 42_000,
-              } : undefined}
-            />
-          )
+          const props: TravelCityEntityProps = {
+            sourceId: city.sourceId,
+            entityId: city.entityId,
+            title: city.title,
+            locale,
+            // 保持原 `?? 1` 的显示语义：没有到访记录时也显示 1（对等测试按此约定）。
+            visitLabel: t('visitRecords', { count: city.visitCount || 1 }),
+            show,
+            lng: city.lng,
+            lat: city.lat,
+            accent: city.accent ?? '#38bdf8',
+            isSelected,
+            isCountryCity,
+            isMuted: selectionMode !== 'overview' && !isSelected && !isCountryCity,
+            showHoverGlow: isHoveredCountryCity && !isSelected,
+            onSelect: selectCityStable,
+          }
+          return travelElements.element(city.sourceId, props, () => <TravelCityEntity key={city.sourceId} {...props} />)
         })}
 
         {mappedCities.map((city) => {
-          // FR-MR-5：足迹 + 想去同一地点。足迹标记（上面那个 Entity）一字不改，
-          // 另起一个独立 Entity 在右上角叠心形徽标；显隐条件与所属标记相同。
-          // 已知限制：Cesium 把"关闭深度测试"实现为把顶点推到近平面，point 用 LEQUAL、
-          // billboard 用 LESS，所以徽标与【相邻城市】的点重叠时总在点的下面（世界视角下的冰岛）。
           if (!city.layerIds.includes(TRAVEL_LAYER_ID) || !city.layerIds.includes(WANT_TO_GO_LAYER_ID)) {
             return null
           }
           const isSelected = city.sourceId === selectedCityId
           const isCountryCity =
             selectedCountryId !== undefined && city.countryId === selectedCountryId
-          const isMuted =
-            selectionMode !== 'overview' && !isSelected && !isCountryCity
-          // 默认（7px、无标签）偏移 (9, -9)。标记放大且显示城市名时（选中 / 当前国家的城市），
-          // 标签底边约在 -15px，徽标改贴标记右侧、略高于中心，免得被标签盖住（同上面的深度限制）。
-          const hasLabel = isSelected || isCountryCity
-          const markerPixelSize = isSelected ? 18 : isCountryCity ? 12 : 7
-          const badgeOffset = hasLabel
-            ? new Cartesian2(markerPixelSize / 2 + 7, -6)
-            : new Cartesian2(9, -9)
-
-          return (
-            <Entity
-              key={`${city.sourceId}__want-to-go-badge`}
-              name={`${resolveName(city.title, locale) || city.sourceId} · ${t('wantToGo')}`}
-              properties={wantToGoBadgeProperties.get(city.entityId)}
-              show={showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)}
-              position={cityPosition(city.lng, city.lat)}
-              // 徽标属于足迹地点：点它与点足迹标记一样进入城市。
-              onClick={() => onSelectCity(city.sourceId)}
-              billboard={{
-                color: Color.WHITE.withAlpha(isMuted ? 0.36 : 1),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                height: 14,
-                image: wantToGoBadgeImage(wantToGoAccent),
-                pixelOffset: badgeOffset,
-                width: 14,
-              }}
-            />
-          )
+          const key = `${city.sourceId}__want-to-go-badge`
+          const props: WantToGoBadgeEntityProps = {
+            sourceId: city.sourceId,
+            entityId: city.entityId,
+            title: city.title,
+            locale,
+            wantToGoLabel,
+            show: showMapContent && (visibleCityIds?.has(city.sourceId) ?? true),
+            lng: city.lng,
+            lat: city.lat,
+            isMuted: selectionMode !== 'overview' && !isSelected && !isCountryCity,
+            hasLabel: isSelected || isCountryCity,
+            markerPixelSize: isSelected ? 18 : isCountryCity ? 12 : 7,
+            onSelect: selectCityStable,
+          }
+          return badgeElements.element(key, props, () => <WantToGoBadgeEntity key={key} {...props} />)
         })}
 
         {activeDroneMediaItems.map((item, index) => {
@@ -2065,4 +2186,4 @@ export function CesiumAtlasGlobe({
       </div>
     </div>
   )
-}
+})

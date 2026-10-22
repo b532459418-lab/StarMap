@@ -13,8 +13,9 @@
  * - `storeBaseRevision()`: the revision of the data the page shows, for the editor's writes (undefined when the page
  *   does not write to a library).
  */
-import { useSyncExternalStore } from 'react'
-import { computeSnapshot, createAppStore, type AppSnapshot } from './appStoreCore.ts'
+import { createContext, createElement, useContext, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { computeSnapshot, createAppStore, createHeldSource, type AppSnapshot, type SnapshotSource } from './appStoreCore.ts'
+export type { AppSnapshot } from './appStoreCore.ts'
 import { appDataSource, loadAppReadModel, sampleReadModel, sessionNow, storeModuleRevision, usesSampleData } from './rawInputs.ts'
 import { readModelOf } from '../worldgraph/readModel/build.ts'
 import { emptyFormalState } from '../worldgraph/store/formal.ts'
@@ -35,16 +36,57 @@ if (!usesSampleData) {
   })
 }
 
-/** The whole snapshot (status, revision, read model, official view, derived data). */
-export function useAppSnapshot(): AppSnapshot {
-  return useSyncExternalStore(appStore.subscribe, appStore.getSnapshot)
+/** Where the hooks read the snapshots: the store, or a part of the page that is not shown (`HoldDataWhileHidden`). */
+const SnapshotSourceContext = createContext<SnapshotSource>(appStore)
+
+/**
+ * 3C-5 D: a part of the page that is not shown (a page behind another one, the map's panels behind a page) reads, through
+ * the hooks, the data it had when it was hidden: it does not render again after every save. When it is shown again, it
+ * takes the latest data (before the browser paints). It stays mounted, so its own state (scroll position, filters,
+ * open drafts) is kept. Its parent holds the values it passes down (../components/PausedWhileHidden.tsx skips the
+ * renders, ../components/useHeldWhileHidden.ts holds one value).
+ */
+export function HoldDataWhileHidden({ visible, children }: { visible: boolean; children: ReactNode }) {
+  const [source] = useState(() => createHeldSource(appStore))
+  useLayoutEffect(() => source.hold(!visible), [source, visible])
+  return createElement(SnapshotSourceContext, { value: source }, children)
 }
 
-/** The derived data of the six data modules. */
+/** The whole snapshot (status, revision, read model, official view, derived data). */
+export function useAppSnapshot(): AppSnapshot {
+  const source = useContext(SnapshotSourceContext)
+  return useSyncExternalStore(source.subscribe, source.getSnapshot)
+}
+
+/**
+ * A part of the snapshot: the component renders again only when `selector` gives another value (Object.is). The data
+ * store keeps the identity of what a save did not change (./appStoreCore.ts: shared sections of the official view, the
+ * derivation steps it did not have to run again), so a selector of an unchanged part keeps its value. `selector` must
+ * give the same value for the same snapshot (a part of it, or a primitive), never a new object each time.
+ */
+export function useAppSelector<T>(selector: (snapshot: AppSnapshot) => T): T {
+  const source = useContext(SnapshotSourceContext)
+  return useSyncExternalStore(source.subscribe, () => selector(source.getSnapshot()))
+}
+
+/** The derived data of the six data modules (all of them: renders again after every change; prefer a section). */
 export const useAppData = () => useAppSnapshot().appData
 
-/** The time query context of the data on the page (computed the first time it is asked for). */
-export const useTimeQueryContext = () => useAppSnapshot().timeQueryContext()
+const selectSection = <K extends keyof AppSnapshot['appData']>(key: K) => (snapshot: AppSnapshot) => snapshot.appData[key]
+const selectors = {
+  travelAtlas: selectSection('travelAtlas'),
+  editorState: selectSection('editorState'),
+  mediaCatalog: selectSection('mediaCatalog'),
+  droneMedia: selectSection('droneMedia'),
+  wantToGo: selectSection('wantToGo'),
+  worldGraph: selectSection('worldGraph'),
+}
+/** One section of the derived data (the six data modules' hooks): renders again only when that section changed. */
+export const useAppSection = <K extends keyof typeof selectors>(key: K): AppSnapshot['appData'][K] => useAppSelector(selectors[key] as (snapshot: AppSnapshot) => AppSnapshot['appData'][K])
+
+const selectTimeQueryContext = (snapshot: AppSnapshot) => snapshot.timeQueryContext()
+/** The time query context of the data on the page (computed the first time it is asked for; kept while its inputs are). */
+export const useTimeQueryContext = () => useAppSelector(selectTimeQueryContext)
 
 /**
  * The store revision of the data the page shows, for the editor's writes (`x-starmap-base-revision`): undefined when the

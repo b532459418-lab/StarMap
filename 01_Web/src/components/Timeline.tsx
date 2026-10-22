@@ -1,8 +1,8 @@
 import { usePlaceNames } from '../i18n/usePlaceNames'
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, Clock3, MapPin, Sparkles } from 'lucide-react'
-import { useTravelAtlas } from '../data/travelAtlas'
+import type { useTravelAtlas } from '../data/travelAtlas'
 import type { JourneyDay } from '../types/travel'
 import { buildBrowseTimeProjection, journeyTimeContext, type BrowseTimeProjection } from '../data/derive/browseTimeProjection'
 import { countryFlagUrl } from './countryFlagUrl'
@@ -11,12 +11,14 @@ type TimelineProps = {
   selectedDayId: string
   onSelectDay: (day: JourneyDay) => void
   projection?: BrowseTimeProjection
+  /** 3C-5 D: the travel data from the App (held while the journey page is hidden), not read here. */
+  travel: Pick<ReturnType<typeof useTravelAtlas>, 'cityById' | 'countryById' | 'journeyDays'>
 }
 
-export function Timeline({ selectedDayId, onSelectDay, projection }: TimelineProps) {
+export const Timeline = memo(function Timeline({ selectedDayId, onSelectDay, projection, travel }: TimelineProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
-  const { cityById, countryById, journeyDays } = useTravelAtlas()
+  const { cityById, countryById, journeyDays } = travel
   const browse = useMemo(() => projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {}), [projection, journeyDays, cityById])
   const unknownDate = t('journey:unknownDate')
   const uncertainDate = t('journey:uncertainDate')
@@ -118,4 +120,4 @@ export function Timeline({ selectedDayId, onSelectDay, projection }: TimelinePro
       </div>
     </section>
   )
-}
+})

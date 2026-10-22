@@ -2,7 +2,7 @@ import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { Check, ChevronDown, Drone, GripVertical, MapPin, Plus, RotateCcw, Settings2, SlidersHorizontal, Undo2, X } from 'lucide-react'
 import { withoutListedCountries } from '../data/countrySearchFilter'
 import { useDroneMedia } from '../data/droneMedia'
@@ -13,11 +13,12 @@ import { countryListProbe } from '../data/draftProbes'
 import { countryDraftOperations, hideIdsOperation, restoreHiddenOperation } from '../data/editorStateDelta'
 import type { CountrySearchOption } from '../data/localEditorApi'
 import { useTravelAtlas } from '../data/travelAtlas'
-import type { CityId, CountryId } from '../types/travel'
+import type { City, CityId, Country, CountryId } from '../types/travel'
 import { countryFlagUrl } from './countryFlagUrl'
 import { LocationSearchField } from './LocationSearchField'
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { useFlipLayout } from './useFlipLayout'
+import { useStableCallback } from './useStableCallback'
 
 type CountrySelectorProps = {
   /** Browsing only. Sorting, hiding, restoring and add checks retain complete inputs. */
@@ -78,7 +79,6 @@ export function CountrySelector({
   onResetView,
 }: CountrySelectorProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
-  const { name, subtitle } = usePlaceNames()
   const { countries, getCitiesForCountry, shouldHideCityFromNavigation } = useTravelAtlas()
   const travelAtlasEditorState = useTravelAtlasEditorState()
   const { hasDroneMedia } = useDroneMedia()
@@ -289,6 +289,29 @@ export function CountrySelector({
     if (globeScaleInputRef.current) globeScaleInputRef.current.value = String(globeDistance)
   }, [globeDistance])
 
+  // 3C-5 D: what the rows do, stable (the rows are memoized: after a save only the rows whose values changed render).
+  const moveCountryAtPointerStable = useStableCallback(moveCountryAtPointer)
+  const moveCountryByStepStable = useStableCallback(moveCountryByStep)
+  const onSelectCountryStable = useStableCallback(onSelectCountry)
+  const onHoverCountryStable = useStableCallback(onHoverCountry)
+  const onSelectCityStable = useStableCallback(onSelectCity)
+  const onSelectDroneMediaStable = useStableCallback(onSelectDroneMedia)
+  const setDragPointer = useCallback((pointerId: number | undefined) => { countryDragPointerRef.current = pointerId }, [])
+  const isDragPointer = useCallback((pointerId: number) => countryDragPointerRef.current === pointerId, [])
+  const rowActions = useMemo<CountryRowActions>(() => ({
+    setDragPointer,
+    isDragPointer,
+    setDraggedCountryId,
+    setDraftCountryIds,
+    setDraftHiddenCountryIds,
+    moveCountryAtPointer: moveCountryAtPointerStable,
+    moveCountryByStep: moveCountryByStepStable,
+    onSelectCountry: onSelectCountryStable,
+    onHoverCountry: onHoverCountryStable,
+    onSelectCity: onSelectCityStable,
+    onSelectDroneMedia: onSelectDroneMediaStable,
+  }), [setDragPointer, isDragPointer, moveCountryAtPointerStable, moveCountryByStepStable, onSelectCountryStable, onHoverCountryStable, onSelectCityStable, onSelectDroneMediaStable])
+
   const commitGlobeDistance = (distance: number) => {
     const hasChanged = Math.abs(distance - committedDistanceRef.current) > 0.001
 
@@ -380,203 +403,22 @@ export function CountrySelector({
       <div ref={countryListRef} className="atlas-country-list atlas-panel-body selector-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto">
         {displayCountries.map((country) => {
           if (!country) return null
-          const isSelected = country.id === selectedCountry?.id
-          const flagUrl = countryFlagUrl(country.flagCode)
           const countryCities = getCitiesForCountry(country.id).filter((city) => !shouldHideCityFromNavigation(city)
             && (isEditingCountries || browseCityIds === undefined || browseCityIds.has(city.id)))
 
           return (
-            <div
+            <CountryRow
               key={country.id}
-              data-flip-id={country.id}
-              data-country-sort-id={country.id}
-              className="country-disclosure"
-              data-editing={isEditingCountries}
-              data-dragging={draggedCountryId === country.id}
-            >
-              {isEditingCountries ? (
-                <div className="atlas-local-editor-row-tools">
-                  <button
-                    type="button"
-                    className="atlas-local-editor-drag"
-                    aria-label={t('editor:dragFor', { name: name(country) })}
-                    title={t('editor:dragHelp')}
-                    onPointerDown={(event) => {
-                      if (event.button !== 0) return
-                      event.preventDefault()
-                      countryDragPointerRef.current = event.pointerId
-                      event.currentTarget.setPointerCapture(event.pointerId)
-                      setDraggedCountryId(country.id)
-                    }}
-                    onPointerMove={(event) => {
-                      if (countryDragPointerRef.current !== event.pointerId) return
-                      moveCountryAtPointer(country.id, event.clientY)
-                    }}
-                    onPointerUp={(event) => {
-                      if (countryDragPointerRef.current !== event.pointerId) return
-                      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-                      countryDragPointerRef.current = undefined
-                      setDraggedCountryId(undefined)
-                    }}
-                    onPointerCancel={() => {
-                      countryDragPointerRef.current = undefined
-                      setDraggedCountryId(undefined)
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'ArrowUp') {
-                        event.preventDefault()
-                        moveCountryByStep(country.id, -1)
-                      }
-                      if (event.key === 'ArrowDown') {
-                        event.preventDefault()
-                        moveCountryByStep(country.id, 1)
-                      }
-                    }}
-                  ><GripVertical /></button>
-                  <button
-                    type="button"
-                    className="atlas-local-editor-hide"
-                    aria-label={t('editor:hideFor', { name: name(country) })}
-                    title={t('editor:hideUndo')}
-                    onClick={() => {
-                      if (!window.confirm(t('editor:hideConfirm', { name: name(country) }))) return
-                      setDraftCountryIds((current) => current.filter((id) => id !== country.id))
-                      setDraftHiddenCountryIds((current) => [...new Set([...current, country.id])])
-                    }}
-                  >
-                    <X />
-                  </button>
-                </div>
-              ) : null}
-              <button
-                type="button"
-                aria-expanded={isSelected}
-                data-selected={isSelected}
-                onClick={() => {
-                  if (!isEditingCountries) onSelectCountry(country.id)
-                }}
-                onPointerEnter={(event) => {
-                  if (event.pointerType === 'mouse') onHoverCountry(country.id)
-                }}
-                onPointerLeave={(event) => {
-                  if (event.pointerType === 'mouse') onHoverCountry(undefined)
-                }}
-                style={{ '--country-color': country.accent } as React.CSSProperties}
-                className={`atlas-country-button group flex w-full items-center justify-between gap-3 rounded-full border px-3.5 py-2.5 text-left transition duration-300 ${
-                  isSelected
-                    ? 'border-slate-950 bg-slate-950 text-white shadow-[0_18px_40px_rgba(15,23,42,0.2)]'
-                    : 'border-white/70 bg-white/55 text-slate-700 hover:-translate-y-0.5 hover:bg-white/85'
-                }`}
-              >
-                <span className="flex min-w-0 items-center gap-3">
-                  <span
-                    className={`grid size-9 shrink-0 place-items-center overflow-hidden rounded-full border shadow-sm ${
-                      isSelected ? 'border-white/15 bg-white/12' : 'border-white/80 bg-white/75'
-                    }`}
-                    aria-hidden="true"
-                  >
-                    {flagUrl ? (
-                      <img
-                        alt=""
-                        className="h-full w-full object-cover"
-                        src={flagUrl}
-                      />
-                    ) : (
-                      <span className="text-base">{country.flag ?? ''}</span>
-                    )}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold tracking-normal">{name(country)}</span>
-                    <span className={isSelected ? 'block truncate text-xs text-slate-300' : 'block truncate text-xs text-slate-400'}>
-                      {subtitle(country)}
-                    </span>
-                  </span>
-                </span>
-                <span
-                  className="size-2.5 rounded-full shadow-[0_0_18px_var(--country-color)]"
-                  style={{ backgroundColor: country.accent }}
-                  aria-hidden="true"
-                />
-              </button>
-
-              <div
-                className="country-city-disclosure"
-                data-open={isSelected}
-                aria-hidden={!isSelected}
-              >
-                <div className="min-h-0 overflow-hidden">
-                  <div className="relative ml-4 mt-2 space-y-1.5 border-l border-dashed border-slate-300/80 pb-1 pl-4 pr-1">
-                    <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                      <MapPin className="size-3 text-sky-600" />
-                      {t('details:visitedCities')}</div>
-
-                    {countryCities.map((city, index) => {
-                      const isCitySelected = city.id === selectedCityId
-                      const cityHasDroneMedia = hasDroneMedia(city.id)
-                      const isDroneMediaActive = city.id === activeDroneMediaCityId
-
-                      return (
-                        <div
-                          key={city.id}
-                          className="country-city-item relative"
-                          style={{ '--city-index': index } as React.CSSProperties}
-                        >
-                          <div className="relative">
-                            <span
-                              className={`absolute -left-[20px] top-1/2 size-2 -translate-y-1/2 rounded-full border shadow-sm ${
-                                isCitySelected
-                                  ? 'border-sky-500 bg-sky-500 shadow-[0_0_16px_rgba(14,165,233,0.48)]'
-                                  : 'border-white bg-slate-300'
-                              }`}
-                              aria-hidden="true"
-                            />
-                            <button
-                              type="button"
-                              disabled={!isSelected}
-                              onClick={() => onSelectCity(city.id)}
-                              data-selected={isCitySelected}
-                              className={`atlas-city-button flex w-full items-center justify-between gap-2 rounded-full border px-3 py-2 text-left text-xs font-semibold transition duration-200 ${
-                                isCitySelected
-                                  ? 'border-sky-400 bg-sky-500 text-white shadow-[0_10px_26px_rgba(14,165,233,0.3)]'
-                                  : 'border-white/75 bg-white/64 text-slate-600 hover:border-sky-200 hover:bg-white/90 hover:text-slate-950'
-                              }`}
-                            >
-                              <span className="min-w-0 truncate">
-                                {name(city)}{' '}
-                                <span className={`atlas-city-name-en ${isCitySelected ? 'text-sky-100' : 'font-medium text-slate-400'}`}>
-                                  {subtitle(city)}
-                                </span>
-                              </span>
-                              {cityHasDroneMedia ? (
-                                <span
-                                  className="drone-city-indicator grid size-6 shrink-0 place-items-center rounded-full"
-                                  title={t('details:droneAvailable')}
-                                  aria-label={t('details:droneAvailable')}
-                                >
-                                  <Drone className="size-3.5" />
-                                </span>
-                              ) : null}
-                            </button>
-                          </div>
-
-                          {isCitySelected && cityHasDroneMedia ? (
-                            <button
-                              type="button"
-                              onClick={() => onSelectDroneMedia(city.id)}
-                              data-active={isDroneMediaActive}
-                              className="drone-media-entry ml-3 mt-1.5 flex w-[calc(100%-12px)] items-center gap-2 rounded-full border px-3 py-2 text-left text-[11px] font-semibold transition duration-200"
-                            >
-                              <Drone className="size-3.5 shrink-0" />
-                              <span className="truncate">{t('details:droneMedia')}</span>
-                            </button>
-                          ) : null}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
+              country={country}
+              isSelected={country.id === selectedCountry?.id}
+              isEditing={isEditingCountries}
+              isDragging={draggedCountryId === country.id}
+              cities={countryCities}
+              selectedCityId={countryCities.some((city) => city.id === selectedCityId) ? selectedCityId : undefined}
+              activeDroneMediaCityId={countryCities.some((city) => city.id === activeDroneMediaCityId) ? activeDroneMediaCityId : undefined}
+              droneCityIds={JSON.stringify(countryCities.filter((city) => hasDroneMedia(city.id)).map((city) => city.id))}
+              actions={rowActions}
+            />
           )
         })}
       </div>
@@ -721,3 +563,280 @@ export function CountrySelector({
     </aside>
   )
 }
+
+type CountryCityListProps = {
+  /** The cities of the country that the list shows. */
+  cities: readonly City[]
+  /** The country is selected: its list is open. */
+  isSelected: boolean
+  /** The selected city and the city whose drone media are shown, when they are among these cities. */
+  selectedCityId?: CityId
+  activeDroneMediaCityId?: CityId
+  /** The ids of these cities that have drone media, as JSON (a value, compared as such). */
+  droneCityIds: string
+  onSelectCity: (cityId: CityId) => void
+  onSelectDroneMedia: (cityId: CityId) => void
+}
+
+/** The same cities: the same ids and names (the data store makes new objects after a save). */
+const sameCities = (a: readonly City[], b: readonly City[]) => a === b
+  || JSON.stringify(a.map((city) => [city.id, city.nameZh, city.nameEn])) === JSON.stringify(b.map((city) => [city.id, city.nameZh, city.nameEn]))
+
+/**
+ * 3C-5 D: a country's cities, memoized on their values: after a save (the list of countries renders again, e.g. when the
+ * order was saved), only the lists whose cities or selection changed render again.
+ */
+const CountryCityList = memo(function CountryCityList({
+  cities, isSelected, selectedCityId, activeDroneMediaCityId, droneCityIds, onSelectCity, onSelectDroneMedia,
+}: CountryCityListProps) {
+  const { t } = useTranslation(['details'])
+  const { name, subtitle } = usePlaceNames()
+  const droneCities = new Set(JSON.parse(droneCityIds) as string[])
+  return (
+    <>
+      {cities.map((city, index) => {
+        const isCitySelected = city.id === selectedCityId
+        const cityHasDroneMedia = droneCities.has(city.id)
+        const isDroneMediaActive = city.id === activeDroneMediaCityId
+
+        return (
+          <div
+            key={city.id}
+            className="country-city-item relative"
+            style={{ '--city-index': index } as React.CSSProperties}
+          >
+            <div className="relative">
+              <span
+                className={`absolute -left-[20px] top-1/2 size-2 -translate-y-1/2 rounded-full border shadow-sm ${
+                  isCitySelected
+                    ? 'border-sky-500 bg-sky-500 shadow-[0_0_16px_rgba(14,165,233,0.48)]'
+                    : 'border-white bg-slate-300'
+                }`}
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                disabled={!isSelected}
+                onClick={() => onSelectCity(city.id)}
+                data-selected={isCitySelected}
+                className={`atlas-city-button flex w-full items-center justify-between gap-2 rounded-full border px-3 py-2 text-left text-xs font-semibold transition duration-200 ${
+                  isCitySelected
+                    ? 'border-sky-400 bg-sky-500 text-white shadow-[0_10px_26px_rgba(14,165,233,0.3)]'
+                    : 'border-white/75 bg-white/64 text-slate-600 hover:border-sky-200 hover:bg-white/90 hover:text-slate-950'
+                }`}
+              >
+                <span className="min-w-0 truncate">
+                  {name(city)}{' '}
+                  <span className={`atlas-city-name-en ${isCitySelected ? 'text-sky-100' : 'font-medium text-slate-400'}`}>
+                    {subtitle(city)}
+                  </span>
+                </span>
+                {cityHasDroneMedia ? (
+                  <span
+                    className="drone-city-indicator grid size-6 shrink-0 place-items-center rounded-full"
+                    title={t('details:droneAvailable')}
+                    aria-label={t('details:droneAvailable')}
+                  >
+                    <Drone className="size-3.5" />
+                  </span>
+                ) : null}
+              </button>
+            </div>
+
+            {isCitySelected && cityHasDroneMedia ? (
+              <button
+                type="button"
+                onClick={() => onSelectDroneMedia(city.id)}
+                data-active={isDroneMediaActive}
+                className="drone-media-entry ml-3 mt-1.5 flex w-[calc(100%-12px)] items-center gap-2 rounded-full border px-3 py-2 text-left text-[11px] font-semibold transition duration-200"
+              >
+                <Drone className="size-3.5 shrink-0" />
+                <span className="truncate">{t('details:droneMedia')}</span>
+              </button>
+            ) : null}
+          </div>
+        )
+      })}
+    </>
+  )
+}, (a, b) => a.isSelected === b.isSelected && a.selectedCityId === b.selectedCityId && a.activeDroneMediaCityId === b.activeDroneMediaCityId
+  && a.droneCityIds === b.droneCityIds && a.onSelectCity === b.onSelectCity && a.onSelectDroneMedia === b.onSelectDroneMedia && sameCities(a.cities, b.cities))
+
+/** What a country row does (stable: see `rowActions`). */
+type CountryRowActions = {
+  /** The pointer that drags a row (kept by the list: its window listeners follow it too). */
+  setDragPointer: (pointerId: number | undefined) => void
+  isDragPointer: (pointerId: number) => boolean
+  setDraggedCountryId: Dispatch<SetStateAction<CountryId | undefined>>
+  setDraftCountryIds: Dispatch<SetStateAction<CountryId[]>>
+  setDraftHiddenCountryIds: Dispatch<SetStateAction<CountryId[]>>
+  moveCountryAtPointer: (countryId: CountryId, clientY: number) => void
+  moveCountryByStep: (countryId: CountryId, step: -1 | 1) => void
+  onSelectCountry: (countryId: CountryId) => void
+  onHoverCountry: (countryId?: CountryId) => void
+  onSelectCity: (cityId: CityId) => void
+  onSelectDroneMedia: (cityId: CityId) => void
+}
+
+type CountryRowProps = {
+  country: Country
+  isSelected: boolean
+  isEditing: boolean
+  isDragging: boolean
+} & Omit<CountryCityListProps, 'isSelected' | 'onSelectCity' | 'onSelectDroneMedia'> & { actions: CountryRowActions }
+
+/** The same country for its row: the values the row shows (the data store makes new objects after a save). */
+const countryValues = (country: Country) => [country.id, country.accent, country.flagCode, country.flag, country.nameZh, country.nameEn]
+
+/**
+ * 3C-5 D: one country of the list, memoized on its values: a save, or the saving state, renders only the rows whose
+ * values changed (leaving the editing mode still renders them all).
+ */
+const CountryRow = memo(function CountryRow({
+  country, isSelected, isEditing, isDragging, cities, selectedCityId, activeDroneMediaCityId, droneCityIds, actions,
+}: CountryRowProps) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { name, subtitle } = usePlaceNames()
+  const flagUrl = countryFlagUrl(country.flagCode)
+  return (
+    <div
+      data-flip-id={country.id}
+      data-country-sort-id={country.id}
+      className="country-disclosure"
+      data-editing={isEditing}
+      data-dragging={isDragging}
+    >
+      {isEditing ? (
+        <div className="atlas-local-editor-row-tools">
+          <button
+            type="button"
+            className="atlas-local-editor-drag"
+            aria-label={t('editor:dragFor', { name: name(country) })}
+            title={t('editor:dragHelp')}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return
+              event.preventDefault()
+              actions.setDragPointer(event.pointerId)
+              event.currentTarget.setPointerCapture(event.pointerId)
+              actions.setDraggedCountryId(country.id)
+            }}
+            onPointerMove={(event) => {
+              if (!actions.isDragPointer(event.pointerId)) return
+              actions.moveCountryAtPointer(country.id, event.clientY)
+            }}
+            onPointerUp={(event) => {
+              if (!actions.isDragPointer(event.pointerId)) return
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+              actions.setDragPointer(undefined)
+              actions.setDraggedCountryId(undefined)
+            }}
+            onPointerCancel={() => {
+              actions.setDragPointer(undefined)
+              actions.setDraggedCountryId(undefined)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowUp') {
+                event.preventDefault()
+                actions.moveCountryByStep(country.id, -1)
+              }
+              if (event.key === 'ArrowDown') {
+                event.preventDefault()
+                actions.moveCountryByStep(country.id, 1)
+              }
+            }}
+          ><GripVertical /></button>
+          <button
+            type="button"
+            className="atlas-local-editor-hide"
+            aria-label={t('editor:hideFor', { name: name(country) })}
+            title={t('editor:hideUndo')}
+            onClick={() => {
+              if (!window.confirm(t('editor:hideConfirm', { name: name(country) }))) return
+              actions.setDraftCountryIds((current) => current.filter((id) => id !== country.id))
+              actions.setDraftHiddenCountryIds((current) => [...new Set([...current, country.id])])
+            }}
+          >
+            <X />
+          </button>
+        </div>
+      ) : null}
+      <button
+        type="button"
+        aria-expanded={isSelected}
+        data-selected={isSelected}
+        onClick={() => {
+          if (!isEditing) actions.onSelectCountry(country.id)
+        }}
+        onPointerEnter={(event) => {
+          if (event.pointerType === 'mouse') actions.onHoverCountry(country.id)
+        }}
+        onPointerLeave={(event) => {
+          if (event.pointerType === 'mouse') actions.onHoverCountry(undefined)
+        }}
+        style={{ '--country-color': country.accent } as React.CSSProperties}
+        className={`atlas-country-button group flex w-full items-center justify-between gap-3 rounded-full border px-3.5 py-2.5 text-left transition duration-300 ${
+          isSelected
+            ? 'border-slate-950 bg-slate-950 text-white shadow-[0_18px_40px_rgba(15,23,42,0.2)]'
+            : 'border-white/70 bg-white/55 text-slate-700 hover:-translate-y-0.5 hover:bg-white/85'
+        }`}
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <span
+            className={`grid size-9 shrink-0 place-items-center overflow-hidden rounded-full border shadow-sm ${
+              isSelected ? 'border-white/15 bg-white/12' : 'border-white/80 bg-white/75'
+            }`}
+            aria-hidden="true"
+          >
+            {flagUrl ? (
+              <img
+                alt=""
+                className="h-full w-full object-cover"
+                src={flagUrl}
+              />
+            ) : (
+              <span className="text-base">{country.flag ?? ''}</span>
+            )}
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold tracking-normal">{name(country)}</span>
+            <span className={isSelected ? 'block truncate text-xs text-slate-300' : 'block truncate text-xs text-slate-400'}>
+              {subtitle(country)}
+            </span>
+          </span>
+        </span>
+        <span
+          className="size-2.5 rounded-full shadow-[0_0_18px_var(--country-color)]"
+          style={{ backgroundColor: country.accent }}
+          aria-hidden="true"
+        />
+      </button>
+
+      <div
+        className="country-city-disclosure"
+        data-open={isSelected}
+        aria-hidden={!isSelected}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="relative ml-4 mt-2 space-y-1.5 border-l border-dashed border-slate-300/80 pb-1 pl-4 pr-1">
+            <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+              <MapPin className="size-3 text-sky-600" />
+              {t('details:visitedCities')}</div>
+
+            <CountryCityList
+              cities={cities}
+              isSelected={isSelected}
+              selectedCityId={selectedCityId}
+              activeDroneMediaCityId={activeDroneMediaCityId}
+              droneCityIds={droneCityIds}
+              onSelectCity={actions.onSelectCity}
+              onSelectDroneMedia={actions.onSelectDroneMedia}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}, (a, b) => a.isSelected === b.isSelected && a.isEditing === b.isEditing && a.isDragging === b.isDragging
+  && a.selectedCityId === b.selectedCityId && a.activeDroneMediaCityId === b.activeDroneMediaCityId && a.droneCityIds === b.droneCityIds
+  && a.actions === b.actions && sameCities(a.cities, b.cities)
+  && (a.country === b.country || JSON.stringify(countryValues(a.country)) === JSON.stringify(countryValues(b.country))))
