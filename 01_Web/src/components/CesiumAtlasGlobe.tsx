@@ -837,6 +837,18 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
   const selectWantToGoPlaceStable = useStableCallback((entityId: string) => onSelectWantToGoPlace?.(entityId))
   const uncertainDateLabel = t('journey:uncertainDate')
   const wantToGoLabel = t('wantToGo')
+  // The label of a number of visit records, once per number and language (the entities' labels; a save renders all of them).
+  const visitLabelOf = useMemo(() => {
+    const labels = new Map<number, string>()
+    return (count: number) => {
+      let label = labels.get(count)
+      if (label === undefined) {
+        label = t('visitRecords', { count })
+        labels.set(count, label)
+      }
+      return label
+    }
+  }, [t])
   // 3C-5 D: the entities' elements, kept while their props are the same (a save creates only the changed ones).
   const routeElements = useElementCache<RouteEntityProps>(sameRouteProps)
   const travelElements = useElementCache<TravelCityEntityProps>(sameEntityProps)
@@ -2083,7 +2095,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
             title: city.title,
             locale,
             // 保持原 `?? 1` 的显示语义：没有到访记录时也显示 1（对等测试按此约定）。
-            visitLabel: t('visitRecords', { count: city.visitCount || 1 }),
+            visitLabel: visitLabelOf(city.visitCount || 1),
             show,
             lng: city.lng,
             lat: city.lat,

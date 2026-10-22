@@ -19,7 +19,7 @@
  *   context, and in ms after the click when applying began, when React had committed, when the result showed); and
  *   the browser's own durations over the run (CDP Performance.getMetrics: script, style, layout, all tasks).
  * - While the page has not yet rendered a new revision (3C-5 D: <html data-starmap-revision>), each frame looks only at
- *   that attribute, so the measurement itself adds little work to the page.
+ *   that attribute; then only at the target control (attribute selectors), so the measurement adds little work.
  * - Prints and writes { scale, ops: { <op>: { runs, reloaded, totalMs: stats, timings: [...] } } }.
  * - `--profile <prefix>` (diagnostics): the first run of each operation under the CPU profiler of the page; the profile
  *   goes to <prefix>-<op>.cpuprofile and the functions with the most self time are printed.
@@ -153,7 +153,9 @@ try {
           const browser = Object.fromEntries(['ScriptDuration', 'RecalcStyleDuration', 'LayoutDuration', 'TaskDuration'].map((key) => [key.replace('Duration', 'Ms'), Math.round((after[key] - before[key]) * 1000)]))
           return { ...answer, totalMs: Math.round(answer.totalMs * 10) / 10, browser }
         }
-        throw new Error('timed out')
+        // Diagnostics: what the page shows when the result never came.
+        if (out) await page.screenshot({ path: `${out}.timeout.png` })
+        throw new Error(`timed out: ${(await page.locator('body').innerText()).split(/[ \n\t]+/).join(' ').slice(0, 1500)}`)
       } catch (error) {
         // The page reloaded during the evaluation (before 3C-5 D): wait for the new document and look again.
         if (!/context was destroyed|navigation|Target closed|Execution context/i.test(String(error?.message))) throw error
@@ -180,8 +182,10 @@ try {
       await page.getByRole('button', { name: `Edit note for ${name}`, exact: true }).click()
       await page.locator('.collection-card').filter({ has: page.getByRole('heading', { name, exact: true }) }).locator('textarea').fill(text)
       record('note', await measure('note', `Save note for ${name}`, ({ name, text }) => {
-        const card = [...document.querySelectorAll('.collection-card')].find((candidate) => candidate.querySelector('h4')?.textContent === name)
-        const edit = card && [...card.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === `Edit note for ${name}`)
+        // Only the target card is looked at (an attribute selector, not every card in script). It is the want-to-go card of
+        // the place: a planned entry of the same place has the same heading, and no note button.
+        const edit = document.querySelector(`.collection-card button[aria-label=${JSON.stringify(`Edit note for ${name}`)}]`)
+        const card = edit?.closest('.collection-card')
         return Boolean(card?.querySelector('.collection-card-note')?.textContent?.includes(text) && edit && !edit.disabled)
       }, { name, text }))
     }
@@ -192,7 +196,7 @@ try {
       const name = `City ${visibleItems[runs + run]}`
       await page.getByRole('button', { name: `Hide: ${name}`, exact: true }).scrollIntoViewIfNeeded()
       record('hide', await measure('hide', `Hide: ${name}`, ({ name }) => {
-        const restore = [...document.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === `Restore: ${name}`)
+        const restore = document.querySelector(`button[aria-label=${JSON.stringify(`Restore: ${name}`)}]`)
         return Boolean(restore && !restore.disabled)
       }, { name }))
     }
@@ -205,7 +209,7 @@ try {
       await page.getByRole('button', { name: /^Drag to reorder / }).first().focus()
       await page.keyboard.press('ArrowDown')
       record('order', await measure('order', 'Save country changes', ({ first }) => {
-        const edit = [...document.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'Edit visited countries')
+        const edit = document.querySelector('button[aria-label="Edit visited countries"]')
         const top = document.querySelector('.atlas-country-list [data-country-sort-id]')?.getAttribute('data-country-sort-id')
         return Boolean(edit && !edit.disabled && top && top !== first)
       }, { first }))

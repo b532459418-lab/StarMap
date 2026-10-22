@@ -1,4 +1,5 @@
 import type * as LocalEditorApiModule from './localEditorApi.ts'
+import { flushSync } from 'react-dom'
 import { localEditorAvailable } from './editorState'
 import { appStore, storeBaseRevision } from './appStore.ts'
 import { loadAppReadModel, storeModuleRevision } from './rawInputs'
@@ -40,8 +41,12 @@ export const loadLocalEditorApi = (): Promise<LocalEditorApi> => import.meta.env
         const sync = createStoreSync({
           store: appStore,
           loadWhole: async () => { const loaded = await loadAppReadModel(); return loaded.error ? undefined : loaded },
+          // The data of a save and the end of the save (the editor closes) render together, once.
+          batch: (work) => flushSync(work),
         })
-        api.setLocalEditorStoreSync({ baseRevision: storeBaseRevision, applySaved: sync.applySaved, pull: sync.pull, waitForServer: sync.waitForServer })
+        api.setLocalEditorStoreSync({
+          baseRevision: storeBaseRevision, applySaved: sync.applySaved, writeStarted: sync.writeStarted, pull: sync.pull, waitForServer: sync.waitForServer,
+        })
         listenToDevServer(sync, import.meta.hot)
       }
       return (loadedApi = api)

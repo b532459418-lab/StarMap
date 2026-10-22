@@ -12,7 +12,9 @@
  * - `createAppStore(initial)`: the mutable cell around the snapshots: getSnapshot / subscribe for React, `replace`,
  *   `apply` and `fail`. Listeners run after each new snapshot.
  *
- * The time query context is computed the first time it is asked for (only time filters read it).
+ * The time query context is computed the first time it is asked for (only time filters read it). The page's queries
+ * (`snapshot.queries`: the places and routes of the visible layers, the browse projection of the time filters, the
+ * Collection) are computed the same way, once per snapshot and arguments, and kept while their inputs are.
  *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types),
  * so it has no Vite import: ./appStore.ts wires it to the page's data source.
@@ -25,7 +27,14 @@ import { officialViewOf } from './store/projectCanonical.ts'
 import { applyReadModelDelta } from '../worldgraph/readModel/delta.ts'
 import { READ_MODEL_TABLES, type ReadModel, type ReadModelTable } from '../worldgraph/readModel/types.ts'
 import { validateRowBase } from '../worldgraph/store/rows.ts'
-import type { TimeQueryContext } from '../worldgraph/timeQuery.ts'
+import type { LayerTimeFilters, TimeQueryContext } from '../worldgraph/timeQuery.ts'
+import { queryVisiblePlaces, type LayerQueryResult } from '../worldgraph/query.ts'
+import { queryCollection, type CollectionEntry } from '../worldgraph/collection.ts'
+import type { LanguageTag } from '../worldgraph/localizedText.ts'
+import type { LayerId } from '../worldgraph/types.ts'
+import { isTimeFilterActive } from '../worldgraph/timeFilter.ts'
+import { WANT_TO_GO_LAYER_ID } from '../worldgraph/layers.ts'
+import { buildBrowseTimeProjection, type BrowseTimeProjection } from './derive/browseTimeProjection.ts'
 
 /**
  * The App's data did not load: which address (the dev server's endpoint, the personal build's data file, or the
@@ -66,6 +75,8 @@ export interface AppSnapshot {
   readonly appData: AppData
   /** The time query context of the same official view, computed when first asked for. */
   readonly timeQueryContext: () => TimeQueryContext
+  /** The page's queries on this snapshot (see SnapshotQueries). */
+  readonly queries: SnapshotQueries
   /** How long this snapshot took (ms): applying the changed rows (after a commit), the official view, the derived data, and
    * the time query context once it was asked for. For measurements (3C-5 D, design §1: the target is ≤400 ms in all). */
   readonly timings: SnapshotTimings
@@ -97,12 +108,43 @@ export interface SnapshotOptions {
   readonly cache?: SnapshotCache
 }
 
-/** What the store keeps between snapshots: the derivation steps, and the time query context with its inputs. */
+/**
+ * 3C-5 D: the page's queries on a snapshot, computed once per snapshot and arguments, outside React (the App's
+ * components read them through hooks, ./appStore.ts): the same arguments on the same data give the same object, and
+ * a query whose inputs a save did not change is not run again (with the store's cache, across snapshots).
+ */
+export interface SnapshotQueries {
+  /** The places and routes of the visible layers, within the time filters when given (without an active filter, the
+   *  same result as without filters: the time query context is then not read). */
+  visiblePlaces(layerIds: readonly LayerId[], filters?: LayerTimeFilters): LayerQueryResult
+  /** The browse projection of the time filters (records, places and counts within them). */
+  browseProjection(filters: LayerTimeFilters): BrowseTimeProjection
+  /** The Collection: every entry of the want-to-go layer, sorted for the UI language. */
+  collection(locale: LanguageTag): CollectionEntry[]
+}
+
+/** What the store keeps between snapshots: the derivation steps, the time query context and the queries, with their inputs. */
 export interface SnapshotCache {
   readonly derive: DeriveCache
   timeContext?: { readonly inputs: readonly unknown[]; readonly value: TimeQueryContext }
+  /** The last results of each query (a few: two consumers can ask with different arguments), most recent first. */
+  readonly queries: Map<string, { readonly inputs: readonly unknown[]; readonly value: unknown }[]>
 }
-export const createSnapshotCache = (): SnapshotCache => ({ derive: createDeriveCache() })
+export const createSnapshotCache = (): SnapshotCache => ({ derive: createDeriveCache(), queries: new Map() })
+
+const QUERY_RESULTS_KEPT = 4
+/** The result of query `name` for `inputs` (compared with Object.is): the kept one, or `compute()` kept for next time. */
+function cachedQuery<T>(queries: SnapshotCache['queries'], name: string, inputs: readonly unknown[], compute: () => T): T {
+  const kept = queries.get(name) ?? []
+  const hit = kept.find((entry) => entry.inputs.length === inputs.length && entry.inputs.every((input, index) => Object.is(input, inputs[index])))
+  if (hit) return hit.value as T
+  const value = compute()
+  queries.set(name, [{ inputs, value }, ...kept].slice(0, QUERY_RESULTS_KEPT))
+  return value
+}
+/** Time filters as a value (equal filters, equal key); undefined when none is active. */
+const activeFiltersKey = (filters: LayerTimeFilters | undefined) => (filters && Object.values(filters).some((filter) => filter !== undefined && isTimeFilterActive(filter))
+  ? JSON.stringify(filters) : undefined)
 
 /** The official view with every section that equals the previous one's replaced by it (and the whole view when all do). */
 function shareSections(previous: CanonicalData, next: CanonicalData): CanonicalData {
@@ -144,6 +186,20 @@ export function computeSnapshot(
     ...(options.startedAt !== undefined ? { startedAt: options.startedAt } : {}), ...(options.deltaMs !== undefined ? { deltaMs: options.deltaMs } : {}), officialMs, ...(reconcileMs !== undefined ? { reconcileMs } : {}), deriveMs: elapsed(started),
   }
   const cache = options.cache
+  // The queries' results: kept by the store across snapshots, or by this snapshot alone (one computed without the store,
+  // e.g. the sample's, which no other replaces): the same arguments always give the same object (React needs that).
+  const queries = cache?.queries ?? new Map()
+  const timeQueryContext = lazy(() => {
+    // It reads the editor state, the places, the travel records and the want-to-go items (not the media).
+    const inputs = [canonical.editorState, canonical.places, canonical.travel, canonical.wantToGo]
+    const last = cache?.timeContext
+    if (last && last.inputs.every((input, index) => input === inputs[index])) return last.value
+    const begun = performance.now()
+    const context = deriveTimeQueryContext(canonical)
+    timings.timeContextMs = elapsed(begun)
+    if (cache) cache.timeContext = { inputs, value: context }
+    return context
+  })
   return Object.freeze({
     status: options.status ?? 'ready',
     ...(options.error ? { error: options.error } : {}),
@@ -152,16 +208,25 @@ export function computeSnapshot(
     model,
     canonical,
     appData,
-    timeQueryContext: lazy(() => {
-      // It reads the editor state, the places, the travel records and the want-to-go items (not the media).
-      const inputs = [canonical.editorState, canonical.places, canonical.travel, canonical.wantToGo]
-      const last = cache?.timeContext
-      if (last && last.inputs.every((input, index) => input === inputs[index])) return last.value
-      const begun = performance.now()
-      const context = deriveTimeQueryContext(canonical)
-      timings.timeContextMs = elapsed(begun)
-      if (cache) cache.timeContext = { inputs, value: context }
-      return context
+    timeQueryContext,
+    queries: Object.freeze({
+      visiblePlaces(layerIds: readonly LayerId[], filters?: LayerTimeFilters) {
+        const graph = appData.worldGraph.worldGraphSnapshot
+        const filtersKey = activeFiltersKey(filters)
+        // Without an active filter the time query context is not an input (a save that changes only it keeps the result).
+        const context = filtersKey === undefined ? undefined : timeQueryContext()
+        return cachedQuery(queries, 'visiblePlaces', [graph, JSON.stringify(layerIds), filtersKey, context], () => (filtersKey === undefined || !filters || !context
+          ? queryVisiblePlaces(graph, layerIds)
+          : queryVisiblePlaces(graph, layerIds, { context, filters })))
+      },
+      browseProjection(filters: LayerTimeFilters) {
+        const context = timeQueryContext()
+        return cachedQuery(queries, 'browseProjection', [context, JSON.stringify(filters)], () => buildBrowseTimeProjection(context, filters))
+      },
+      collection(locale: LanguageTag) {
+        const graph = appData.worldGraph.worldGraphSnapshot
+        return cachedQuery(queries, 'collection', [graph, locale], () => queryCollection(graph, WANT_TO_GO_LAYER_ID, locale))
+      },
     }),
     timings,
   })

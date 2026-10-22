@@ -4,7 +4,7 @@ import { memo, useCallback, useId, useMemo, useState } from 'react'
 import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
 import { deleteHiddenLocalWantToGo, updateLocalWantToGo } from '../data/localEditorClient'
-import { useDraft } from '../data/drafts'
+import { once, useDraft } from '../data/drafts'
 import { wishProbe } from '../data/draftProbes'
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { useElementCache } from './useElementCache'
@@ -345,15 +345,17 @@ const CollectionCard = memo(function CollectionCard({
   if (fromTravelLog) tags.push({ id: 'travel-log', label: t('readOnlyTravel') })
   if (isSample) tags.push({ id: 'sample', label: t('sample') })
 
-  const runWrite = (action: () => Promise<unknown>, failureKey: string) => {
+  const runWrite = (action: (options: { onApplied: () => void }) => Promise<unknown>, failureKey: string) => {
     setBusy(true)
     setNotice('')
-    void action()
-      // 3C-5 D: the saved data are on the page when the write resolves (no reload); the note editor closes.
-      .then(() => {
-        if (editingNote) endNoteDraft()
-        setBusy(false)
-      })
+    // 3C-5 D: the saved data are on the page when the write resolves (no reload); the note editor closes. The end of the
+    // write renders together with its data (onApplied), once.
+    const finish = once(() => {
+      if (editingNote) endNoteDraft()
+      setBusy(false)
+    })
+    void action({ onApplied: finish })
+      .then(finish)
       .catch((error: unknown) => {
         // 失败留在卡片里说明，不刷新。
         setNotice(editorErrorNotice(error, `collection:${failureKey}`))
@@ -371,23 +373,23 @@ const CollectionCard = memo(function CollectionCard({
   const saveNote = () => {
     if (!writableId) return
     // 空串即删除备注（端点负责 trim 与删除）。
-    runWrite(() => updateLocalWantToGo(writableId, { note: noteDraft }, noteDraftHandle.writeOptions()), 'saveFailed')
+    runWrite((done) => updateLocalWantToGo(writableId, { note: noteDraft }, { ...noteDraftHandle.writeOptions(), ...done }), 'saveFailed')
   }
 
   const hideEntry = () => {
     if (!writableId) return
-    runWrite(() => updateLocalWantToGo(writableId, { hidden: true }), 'hideFailed')
+    runWrite((done) => updateLocalWantToGo(writableId, { hidden: true }, done), 'hideFailed')
   }
 
   const restoreEntry = () => {
     if (!writableId) return
-    runWrite(() => updateLocalWantToGo(writableId, { hidden: false }), 'restoreFailed')
+    runWrite((done) => updateLocalWantToGo(writableId, { hidden: false }, done), 'restoreFailed')
   }
 
   const deleteEntry = () => {
     if (!writableId) return
     if (!window.confirm(t('deleteConfirm', { name }))) return
-    runWrite(() => deleteHiddenLocalWantToGo([writableId]), 'deleteFailed')
+    runWrite((done) => deleteHiddenLocalWantToGo([writableId], done), 'deleteFailed')
   }
 
   return (

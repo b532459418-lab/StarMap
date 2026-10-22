@@ -53,6 +53,19 @@ interface DraftState<V> {
   readonly baseValue: V
 }
 
+/**
+ * 3C-5 D (review F): the end of a save, run once: it is passed as the write's `onApplied` (so it renders with the
+ * saved data) and called again when the write resolves (for a write that applied nothing on the page).
+ */
+export function once(end: () => void): () => void {
+  let ended = false
+  return () => {
+    if (ended) return
+    ended = true
+    end()
+  }
+}
+
 const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 /** The selected JSON when the record is gone (JSON.stringify(undefined) is undefined), and without a draft. */
 const GONE = 'starmap:draft:gone'

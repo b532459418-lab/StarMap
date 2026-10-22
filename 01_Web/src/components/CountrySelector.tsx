@@ -8,7 +8,7 @@ import { withoutListedCountries } from '../data/countrySearchFilter'
 import { useDroneMedia } from '../data/droneMedia'
 import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
 import { addLocalCountry, applyLocalViewOperations, deleteHiddenLocalCountries, searchLocalCountries } from '../data/localEditorClient'
-import { useDraft } from '../data/drafts'
+import { once, useDraft } from '../data/drafts'
 import { countryListProbe } from '../data/draftProbes'
 import { countryDraftOperations, hideIdsOperation, restoreHiddenOperation } from '../data/editorStateDelta'
 import type { CountrySearchOption } from '../data/localEditorApi'
@@ -161,11 +161,13 @@ export function CountrySelector({
   const saveCountryDraft = async () => {
     setIsSaving(true)
     setEditorNotice({ key: 'editor:saving' })
+    // 3C-5 D: the editor closes in the same render as the saved data (onApplied), once.
+    const saved = once(countryDraftSaved)
     try {
       await applyLocalViewOperations(countryDraftOperations({
         draftCountryIds, baselineCountryOrder, baselineHiddenCountryIds, draftHiddenCountryIds,
-      }), countryDraft.writeOptions())
-      countryDraftSaved()
+      }), { ...countryDraft.writeOptions(), onApplied: saved })
+      saved()
     } catch (error) {
       setEditorNotice(editorErrorNotice(error, 'editor:saveFailed'))
       setIsSaving(false)
@@ -175,10 +177,11 @@ export function CountrySelector({
   const restoreHiddenCountries = async () => {
     if (draftHiddenCountryIds.length === 0) return
     setIsSaving(true)
+    const saved = once(countryDraftSaved)
     try {
       // Only the countries listed here; a country hidden elsewhere after this page loaded stays hidden (D1).
-      await applyLocalViewOperations([restoreHiddenOperation('countries', draftHiddenCountryIds)], countryDraft.writeOptions())
-      countryDraftSaved()
+      await applyLocalViewOperations([restoreHiddenOperation('countries', draftHiddenCountryIds)], { ...countryDraft.writeOptions(), onApplied: saved })
+      saved()
     } catch (error) {
       setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
       setIsSaving(false)
@@ -210,9 +213,10 @@ export function CountrySelector({
     }
     setIsSaving(true)
     setEditorNotice({ key: 'editor:creatingCountry' })
+    const saved = once(countryDraftSaved)
     try {
-      await addLocalCountry(selectedCountryOption.countryCode, countryVisitedDate, countryDraft.writeOptions())
-      countryDraftSaved()
+      await addLocalCountry(selectedCountryOption.countryCode, countryVisitedDate, { ...countryDraft.writeOptions(), onApplied: saved })
+      saved()
     } catch (error) {
       setEditorNotice(editorErrorNotice(error, 'editor:createFailed'))
       setIsSaving(false)

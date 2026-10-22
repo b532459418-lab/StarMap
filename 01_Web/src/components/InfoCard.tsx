@@ -7,7 +7,7 @@ import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-re
 import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
 import { getMediaSource, useMediaCatalog } from '../data/mediaCatalog'
 import { addLocalTravelRecord, applyLocalViewOperations, deleteHiddenLocalMedia, journeyChoiceCandidatesOf, placeChoiceCandidatesOf, searchLocalCities } from '../data/localEditorClient'
-import { useDraft } from '../data/drafts'
+import { once, useDraft } from '../data/drafts'
 import { cityListProbe, photoListProbe } from '../data/draftProbes'
 import { placeChoiceKey, placeChoiceStateOf, type PlaceChoiceState } from '../data/placeChoice.ts'
 import { journeyChoiceInput, journeyChoiceKey, journeyChoiceStateOf, type JourneyChoiceState } from '../data/journeyChoice.ts'
@@ -211,11 +211,13 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     if (!country || editorActionBusy) return
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:savingCities' })
+    // 3C-5 D: the editor closes in the same render as the saved data (onApplied), once.
+    const saved = once(() => draftSaved(cityDraft))
     try {
       await applyLocalViewOperations(cityDraftOperations({
         countryId: country.id, draftCityIds, baselineCityIds: baselineCityOrder, baselineHiddenCityIds, draftHiddenCityIds,
-      }), cityDraft.writeOptions())
-      draftSaved(cityDraft)
+      }), { ...cityDraft.writeOptions(), onApplied: saved })
+      saved()
     } catch (error) {
       setEditorNotice(editorErrorNotice(error, 'editor:saveFailed'))
       setEditorBusy(false)
@@ -226,11 +228,12 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     if (!city || editorActionBusy) return
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:savingPhotos' })
+    const saved = once(() => draftSaved(photoDraft))
     try {
       await applyLocalViewOperations(photoDraftOperations({
         cityId: city.id, draftPhotoIds, baselinePhotoIds: baselinePhotoOrder, baselineHiddenPhotoIds, draftHiddenPhotoIds, draftCoverPhotoId,
-      }), photoDraft.writeOptions())
-      draftSaved(photoDraft)
+      }), { ...photoDraft.writeOptions(), onApplied: saved })
+      saved()
     } catch (error) {
       setEditorNotice(editorErrorNotice(error, 'editor:saveFailed'))
       setEditorBusy(false)
@@ -730,7 +733,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                   if (editorActionBusy) return
                   setEditorBusy(true)
                   // Only the cities listed here; a city hidden elsewhere after this page loaded stays hidden (D1).
-                  void applyLocalViewOperations([restoreHiddenOperation('cities', hiddenCityIdsForCountry)], cityDraft.writeOptions()).then(() => draftSaved(cityDraft)).catch((error: unknown) => {
+                  const saved = once(() => draftSaved(cityDraft))
+                  void applyLocalViewOperations([restoreHiddenOperation('cities', hiddenCityIdsForCountry)], { ...cityDraft.writeOptions(), onApplied: saved }).then(saved).catch((error: unknown) => {
                     setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
                     setEditorBusy(false)
                   })
@@ -750,7 +754,8 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                     event.stopPropagation()
                     if (editorActionBusy) return
                     setEditorBusy(true)
-                    void applyLocalViewOperations([restoreHiddenOperation('media', hiddenPhotoIdsForCity)], photoDraft.writeOptions()).then(() => draftSaved(photoDraft)).catch((error: unknown) => {
+                    const saved = once(() => draftSaved(photoDraft))
+                    void applyLocalViewOperations([restoreHiddenOperation('media', hiddenPhotoIdsForCity)], { ...photoDraft.writeOptions(), onApplied: saved }).then(saved).catch((error: unknown) => {
                       setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
                       setEditorBusy(false)
                     })

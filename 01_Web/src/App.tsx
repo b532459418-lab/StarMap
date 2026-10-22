@@ -30,9 +30,9 @@ import { localEditorAvailable } from './data/editorState'
 import type { LocalConvertToTravelResult } from './data/localEditorApi'
 import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
 import { readLayerTimeFilters, rememberLayerTimeFilters } from './data/layerTimeFilters'
-import { HoldDataWhileHidden, useTimeQueryContext } from './data/appStore'
+import { HoldDataWhileHidden, useBrowseProjection, useCollectionEntries, useVisiblePlaces } from './data/appStore'
 import { PausedWhileHidden } from './components/PausedWhileHidden'
-import { buildBrowseTimeProjection, includedBrowseRecordKeys, countMappedTravelRecords } from './data/derive/browseTimeProjection'
+import { includedBrowseRecordKeys, countMappedTravelRecords } from './data/derive/browseTimeProjection'
 import { coordinateForRecord } from './data/derive/travelAtlas'
 import { wantToGoCardRecordOf, type WantToGoCardRecord } from './data/derive/wantToGo'
 import { City3DToggle } from './extensions/City3DToggle'
@@ -48,10 +48,8 @@ import { useWorldGraph } from './data/worldGraph'
 import { useUiLocale } from './i18n/useUiLocale'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
 import { useWantToGo } from './data/wantToGo'
-import { queryCollection } from './worldgraph/collection'
 import type { CollectionEntry } from './worldgraph/collection'
 import { officialLayers, TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from './worldgraph/layers'
-import { queryVisiblePlaces } from './worldgraph/query'
 import { isTimeFilterActive } from './worldgraph/timeFilter'
 import type { LayerTimeFilters as TimeFilterState } from './worldgraph/timeQuery'
 import { recordRefKey } from './worldgraph/recordIdentity'
@@ -116,7 +114,6 @@ function App() {
   const { droneMediaById, hasDroneMedia } = useDroneMedia()
   const { worldGraphSnapshot } = useWorldGraph()
   const { hiddenWantToGoItems } = useWantToGo()
-  const timeQueryContext = useTimeQueryContext()
   // 概览视角目标点（PR3c），由这里传给地图，地图不再自己读 travelAtlas。
   const overviewTarget = travelAtlasDisplay.overviewTarget
   useEffect(() => {
@@ -429,9 +426,11 @@ function App() {
     () => officialLayers.filter((layer) => layerVisibility[layer.id] !== false).map((layer) => layer.id),
     [layerVisibility],
   )
-  const layerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds, { context: timeQueryContext, filters: timeFilters }), [worldGraphSnapshot, visibleLayerIds, timeQueryContext, timeFilters])
-  const unfilteredLayerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds), [worldGraphSnapshot, visibleLayerIds])
-  const browseProjection = useMemo(() => buildBrowseTimeProjection(timeQueryContext, timeFilters), [timeQueryContext, timeFilters])
+  // 3C-5 D: the page's queries come from the data store (computed once per snapshot and arguments, kept while their inputs
+  // are; without an active time filter the two place queries are one).
+  const layerData = useVisiblePlaces(visibleLayerIds, timeFilters)
+  const unfilteredLayerData = useVisiblePlaces(visibleLayerIds)
+  const browseProjection = useBrowseProjection(timeFilters)
   const includedRecordKeys = useMemo(() => includedBrowseRecordKeys(browseProjection), [browseProjection])
   const dateQualityCounts = useMemo(() => {
     const counts = { partial: 0, missing: 0, invalid: 0 }
@@ -474,7 +473,7 @@ function App() {
 
   // Collection 列表（PR7）：想去图层的全部条目，含已隐藏与无坐标，不受图层可见性影响（FR-LP-6）。
   // 快照随数据更新（3C-5 D）；语言切换时重算名称排序。
-  const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID, locale), [worldGraphSnapshot, locale])
+  const collectionEntries = useCollectionEntries(locale)
 
   const mappedTravelRecordIds = useMemo(() => new Set(Object.values(cityById).flatMap(city => (city.records ?? []).filter(record => coordinateForRecord(record)).map(record => record.id))), [cityById])
   const atlasStats = useMemo(

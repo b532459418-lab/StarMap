@@ -13,6 +13,10 @@ import { memoryReader } from '../worldgraph/store/reader.ts'
 import type { FormalState } from '../worldgraph/store/formal.ts'
 import { computeSnapshot, createAppStore, createHeldSource, type AppSnapshot, type ReadModelChanges } from './appStoreCore.ts'
 import { buildBaseline, stableStringify } from './derive/baseline.ts'
+import { buildBrowseTimeProjection } from './derive/browseTimeProjection.ts'
+import { queryVisiblePlaces } from '../worldgraph/query.ts'
+import { queryCollection } from '../worldgraph/collection.ts'
+import { TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers.ts'
 import { doubleRunStore, random, randomStep, stepContext } from './editor/doubleRun.fixture.ts'
 import { NATIVE_WRITES } from './editor/native/routes.ts'
 import { viewOf } from './store/diffV2.fixture.ts'
@@ -145,4 +149,41 @@ test('a held source keeps its snapshot without notices; let go, it follows the s
   stop()
   store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
   assert.equal(told, 2, 'no listener: detached from the store')
+})
+
+test('the page queries: one result per snapshot and arguments, equal to the direct query, kept while their inputs are', () => {
+  const state = doubleRunStore(migratedFiles()).state
+  const store = createAppStore(snapshotOf(state), OPTIONS)
+  store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
+  const snapshot = store.getSnapshot()
+  const graph = snapshot.appData.worldGraph.worldGraphSnapshot
+  const layers = [TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID]
+  const places = snapshot.queries.visiblePlaces(layers)
+  assert.equal(snapshot.queries.visiblePlaces([...layers]), places, 'equal arguments: the same object')
+  assert.deepEqual(places, queryVisiblePlaces(graph, layers))
+  // Filters that are not active: the same result, and the time query context is not computed for it.
+  assert.equal(snapshot.queries.visiblePlaces(layers, { travel: { includeUncertain: false } }), places)
+  assert.equal(snapshot.timings.timeContextMs, undefined)
+  const filters = { travel: { from: '2025-01-01', to: '2025-12-31', includeUncertain: false } }
+  const filtered = snapshot.queries.visiblePlaces(layers, filters)
+  assert.deepEqual(filtered, queryVisiblePlaces(graph, layers, { context: snapshot.timeQueryContext(), filters }))
+  assert.equal(snapshot.queries.visiblePlaces(layers, { ...filters }), filtered)
+  const projection = snapshot.queries.browseProjection(filters)
+  assert.equal(snapshot.queries.browseProjection({ ...filters }), projection)
+  assert.deepEqual(projection, buildBrowseTimeProjection(snapshot.timeQueryContext(), filters))
+  const entries = snapshot.queries.collection('en')
+  assert.equal(snapshot.queries.collection('en'), entries)
+  assert.deepEqual(entries, queryCollection(graph, WANT_TO_GO_LAYER_ID, 'en'))
+  // The same data again (another snapshot): the kept results.
+  const again = store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
+  assert.notEqual(again, snapshot)
+  assert.equal(again.queries.visiblePlaces(layers), places)
+  assert.equal(again.queries.visiblePlaces(layers, filters), filtered)
+  assert.equal(again.queries.browseProjection(filters), projection)
+  assert.equal(again.queries.collection('en'), entries)
+  // A snapshot computed without a store (the sample's) keeps its own results: the same arguments, the same object.
+  const alone = snapshotOf(state)
+  assert.equal(alone.queries.visiblePlaces(layers), alone.queries.visiblePlaces([...layers]))
+  assert.equal(alone.queries.browseProjection(filters), alone.queries.browseProjection({ ...filters }))
+  assert.equal(alone.queries.collection('en'), alone.queries.collection('en'))
 })

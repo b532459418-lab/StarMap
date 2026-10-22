@@ -41,7 +41,9 @@ export const setStoreBaseRevision = (revision: number | undefined) => {
  */
 export interface LocalEditorStoreSync {
   baseRevision(): number | undefined
-  applySaved(result: unknown): Promise<void>
+  applySaved(result: unknown, onApplied?: () => void): Promise<void>
+  /** A write started: the revision pushes wait for it (./storeSync.ts); the release is idempotent. */
+  writeStarted(): () => void
   pull(): Promise<void>
   waitForServer(): Promise<void>
 }
@@ -53,10 +55,14 @@ const currentBaseRevision = () => (storeSync ? storeSync.baseRevision() : storeB
  * 3C-5 D: a write's options: the revision its draft is based on (default: the revision of the data on the page), and
  * whether the record the draft concerns changed meanwhile (asked after an E_STALE and the changes fetched: then the
  * write is not sent again but refused with E_DRAFT_CONFLICT, and the editor shows the conflict; ./drafts.ts).
+ * `onApplied`: the editor's end of the save (close the draft, clear the busy state), run once with the applying of the
+ * write's data, so React renders both together (review F; ./storeSync.ts). The write's promise resolves after it; an
+ * editor that also ends the save there makes the end idempotent (./drafts.ts `once`).
  */
 export interface EditorWriteOptions {
   readonly baseRevision?: number
   readonly changedMeanwhile?: () => boolean
+  readonly onApplied?: () => void
 }
 /** E_STALE retries of one write: the changes are fetched and the request sent again on the new revision. */
 export const STALE_RETRIES = 3
@@ -72,27 +78,34 @@ export const STALE_RETRIES = 3
  */
 const sendToStore = async <T>(send: (protocol: StoreWriteHeaders) => Promise<T>, baseRevision: number, options: EditorWriteOptions = {}): Promise<T> => {
   let base = baseRevision
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const sync = storeSync
-      const result = await sendStoreWrite(send, {
-        baseRevision: base, onUnconfirmed: requireLocalEditorReload, ...(sync ? { beforeLastTry: () => sync.waitForServer() } : {}),
-      })
-      if (sync) await sync.applySaved(result)
-      else {
-        const revision = (result as { revision?: unknown }).revision
-        if (typeof revision === 'number') setStoreBaseRevision(revision)
+  // The revision pushes wait while this write is in flight (it applies its own answer); released whatever happens.
+  const release = storeSync?.writeStarted()
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const sync = storeSync
+        const result = await sendStoreWrite(send, {
+          baseRevision: base, onUnconfirmed: requireLocalEditorReload, ...(sync ? { beforeLastTry: () => sync.waitForServer() } : {}),
+        })
+        if (sync) await sync.applySaved(result, options.onApplied)
+        else {
+          const revision = (result as { revision?: unknown }).revision
+          if (typeof revision === 'number') setStoreBaseRevision(revision)
+          options.onApplied?.()
+        }
+        return result
+      } catch (error) {
+        const sync = storeSync
+        if (!sync || !(error instanceof LocalEditorError) || error.code !== 'E_STALE' || attempt >= STALE_RETRIES) throw error
+        await sync.pull()
+        if (options.changedMeanwhile?.()) throw new LocalEditorError({ code: 'E_DRAFT_CONFLICT' })
+        const next = sync.baseRevision()
+        if (next === undefined || next === base) throw error
+        base = next
       }
-      return result
-    } catch (error) {
-      const sync = storeSync
-      if (!sync || !(error instanceof LocalEditorError) || error.code !== 'E_STALE' || attempt >= STALE_RETRIES) throw error
-      await sync.pull()
-      if (options.changedMeanwhile?.()) throw new LocalEditorError({ code: 'E_DRAFT_CONFLICT' })
-      const next = sync.baseRevision()
-      if (next === undefined || next === base) throw error
-      base = next
     }
+  } finally {
+    release?.()
   }
 }
 

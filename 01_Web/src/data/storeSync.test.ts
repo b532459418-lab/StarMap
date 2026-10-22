@@ -122,10 +122,11 @@ test('a 410, or changes that do not apply, read the whole read model again; the 
 })
 
 test('the editor writes with the sync: E_STALE fetches the changes and retries on the new revision with a new request id', async () => {
+  let released = 0
   const sent: { base: string; id: string }[] = []
   let pulls = 0
   let revision = 5
-  setLocalEditorStoreSync({ baseRevision: () => revision, applySaved: async () => {}, pull: async () => { pulls++; revision = 7 }, waitForServer: async () => {} })
+  setLocalEditorStoreSync({ baseRevision: () => revision, applySaved: async () => {}, writeStarted: () => () => { released++ }, pull: async () => { pulls++; revision = 7 }, waitForServer: async () => {} })
   const original = globalThis.fetch
   globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
     const headers = init!.headers as Record<string, string>
@@ -139,12 +140,14 @@ test('the editor writes with the sync: E_STALE fetches the changes and retries o
   assert.deepEqual(sent.map((request) => request.base), ['5', '7'])
   assert.notEqual(sent[0].id, sent[1].id)
   assert.equal(pulls, 1)
+  assert.equal(released, 1, 'the pushes no longer wait for the write')
 })
 
 test('the editor writes with the sync: after an E_STALE, a draft whose record changed meanwhile is not sent again (E_DRAFT_CONFLICT)', async () => {
+  let released = 0
   let sent = 0
   let pulls = 0
-  setLocalEditorStoreSync({ baseRevision: () => 9, applySaved: async () => {}, pull: async () => { pulls++ }, waitForServer: async () => {} })
+  setLocalEditorStoreSync({ baseRevision: () => 9, applySaved: async () => {}, writeStarted: () => () => { released++ }, pull: async () => { pulls++ }, waitForServer: async () => {} })
   const original = globalThis.fetch
   globalThis.fetch = (async () => {
     sent++
@@ -154,12 +157,14 @@ test('the editor writes with the sync: after an E_STALE, a draft whose record ch
     await assert.rejects(updateLocalWantToGo('wish-1', { note: 'Synthetic' }, { baseRevision: 5, changedMeanwhile: () => true }), { code: 'E_DRAFT_CONFLICT' })
   } finally { globalThis.fetch = original; setLocalEditorStoreSync(undefined) }
   assert.deepEqual([sent, pulls], [1, 1], 'the changes fetched, the request not sent again')
+  assert.equal(released, 1, 'released when the write is refused')
 })
 
 test('the editor writes with the sync: an outcome unknown twice waits for the server and tries the same request id once more', async () => {
+  let released = 0
   const ids: string[] = []
   let waited = 0
-  setLocalEditorStoreSync({ baseRevision: () => 3, applySaved: async () => {}, pull: async () => {}, waitForServer: async () => { waited++ } })
+  setLocalEditorStoreSync({ baseRevision: () => 3, applySaved: async () => {}, writeStarted: () => () => { released++ }, pull: async () => {}, waitForServer: async () => { waited++ } })
   const original = globalThis.fetch
   globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
     ids.push((init!.headers as Record<string, string>)[STORE_REQUEST_ID_HEADER])
@@ -172,6 +177,7 @@ test('the editor writes with the sync: an outcome unknown twice waits for the se
   assert.equal(ids.length, 3)
   assert.equal(new Set(ids).size, 1, 'the same request id')
   assert.equal(waited, 1)
+  assert.equal(released, 1)
 })
 
 test('waitForServer: resolves when the server answers again, or after its time', async () => {
@@ -188,4 +194,75 @@ test('waitForServer: resolves when the server answers again, or after its time',
   const started = Date.now()
   await createStoreSync({ store, fetch: (async () => { throw new TypeError('down') }) as typeof globalThis.fetch, loadWhole: async () => undefined, pollMs: 5, timeoutMs: 40 }).waitForServer()
   assert.ok(Date.now() - started < 1000)
+})
+
+/** A page whose sync records its batches and whether a callback ran inside one. */
+function batchedPageOf(lib: ReturnType<typeof library>, pushHoldMs = 10_000) {
+  const store = createAppStore(computeSnapshot(modelOf(lib.state), { ...OPTIONS, identity: LIBRARY }), OPTIONS)
+  const requests: string[] = []
+  let inBatch = false
+  let batches = 0
+  const fetch = (async (input: unknown) => {
+    const url = new URL(String(input), 'http://127.0.0.1')
+    requests.push(url.pathname + url.search)
+    const since = Number(url.searchParams.get('since'))
+    return new Response(JSON.stringify({ ok: true, ...LIBRARY, revision: lib.state.revision, deltas: lib.log.filter((delta) => delta.from >= since) }), { status: 200 })
+  }) as typeof globalThis.fetch
+  const sync = createStoreSync({
+    store, fetch, pollMs: 1, timeoutMs: 50, pushHoldMs,
+    loadWhole: async () => ({ model: modelOf(lib.state), identity: LIBRARY }),
+    batch: (work) => { batches++; inBatch = true; try { work() } finally { inBatch = false } },
+  })
+  /** The end of a save: records the revision it saw and whether it ran in the same batch as the data. */
+  const ends: { revision: number; inBatch: boolean }[] = []
+  const onApplied = () => { ends.push({ revision: store.getSnapshot().revision, inBatch }) }
+  return { store, sync, requests, ends, onApplied, get batches() { return batches } }
+}
+
+test('the end of a save runs once, in the same batch as its data: its own changed rows, or the changes fetched when they do not follow', async () => {
+  const lib = library()
+  const page = batchedPageOf(lib)
+  const own = lib.commit()
+  await page.sync.applySaved({ ok: true, revision: own.to, delta: own }, page.onApplied)
+  assert.deepEqual(page.ends, [{ revision: own.to, inBatch: true }])
+  assert.equal(page.batches, 1, 'one batch: the data and the end together')
+  // Rows that do not follow (a commit of another page between): the end runs with the fetched changes.
+  const between = lib.commit()
+  const next = lib.commit()
+  await page.sync.applySaved({ ok: true, revision: next.to, delta: next }, page.onApplied)
+  assert.deepEqual(page.ends.slice(1), [{ revision: next.to, inBatch: true }])
+  assert.ok(between.to < next.to)
+  assert.equal(page.requests.length, 1)
+  // The data already there (nothing to apply): the save still ends, once.
+  await page.sync.applySaved({ ok: true, revision: next.to, delta: next }, page.onApplied)
+  assert.deepEqual(page.ends.slice(2), [{ revision: next.to, inBatch: true }])
+})
+
+test('revision pushes wait while this page writes; the last write to end fetches what they announced, and the hold is bounded', async () => {
+  const lib = library()
+  const page = batchedPageOf(lib, 20)
+  const release = page.sync.writeStarted()
+  const second = page.sync.writeStarted()
+  // The push of this page's own commit arrives before its answer: nothing is fetched.
+  const own = lib.commit()
+  await page.sync.revisionPushed({ ...LIBRARY, revision: own.to })
+  assert.deepEqual(page.requests, [])
+  await page.sync.applySaved({ ok: true, revision: own.to, delta: own }, page.onApplied)
+  assert.deepEqual(page.ends, [{ revision: own.to, inBatch: true }])
+  // Another tab's commit announced meanwhile: fetched when the last write ends (a release twice counts once).
+  const other = lib.commit()
+  await page.sync.revisionPushed({ ...LIBRARY, revision: other.to })
+  release()
+  release()
+  assert.deepEqual(page.requests, [], 'one write still in flight')
+  second()
+  await page.sync.pull()
+  assert.equal(page.store.getSnapshot().revision, other.to)
+  assert.equal(page.requests.length, 2, 'the held push and the pull above')
+  // A write that never ends does not hold the pushes for longer than the bound.
+  page.sync.writeStarted()
+  const late = lib.commit()
+  await page.sync.revisionPushed({ ...LIBRARY, revision: late.to })
+  for (let waited = 0; page.store.getSnapshot().revision !== late.to && waited < 100; waited++) await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(page.store.getSnapshot().revision, late.to, 'fetched after the bound, the write still in flight')
 })

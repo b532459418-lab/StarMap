@@ -7,7 +7,7 @@ import { Drone, GripVertical, Maximize2, X } from 'lucide-react'
 import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
 import { useMediaCatalog } from '../data/mediaCatalog'
 import { applyLocalViewOperations, deleteHiddenLocalMedia, mediaJobs } from '../data/localEditorClient'
-import { useDraft } from '../data/drafts'
+import { once, useDraft } from '../data/drafts'
 import { droneListProbe } from '../data/draftProbes'
 import { droneDraftOperations, hideIdsOperation, restoreHiddenOperation } from '../data/editorStateDelta'
 import { readDroneFileMetadata } from '../data/droneMetadata'
@@ -191,11 +191,13 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
     if (busy || sessionLocked) return
     setBusy(true)
     setNotice({ key: 'droneEditor:saving' })
+    // 3C-5 D: the editor closes in the same render as the saved data (onApplied), once.
+    const saved = once(draftSaved)
     try {
       await applyLocalViewOperations(droneDraftOperations({
         cityId: city.id, draftItemIds, baselineItemIds, baselineHiddenIds, draftHiddenIds,
-      }), droneDraft.writeOptions())
-      draftSaved()
+      }), { ...droneDraft.writeOptions(), onApplied: saved })
+      saved()
     } catch (error) {
       setNotice(editorErrorNotice(error, 'droneEditor:saveFailed'))
       setBusy(false)
@@ -478,7 +480,8 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
               onClick={() => {
                 if (busy || sessionLocked) return
                 setBusy(true)
-                void applyLocalViewOperations([restoreHiddenOperation('drone', hiddenIdsForCity)], droneDraft.writeOptions()).then(draftSaved).catch((error: unknown) => {
+                const saved = once(draftSaved)
+                void applyLocalViewOperations([restoreHiddenOperation('drone', hiddenIdsForCity)], { ...droneDraft.writeOptions(), onApplied: saved }).then(saved).catch((error: unknown) => {
                   setNotice(editorErrorNotice(error, 'droneEditor:restoreFailed'))
                   setBusy(false)
                 })

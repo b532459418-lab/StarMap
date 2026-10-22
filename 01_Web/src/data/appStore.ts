@@ -15,6 +15,9 @@
  */
 import { createContext, createElement, useContext, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { computeSnapshot, createAppStore, createHeldSource, type AppSnapshot, type SnapshotSource } from './appStoreCore.ts'
+import type { LanguageTag } from '../worldgraph/localizedText.ts'
+import type { LayerTimeFilters } from '../worldgraph/timeQuery.ts'
+import type { LayerId } from '../worldgraph/types.ts'
 export type { AppSnapshot } from './appStoreCore.ts'
 import { appDataSource, loadAppReadModel, sampleReadModel, sessionNow, storeModuleRevision, usesSampleData } from './rawInputs.ts'
 import { readModelOf } from '../worldgraph/readModel/build.ts'
@@ -87,6 +90,15 @@ export const useAppSection = <K extends keyof typeof selectors>(key: K): AppSnap
 const selectTimeQueryContext = (snapshot: AppSnapshot) => snapshot.timeQueryContext()
 /** The time query context of the data on the page (computed the first time it is asked for; kept while its inputs are). */
 export const useTimeQueryContext = () => useAppSelector(selectTimeQueryContext)
+
+/**
+ * 3C-5 D: the page's queries (./appStoreCore.ts SnapshotQueries), computed once per snapshot and arguments outside
+ * React and kept while their inputs are: the component renders again only when the result is another object.
+ */
+export const useVisiblePlaces = (layerIds: readonly LayerId[], filters?: LayerTimeFilters) =>
+  useAppSelector((snapshot) => snapshot.queries.visiblePlaces(layerIds, filters))
+export const useBrowseProjection = (filters: LayerTimeFilters) => useAppSelector((snapshot) => snapshot.queries.browseProjection(filters))
+export const useCollectionEntries = (locale: LanguageTag) => useAppSelector((snapshot) => snapshot.queries.collection(locale))
 
 /**
  * The store revision of the data the page shows, for the editor's writes (`x-starmap-base-revision`): undefined when the
