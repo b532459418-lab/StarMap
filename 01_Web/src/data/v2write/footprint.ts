@@ -11,26 +11,21 @@
 
 import type { PlaceId } from '../canonical/types.ts'
 import type { V2FileKey, V2TravelRecord } from '../canonical/v2Schema.ts'
-import { V2WriteError, fail } from './errors.ts'
 import {
-  COUNTRY_CODE_PATTERN,
-  DATE_PATTERN,
-  bodyOf,
-  createNewOf,
   ensureCountryPlace,
   isCountryInFootprint,
   newOrChosenCityPlace,
-  optionalText,
   referencedCityPlace,
   reorderCountries,
-  requireText,
-  requiredNumberInRange,
   sameAsLocation,
-  visitDates,
   zhNameOf,
   type EnsuredPlace,
 } from './common.ts'
-import { journeyChoiceOf, journeyIdFor } from './journeyChoice.ts'
+import {
+  defaultTripTitle, parseAddCountry, parseAddTravelRecord, parseDeleteCountries, requireCityWithoutRecords, requireCoordinates,
+  requireCountriesDeletable, requireCountryNotInFootprint,
+} from '../editor/rules/footprint.ts'
+import { journeyIdFor } from './journeyChoice.ts'
 import { removeUnreferencedPlaces, runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 
 /** 旧模式「足迹已创建，但……」：新增足迹之后国家排序没写成。 */
@@ -46,44 +41,6 @@ export interface AddTravelRecordResult {
   id: string
   countryId: PlaceId
   cityId: PlaceId
-}
-
-/** 按地点 id 引用时不能同时出现的字段（三种输入只能选一种）。 */
-const NAMED_CITY_FIELDS = ['country', 'country_en', 'city', 'city_en', 'country_code', 'createNew'] as const
-
-/** 按地点 id 引用时的坐标：可省略，给了就要成对且在范围内。 */
-const optionalCoordinates = (body: Record<string, unknown>): { lat: number; lng: number } | undefined => {
-  const given = (value: unknown) => value !== undefined && value !== null && !(typeof value === 'string' && !value.trim())
-  if (given(body.lat) !== given(body.lng)) fail('E_COORDINATES_PAIR')
-  if (!given(body.lat)) return undefined
-  return { lat: requiredNumberInRange(body.lat, -90, 90, 'lat'), lng: requiredNumberInRange(body.lng, -180, 180, 'lng') }
-}
-
-type VisitDates = { start: string; end?: string }
-
-type RecordTarget =
-  | { kind: 'named'; names: { zh: string; en: string }; countryCode: string; coordinates: { lat: number; lng: number }; createNew: boolean; dates: VisitDates }
-  | { kind: 'placeId'; placeId: PlaceId; coordinates?: { lat: number; lng: number }; dates: VisitDates }
-
-/** 按地点 id 引用：日期必填，坐标可省略。 */
-const referencedTargetOf = (body: Record<string, unknown>): RecordTarget => {
-  const dates = visitDates(body.start_date, body.end_date, { start: 'start_date', end: 'end_date' })
-  return { kind: 'placeId', placeId: String(body.placeId).trim(), coordinates: optionalCoordinates(body), dates }
-}
-
-/** 按名称：校验顺序与文案同旧模式。 */
-const namedTargetOf = (body: Record<string, unknown>): RecordTarget => {
-  requireText(body.country, 'country')
-  requireText(body.country_en, 'country_en')
-  const cityZh = requireText(body.city, 'city')
-  const cityEn = requireText(body.city_en, 'city_en')
-  const dates = visitDates(body.start_date, body.end_date, { start: 'start_date', end: 'end_date' })
-  const lat = requiredNumberInRange(body.lat, -90, 90, 'lat')
-  const lng = requiredNumberInRange(body.lng, -180, 180, 'lng')
-  const countryCode = typeof body.country_code === 'string' ? body.country_code.trim().toUpperCase() : ''
-  if (!countryCode) fail('E_COUNTRY_CODE_REQUIRED')
-  if (!COUNTRY_CODE_PATTERN.test(countryCode)) fail('E_COUNTRY_CODE_INVALID')
-  return { kind: 'named', names: { zh: cityZh, en: cityEn }, countryCode, coordinates: { lat, lng }, createNew: createNewOf(body), dates }
 }
 
 /**
@@ -108,14 +65,8 @@ const namedTargetOf = (body: Record<string, unknown>): RecordTarget => {
  * 写盘：地点注册表（有新地点或补了坐标时）→ 足迹 → editor-state（排序变了时）。
  */
 export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<AddTravelRecordResult> {
-  const body = bodyOf(input)
-  const referencesPlace = Object.hasOwn(body, 'placeId')
-  if (referencesPlace && (typeof body.placeId !== 'string' || !body.placeId.trim() || NAMED_CITY_FIELDS.some((field) => Object.hasOwn(body, field)))) {
-    fail('E_UNKNOWN_PLACE_REF')
-  }
-  const target = referencesPlace ? referencedTargetOf(body) : namedTargetOf(body)
-  const tripTitleInput = optionalText(body.trip_title)
-  const journeyChoice = journeyChoiceOf(body)
+  // The decisions are ../editor/rules/footprint.ts (3C-5 C2), shared with the store-native write.
+  const { target, tripTitle: tripTitleInput, journeyChoice } = parseAddTravelRecord(input)
 
   return runV2Transaction(files, ctx, (draft) => {
     let country: EnsuredPlace
@@ -134,11 +85,11 @@ export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknow
     }
     const dates = target.dates
     const wasInFootprint = isCountryInFootprint(draft.files, country.place.id)
-    if (draft.files.travel.records.some((record) => record.placeId === city.place.id)) fail('E_CITY_EXISTS', { cityId: city.place.id })
-    const { lat, lng } = coordinates ?? fail('E_REQUIRED', { field: 'lat' })
+    requireCityWithoutRecords(draft.files.travel.records.some((record) => record.placeId === city.place.id), city.place.id)
+    const { lat, lng } = requireCoordinates(coordinates)
 
     // 到这里地点已经确定（地点选择在前）；行程选择在后，要用到由城市决定的默认标题（第 2C 批）。
-    const tripTitle = tripTitleInput ?? `${zhNameOf(country.place)} · ${zhNameOf(city.place)}`
+    const tripTitle = tripTitleInput ?? defaultTripTitle(country.place, city.place)
     const record: V2TravelRecord = {
       id: ctx.newId(),
       placeId: city.place.id,
@@ -175,15 +126,11 @@ export function addTravelRecord(files: V2FilesOrEmpty | undefined, input: unknow
  * 写盘：地点注册表（新建时）→ editor-state。
  */
 export function addCountry(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<{ countryId: PlaceId }> {
-  const body = bodyOf(input)
-  const countryCode = requireText(body.countryCode, 'countryCode').toUpperCase()
-  if (!COUNTRY_CODE_PATTERN.test(countryCode)) fail('E_COUNTRY_NOT_IN_CATALOG', { iso: countryCode })
-  const visitedDate = requireText(body.visitedDate, 'visitedDate')
-  if (!DATE_PATTERN.test(visitedDate)) fail('E_DATE_FORMAT', { field: 'visitedDate' })
+  const { countryCode, visitedDate } = parseAddCountry(input)
 
   return runV2Transaction(files, ctx, (draft) => {
     const country = ensureCountryPlace(draft, countryCode)
-    if (isCountryInFootprint(draft.files, country.place.id)) fail('E_COUNTRY_EXISTS', { countryId: country.place.id })
+    requireCountryNotInFootprint(isCountryInFootprint(draft.files, country.place.id), country.place.id)
     const region = ctx.countryCatalog.get(countryCode)?.region
     draft.files.editorState.addedCountries.push({ placeId: country.place.id, ...(region ? { region } : {}), visitedDate })
     reorderCountries(draft.files)
@@ -219,17 +166,12 @@ export const DELETE_PLACES_FAILURE = '国家已删除，但地点注册表没有
  * 写盘：editor-state → 足迹（有记录时）→ 地点注册表（有地点可删时）。
  */
 export function deleteHiddenCountries(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<DeleteCountriesResult> {
-  const body = bodyOf(input)
-  const ids = Array.isArray(body.ids) && body.ids.every((id) => typeof id === 'string')
-    ? [...new Set((body.ids as string[]).map((id) => id.trim()).filter(Boolean))]
-    : []
-  if (ids.length === 0) fail('E_COUNTRY_DELETE_EMPTY')
+  const ids = parseDeleteCountries(input)
   const idSet = new Set(ids)
 
   return runV2Transaction(files, ctx, (draft) => {
     const { editorState, travel } = draft.files
     const hidden = new Set(editorState.hiddenCountryIds)
-    if (ids.some((id) => !hidden.has(id))) fail('E_COUNTRY_DELETE_NOT_HIDDEN')
 
     const countryOfCity = (placeId: PlaceId) => {
       const place = draft.placeById(placeId)
@@ -237,18 +179,16 @@ export function deleteHiddenCountries(files: V2FilesOrEmpty | undefined, input: 
     }
     const targetRecords = travel.records.filter((record) => idSet.has(countryOfCity(record.placeId) ?? ''))
     const addedIds = new Set(editorState.addedCountries.map((entry) => entry.placeId))
-    if (ids.some((id) => !targetRecords.some((record) => countryOfCity(record.placeId) === id) && !addedIds.has(id))) {
-      fail('E_COUNTRY_DELETE_NO_DATA')
-    }
-
-    const blockingMedia = draft.files.media.items.filter((item) => idSet.has(countryOfCity(item.placeId) ?? ''))
-    if (blockingMedia.length > 0) {
-      const counts = new Map<PlaceId, number>()
-      for (const item of blockingMedia) counts.set(item.placeId, (counts.get(item.placeId) ?? 0) + 1)
-      throw new V2WriteError('E_COUNTRY_HAS_MEDIA', {
-        cities: [...counts].map(([placeId, count]) => ({ placeId, name: zhNameOf(draft.placeById(placeId)) || placeId, count })),
-      })
-    }
+    requireCountriesDeletable(ids, {
+      isHidden: (id) => hidden.has(id),
+      hasData: (id) => targetRecords.some((record) => countryOfCity(record.placeId) === id) || addedIds.has(id),
+      mediaCities: () => {
+        const counts = new Map<PlaceId, number>()
+        for (const item of draft.files.media.items) if (idSet.has(countryOfCity(item.placeId) ?? '')) counts.set(item.placeId, (counts.get(item.placeId) ?? 0) + 1)
+        return [...counts].map(([placeId, count]) => ({ placeId, count }))
+      },
+      nameOf: (placeId) => zhNameOf(draft.placeById(placeId)),
+    })
 
     // 这个国家的全部城市地点（不只是有记录的）：editor-state 里涉及它们的键与值一并清掉。
     const cityIds = new Set(draft.files.places.places

@@ -13,20 +13,14 @@
  */
 
 import { convertRuleDataOfV2Files, convertRules } from '../canonical/convertRules.ts'
+import { convertDates, convertTripTitle, defaultTripTitle, firstVisitRegion, parseConvertRequest } from '../editor/rules/footprint.ts'
+import type { JourneyChoice } from '../editor/rules/journeys.ts'
 import type { PlaceId } from '../canonical/types.ts'
 import type { V2FileKey, V2TravelRecord } from '../canonical/v2Schema.ts'
 import { fail } from './errors.ts'
-import {
-  bodyOf,
-  isCountryInFootprint,
-  optionalText,
-  reorderCountries,
-  requireText,
-  visitDates,
-  zhNameOf,
-} from './common.ts'
+import { isCountryInFootprint, reorderCountries } from './common.ts'
 import { REORDER_FAILURE } from './footprint.ts'
-import { journeyChoiceOf, journeyIdFor } from './journeyChoice.ts'
+import { journeyIdFor } from './journeyChoice.ts'
 import { runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 
 export interface ConvertToTravelResult {
@@ -51,10 +45,10 @@ type WriteList = { file: V2FileKey; onFailure?: string }[]
  * 并重排 `countryOrder`；已有国家信息不覆盖，目录缺失时不猜测洲。
  * 写盘：足迹 → 想去（移除条目时）→ editor-state（排序变了时）。
  */
-const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<string, unknown>, ctx: V2WriteContext) => {
-  const id = requireText(body.id, 'id')
-  if (body.keepWantToGo !== undefined && typeof body.keepWantToGo !== 'boolean') fail('E_KEEP_WTG_NOT_BOOLEAN')
-  const journeyChoice = journeyChoiceOf(body)
+const convertWantToGoItem = (
+  files: V2FilesOrEmpty | undefined, request: { id: string; keepWantToGo: boolean; journeyChoice: JourneyChoice; body: Record<string, unknown> }, ctx: V2WriteContext,
+) => {
+  const { id, journeyChoice, body } = request
 
   return runV2Transaction(files, ctx, (draft) => {
     const blocked = convertRules(convertRuleDataOfV2Files(draft.files)).wantToGoConvertBlockCode(id)
@@ -63,11 +57,11 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
     if (blocked === 'E_CONVERT_CITY_IN_FOOTPRINT') return fail(blocked, { cityId: item.placeId })
     if (blocked !== undefined) return fail(blocked)
     const city = draft.placeById(item.placeId)!
-    const dates = visitDates(body.startDate, body.endDate, { start: 'startDate', end: 'endDate' })
+    const dates = convertDates(body)
 
     const countryId = city.partOf as PlaceId
     const wasInFootprint = isCountryInFootprint(draft.files, countryId)
-    const tripTitle = optionalText(body.tripTitle) ?? `${zhNameOf(draft.placeById(countryId))} · ${zhNameOf(city)}`
+    const tripTitle = convertTripTitle(body) ?? defaultTripTitle(draft.placeById(countryId), city)
     const record: V2TravelRecord = {
       id: ctx.newId(),
       placeId: city.id,
@@ -81,13 +75,11 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
       journeyId: journeyIdFor(draft.files, tripTitle, ctx, journeyChoice),
     }
     draft.files.travel.records.push(record)
-    const wantToGoRemoved = body.keepWantToGo !== true
+    const wantToGoRemoved = !request.keepWantToGo
     if (wantToGoRemoved) draft.files.wantToGo.items = draft.files.wantToGo.items.filter((candidate) => candidate.id !== id)
     const countryCode = draft.placeById(countryId)?.externalIds?.iso3166Alpha2
     const hasCountryInfo = draft.files.editorState.addedCountries.some((country) => country.placeId === countryId)
-    const region = !wasInFootprint && !hasCountryInfo && countryCode
-      ? ctx.countryCatalog.get(countryCode.trim().toUpperCase())?.region
-      : undefined
+    const region = firstVisitRegion(wasInFootprint, hasCountryInfo, countryCode, ctx.countryCatalog)
     if (region) draft.files.editorState.addedCountries.push({ placeId: countryId, region, visitedDate: dates.start })
     const reordered = !wasInFootprint && reorderCountries(draft.files)
 
@@ -108,9 +100,10 @@ const convertWantToGoItem = (files: V2FilesOrEmpty | undefined, body: Record<str
  * 有坐标——自身的 lat / lng，省略时取城市的 location；都没有 → `E_PLANNED_NO_COORDINATES`（沿用旧文案）。
  * 国家首次进入足迹时重排 `countryOrder`。写盘：足迹 → editor-state（排序变了时）。
  */
-const convertPlannedTravelRecord = (files: V2FilesOrEmpty | undefined, body: Record<string, unknown>, ctx: V2WriteContext) => {
-  const recordId = requireText(body.recordId, 'recordId')
-  const journeyChoice = journeyChoiceOf(body)
+const convertPlannedTravelRecord = (
+  files: V2FilesOrEmpty | undefined, request: { recordId: string; journeyChoice: JourneyChoice; body: Record<string, unknown> }, ctx: V2WriteContext,
+) => {
+  const { recordId, journeyChoice, body } = request
 
   return runV2Transaction(files, ctx, (draft) => {
     const blocked = convertRules(convertRuleDataOfV2Files(draft.files)).plannedConvertBlockCode(recordId)
@@ -119,7 +112,7 @@ const convertPlannedTravelRecord = (files: V2FilesOrEmpty | undefined, body: Rec
     const index = records.findIndex((record) => record.id === recordId)
     const current = records[index]
     const city = draft.placeById(current.placeId)
-    const dates = visitDates(body.startDate, body.endDate, { start: 'startDate', end: 'endDate' })
+    const dates = convertDates(body)
 
     const countryId = city?.partOf as PlaceId
     const wasInFootprint = isCountryInFootprint(draft.files, countryId)
@@ -145,8 +138,7 @@ const convertPlannedTravelRecord = (files: V2FilesOrEmpty | undefined, body: Rec
 
 /** `POST /wanttogo/convert`：按 `source` 分派；其他来源 → `E_CONVERT_SOURCE_INVALID`（沿用旧文案）。 */
 export function convertToTravel(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<ConvertToTravelResult> {
-  const body = bodyOf(input)
-  if (body.source === 'want-to-go') return convertWantToGoItem(files, body, ctx)
-  if (body.source === 'planned') return convertPlannedTravelRecord(files, body, ctx)
-  return fail('E_CONVERT_SOURCE_INVALID')
+  // The request and the decisions are ../editor/rules/ (3C-5 C2), shared with the store-native write.
+  const request = parseConvertRequest(input)
+  return request.source === 'want-to-go' ? convertWantToGoItem(files, request, ctx) : convertPlannedTravelRecord(files, request, ctx)
 }

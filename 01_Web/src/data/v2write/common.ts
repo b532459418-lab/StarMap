@@ -9,12 +9,12 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import { EN, ZH, namesOf } from '../canonical/reconstruct.ts'
+import { namesOf } from '../canonical/reconstruct.ts'
 import { chooseCountry, requireNoCityCandidates } from '../editor/rules/places.ts'
 import type { CanonicalPlace, PlaceId } from '../canonical/types.ts'
 import type { V2Files, V2TravelRecord } from '../canonical/v2Schema.ts'
-import { fail } from './errors.ts'
-import { DATE_PATTERN } from '../editor/rules/input.ts'
+import { requireChosenCity, sortCountryIdsByLatestVisit as sortByLatestVisit, sameOrder } from '../editor/rules/footprint.ts'
+import { isVisitedRecord } from '../editor/rules/journeys.ts'
 import type { V2Draft } from './transaction.ts'
 
 // ---------------------------------------------------------------------------
@@ -30,8 +30,8 @@ export {
 // 地点：国家按 ISO 先找后建；城市按名字只找候选，身份靠用户明确选择的地点 id（RFC ID-6，第 2A 批）
 // ---------------------------------------------------------------------------
 
-/** 显示用的名称：中文名，没有则英文名。 */
-export const zhNameOf = (place: CanonicalPlace | undefined): string => place?.names[ZH] ?? place?.names[EN] ?? ''
+/** 显示用的名称：中文名，没有则英文名（3C-5 C2 起在 ../editor/rules/footprint.ts）。 */
+export { zhNameOf } from '../editor/rules/footprint.ts'
 
 export interface EnsuredPlace {
   place: CanonicalPlace
@@ -107,8 +107,8 @@ export const referencedCityPlace = (
 ): EnsuredPlace & { country: CanonicalPlace } => {
   const place = draft.placeById(placeId)
   const country = place?.subtype === 'city' && place.partOf !== undefined ? draft.placeById(place.partOf) : undefined
-  if (!place || country?.subtype !== 'country') return fail('E_UNKNOWN_PLACE_REF', { placeId })
-  return { place, country, changed: fillMissingLocation(place, location) }
+  requireChosenCity(place, country, placeId)
+  return { place: place!, country: country!, changed: fillMissingLocation(place!, location) }
 }
 
 /** 国家地点没有坐标、而输入带了坐标时补上（想去国家）。 */
@@ -129,7 +129,7 @@ export const countryIdOfPlace = (files: V2Files, placeId: PlaceId): PlaceId | un
   return place.subtype === 'country' ? place.id : place.partOf
 }
 
-const isVisited = (record: V2TravelRecord) => record.status !== 'planned'
+const isVisited = (record: V2TravelRecord) => isVisitedRecord(record)
 
 /**
  * 国家是否已在足迹中：有已去过的记录，或已有 `addedCountries` 条目。planned 不算
@@ -146,41 +146,16 @@ export const isCountryInFootprint = (files: V2Files, countryId: PlaceId): boolea
  * 日期只看已去过的记录（与旧模式的想去 / planned 转足迹相同：planned 的日期是计划日期，不是到访日期）
  * 与 addedCountries 的首次到访日期。
  */
-export const sortCountryIdsByLatestVisit = (files: V2Files): PlaceId[] => {
-  const latest = new Map<PlaceId, string>()
-  const remember = (countryId: PlaceId, value: unknown) => {
-    if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return
-    const current = latest.get(countryId)
-    if (!current || value > current) latest.set(countryId, value)
-  }
-  const visitedCountryIds: PlaceId[] = []
-  for (const record of files.travel.records) {
-    if (!isVisited(record)) continue
-    const countryId = countryIdOfPlace(files, record.placeId)
-    if (countryId === undefined) continue
-    visitedCountryIds.push(countryId)
-    remember(countryId, record.start_date)
-    remember(countryId, record.end_date)
-  }
-  for (const entry of files.editorState.addedCountries) remember(entry.placeId, entry.visitedDate)
-
-  const countryIds = [...new Set([
-    ...files.editorState.countryOrder,
-    ...visitedCountryIds,
-    ...files.editorState.addedCountries.map((entry) => entry.placeId),
-  ])]
-  const rank = new Map(countryIds.map((id, index) => [id, index]))
-  return countryIds.sort((left, right) => {
-    const dateOrder = (latest.get(right) ?? '').localeCompare(latest.get(left) ?? '')
-    return dateOrder || (rank.get(left) ?? 0) - (rank.get(right) ?? 0)
-  })
-}
+export const sortCountryIdsByLatestVisit = (files: V2Files): PlaceId[] => sortByLatestVisit({
+  countryOrder: files.editorState.countryOrder,
+  visits: files.travel.records.filter(isVisited).map((record) => ({ countryId: countryIdOfPlace(files, record.placeId), start_date: record.start_date, end_date: record.end_date })),
+  added: files.editorState.addedCountries,
+})
 
 /** 重排 countryOrder；顺序有变化时返回 true（这时才需要写 editor-state）。 */
 export const reorderCountries = (files: V2Files): boolean => {
   const next = sortCountryIdsByLatestVisit(files)
-  const changed = next.length !== files.editorState.countryOrder.length
-    || next.some((id, index) => id !== files.editorState.countryOrder[index])
+  const changed = !sameOrder(next, files.editorState.countryOrder)
   if (changed) files.editorState.countryOrder = next
   return changed
 }
