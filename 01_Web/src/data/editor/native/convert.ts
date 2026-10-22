@@ -15,7 +15,6 @@
  *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types).
  */
-import type { ViewItem } from '../../../worldgraph/store/formal.ts'
 import type { JsonValue, LayerEntry } from '../../../worldgraph/store/types.ts'
 import type { PlaceId } from '../../canonical/types.ts'
 import type { V2TravelRecord } from '../../canonical/v2Schema.ts'
@@ -27,8 +26,7 @@ import { fail } from '../../v2write/errors.ts'
 import { convertRulesOf, type ConvertRuleRecord } from '../rules/convertRules.ts'
 import { convertDates, convertTripTitle, defaultTripTitle, firstVisitRegion, parseConvertRequest, type ConvertRequest } from '../rules/footprint.ts'
 import { decideJourney } from '../rules/journeys.ts'
-import { commandBatch, type CommandBatch } from './batch.ts'
-import { referencesOf, rowOf } from './places.ts'
+import { commandBatch } from './batch.ts'
 import { addCountryVisit, appendRecord, countryInFootprint, countryOfPlace, journeyCandidates, reorderCountries, travelEntry, writeJourney } from './records.ts'
 import type { NativeWrite, NativeWriteContext } from './routes.ts'
 
@@ -50,13 +48,6 @@ const inFootprint = (reader: OfficialReader, countryId: PlaceId | undefined) => 
   ? countryInFootprint(reader, countryId)
   : reader.recordsInOrder().some((record) => !record.planned && countryOfPlace(reader.place(record.record.placeId)) === undefined))
 
-/** Remove an entry with every view row that points at it. */
-function removeWithViewRows(reader: OfficialReader, batch: CommandBatch, entry: LayerEntry): void {
-  for (const ref of referencesOf(reader)('entries', entry.id)) {
-    if (ref.fromTable === 'viewItems' || ref.fromTable === 'viewSettings') batch.remove(ref.fromTable, rowOf(reader, ref.fromTable, ref.fromId))
-  }
-  batch.remove('entries', entry)
-}
 
 function convertWish(reader: OfficialReader, request: Extract<ConvertRequest, { source: 'want-to-go' }>, ctx: NativeWriteContext) {
   const { id, body, journeyChoice } = request
@@ -80,7 +71,8 @@ function convertWish(reader: OfficialReader, request: Extract<ConvertRequest, { 
   appendRecord(reader, batch, entryId, ctx.newId)
   writeJourney(reader, batch, decided, { entryId, id: entryId, start_date: dates.start }, ctx.newId)
   const wantToGoRemoved = !request.keepWantToGo
-  if (wantToGoRemoved) removeWithViewRows(reader, batch, wish.entry)
+  // Its view rows (order, hidden) follow it: the planner removes the view rows of a removed row.
+  if (wantToGoRemoved) batch.remove('entries', wish.entry)
   const countryCode = reader.place(countryId)?.externalIds?.iso3166Alpha2
   const hasCountryInfo = reader.addedCountries().some((country) => country.placeId === countryId)
   const region = firstVisitRegion(wasInFootprint, hasCountryInfo, countryCode, ctx.countryCatalog)
@@ -130,15 +122,12 @@ function convertPlanned(reader: OfficialReader, request: Extract<ConvertRequest,
   void _dropped
   batch.create('entries', { ...rest, ...(Object.keys(extensions).length ? { extensions: { ...entry.extensions, v2: extensions } } : {}) } satisfies LayerEntry)
   // Its view rows follow it: the record order keeps its position, hidden-from-home its flag (as the old path's retarget
-  // and flag); any other view row of the planned entry goes with it.
-  for (const ref of referencesOf(reader)('entries', planned.entry.id)) {
-    if (ref.fromTable !== 'viewItems' && ref.fromTable !== 'viewSettings') continue
-    const row = rowOf(reader, ref.fromTable, ref.fromId) as ViewItem
-    const target = { table: 'entries' as const, id: entryId }
-    if (ref.fromTable === 'viewItems' && row.scope === S.recordOrder) batch.update('viewItems', row, viewItemRow(row.scope, row.id, target, row.position, row.hidden, row.layerId))
-    else if (ref.fromTable === 'viewItems' && row.scope === S.recordHiddenFromHome) batch.update('viewItems', row, viewItemRow(row.scope, row.id, target, row.position, row.hidden))
-    else batch.remove(ref.fromTable, row)
-  }
+  // and flag); any other view row of the planned entry goes with it (the planner removes the view rows of a removed row).
+  const target = { table: 'entries' as const, id: entryId }
+  const order = reader.viewItem(S.recordOrder, 'entries', planned.entry.id)
+  if (order) batch.update('viewItems', order, viewItemRow(order.scope, order.id, target, order.position, order.hidden, order.layerId))
+  const hidden = reader.viewItem(S.recordHiddenFromHome, 'entries', planned.entry.id)
+  if (hidden) batch.update('viewItems', hidden, viewItemRow(hidden.scope, hidden.id, target, hidden.position, hidden.hidden))
   if (decided) writeJourney(reader, batch, decided, { entryId, id: recordId, start_date: dates.start }, ctx.newId)
   batch.remove('entries', planned.entry)
   if (!wasInFootprint) {

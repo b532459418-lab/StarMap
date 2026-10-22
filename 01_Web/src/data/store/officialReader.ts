@@ -48,6 +48,14 @@ export interface OfficialRecord {
   /** The Canonical record (the official view's value: V2 id, place, dates, title, journey, coordinates). */
   readonly record: Readonly<Record<string, unknown>> & { readonly id: string; readonly placeId: string }
 }
+/** A record as the country order reads it. */
+export interface OfficialVisit {
+  readonly entry: LayerEntry
+  readonly placeId: string
+  readonly planned: boolean
+  readonly start_date?: unknown
+  readonly end_date?: unknown
+}
 /** A journey as the projection reads it: its id, its entity and the entity's sequences (id order). */
 export interface OfficialJourney {
   readonly journeyId: string
@@ -96,6 +104,13 @@ export interface OfficialReader {
   recordsInOrder(): readonly OfficialRecord[]
   /** The visited records (footprint entries) whose trip title is `title`. */
   visitedTitled(title: string): readonly OfficialRecord[]
+  /**
+   * Every footprint and planned record in the official order, light (no Canonical value): its entry, place, whether
+   * planned, and its visit dates as the official view gives them (for the country order).
+   */
+  visitsInOrder(): readonly OfficialVisit[]
+  /** The country a place counts for (V2's countryIdOfPlace: a country itself, any other place's part-of), without building it. */
+  countryOf(placeId: string): string | undefined
   /** The journey the projection assigns a footprint entry to, if any. */
   journeyOfEntry(entryId: string): OfficialJourney | undefined
   /** The journey with this id (a journey some footprint entry belongs to), if any. */
@@ -212,9 +227,10 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     }
     return found
   }
-  let ordered: readonly OfficialRecord[] | undefined
-  const recordsInOrder = (): readonly OfficialRecord[] => {
-    if (ordered) return ordered
+  /** The record entries in the official order: recordOrder positions, then creation time and id. */
+  let orderedEntries: readonly LayerEntry[] | undefined
+  const entriesInOrder = (): readonly LayerEntry[] => {
+    if (orderedEntries) return orderedEntries
     const all = [...index.entriesOfLayer(OFFICIAL.travel), ...index.entriesOfLayer(OFFICIAL.wantToGo)].filter(isRecord)
     const positioned = new Set<string>(), result: LayerEntry[] = []
     const isListed = new Set(all.map((entry) => entry.id))
@@ -225,7 +241,24 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     }
     const rest = all.filter((entry) => !positioned.has(entry.id))
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    return (ordered = Object.freeze([...result, ...rest].map(recordOf)))
+    return (orderedEntries = Object.freeze([...result, ...rest]))
+  }
+  /** A record's visit dates as recordValueOf gives them (the raw dates, else its verbatim V2 values). */
+  const visitOf = (entry: LayerEntry): OfficialVisit => {
+    const plain = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
+    const date = entry.fields.date
+    const raw = plain(date) && plain(date.raw) ? date.raw : {}
+    const v2 = plain(entry.extensions?.v2) ? entry.extensions.v2 : {}
+    const value = (from: string, to: string) => (Object.hasOwn(raw, from) ? raw[from] : v2[to])
+    return { entry, placeId: entry.entityId, planned: officialEntryRole(entry) === 'planned', start_date: value('startDate', 'start_date'), end_date: value('endDate', 'end_date') }
+  }
+  let visits: readonly OfficialVisit[] | undefined
+  /** The first part-of relation (by id) to a place: the projection's partOf. */
+  const parentOf = (id: string) => index.relationsFrom(id, OFFICIAL.partOf).find((relation) => isPlaceEntity(relation.toEntityId))?.toEntityId
+  let ordered: readonly OfficialRecord[] | undefined
+  const recordsInOrder = (): readonly OfficialRecord[] => {
+    if (ordered) return ordered
+    return (ordered = Object.freeze(entriesInOrder().map(recordOf)))
   }
   let added: readonly OfficialAddedCountry[] | undefined
   const addedCountriesOf = (): OfficialAddedCountry[] => {
@@ -288,7 +321,16 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     },
     recordsInOrder,
     visitedTitled: (title) => index.entriesOfLayer(OFFICIAL.travel)
-      .filter((entry) => isRecord(entry) && !recordOf(entry).planned && entry.fields.tripTitle === title).map(recordOf),
+      .filter((entry) => entry.fields.tripTitle === title && isRecord(entry) && officialEntryRole(entry) === 'footprint').map(recordOf),
+    visitsInOrder() {
+      visits ??= Object.freeze(entriesInOrder().map(visitOf))
+      return visits
+    },
+    countryOf(placeId) {
+      const entity = index.get('entities', placeId) as StoreEntity | undefined
+      if (entity?.typeId !== OFFICIAL.place) return undefined
+      return entity.fields.subtype === 'country' ? placeId : parentOf(placeId)
+    },
     journeyOfEntry: (entryId) => journeyIndex().byEntry.get(entryId),
     journey: (journeyId) => journeyIndex().byId.get(journeyId),
     journeyMembers: (journeyId) => (journeyIndex().members.get(journeyId) ?? []).map(recordOf),

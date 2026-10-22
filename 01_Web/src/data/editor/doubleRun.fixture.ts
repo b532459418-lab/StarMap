@@ -9,11 +9,13 @@
  *   planCommands, applyChangeSet.
  * Compared: the error code and parameters (the place and journey candidates, in their order, are parameters), and the
  * derived baseline of both states with ids renamed in the order they first appear, without the changes design §9
- * makes on purpose (V2-only values, file headers, unknown media ids in view operations).
+ * makes on purpose (new ids, journey ids without the `journey-` prefix, V2-only values such as `type`, `status` and
+ * `source`, file headers, unknown media ids in view operations).
  *
  * Sequences go on from the second engine's state (the engine the host runs); at every step both engines start from it.
  * Endpoints that have no native planner (they still run the V2 functions in the host) run the old engine twice — the
- * stand-in (standInEngine), which also checks the comparison itself. C2 reuses this with its own planners and steps.
+ * stand-in (standInEngine), which also checks the comparison itself. Since 3C-5 C2 every endpoint the sequences draw has a
+ * native planner.
  * Only tracked neutral fixtures and invented values. Not imported by the App.
  */
 import type { FormalState } from '../../worldgraph/store/formal.ts'
@@ -332,7 +334,7 @@ const R = editorRoute
 
 /**
  * One random request, drawn from the current V2 view (3C-4a's sequence, with the editor-state writes as the view
- * operations a page sends): the native endpoints of 3C-5 C1 and the endpoints that still run the V2 functions, mixed.
+ * operations a page sends), over the eight editor endpoints.
  */
 export function randomStep(rng: Random, files: V2Files): DoubleRunStep {
   const places = files.places.places

@@ -405,7 +405,22 @@ export function createStoreSession(privatePaths, {
     const { model, timings } = read
     cache = cacheEntry(key, { model, timings })
     log(`[StarMap store] 读模型（修订号 ${model.revision}）：${timings.openMs === undefined ? '' : `打开 ${timings.openMs} ms，`}readModel ${timings.readMs} ms`)
+    if (!readOnly) warmUp(cache)
     return cache
+  }
+
+  /**
+   * 3C-5 C2: after a read of the store, the live index and its reverse references are built while nothing else runs
+   * (setImmediate, queued with the writes), so that the first write of the page does not pay for them (about a quarter
+   * of a second at the real scale). A write that arrives first builds them itself.
+   */
+  let warming
+  function warmUp(entry) {
+    if (warming) return
+    warming = setImmediate(() => {
+      warming = undefined
+      serialized(() => { if (cache === entry) entry.live.referencesTo('entities', '') }).catch(() => {})
+    })
   }
 
   /**
@@ -686,6 +701,7 @@ export function createStoreSession(privatePaths, {
     async close() {
       const pending = opening
       if (pending) await pending.catch(() => {})
+      if (warming) { clearImmediate(warming); warming = undefined }
       if (scheduledPrune?.timer) {
         clearImmediate(scheduledPrune.timer)
         scheduledPrune.resolve()

@@ -24,7 +24,7 @@ import { sameOrder, sortCountryIdsByLatestVisit, type CountryVisit } from '../ru
 import { findJourneyCandidates, type JourneyCandidate, type JourneyRecord } from '../rules/journeys.ts'
 import { viewListAccess, type CommandBatch } from './batch.ts'
 import { appendToOriginalOrder } from './originalOrder.ts'
-import { referencesOf, rowOf, userSource } from './places.ts'
+import { userSource } from './places.ts'
 
 const S = VIEW_SCOPES
 
@@ -170,14 +170,15 @@ export function reorderCountries(reader: OfficialReader, batch: CommandBatch, ne
   readonly placeOf?: (placeId: PlaceId) => CanonicalPlace | undefined
   readonly isPlace?: (placeId: PlaceId) => boolean
 }): void {
-  const placeOf = change.placeOf ?? ((placeId: PlaceId) => reader.place(placeId))
+  // The country of a record's place: the places this write creates, then the reader (without building places).
+  const countryOf = (placeId: PlaceId) => (change.placeOf ? countryOfPlace(change.placeOf(placeId)) : reader.countryOf(placeId))
   const before = reader.editorLists().countryOrder as string[]
   const order = change.countryOrder ?? before
   const visits: CountryVisit[] = []
-  for (const record of reader.recordsInOrder()) {
-    if (record.entry.id === change.visitedAt?.entryId) { visits.push(change.visitedAt.visit); continue }
-    if (record.planned || change.removedEntries?.has(record.entry.id)) continue
-    visits.push({ countryId: countryOfPlace(placeOf(record.record.placeId)), start_date: record.record.start_date, end_date: record.record.end_date })
+  for (const visit of reader.visitsInOrder()) {
+    if (visit.entry.id === change.visitedAt?.entryId) { visits.push(change.visitedAt.visit); continue }
+    if (visit.planned || change.removedEntries?.has(visit.entry.id)) continue
+    visits.push({ countryId: countryOf(visit.placeId), start_date: visit.start_date, end_date: visit.end_date })
   }
   visits.push(...(change.visits ?? []))
   const added = [
@@ -220,11 +221,6 @@ export function removeRecords(reader: OfficialReader, batch: CommandBatch, recor
       batch.create('sequences', { ...journeySequence(journeyId, journey.entity.id, entryIds, id), source: userSource(id) } satisfies EntrySequence)
     }
   }
-  const references = referencesOf(reader)
-  for (const record of records) {
-    for (const ref of references('entries', record.entry.id)) {
-      if (ref.fromTable === 'viewItems' || ref.fromTable === 'viewSettings') batch.remove(ref.fromTable, rowOf(reader, ref.fromTable, ref.fromId))
-    }
-    batch.remove('entries', record.entry)
-  }
+  // Their view rows (order, hidden from home) follow them: the planner removes the view rows of a removed row.
+  for (const record of records) batch.remove('entries', record.entry)
 }

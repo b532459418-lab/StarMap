@@ -34,7 +34,7 @@ export interface NativeWrite {
   plan(reader: OfficialReader, input: unknown, ctx: NativeWriteContext): NativePlan
 }
 
-/** The store-native endpoints by `METHOD /path` (filled in by the commits of 3C-5 C1). */
+/** The store-native endpoints by `METHOD /path` (3C-5 C1 and C2: every editor endpoint but PUT /state). */
 export const NATIVE_WRITES: Readonly<Record<string, NativeWrite>> = Object.freeze({
   'POST /__travelatlas/editor/view': editorViewWrite,
   'POST /__travelatlas/editor/records': addTravelRecordWrite,

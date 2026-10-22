@@ -45,5 +45,9 @@ for (const [name, files] of migrationInputs()) test(`the official reader answers
         view.travel.records.filter((record) => record.trip_title === title && record.status !== 'planned' && reader.recordById(record.id)?.planned === false).map((record) => record.id).sort(), `${label}: titled ${title}`)
     }
     assert.deepEqual(reader.addedCountries().map((country) => country.value), view.editorState.addedCountries, `${label}: added countries`)
+    // The light queries of the country order.
+    assert.deepEqual(reader.visitsInOrder().map((visit) => [visit.placeId, visit.planned, visit.start_date, visit.end_date]),
+      view.travel.records.map((record) => [record.placeId, record.status === 'planned' && reader.recordById(record.id)!.planned, record.start_date, record.end_date]), `${label}: visits`)
+    for (const place of view.places) assert.equal(reader.countryOf(place.id), place.subtype === 'country' ? place.id : place.partOf, `${label}: country of ${place.id}`)
   }
 })

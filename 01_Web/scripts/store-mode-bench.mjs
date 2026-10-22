@@ -19,6 +19,8 @@
  *                            and total
  *   ... --segment native     (3C-5 C1) the store-native endpoints (view operations, want-to-go) over HTTP, normal edits
  *                            and batches, with the PUT /state path of the same view changes (G4a) beside them
+ *   ... --segment records    (3C-5 C2) the four endpoints C2 made store-native (records, countries, country deletion,
+ *                            conversion), normal edits and batches, and native and formerly-V2 writes alternately
  *   ... --segment media      (3C-4b) media files for the store root's media items (derivatives, originals with folder
  *                            pins, the media source index); run after generate
  *   ... --segment backup     (3C-4b) store:backup of the store root with its media into <dir>/backup: the time under the
@@ -571,16 +573,148 @@ export async function nativeSegment(dir, scale) {
   )]))
 }
 
+/**
+ * The editor client of the native segments: `send(label, method, route, input)` sends one write over HTTP with the store
+ * protocol and records, per label, the client's end to end and the host's line (V2 write, diff or plan, commit, index
+ * update, commands, total; protocol = end to end − host total). A write of 50 commands or more is recorded under
+ * `<label> [≥50 rows]` (the batch target). `state()` is GET /state.
+ */
+function editorClient(url, lines, revision) {
+  const timings = {}
+  let requestCount = 0
+  const send = async (label, method, route, input) => {
+    const headers = {
+      'content-type': 'application/json', 'x-travelatlas-local-editor': '1',
+      'x-starmap-request-id': `01980000-0000-7000-8000-${hex(++requestCount)}`, 'x-starmap-base-revision': String(revision),
+    }
+    const before = lines.length
+    const started = performance.now()
+    const body = await requestJson(method, `${url}/__travelatlas/editor/${route}`, headers, JSON.stringify(input))
+    const endToEnd = ms(started)
+    if (!body.ok) throw new Error(`${label} failed: ${body.code} ${JSON.stringify(body.params ?? {})}`)
+    revision = body.revision
+    const added = lines.slice(before)
+    const host = added.map((line) => HOST_LINE.exec(line)).find(Boolean)
+    const native = added.map((line) => NATIVE_LINE.exec(line)).find(Boolean)
+    const commands = Number(host?.[3] ?? native?.[2] ?? 0)
+    const key = commands >= 50 ? `${label} [≥50 rows]` : label
+    const entry = timings[key] ??= { endToEnd: [], v2Write: [], diff: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [], protocol: [] }
+    entry.endToEnd.push(endToEnd)
+    if (host) {
+      entry.v2Write.push(Number(host[1])); entry.diff.push(Number(host[2])); entry.commands.push(Number(host[3]))
+      entry.commit.push(Number(host[4])); entry.host.push(Number(host[5])); entry.protocol.push(Math.round((endToEnd - Number(host[5])) * 10) / 10)
+    }
+    if (native) {
+      entry.plan.push(Number(native[1])); entry.commands.push(Number(native[2])); entry.commit.push(Number(native[3]))
+      entry.indexUpdate.push(Number(native[4])); entry.host.push(Number(native[5])); entry.protocol.push(Math.round((endToEnd - Number(native[5])) * 10) / 10)
+    }
+    return body
+  }
+  const state = async () => (await requestJson('GET', `${url}/__travelatlas/editor/state`, {}, undefined)).state
+  const summary = () => Object.fromEntries(Object.entries(timings).map(([label, entry]) => [label, Object.fromEntries(
+    Object.entries(entry).filter(([, values]) => values.length).map(([key, values]) => [key, stats(values)]),
+  )]))
+  return { send, state, summary }
+}
+
+/**
+ * `records` (3C-5 C2 spec §2.7): the four endpoints C2 made store-native, over HTTP through the plugin, on freshly
+ * generated roots (<dir>/records):
+ * - POST /records: a new city by name in a new country (`scale.updates`), a city by id joining a synthetic journey;
+ * - POST /wanttogo/convert: want-to-go items (new cities) and planned records;
+ * - POST /countries: a new country (its place exists), and after a reversal of the country order (the order by latest
+ *   visit then moves every country: the batch);
+ * - POST /countries/delete: an added country, and a country with records, cities and journeys;
+ * - mixed paths: a native want-to-go note and a record by name alternately (before 3C-5 C2 the record ran the V2
+ *   function, which had to build the V2 view again after a native write).
+ */
+export async function recordsSegment(dir, scale) {
+  const base = path.join(dir, 'records')
+  await rm(base, { recursive: true, force: true })
+  await generateRoots(base, scale)
+  const lines = []
+  const { plugin, handlers, restoreConsole } = await pluginFor(rootsOf(base).store, (line) => lines.push(line))
+  const { server, url } = await serve(handlers)
+  const batches = Math.max(2, Math.round(scale.updates / 3))
+  try {
+    const { send, state, summary } = editorClient(url, lines, (await servedModuleOf(plugin)).privateStoreRevision)
+    const codes = BENCH_COUNTRY_CODES.slice(0, scale.updates)
+    // Want-to-go items on new cities of new countries (their places), then: some converted, some recorded by id.
+    const wishes = []
+    for (const [n, code] of codes.entries()) {
+      wishes.push(await send('setup: wanttogo', 'POST', 'wanttogo', {
+        place: { kind: 'city', nameZh: `想去城市 ${n}`, nameEn: `Bench wish ${n}`, countryCode: code, lat: 30 + n, lng: 40 + n }, createNew: true,
+      }))
+    }
+    const third = Math.max(1, Math.floor(wishes.length / 3))
+    for (const wish of wishes.slice(0, third)) {
+      await send('wanttogo/convert: want-to-go', 'POST', 'wanttogo/convert', { source: 'want-to-go', id: wish.id, startDate: '2026-03-01', tripTitle: `Bench trip ${wish.id}` })
+    }
+    // The cities of these items (the module's V2 files: the response names the item, not its place).
+    const placeOf = new Map(servedV2Files(await servedModuleOf(plugin)).wantToGo.items.map((item) => [item.id, item.placeId]))
+    for (const [n, wish] of wishes.slice(third, 2 * third).entries()) {
+      // Join a synthetic journey (its title and id).
+      const journey = n % Math.max(1, Math.floor(scale.visited / scale.journeySize))
+      await send('records: by id, joining a journey', 'POST', 'records', {
+        placeId: placeOf.get(wish.id), start_date: '2024-07-01', trip_title: `Trip ${journey}`, journeyId: `journey-${journey}`,
+      })
+    }
+    for (let n = 0; n < Math.min(scale.planned, batches); n++) {
+      await send('wanttogo/convert: planned', 'POST', 'wanttogo/convert', { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' })
+    }
+    // Records by name: a new city in each new country (the country enters the footprint: the order by latest visit).
+    const countryOf = new Map()
+    for (const [n, code] of codes.entries()) {
+      const saved = await send('records: new city by name', 'POST', 'records', {
+        country: code, country_en: code, city: `测试城市 ${n}`, city_en: `Bench city ${n}`, start_date: `2025-0${1 + (n % 9)}-1${n % 10}`,
+        lat: 10 + n, lng: 20 + n, country_code: code, createNew: true, newJourney: true,
+      })
+      countryOf.set(code, saved.countryId)
+    }
+    // Countries: an added country (its place exists), hidden, deleted; again after a reversal of the order (the batch).
+    const spare = BENCH_COUNTRY_CODES.slice(scale.updates)
+    for (let n = 0; n < batches; n++) {
+      const code = spare[n % spare.length]
+      if (n % 2 === 1) {
+        const { countryOrder } = await state()
+        await send('setup: view reverse countries', 'POST', 'view', { operations: [{ op: 'order', scope: 'countries', ids: [...countryOrder].reverse(), baseline: countryOrder }] })
+      }
+      const { countryId } = await send(n % 2 ? 'countries: after a reversal' : 'countries', 'POST', 'countries', { countryCode: code, visitedDate: `2026-0${1 + (n % 9)}-0${1 + (n % 9)}` })
+      await send('setup: view hide country', 'POST', 'view', { operations: [{ op: 'hide', scope: 'countries', add: [countryId], remove: [] }] })
+      await send('countries/delete: an added country', 'POST', 'countries/delete', { ids: [countryId] })
+    }
+    // Countries with records (a city by name, a want-to-go city): hidden, deleted (records, journeys, unreferenced cities).
+    for (const code of codes.slice(codes.length - batches)) {
+      const countryId = countryOf.get(code)
+      await send('setup: view hide country', 'POST', 'view', { operations: [{ op: 'hide', scope: 'countries', add: [countryId], remove: [] }] })
+      await send('countries/delete: a country with records', 'POST', 'countries/delete', { ids: [countryId] })
+    }
+    // Mixed paths: a native note and a record by name alternately.
+    for (let n = 0; n < batches; n++) {
+      await send('mixed: wanttogo/update note', 'POST', 'wanttogo/update', { id: `wish-${(n * 97) % scale.wishes}`, note: `Synthetic mixed ${n}` })
+      await send('mixed: records by name, right after a native write', 'POST', 'records', {
+        country: codes[n % third], country_en: codes[n % third], city: `混合城市 ${n}`, city_en: `Mixed city ${n}`, start_date: '2023-03-03',
+        lat: 5 + n, lng: 6 + n, country_code: codes[n % third], createNew: true, newJourney: true,
+      })
+    }
+    return summary()
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+    await plugin.buildEnd()
+    restoreConsole()
+  }
+}
+
 const SEGMENTS = {
   generate: generateRoots, read: readSegment, http: httpSegment, pipeline: pipelineSegment, editors: editorsSegment,
-  media: mediaSegment, backup: backupSegment, restore: restoreSegment, native: nativeSegment,
+  media: mediaSegment, backup: backupSegment, restore: restoreSegment, native: nativeSegment, records: recordsSegment,
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const arg = (name) => { const at = process.argv.indexOf(name); return at > 0 ? process.argv[at + 1] : undefined }
   const dir = arg('--dir'), segment = arg('--segment'), scaleName = arg('--scale') ?? 'real'
   if (!dir || !Object.hasOwn(SEGMENTS, segment) || !Object.hasOwn(MODE_BENCH_SCALES, scaleName)) {
-    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline|editors|native|media|backup|restore [--scale real|tiny] [--derivative-kb N --original-kb N]')
+    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline|editors|native|records|media|backup|restore [--scale real|tiny] [--derivative-kb N --original-kb N]')
     process.exitCode = 1
   } else {
     mkdirSync(dir, { recursive: true })

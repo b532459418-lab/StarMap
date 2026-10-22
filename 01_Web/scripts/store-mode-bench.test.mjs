@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  MODE_BENCH_SCALES, backupSegment, editorsSegment, generateRoots, httpSegment, mediaSegment, nativeSegment, pipelineSegment, readSegment, restoreSegment,
+  MODE_BENCH_SCALES, backupSegment, editorsSegment, generateRoots, httpSegment, mediaSegment, nativeSegment, pipelineSegment, readSegment, recordsSegment,
+  restoreSegment,
   syntheticV2Files,
 } from './store-mode-bench.mjs'
 import { tempPrivateRoot } from './store-mode.fixture.mjs'
@@ -69,4 +70,14 @@ test('smoke: the native segment (3C-5 C1) runs at the tiny scale: view operation
   // 3C-5 C2: the conversion is native too.
   for (const label of ['convert planned, right after a native write (V2 path)', 'convert planned, after a V2 write (V2 path)']) assert.ok(result[label].plan.n > 0, label)
   assert.equal(result['view: order swap'].endToEnd.n, scale.updates)
+})
+
+test('smoke: the records segment (3C-5 C2) runs at the tiny scale: records, countries, country deletion and conversion, native', async (t) => {
+  const { directory } = await tempPrivateRoot(t, 'starmap-store-mode-bench-')
+  const result = await recordsSegment(directory, MODE_BENCH_SCALES.tiny)
+  for (const label of ['records: new city by name', 'records: by id, joining a journey', 'wanttogo/convert: want-to-go', 'wanttogo/convert: planned', 'countries',
+    'countries/delete: an added country', 'countries/delete: a country with records', 'mixed: records by name, right after a native write']) {
+    assert.ok(result[label]?.plan.n > 0 && result[label].indexUpdate.n === result[label].plan.n, label)
+  }
+  assert.equal(Object.values(result).some((entry) => entry.diff), false, 'no V2 write')
 })
