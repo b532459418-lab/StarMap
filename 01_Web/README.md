@@ -72,18 +72,20 @@ places, 10,000 entries and 10,000 media entities, where the targets apply) and
 `npm run store:bench -- --dir <absolute work directory> --scale real|stress --segment load|validate|copy|commit|cold|age|prune|modes`
 (see the header of `scripts/store-bench.mjs`). The new library itself is
 measured on the plugin path with synthetic V2 data migrated at the real scale (since 3C-4d its write segments measure
-the store only): `npm run store:bench:mode -- --dir <absolute work directory> --segment generate|read|http|pipeline|editors|native|media|backup|restore`
-(see the header of `scripts/store-mode-bench.mjs`; `npm test` runs a tiny scale). Since 3C-5 C1 the view operations
-(`POST /__travelatlas/editor/view`: orders, hidden lists and covers, which the page sends instead of `GET` + `PUT /state`)
-and the three Want to Go endpoints are store-native: the host plans their commands on its live read-model index through
-the official reader (`src/data/store/officialReader.ts`) with the decision layer the V2 write functions also use
-(`src/data/editor/rules/`, planners in `src/data/editor/native/`), commits once, and moves the index on with the
-commit's changed rows; new rows are `starmap:user` rows. The other editor writes (records, countries, country deletion,
-conversion, and `PUT /state`, which the page no longer sends) still run V2's write functions on the read model's V2
-view and commit only the records that changed (`src/data/store/diffV2.ts`). A test-only double run
-(`src/data/editor/doubleRun.fixture.ts`) runs a request in both engines from the same store and compares refusals and
-the derived baseline. `STARMAP_STORE_VERIFY=1` makes the dev server read the store after every commit and compare it
-with its cache (development and tests). Every connection to a store file, tests and benchmarks included, is
+the store only): `npm run store:bench:mode -- --dir <absolute work directory> --segment generate|read|http|pipeline|editors|native|records|media|backup|restore`
+(see the header of `scripts/store-mode-bench.mjs`; `npm test` runs a tiny scale). Since 3C-5 C1 and C2 every editor
+write is store-native — the view operations (`POST /__travelatlas/editor/view`: orders, hidden lists and covers, which
+the page sends instead of `GET` + `PUT /state`), the three Want to Go endpoints, records, countries, country deletion and
+conversion: the host plans the commands on its live read-model index through the official reader
+(`src/data/store/officialReader.ts`) with the decision layer the V2 write functions also use (`src/data/editor/rules/`,
+planners in `src/data/editor/native/`), commits once, and moves the index on with the commit's changed rows; new rows
+are `starmap:user` rows (a planned record marked visited keeps its identity). Only `PUT /state`, which the page no
+longer sends, still runs V2's write function and `src/data/store/diffV2.ts`. The session keeps no V2 view: where the
+V2 shape is still needed (`PUT /state`, `GET /state`, the media rules of the media service) it is generated from the
+read model through the official view when asked for. A test-only double run (`src/data/editor/doubleRun.fixture.ts`)
+runs a request in both engines from the same store and compares refusals and the derived baseline.
+`STARMAP_STORE_VERIFY=1` makes the dev server read the store after every commit and compare it with its cache
+(development and tests). Every connection to a store file, tests and benchmarks included, is
 opened through `scripts/store-sqlite.mjs` in the same TRUNCATE journal mode: on Windows a connection in SQLite's
 default DELETE mode cannot commit while the dev server has the store open. The dev server's session prunes receipts
 and `op_log` (`pruneLogs`) when it opens the store and after every 200 commits, one small step at a time after the

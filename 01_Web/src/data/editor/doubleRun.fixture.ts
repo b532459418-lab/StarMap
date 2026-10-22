@@ -9,11 +9,13 @@
  *   planCommands, applyChangeSet.
  * Compared: the error code and parameters (the place and journey candidates, in their order, are parameters), and the
  * derived baseline of both states with ids renamed in the order they first appear, without the changes design §9
- * makes on purpose (V2-only values, file headers, unknown media ids in view operations).
+ * makes on purpose (new ids, journey ids without the `journey-` prefix, V2-only values such as `type`, `status` and
+ * `source`, file headers, unknown media ids in view operations).
  *
  * Sequences go on from the second engine's state (the engine the host runs); at every step both engines start from it.
  * Endpoints that have no native planner (they still run the V2 functions in the host) run the old engine twice — the
- * stand-in (standInEngine), which also checks the comparison itself. C2 reuses this with its own planners and steps.
+ * stand-in (standInEngine), which also checks the comparison itself. Since 3C-5 C2 every endpoint the sequences draw has a
+ * native planner.
  * Only tracked neutral fixtures and invented values. Not imported by the App.
  */
 import type { FormalState } from '../../worldgraph/store/formal.ts'
@@ -153,6 +155,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** File header values (design §9 change 3) and V2-only values of new records (change 2). */
 const HEADER_KEYS = new Set(['updatedAt', 'generatedAt', 'generated_at'])
 const V2_ONLY_SOURCE = 'local-editor'
+/** V2-only values of new and converted records (design §9 change 2): `type: 'visit'`, `status: 'visited'`. */
+const V2_ONLY_VALUES: Readonly<Record<string, unknown>> = { source: V2_ONLY_SOURCE, type: 'visit', status: 'visited' }
+/** A new journey's id (design §9 change 1): `journey-<UUIDv7>` before, the journey entity's UUIDv7 now. */
+const JOURNEY = /^journey-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/
 
 const canonicalOf = (state: FormalState): CanonicalData => projectStoreToCanonical(state, { source: 'local', track: false, freeze: false }).canonical
 
@@ -160,7 +166,7 @@ const canonicalOf = (state: FormalState): CanonicalData => projectStoreToCanonic
 function renameIds(value: unknown, { dropHeaders }: { dropHeaders: boolean }): unknown {
   const names = new Map<string, string>()
   const rename = (text: string) => {
-    if (!UUID.test(text)) return text
+    if (!UUID.test(text) && !JOURNEY.test(text)) return text
     let name = names.get(text)
     if (!name) names.set(text, name = `#${names.size + 1}`)
     return name
@@ -172,7 +178,7 @@ function renameIds(value: unknown, { dropHeaders }: { dropHeaders: boolean }): u
     const out: Record<string, unknown> = {}
     for (const [key, child] of Object.entries(item)) {
       if (dropHeaders && HEADER_KEYS.has(key)) continue
-      if (dropHeaders && key === 'source' && child === V2_ONLY_SOURCE) continue
+      if (dropHeaders && Object.hasOwn(V2_ONLY_VALUES, key) && child === V2_ONLY_VALUES[key]) continue
       out[rename(key)] = walk(child)
     }
     return out
@@ -182,7 +188,8 @@ function renameIds(value: unknown, { dropHeaders }: { dropHeaders: boolean }): u
 
 /**
  * The derived baseline of a state, as JSON with every UUID renamed `#n` in the order it first appears (keys too), the file
- * headers left out, and V2-only `source: 'local-editor'` values dropped. `adjust` changes the official view first.
+ * headers left out, and the V2-only values (`source: 'local-editor'`, `type: 'visit'`, `status: 'visited'`) dropped; a new
+ * journey's `journey-<UUID>` is renamed like a UUID. `adjust` changes the official view first.
  */
 export function normalizedBaseline(state: FormalState, adjust?: (canonical: CanonicalData) => CanonicalData): unknown {
   const canonical = adjust ? adjust(canonicalOf(state)) : canonicalOf(state)
@@ -328,7 +335,7 @@ const R = editorRoute
 
 /**
  * One random request, drawn from the current V2 view (3C-4a's sequence, with the editor-state writes as the view
- * operations a page sends): the native endpoints of 3C-5 C1 and the endpoints that still run the V2 functions, mixed.
+ * operations a page sends), over the eight editor endpoints.
  */
 export function randomStep(rng: Random, files: V2Files): DoubleRunStep {
   const places = files.places.places
@@ -340,7 +347,10 @@ export function randomStep(rng: Random, files: V2Files): DoubleRunStep {
       const title = rng.pick(TITLES)
       const journeys = [...new Set(files.travel.records.filter(r => r.status !== 'planned' && r.trip_title === title && r.journeyId).map(r => r.journeyId as string))]
       const choice = journeys.length && rng.chance(0.5) ? { journeyId: rng.pick(journeys)! } : rng.chance(0.3) ? { newJourney: true } : {}
-      const city = rng.pick(cities)
+      // Half the time a city without records (a want-to-go city): a city with records is E_CITY_EXISTS (3C-5 C2, so that
+      // records by id also save and join journeys).
+      const unrecorded = cities.filter(c => !files.travel.records.some(r => r.placeId === c.id))
+      const city = unrecorded.length && rng.chance(0.5) ? rng.pick(unrecorded) : rng.pick(cities)
       if (city && rng.chance(0.4)) return sameRequest('records/placeId', R('records'), OLD_WRITES.records, { placeId: city.id, start_date: dateOf(rng), lat: 10, lng: 20, trip_title: title, ...choice })
       const code = rng.pick(COUNTRY_CODES)!
       return sameRequest('records/named', R('records'), OLD_WRITES.records, {
@@ -427,9 +437,12 @@ export function randomStep(rng: Random, files: V2Files): DoubleRunStep {
       const convertible = files.wantToGo.items.filter(i => !i.hidden && placeOf.get(i.placeId)?.subtype === 'city' && placeOf.get(i.placeId)?.location
         && !files.travel.records.some(r => r.placeId === i.placeId))
       const item = rng.pick(convertible.length && rng.chance(0.8) ? convertible : files.wantToGo.items)
+      const tripTitle = rng.pick(TITLES)
+      // Now and then one of the journeys of that title (3C-5 C2: conversions that join a journey save too).
+      const journeys = [...new Set(files.travel.records.filter(r => r.status !== 'planned' && r.trip_title === tripTitle && r.journeyId).map(r => r.journeyId as string))]
+      const choice = journeys.length && rng.chance(0.4) ? { journeyId: rng.pick(journeys)! } : rng.chance(0.4) ? { newJourney: true } : {}
       return sameRequest('convert/want-to-go', R('wanttogo/convert'), OLD_WRITES.convert, {
-        source: 'want-to-go', id: item?.id ?? 'synthetic-missing', startDate: dateOf(rng), tripTitle: rng.pick(TITLES), keepWantToGo: rng.chance(0.3),
-        ...(rng.chance(0.4) ? { newJourney: true } : {}),
+        source: 'want-to-go', id: item?.id ?? 'synthetic-missing', startDate: dateOf(rng), tripTitle, keepWantToGo: rng.chance(0.3), ...choice,
       })
     }
   }
@@ -445,6 +458,8 @@ export interface RunReport {
   readonly differences: readonly string[]
   /** The second engine's outcome of every step. */
   readonly outcomes: readonly EngineOutcome[]
+  /** The store after the last step (the second engine's). */
+  readonly state: FormalState
 }
 
 /** Run one step in both engines from `store`'s state, compare, and go on from the second engine's state. */
@@ -473,7 +488,7 @@ export function runSteps(files: V2Files, steps: readonly ((view: V2Files) => Dou
     if (engines.native.has(request.route)) native++
     return doubleRunStep(store, request, engines.engineFor(request.route), startAt + index, report)
   })
-  return { steps: steps.length, native, ...report, outcomes }
+  return { steps: steps.length, native, ...report, outcomes, state: store.state }
 }
 
 /** Run `count` random steps from `files` (seed `seed`) in both engines (see runSteps). */

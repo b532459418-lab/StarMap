@@ -147,7 +147,8 @@ async function history(paths, job, resourceChecks = new Map()) {
 /** 3C-4d: the media store of the plugin's session; none means the private root is not a store. */
 const mediaStoreOf = (storeMedia) => storeMedia?.mediaStore ?? fail('E_STORE_MIGRATION_REQUIRED')
 async function checkedFiles(storeMedia) {
-  // 3C-4c: the new library's view (places, catalog, editor state), never the V2 files.
+  // 3C-4c: the new library's view (places, catalog, editor state), never the V2 files; 3C-5 C2: generated from the read
+  // model through the official view for each call (the session keeps no V2 view).
   return (await mediaStoreOf(storeMedia).view()).files
 }
 const queryOf = (job, file) => new URLSearchParams(Object.entries({

@@ -7,7 +7,8 @@
  * - `relationsTo(entityId, typeId?)`, `relationsFrom(entityId, typeId?)`: relations by either end, optionally of one
  *   type; the reverse part-of lookup is `relationsTo(country, partOfType)`;
  * - `anchorsOf(entityId)`: an entity's anchors;
- * - `viewItemsOf(scope)`: a scope's items ordered by position, then id; `viewSettingsOf(scope)`: its settings by id.
+ * - `viewItemsOf(scope)`: a scope's items ordered by position, then id; `viewSettingsOf(scope)`: its settings by id;
+ * - `evidenceOfSource(sourceId)`: evidence rows of one source, `sequencesOfEntity(entityId)`: an entity's sequences, in id order (3C-5 C2).
  *
  * Returned lists are frozen and shared; rows are the model's own. Core knows no type, layer or scope by name: the
  * caller passes them.
@@ -15,7 +16,7 @@
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types).
  */
 import type { ViewItem, ViewSetting } from '../store/formal.ts'
-import type { LayerEntry, StoreAnchor, StoreEntity, StoreRelation } from '../store/types.ts'
+import type { EntrySequence, Evidence, LayerEntry, StoreAnchor, StoreEntity, StoreRelation } from '../store/types.ts'
 import { READ_MODEL_TABLES, compareIds, type ReadModel, type ReadModelRow, type ReadModelTable } from './types.ts'
 
 export interface ReadModelIndex {
@@ -29,6 +30,8 @@ export interface ReadModelIndex {
   anchorsOf(entityId: string): readonly StoreAnchor[]
   viewItemsOf(scope: string): readonly ViewItem[]
   viewSettingsOf(scope: string): readonly ViewSetting[]
+  evidenceOfSource(sourceId: string): readonly Evidence[]
+  sequencesOfEntity(entityId: string): readonly EntrySequence[]
 }
 
 const NONE: readonly never[] = Object.freeze([])
@@ -58,6 +61,8 @@ export function indexReadModel(model: ReadModel): ReadModelIndex {
     (item) => item.scope,
   )
   const settings = grouped(model.viewSettings, (setting) => setting.scope)
+  const evidence = grouped(model.evidence, (row) => row.sourceId)
+  const sequences = grouped(model.sequences, (row) => row.entityId)
   const ofType = (list: readonly StoreRelation[] | undefined, typeId: string | undefined) =>
     !list ? NONE : typeId === undefined ? list : Object.freeze(list.filter((relation) => relation.typeId === typeId))
   return Object.freeze({
@@ -71,5 +76,7 @@ export function indexReadModel(model: ReadModel): ReadModelIndex {
     anchorsOf: (entityId: string) => anchors.get(entityId) ?? NONE,
     viewItemsOf: (scope: string) => items.get(scope) ?? NONE,
     viewSettingsOf: (scope: string) => settings.get(scope) ?? NONE,
+    evidenceOfSource: (sourceId: string) => evidence.get(sourceId) ?? NONE,
+    sequencesOfEntity: (entityId: string) => sequences.get(entityId) ?? NONE,
   })
 }

@@ -123,6 +123,34 @@ export function wishValueOf(entry: LayerEntry, hidden: boolean | undefined): Jso
   return value
 }
 
+/**
+ * A footprint or planned record's Canonical value from its entry (role 'footprint' or 'planned'): the verbatim V2 values,
+ * id, place, the raw dates, note and trip title, its hidden-from-home flag and journey, and (readV2's rule, v2Reader.ts
+ * readRecord) its city's location when it omits both coordinates.
+ */
+export function recordValueOf(entry: LayerEntry, hidden: boolean | undefined, journeyId: string | undefined, location: unknown): Json {
+  const value: Json = { ...v2Of(entry), id: recordIdOf(entry), placeId: entry.entityId }
+  const fields = entry.fields
+  const raw = rawDates(fields.date)
+  for (const [from, to] of [['startDate', 'start_date'], ['endDate', 'end_date'], ['year', 'year']] as const) if (Object.hasOwn(raw, from)) value[to] = raw[from]
+  if (typeof fields.note === 'string') value.notes = fields.note
+  if (typeof fields.tripTitle === 'string') value.trip_title = fields.tripTitle
+  if (hidden !== undefined) value.hiddenFromHome = hidden
+  if (journeyId !== undefined) value.journeyId = journeyId
+  if (!Object.hasOwn(value, 'lat') && !Object.hasOwn(value, 'lng') && plain(location)) { value.lat = location.lat; value.lng = location.lng }
+  return value
+}
+
+/** An added country's Canonical value: its evidence's attributes and place, and the visit entry's date. */
+export function addedCountryValueOf(evidence: Evidence, visit: LayerEntry | undefined): Json {
+  const value: Json = { ...evidence.attributes, placeId: evidence.recordId }
+  if (visit) {
+    const raw = rawDates(visit.fields.date)
+    if (Object.hasOwn(raw, 'startDate')) value.visitedDate = raw.startDate
+  }
+  return value
+}
+
 /** The view rows of one scope, as the projection reads them (its own groups, or a read model index). */
 export interface ViewScopeAccess {
   /** Items of a scope, in any order. */
@@ -295,19 +323,7 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
       wishes.push({ itemId: entry.id, value: wishValueOf(entry, wishHidden(entry.id)), after: [entry.createdAt, entry.id] })
       continue
     }
-    const value: Json = { ...v2Of(entry), id: recordIdOf(entry), placeId: entry.entityId }
-    const fields = entry.fields
-    const raw = rawDates(fields.date)
-    for (const [from, to] of [['startDate', 'start_date'], ['endDate', 'end_date'], ['year', 'year']] as const) if (Object.hasOwn(raw, from)) value[to] = raw[from]
-    if (typeof fields.note === 'string') value.notes = fields.note
-    if (typeof fields.tripTitle === 'string') value.trip_title = fields.tripTitle
-    const hidden = homeHidden(entry.id)
-    if (hidden !== undefined) value.hiddenFromHome = hidden
-    const journeyId = journeyOf.get(entry.id)
-    if (journeyId !== undefined) value.journeyId = journeyId
-    // readV2's rule (v2Reader.ts readRecord): a record that omits both coordinates takes its city's location.
-    const location = places.get(entry.entityId)!.location
-    if (!Object.hasOwn(value, 'lat') && !Object.hasOwn(value, 'lng') && plain(location)) { value.lat = location.lat; value.lng = location.lng }
+    const value = recordValueOf(entry, homeHidden(entry.id), journeyOf.get(entry.id), places.get(entry.entityId)!.location)
     records.push({ itemId: entry.id, value, after: [entry.createdAt, entry.id] })
   }
 
@@ -315,13 +331,9 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
   const containers: { itemId: string; value: Json; after: [string, string] }[] = []
   for (const evidence of state.evidence as readonly Evidence[]) {
     if (evidence.sourceId !== V2_SOURCES.countryVisit || !isPlace(evidence.recordId)) continue
-    const value: Json = { ...evidence.attributes, placeId: evidence.recordId }
     const visit = visits.get(evidence.recordId)
-    if (visit) {
-      const raw = rawDates(visit.fields.date)
-      if (Object.hasOwn(raw, 'startDate')) value.visitedDate = raw.startDate
-      consume('entries', visit.id)
-    }
+    const value = addedCountryValueOf(evidence, visit)
+    if (visit) consume('entries', visit.id)
     consume('evidence', evidence.id)
     containers.push({ itemId: evidence.recordId, value, after: ['', evidence.id] })
   }

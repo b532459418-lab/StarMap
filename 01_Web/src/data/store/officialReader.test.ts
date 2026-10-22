@@ -32,5 +32,22 @@ for (const [name, files] of migrationInputs()) test(`the official reader answers
     // The editor lists only: the file header fields (schemaVersion, updatedAt, …) are not lists.
     const expected = Object.fromEntries(Object.entries(lists).filter(([key]) => Array.isArray(lists[key]) || (typeof lists[key] === 'object' && lists[key] !== null)))
     assert.deepEqual(reader.editorLists(), expected, `${label}: editor lists`)
+    // 3C-5 C2: records, their order and journeys; added countries.
+    assert.deepEqual(reader.recordsInOrder().map((record) => record.record), view.travel.records, `${label}: records`)
+    for (const record of view.travel.records) {
+      assert.deepEqual(reader.recordById(record.id)?.record, view.travel.records.find((candidate) => candidate.id === record.id), `${label}: record ${record.id}`)
+      assert.ok(reader.recordsOn(record.placeId).some((found) => found.record.id === record.id))
+      // A visited record's journey comes from a sequence (a planned record keeps its journeyId as a verbatim V2 value).
+      if (record.status !== 'planned' && typeof record.journeyId === 'string' && record.journeyId.trim()) assert.ok(reader.journeyMembers(record.journeyId).some((found) => found.record.id === record.id), `${label}: member of ${record.journeyId}`)
+    }
+    for (const title of new Set(view.travel.records.map((record) => record.trip_title).filter((title) => typeof title === 'string'))) {
+      assert.deepEqual(reader.visitedTitled(title as string).map((found) => found.record.id).sort(),
+        view.travel.records.filter((record) => record.trip_title === title && record.status !== 'planned' && reader.recordById(record.id)?.planned === false).map((record) => record.id).sort(), `${label}: titled ${title}`)
+    }
+    assert.deepEqual(reader.addedCountries().map((country) => country.value), view.editorState.addedCountries, `${label}: added countries`)
+    // The light queries of the country order.
+    assert.deepEqual(reader.visitsInOrder().map((visit) => [visit.placeId, visit.planned, visit.start_date, visit.end_date]),
+      view.travel.records.map((record) => [record.placeId, record.status === 'planned' && reader.recordById(record.id)!.planned, record.start_date, record.end_date]), `${label}: visits`)
+    for (const place of view.places) assert.equal(reader.countryOf(place.id), place.subtype === 'country' ? place.id : place.partOf, `${label}: country of ${place.id}`)
   }
 })

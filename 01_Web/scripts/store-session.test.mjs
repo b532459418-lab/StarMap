@@ -73,7 +73,7 @@ test('a store that fails its open checks is an error with the check code, never 
   assert.equal(garbage?.code, 'E_STORE_CORRUPT')
 })
 
-test('the read model is the store\'s read model, cached per revision with timed steps; its V2 view is built on first use', async (t) => {
+test('the read model is the store\'s read model, cached per revision with timed steps; its V2 view is generated when asked for, never cached', async (t) => {
   const { files, paths, file } = await migratedRoot(t)
   const output = quietly()
   const session = createStoreSession(paths, { log: output.log })
@@ -85,19 +85,20 @@ test('the read model is the store\'s read model, cached per revision with timed 
     assert.deepEqual(officialViewOf(first.model, 'local'), readV2(files))
     const snapshot = session.lastSnapshot
     for (const step of ['openMs', 'readMs']) assert.equal(typeof snapshot.timings[step], 'number', step)
-    assert.equal(snapshot.hasFiles, false, 'no V2 view until something asks for it')
     assert.equal(output.lines.length, 1)
     assert.match(output.lines[0], /^\[StarMap store\] 读模型（修订号 1）：打开 [\d.]+ ms，readModel [\d.]+ ms$/)
-    // The V2 view, built from the read model when asked for (the V2 write functions and the media service use it).
+    // The V2 view, generated from the read model through the official view when asked for (PUT /state and the media rules
+    // use it; 3C-5 C2: never cached).
     assert.deepEqual(canonicalForInputs({ v2Files: first.files }), readV2(files))
-    assert.equal(snapshot.hasFiles, true)
-    assert.match(output.lines[1], /^\[StarMap store\] V2 视图（修订号 1）：投影与 serializeV2 [\d.]+ ms$/)
+    assert.match(output.lines[1], /^\[StarMap store\] V2 视图（修订号 1，按需生成，不缓存）：官方视图与 serializeV2 [\d.]+ ms$/)
     assert.equal(snapshot.index.get('entities', files.places.places[0].id)?.id, files.places.places[0].id)
-    // Same revision: the cached model and view, no new log line.
+    // Same revision: the cached model, no new read; the V2 view is generated again (equal, not the same object).
     const again = await session.moduleExports()
     assert.equal(again.model, first.model)
-    assert.equal(again.files, first.files)
-    assert.equal(output.lines.length, 2)
+    const files2 = again.files
+    assert.deepEqual(files2, first.files)
+    assert.notEqual(files2, first.files)
+    assert.equal(output.lines.filter((line) => line.includes('读模型')).length, 1)
     // GET /editor/state reads the same model.
     const state = await session.readEditorState(new Date(NOW))
     assert.deepEqual(state, { status: 200, body: { ok: true, state: readEditorStateV1(files, new Date(NOW)) } })

@@ -20,7 +20,8 @@
  * give now (mediaRecords.ts rereadMediaRecordCommands), and their sources the new description digest. A record whose
  * present sources describe it differently is refused and listed; a source whose file is gone or changed is listed.
  *
- * `store` is the media store adapter: { readOnly, meta(), view() → { files, revision }, mediaRegistry(), mediaEntities(),
+ * `store` is the media store adapter: { readOnly, meta(), view() → { files, revision } (3C-5 C2: the V2 shape of the read model,
+ * generated through the official view for each call, for the media rules that still take it), mediaRegistry(), mediaEntities(),
  * read(reader → value), lookup(requestId), commit(request, { leaseToken }), settleFileOps(work, { leaseToken }) }:
  * store-session.mjs mediaStore() for the dev server, handleMediaStore(handle) for a command line.
  */

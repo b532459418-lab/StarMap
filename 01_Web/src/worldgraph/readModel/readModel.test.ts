@@ -308,6 +308,8 @@ function assertSameLookups(live: LiveReadModelIndex, model: ReadModel, label: st
   }
   for (const scope of new Set(model.viewItems.map((row) => row.scope))) assert.deepEqual(rowIds(live.viewItemsOf(scope)), rowIds(fresh.viewItemsOf(scope)), label)
   for (const scope of new Set(model.viewSettings.map((row) => row.scope))) assert.deepEqual(rowIds(live.viewSettingsOf(scope)), rowIds(fresh.viewSettingsOf(scope)), label)
+  for (const sourceId of new Set(model.evidence.map((row) => row.sourceId))) assert.deepEqual(rowIds(live.evidenceOfSource(sourceId)), rowIds(fresh.evidenceOfSource(sourceId)), label)
+  for (const entityId of new Set(model.sequences.map((row) => row.entityId))) assert.deepEqual(rowIds(live.sequencesOfEntity(entityId)), rowIds(fresh.sequencesOfEntity(entityId)), label)
   // Reverse references: every reference Core sees in the model, and no other.
   const lookup = { get: (table: string, rowId: string) => fresh.get(table as ReadModelTable, rowId) as FormalRow | undefined }
   const expected = new Map<string, string[]>()

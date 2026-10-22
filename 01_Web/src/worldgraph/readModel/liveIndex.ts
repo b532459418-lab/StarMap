@@ -19,7 +19,7 @@ import type { FormalRow, ViewItem, ViewSetting } from '../store/formal.ts'
 import type { ChangeSet } from '../store/planner.ts'
 import { reject } from '../store/primitives.ts'
 import { referencesOf, type Ref } from '../store/reader.ts'
-import type { LayerEntry, StoreAnchor, StoreEntity, StoreRelation } from '../store/types.ts'
+import type { EntrySequence, Evidence, LayerEntry, StoreAnchor, StoreEntity, StoreRelation } from '../store/types.ts'
 import { applyReadModelDelta } from './delta.ts'
 import type { ReadModelIndex } from './lookup.ts'
 import { READ_MODEL_TABLES, compareIds, type ReadModel, type ReadModelRow, type ReadModelTable } from './types.ts'
@@ -91,6 +91,8 @@ export function liveReadModelIndex(model: ReadModel): LiveReadModelIndex {
   const anchors = new Groups<StoreAnchor>((anchor) => anchor.entityId, byId)
   const items = new Groups<ViewItem>((item) => item.scope, byPosition)
   const settings = new Groups<ViewSetting>((setting) => setting.scope, byId)
+  const evidence = new Groups<Evidence>((row) => row.sourceId, byId)
+  const sequences = new Groups<EntrySequence>((row) => row.entityId, byId)
   /** The groups a table's rows are in (typed by row, as each table's rows are). */
   type RowGroups = { add(row: ReadModelRow): void; remove(row: ReadModelRow): void }
   const as = (...groups: unknown[]) => groups as RowGroups[]
@@ -102,6 +104,8 @@ export function liveReadModelIndex(model: ReadModel): LiveReadModelIndex {
       case 'anchors': return as(anchors)
       case 'viewItems': return as(items)
       case 'viewSettings': return as(settings)
+      case 'evidence': return as(evidence)
+      case 'sequences': return as(sequences)
       default: return []
     }
   }
@@ -160,6 +164,8 @@ export function liveReadModelIndex(model: ReadModel): LiveReadModelIndex {
     anchorsOf: (entityId: string) => anchors.list(entityId),
     viewItemsOf: (scope: string) => items.list(scope),
     viewSettingsOf: (scope: string) => settings.list(scope),
+    evidenceOfSource: (sourceId: string) => evidence.list(sourceId),
+    sequencesOfEntity: (entityId: string) => sequences.list(entityId),
     referencesTo,
     apply(changes: ReadModelChanges) {
       if (changes.baseRevision !== revision) reject('E_STALE', 'changes.baseRevision')
