@@ -6,9 +6,11 @@
  * and migrated (`store:migrate --apply`) before the dev server starts. `mode: 'v2'` leaves the V2 files unmigrated (a
  * root that needs migration: the `--migration` group). Cases read the fixture through the store's projection
  * (readFixtureFiles) and change or reset it with store commits (resetFixture, patchFixture): the dev server keeps the
- * store open, so the file is never replaced. After a commit the V2 files are rewritten too (they stay the migration's
- * input), and that change under `data/v2/` makes the dev server reload its private data module; resetFixture then
- * waits until the server serves the new revision.
+ * store open, so the file is never replaced. 3C-5 D: such a commit is another writer for the dev server, which finds it
+ * (its look at the library's files, its poll while a page is connected, or a request for the changes) and pushes the
+ * new revision to the open pages, which apply the changes without a reload. resetFixture waits until the dev server
+ * has found it (waitForServedRevision asks the changes endpoint, which looks first). The V2 files are no longer
+ * rewritten: under `data/v2/` a change would reload the pages.
  *
  * Media are store-native (3C-4c): diffV2ToCommands refuses a change to media items, so a reset keeps the store's media
  * items as they are (review §7-1) and resets everything else, the media orders, hidden lists and covers included.
@@ -137,30 +139,29 @@ function servedModule() {
   })
 }
 
-/**
- * How often waitForServedRevision nudges the dev server again while it still serves an older revision: just past the
- * watcher's 50 ms window (see below), and often enough that a dropped event costs a quarter of a second, not seconds.
- */
-const RETOUCH_MS = 250
+/** The library revision the dev server has (its changes endpoint looks for other writers first), or undefined. */
+function servedChangesRevision() {
+  return new Promise((resolve, reject) => {
+    const request = http.get({ ...DEV_SERVER, path: '/__travelatlas/editor/read-model/changes?since=0', agent: false, headers: { host: '127.0.0.1:5173' } }, (response) => {
+      let text = ''
+      response.setEncoding('utf8')
+      response.on('data', (chunk) => { text += chunk })
+      response.on('end', () => { try { resolve(JSON.parse(text).revision) } catch { resolve(undefined) } })
+    })
+    request.on('error', (error) => (error?.code === 'ECONNREFUSED' ? resolve(undefined) : reject(error)))
+    request.setTimeout(15000, () => request.destroy(new Error('The dev server did not answer within 15 s')))
+  })
+}
 
 /**
- * Wait until the dev server (when one runs) serves `revision` in its private data module. `touch` (optional) makes the
- * dev server reload the module: it runs first, and again every RETOUCH_MS while another revision is served.
- *
- * Why the retouch is needed (found in 3C-5B): Vite 8's bundled chokidar throttles `change` events per file to one in
- * 50 ms (`_emit`: `if (!this._throttle(EV_CHANGE, path, 50)) return this`). A later event inside the window is dropped,
- * and nothing is emitted when the window ends. So when two resets rewrite the V2 files within 50 ms (CI on Linux, where
- * inotify reports at once and a commit takes milliseconds), the second change never reaches the plugin, the private
- * data module is not invalidated, and the dev server keeps serving the old revision until another change arrives.
+ * Wait until the dev server (when one runs) has `revision`: the revision of the library its pages follow (3C-5 D: asked
+ * through the changes endpoint, which first looks for another writer's commits), and the one its private data module
+ * names. `undefined` waits for a module without a library (a root set aside, a damaged store). No file is touched.
  */
-export async function waitForServedRevision(revision, { timeoutMs = 30000, touch } = {}) {
+export async function waitForServedRevision(revision, { timeoutMs = 30000 } = {}) {
   const deadline = Date.now() + timeoutMs
-  let nextTouch = 0
   for (;;) {
-    if (touch && Date.now() >= nextTouch) {
-      await touch()
-      nextTouch = Date.now() + RETOUCH_MS
-    }
+    if (revision !== undefined && String(revision) !== 'undefined') await servedChangesRevision()
     const text = await servedModule()
     if (text === undefined) return
     const current = /privateStoreRevision = (\w+)/.exec(text)?.[1]
@@ -172,17 +173,12 @@ export async function waitForServedRevision(revision, { timeoutMs = 30000, touch
   }
 }
 
-/** Rewrite one V2 file with its own bytes: a change under data/v2/ makes the dev server reload its private data module. */
-async function touchV2Files(root) {
-  const file = path.join(root, 'data', 'v2', fixtureFileNames.places)
-  if (existsSync(file)) await writeFile(file, await readFile(file))
-}
 
 /**
  * Make the store hold `files` (the V2 shape) with one commit through a separate connection, under the library lease,
  * as the editor writes do. Media items are kept as the store has them (diffV2ToCommands refuses a change to them; review
- * §7-1); everything else follows `files`. Then the V2 files are rewritten with `files` (the dev server reloads its
- * module) and, when a dev server runs, this waits until it serves the new revision. Resolves the revision.
+ * §7-1); everything else follows `files`. When a dev server runs, this waits until it has found the commit (3C-5 D: its
+ * open pages then apply it without a reload). Resolves the revision.
  */
 export async function resetFixture(root, files) {
   const paths = pathsOf(root)
@@ -206,8 +202,7 @@ export async function resetFixture(root, files) {
       return result.revision
     } finally { await handle.close() }
   })
-  await writeFixtureFiles(root, { ...files, media: undefined })
-  await waitForServedRevision(revision, { touch: () => touchV2Files(root) })
+  await waitForServedRevision(revision)
   return revision
 }
 
@@ -220,8 +215,9 @@ export async function patchFixture(root, key, change) {
 
 /**
  * Import what the Inbox holds into the store through the media service (as `npm run media:import -- --apply
- * --accept-folder-bindings` does), then let the dev server reload its module and wait for the new revision. The
- * folders should carry place.json. Resolves the revision.
+ * --accept-folder-bindings` does) — another writer for the dev server, as a command-line import is — and wait until the
+ * dev server has found it (3C-5 D: its open pages then show the media without a reload). The folders should carry
+ * place.json. Resolves the revision.
  */
 export async function importInboxMedia(root) {
   const paths = pathsOf(root)
@@ -235,7 +231,7 @@ export async function importInboxMedia(root) {
       return result.revision
     } finally { await handle.close() }
   })
-  await waitForServedRevision(revision, { touch: () => touchV2Files(root) })
+  await waitForServedRevision(revision)
   return revision
 }
 

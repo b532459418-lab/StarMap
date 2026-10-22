@@ -50,9 +50,9 @@ test('a case patches the store with one commit and the next case resets it to th
   assert.equal(revision, 2)
   const patched = await readFixtureFiles(root)
   assert.equal(patched.wantToGo.items.find((item) => item.placeId === fixtureIds.nuuk).note, 'Synthetic patched note')
-  // The V2 files follow the store (they stay the migration's input).
+  // 3C-5 D: the V2 files are not rewritten (a change under data/v2/ would reload the open pages); the store is the data.
   const v2 = JSON.parse(await readFile(path.join(root, 'data', 'v2', fixtureFileNames.wantToGo), 'utf8'))
-  assert.equal(v2.items.find((item) => item.placeId === fixtureIds.nuuk).note, 'Synthetic patched note')
+  assert.notEqual(v2.items.find((item) => item.placeId === fixtureIds.nuuk).note, 'Synthetic patched note')
   assert.notDeepEqual(await fixtureHashes(root), pristine)
 
   await createBrowserFixture(root)

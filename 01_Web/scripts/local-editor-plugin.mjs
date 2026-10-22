@@ -638,6 +638,12 @@ export function travelAtlasLocalEditor(options = {}) {
         const privateModule = server.moduleGraph.getModuleById(resolvedPrivateDataId)
         if (privateModule) server.moduleGraph.invalidateModule(privateModule)
       }
+      // 3C-5 D: once per commit — an editor write and the revision push of its commit both invalidate it; a module already
+      // invalidated (no transform result yet) is left as it is.
+      const invalidatePrivateDataModuleOnce = () => {
+        const privateModule = server.moduleGraph.getModuleById(resolvedPrivateDataId)
+        if (privateModule && privateModule.transformResult !== null) server.moduleGraph.invalidateModule(privateModule)
+      }
       // data/v2/ 的新建、修改、删除，以及四个旧数据文件的新建与删除（RFC-LOC-1 PR5a）：迁移写出 V2 文件、导入器更新媒体目录、
       // 把旧文件移走，不重启服务也会让虚拟模块失效；编辑器自己的写入期间与之后 1.5 秒内不刷新页面（原有条件）。
       const onPrivateDataEvent = (event, changedPath) => {
@@ -650,7 +656,12 @@ export function travelAtlasLocalEditor(options = {}) {
       // library id, restore mark and revision; they fetch the changes themselves). Commits of another process are looked
       // for when the library's files change (debounced) and every EXTERNAL_CHECK_MS while a page is connected (a file
       // event can be lost: chokidar drops a second change within 50 ms).
-      pushRevision = (revision) => server.ws.send({ type: 'custom', event: REVISION_EVENT, data: revision })
+      // The private data module names the revision too (tools and tests read it): a push invalidates it (once: see above),
+      // which reloads no page (the pages fetch the changes).
+      pushRevision = (revision) => {
+        invalidatePrivateDataModuleOnce()
+        server.ws.send({ type: 'custom', event: REVISION_EVENT, data: revision })
+      }
       let externalCheckPending
       const checkExternal = () => {
         if (!storeMode() || !storeSessionLoading) return
@@ -808,7 +819,7 @@ export function travelAtlasLocalEditor(options = {}) {
                 } finally {
                   editorMutationDepth -= 1
                   if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
-                  invalidatePrivateDataModule()
+                  invalidatePrivateDataModuleOnce()
                 }
                 return sendJson(response, jobResult.status, withDelta(jobResult.body, session, jobFrom))
               }
@@ -829,7 +840,7 @@ export function travelAtlasLocalEditor(options = {}) {
               } finally {
                 editorMutationDepth -= 1
                 if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
-                invalidatePrivateDataModule()
+                invalidatePrivateDataModuleOnce()
               }
               return sendJson(response, mediaResult.status, withDelta(mediaResult.body, session, mediaFrom))
             }
@@ -837,7 +848,7 @@ export function travelAtlasLocalEditor(options = {}) {
               headers: request.headers, input: await readJsonBody(request), ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }),
             })
             // 提交之后（以及结果不明时）让虚拟模块失效；客户端照旧整页刷新。
-            invalidatePrivateDataModule()
+            invalidatePrivateDataModuleOnce()
             return sendJson(response, result.status, result.body)
           }
         } catch (error) {

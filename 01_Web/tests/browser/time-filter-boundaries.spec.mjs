@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure, saveAndWaitForReload } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure, saveAndWaitForRevision } from './helpers.mjs'
 import { createBrowserFixture, fixtureHashes, fixtureIds, patchFixture as patchStoreFixture, storeRevisionOf } from '../../scripts/browser-fixture.mjs'
 import { uuidv7 } from '../../src/data/canonical/uuidv7.ts'
 import path from 'node:path'
@@ -86,7 +86,7 @@ test('conversion preserves the selected result outside the active travel range a
   await dialog.locator('input[type=checkbox]').check()
   recordReloadCheckpoint(page, 'before converting Nuuk')
   // A confirmed conversion reloads the whole page; the checks below start after that reload (batch 4B).
-  await saveAndWaitForReload(page, async () => {
+  await saveAndWaitForRevision(page, async () => {
     const saved = page.waitForResponse(response => response.url().endsWith('/wanttogo/convert'))
     await dialog.locator('button[type=submit]').click()
     expect((await saved).ok()).toBe(true)
