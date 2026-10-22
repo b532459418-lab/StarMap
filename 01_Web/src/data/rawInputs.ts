@@ -31,7 +31,7 @@ import { readModelOf } from '../worldgraph/readModel/build.ts'
 import { readReadModel } from '../worldgraph/readModel/check.ts'
 import type { ReadModel } from '../worldgraph/readModel/types.ts'
 import { emptyFormalState } from '../worldgraph/store/formal.ts'
-import type { AppDataLoadError } from './appStoreCore.ts'
+import type { AppDataLoadError, StoreIdentity } from './appStoreCore.ts'
 
 /** 原 worldGraph.ts 的 worldGraphSessionNow：模块加载时固定一次，适配器要求 now 必填且不读时钟。 */
 export const sessionNow: string = new Date().toISOString()
@@ -78,7 +78,7 @@ const refusalOf = (body: unknown): { code?: string; problems?: readonly string[]
 }
 
 /** 上面两种来源之一的读模型；读不到或格式不对时是空的读模型加上原因。 */
-export async function loadAppReadModel(): Promise<{ readonly model: ReadModel; readonly error?: AppDataLoadError }> {
+export async function loadAppReadModel(): Promise<{ readonly model: ReadModel; readonly identity?: StoreIdentity; readonly error?: AppDataLoadError }> {
   const file = useSampleData ? 'sample/sample.read-model.json' : (privateReadModelUrl ?? 'virtual:starmap-private-data').replace(/\?.*$/, '')
   try {
     if (useSampleData) return { model: readReadModel(sampleReadModelJson) }
@@ -92,7 +92,10 @@ export async function loadAppReadModel(): Promise<{ readonly model: ReadModel; r
     const value: unknown = await response.json().catch(() => {
       throw new Error(`HTTP ${response.status}, ${response.headers.get('content-type') ?? 'no content type'}: not JSON`)
     })
-    return { model: readReadModel(value) }
+    // 3C-5 D: the library the read model is of (the dev server's endpoint names it), for the changes the page applies.
+    const libraryId = response.headers.get('x-starmap-library-id')
+    const identity = libraryId ? { libraryId, restoreMark: response.headers.get('x-starmap-restore-mark') || null } : undefined
+    return { model: readReadModel(value), ...(identity ? { identity } : {}) }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
     const refusal = error instanceof DataLoadFailure ? { ...(error.code ? { code: error.code } : {}), ...(error.problems ? { problems: error.problems } : {}) } : {}

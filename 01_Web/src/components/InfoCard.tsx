@@ -6,7 +6,9 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
 import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
 import { getMediaSource, useMediaCatalog } from '../data/mediaCatalog'
-import { addLocalTravelRecord, applyLocalViewOperations, deleteHiddenLocalMedia, journeyChoiceCandidatesOf, placeChoiceCandidatesOf, reloadAfterLocalSave, searchLocalCities } from '../data/localEditorClient'
+import { addLocalTravelRecord, applyLocalViewOperations, deleteHiddenLocalMedia, journeyChoiceCandidatesOf, placeChoiceCandidatesOf, searchLocalCities } from '../data/localEditorClient'
+import { useDraft } from '../data/drafts'
+import { cityListProbe, photoListProbe } from '../data/draftProbes'
 import { placeChoiceKey, placeChoiceStateOf, type PlaceChoiceState } from '../data/placeChoice.ts'
 import { journeyChoiceInput, journeyChoiceKey, journeyChoiceStateOf, type JourneyChoiceState } from '../data/journeyChoice.ts'
 import { cityDraftOperations, hideIdsOperation, photoDraftOperations, restoreHiddenOperation } from '../data/editorStateDelta'
@@ -85,8 +87,14 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   const memorySectionLabel = isCityMode ? t('details:cityPhotos') : t('details:cityCards')
   const cityCoverPhoto = useMemo(() => isCityMode ? getCityCoverPhoto(city.id) : undefined, [city, isCityMode, getCityCoverPhoto])
   const photoInputRef = useRef<HTMLInputElement>(null)
-  const [cityEditing, setCityEditing] = useState(false)
-  const [photoEditing, setPhotoEditing] = useState(false)
+  // 3C-5 D: a draft starts when editing starts, from the data on the page then (its baselines and revision), and ends with
+  // the save or the exit; without a draft the grids show the data. Saves apply only the difference from the baselines (D1).
+  const cityProbe = useMemo(() => cityListProbe(country?.id), [country?.id])
+  const photoProbe = useMemo(() => photoListProbe(isCityMode ? city.id : undefined), [isCityMode, city?.id])
+  const cityDraft = useDraft(cityProbe)
+  const photoDraft = useDraft(photoProbe)
+  const cityEditing = cityDraft.active
+  const photoEditing = photoDraft.active
   const [showAddCity, setShowAddCity] = useState(false)
   const [editorNotice, setEditorNotice] = useLocalizedNotice()
   const [editorBusy, setEditorBusy] = useState(false)
@@ -103,14 +111,15 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   const editorActionBusy = editorBusy || coordination.blocked
   const [draggedCityId, setDraggedCityId] = useState<CityId>()
   const [draggedPhotoId, setDraggedPhotoId] = useState<string>()
-  const [draftCityIds, setDraftCityIds] = useState<CityId[]>(memoryCities.map((item) => item.id))
-  const [draftHiddenCityIds, setDraftHiddenCityIds] = useState<CityId[]>(travelAtlasEditorState.hiddenCityIds)
-  const [draftPhotoIds, setDraftPhotoIds] = useState<string[]>(cityPhotos.map((item) => item.id))
-  const [draftHiddenPhotoIds, setDraftHiddenPhotoIds] = useState<string[]>(travelAtlasEditorState.hiddenMediaIds)
-  // The drafts start from (and reset to) the page-load snapshot; saves apply only the difference from it (D1).
-  const [baselineHiddenCityIds] = useState<readonly CityId[]>(() => travelAtlasEditorState.hiddenCityIds)
-  const [baselineHiddenPhotoIds] = useState<readonly string[]>(() => travelAtlasEditorState.hiddenMediaIds)
-  const [draftCoverPhotoId, setDraftCoverPhotoId] = useState<string | undefined>(cityCoverPhoto?.id)
+  const [draftCityIds, setDraftCityIds] = useState<CityId[]>([])
+  const [draftHiddenCityIds, setDraftHiddenCityIds] = useState<CityId[]>([])
+  const [draftPhotoIds, setDraftPhotoIds] = useState<string[]>([])
+  const [draftHiddenPhotoIds, setDraftHiddenPhotoIds] = useState<string[]>([])
+  const [baselineCityOrder, setBaselineCityOrder] = useState<readonly CityId[]>([])
+  const [baselineHiddenCityIds, setBaselineHiddenCityIds] = useState<readonly CityId[]>([])
+  const [baselinePhotoOrder, setBaselinePhotoOrder] = useState<readonly string[]>([])
+  const [baselineHiddenPhotoIds, setBaselineHiddenPhotoIds] = useState<readonly string[]>([])
+  const [draftCoverPhotoId, setDraftCoverPhotoId] = useState<string | undefined>()
   const [selectedCityOption, setSelectedCityOption] = useState<CitySearchOption>()
   const [isManualCityEntry, setIsManualCityEntry] = useState(false)
   const [manualCity, setManualCity] = useState({ nameZh: '', nameEn: '', lat: '', lng: '' })
@@ -128,7 +137,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     ? draftPhotoIds.map((id) => photoByDraftId.get(id)).filter(Boolean)
     : cityPhotos
   const memoryGridRef = useFlipLayout<HTMLDivElement>(
-    isCityMode ? draftPhotoIds.join('|') : draftCityIds.join('|'),
+    isCityMode ? displayedCityPhotos.map((photo) => photo?.id).join('|') : displayedMemoryCities.map((item) => item?.id).join('|'),
   )
   // 被隐藏的城市不在 cityById 里；所属国家只问 countryIdOfCity，不解析 id 的结构（RFC-LOC-1 PR3b-1 §2.5）。
   const hiddenCityIdsForCountry = country
@@ -145,15 +154,49 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     return searchLocalCities(query, countryCode, signal)
   }, [countryCode, t])
 
+  /** The city draft from the data on the page now (start, or undo). */
+  const startCityDraft = () => {
+    cityDraft.begin()
+    setDraftCityIds(memoryCities.map((item) => item.id))
+    setDraftHiddenCityIds(travelAtlasEditorState.hiddenCityIds)
+    setBaselineCityOrder(country ? travelAtlasEditorState.cityOrderByCountry[country.id] ?? [] : [])
+    setBaselineHiddenCityIds(travelAtlasEditorState.hiddenCityIds)
+  }
+  const resetAddCity = () => {
+    setShowAddCity(false)
+    setSelectedCityOption(undefined)
+    setIsManualCityEntry(false)
+    setManualCity({ nameZh: '', nameEn: '', lat: '', lng: '' })
+    setCityVisitDates({ startDate: '', endDate: '' })
+    setPlaceChoice(undefined)
+    setJourneyChoice(undefined)
+  }
+  /** The photo draft from the data on the page now (start, or undo). */
+  const startPhotoDraft = () => {
+    photoDraft.begin()
+    setDraftPhotoIds(cityPhotos.map((photo) => photo.id))
+    setDraftHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
+    setDraftCoverPhotoId(cityCoverPhoto?.id)
+    setBaselinePhotoOrder(isCityMode ? travelAtlasEditorState.mediaOrderByCity[city.id] ?? [] : [])
+    setBaselineHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
+  }
+  /** A write of a draft is saved: the page shows the data (3C-5 D: no reload), the editor closes. */
+  const draftSaved = (draft: { end(): void }) => {
+    draft.end()
+    resetAddCity()
+    setEditorBusy(false)
+    setEditorNotice('')
+  }
+
   const saveCityDraft = async () => {
     if (!country || editorActionBusy) return
     setEditorBusy(true)
     setEditorNotice({ key: 'editor:savingCities' })
     try {
       await applyLocalViewOperations(cityDraftOperations({
-        countryId: country.id, draftCityIds, baselineCityIds: travelAtlasEditorState.cityOrderByCountry[country.id] ?? [], baselineHiddenCityIds, draftHiddenCityIds,
-      }))
-      reloadAfterLocalSave()
+        countryId: country.id, draftCityIds, baselineCityIds: baselineCityOrder, baselineHiddenCityIds, draftHiddenCityIds,
+      }), cityDraft.writeOptions())
+      draftSaved(cityDraft)
     } catch (error) {
       setEditorNotice(editorErrorNotice(error, 'editor:saveFailed'))
       setEditorBusy(false)
@@ -166,9 +209,9 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     setEditorNotice({ key: 'editor:savingPhotos' })
     try {
       await applyLocalViewOperations(photoDraftOperations({
-        cityId: city.id, draftPhotoIds, baselinePhotoIds: travelAtlasEditorState.mediaOrderByCity[city.id] ?? [], baselineHiddenPhotoIds, draftHiddenPhotoIds, draftCoverPhotoId,
-      }))
-      reloadAfterLocalSave()
+        cityId: city.id, draftPhotoIds, baselinePhotoIds: baselinePhotoOrder, baselineHiddenPhotoIds, draftHiddenPhotoIds, draftCoverPhotoId,
+      }), photoDraft.writeOptions())
+      draftSaved(photoDraft)
     } catch (error) {
       setEditorNotice(editorErrorNotice(error, 'editor:saveFailed'))
       setEditorBusy(false)
@@ -250,7 +293,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
           ...journey,
         })
       }
-      reloadAfterLocalSave()
+      draftSaved(cityDraft)
     } catch (error) {
       // 409 E_PLACE_CHOICE_REQUIRED：在表单里列出候选，同一按钮再次提交（第 2A 批）。
       const candidates = placeChoiceCandidatesOf(error)
@@ -468,17 +511,13 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                     label={t('editor:photos')}
                     onToggle={() => {
                       if (editorActionBusy) return
-                      setPhotoEditing((editing) => !editing)
-                      setDraftPhotoIds(cityPhotos.map((photo) => photo.id))
-                      setDraftHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
-                      setDraftCoverPhotoId(cityCoverPhoto?.id)
+                      if (photoEditing) photoDraft.end()
+                      else startPhotoDraft()
                       setEditorNotice('')
                     }}
                     onReset={() => {
                       if (editorActionBusy) return
-                      setDraftPhotoIds(cityPhotos.map((photo) => photo.id))
-                      setDraftHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
-                      setDraftCoverPhotoId(cityCoverPhoto?.id)
+                      startPhotoDraft()
                       setEditorNotice({ key: 'editor:undoPhotos' })
                     }}
                     onAdd={() => {
@@ -516,27 +555,15 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                     label={t('editor:cities')}
                     onToggle={() => {
                       if (editorActionBusy) return
-                      setCityEditing((editing) => !editing)
-                      setDraftCityIds(memoryCities.map((item) => item.id))
-                      setDraftHiddenCityIds(travelAtlasEditorState.hiddenCityIds)
-                      setShowAddCity(false)
-                      setSelectedCityOption(undefined)
-                      setIsManualCityEntry(false)
-                      setManualCity({ nameZh: '', nameEn: '', lat: '', lng: '' })
-                      setCityVisitDates({ startDate: '', endDate: '' })
-                      setPlaceChoice(undefined)
-                      setJourneyChoice(undefined)
+                      if (cityEditing) cityDraft.end()
+                      else startCityDraft()
+                      resetAddCity()
                       setEditorNotice('')
                     }}
                     onReset={() => {
                       if (editorActionBusy) return
-                      setDraftCityIds(memoryCities.map((item) => item.id))
-                      setDraftHiddenCityIds(travelAtlasEditorState.hiddenCityIds)
-                      setShowAddCity(false)
-                      setSelectedCityOption(undefined)
-                      setCityVisitDates({ startDate: '', endDate: '' })
-                      setPlaceChoice(undefined)
-                      setJourneyChoice(undefined)
+                      startCityDraft()
+                      resetAddCity()
                       setEditorNotice({ key: 'editor:undoCities' })
                     }}
                     onAdd={() => {
@@ -657,7 +684,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                   if (editorActionBusy) return
                   setEditorBusy(true)
                   // Only the cities listed here; a city hidden elsewhere after this page loaded stays hidden (D1).
-                  void applyLocalViewOperations([restoreHiddenOperation('cities', hiddenCityIdsForCountry)]).then(reloadAfterLocalSave).catch((error: unknown) => {
+                  void applyLocalViewOperations([restoreHiddenOperation('cities', hiddenCityIdsForCountry)], cityDraft.writeOptions()).then(() => draftSaved(cityDraft)).catch((error: unknown) => {
                     setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
                     setEditorBusy(false)
                   })
@@ -677,7 +704,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                     event.stopPropagation()
                     if (editorActionBusy) return
                     setEditorBusy(true)
-                    void applyLocalViewOperations([restoreHiddenOperation('media', hiddenPhotoIdsForCity)]).then(reloadAfterLocalSave).catch((error: unknown) => {
+                    void applyLocalViewOperations([restoreHiddenOperation('media', hiddenPhotoIdsForCity)], photoDraft.writeOptions()).then(() => draftSaved(photoDraft)).catch((error: unknown) => {
                       setEditorNotice(editorErrorNotice(error, 'editor:restoreFailed'))
                       setEditorBusy(false)
                     })
@@ -696,9 +723,10 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                     if (!confirmed) return
                     setEditorBusy(true)
                     setEditorNotice({ key: 'editor:deletingPhotos' })
-                    void applyLocalViewOperations([hideIdsOperation('media', hiddenPhotoIdsForCity)])
+                    void applyLocalViewOperations([hideIdsOperation('media', hiddenPhotoIdsForCity)], photoDraft.writeOptions())
+                      // The second write follows the first one: on the revision of the data on the page now.
                       .then(() => deleteHiddenLocalMedia(city.id, hiddenPhotoIdsForCity))
-                      .then(reloadAfterLocalSave)
+                      .then(() => draftSaved(photoDraft))
                       .catch((error: unknown) => {
                         setEditorNotice(editorErrorNotice(error, 'editor:deletePermanentlyFailed'))
                         setEditorBusy(false)

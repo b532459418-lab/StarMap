@@ -6,7 +6,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Drone, GripVertical, Maximize2, X } from 'lucide-react'
 import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
 import { useMediaCatalog } from '../data/mediaCatalog'
-import { applyLocalViewOperations, deleteHiddenLocalMedia, mediaJobs, reloadAfterLocalSave } from '../data/localEditorClient'
+import { applyLocalViewOperations, deleteHiddenLocalMedia, mediaJobs } from '../data/localEditorClient'
+import { useDraft } from '../data/drafts'
+import { droneListProbe } from '../data/draftProbes'
 import { droneDraftOperations, hideIdsOperation, restoreHiddenOperation } from '../data/editorStateDelta'
 import { readDroneFileMetadata } from '../data/droneMetadata'
 import { useTravelAtlas } from '../data/travelAtlas'
@@ -109,15 +111,20 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   const items = useMemo(() => getDroneMediaForCity(cityId), [cityId, getDroneMediaForCity])
   const metadataRunRef = useRef(0)
   const mountedRef = useRef(true)
-  const [editing, setEditing] = useState(false)
+  // 3C-5 D: the draft starts when editing starts, from the data on the page then (its baselines and revision), and ends
+  // with the save or the exit; without a draft the track shows the data. Saves apply only the difference (D1).
+  const droneProbe = useMemo(() => droneListProbe(city?.id), [city?.id])
+  const droneDraft = useDraft(droneProbe)
+  const editing = droneDraft.active
   const [showUpload, setShowUpload] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
   const [draggedItemId, setDraggedItemId] = useState<string>()
-  const [draftItemIds, setDraftItemIds] = useState(items.map((item) => item.id))
-  const [draftHiddenIds, setDraftHiddenIds] = useState(travelAtlasEditorState.hiddenDroneMediaIds)
+  const [draftItemIds, setDraftItemIds] = useState<string[]>([])
+  const [draftHiddenIds, setDraftHiddenIds] = useState<string[]>([])
+  const [baselineItemIds, setBaselineItemIds] = useState<readonly string[]>([])
   // The draft starts from (and resets to) the page-load snapshot; saves apply only the difference from it (D1).
-  const [baselineHiddenIds] = useState<readonly string[]>(() => travelAtlasEditorState.hiddenDroneMediaIds)
+  const [baselineHiddenIds, setBaselineHiddenIds] = useState<readonly string[]>([])
   const [uploadForm, setUploadForm] = useState({
     kind: 'panorama360' as 'panorama360' | 'aerialPhoto',
   })
@@ -126,7 +133,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   const displayedItems = editing
     ? draftItemIds.map((id) => itemById.get(id)).filter(Boolean)
     : items
-  const droneGridRef = useFlipLayout<HTMLDivElement>(draftItemIds.join('|'))
+  const droneGridRef = useFlipLayout<HTMLDivElement>(displayedItems.map((item) => item?.id).join('|'))
   const hiddenIdsForCity = city
     ? draftHiddenIds.filter((id) => allImportedMediaItems.some((item) => (
         item.id === id && item.cityId === city.id && (item.kind === 'panorama360' || item.kind === 'aerialPhoto')
@@ -152,15 +159,32 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   // Saved bilingual titles are stable metadata, independent of the interface language.
   const mediaTitle = `${city.nameZh}无人机影像`
 
+  /** The draft from the data on the page now (start, or undo). */
+  const startDroneDraft = () => {
+    droneDraft.begin()
+    setDraftItemIds(items.map((item) => item.id))
+    setDraftHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
+    setBaselineItemIds(travelAtlasEditorState.droneOrderByCity[city.id] ?? [])
+    setBaselineHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
+  }
+  /** A write of the draft is saved: the page shows the data (3C-5 D: no reload), the editor closes. */
+  const draftSaved = () => {
+    droneDraft.end()
+    setShowUpload(false)
+    setFileDrafts([])
+    setBusy(false)
+    setNotice('')
+  }
+
   const saveDraft = async () => {
     if (busy || sessionLocked) return
     setBusy(true)
     setNotice({ key: 'droneEditor:saving' })
     try {
       await applyLocalViewOperations(droneDraftOperations({
-        cityId: city.id, draftItemIds, baselineItemIds: travelAtlasEditorState.droneOrderByCity[city.id] ?? [], baselineHiddenIds, draftHiddenIds,
-      }))
-      reloadAfterLocalSave()
+        cityId: city.id, draftItemIds, baselineItemIds, baselineHiddenIds, draftHiddenIds,
+      }), droneDraft.writeOptions())
+      draftSaved()
     } catch (error) {
       setNotice(editorErrorNotice(error, 'droneEditor:saveFailed'))
       setBusy(false)
@@ -316,18 +340,16 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
               onToggle={() => {
                 if (busy || sessionLocked) return
                 metadataRunRef.current += 1
-                setEditing((current) => !current)
+                if (editing) droneDraft.end()
+                else startDroneDraft()
                 setShowUpload(false)
-                setDraftItemIds(items.map((item) => item.id))
-                setDraftHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
                 setFileDrafts([])
                 setNotice('')
               }}
               onReset={() => {
                 if (busy || sessionLocked) return
                 metadataRunRef.current += 1
-                setDraftItemIds(items.map((item) => item.id))
-                setDraftHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
+                startDroneDraft()
                 setShowUpload(false)
                 setFileDrafts([])
                 setNotice({ key: 'droneEditor:undo' })
@@ -432,7 +454,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
               onClick={() => {
                 if (busy || sessionLocked) return
                 setBusy(true)
-                void applyLocalViewOperations([restoreHiddenOperation('drone', hiddenIdsForCity)]).then(reloadAfterLocalSave).catch((error: unknown) => {
+                void applyLocalViewOperations([restoreHiddenOperation('drone', hiddenIdsForCity)], droneDraft.writeOptions()).then(draftSaved).catch((error: unknown) => {
                   setNotice(editorErrorNotice(error, 'droneEditor:restoreFailed'))
                   setBusy(false)
                 })
@@ -450,9 +472,10 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                 if (!confirmed) return
                 setBusy(true)
                 setNotice({ key: 'droneEditor:deleting' })
-                void applyLocalViewOperations([hideIdsOperation('drone', hiddenIdsForCity)])
+                void applyLocalViewOperations([hideIdsOperation('drone', hiddenIdsForCity)], droneDraft.writeOptions())
+                  // The second write follows the first one: on the revision of the data on the page now.
                   .then(() => deleteHiddenLocalMedia(city.id, hiddenIdsForCity))
-                  .then(reloadAfterLocalSave)
+                  .then(draftSaved)
                   .catch((error: unknown) => {
                     setNotice(editorErrorNotice(error, 'droneEditor:deleteFailed'))
                     setBusy(false)

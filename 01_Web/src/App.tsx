@@ -576,28 +576,29 @@ function App() {
     changePrimaryPage('map')
   }
 
-  // 转换成功、刷新之前（PR9 规格 §2 第 8 条）：把视图状态写成 Map 页并选中新国家与新城市，
-  // 刷新后直接落在这座城市上。刷新时的视图恢复会校验这些 id（cityById / countryById / journeyDays），
-  // 万一某个 id 在新数据里不存在，就回落到总览，不会选中一个不存在的地点。
+  // 转换成功（PR9 规格 §2 第 8 条）：切到 Map 页并选中新国家与新城市，落在这座城市上。3C-5 D：写入完成时新足迹已在页面
+  // 数据里（不再整页刷新），所以直接选中；原来刷新后的视图恢复做的事在这里做。
   // 足迹图层被关掉时一并打开，否则选中的新城市在地图上没有标记（与「在地图上查看」打开想去图层同理）。
-  const rememberConvertedPlace = (result: LocalConvertToTravelResult) => {
-    const savedLayerVisibility = getInitialLayerVisibility()
-    if (savedLayerVisibility[TRAVEL_LAYER_ID] === false) {
-      rememberLayerVisibility({ ...savedLayerVisibility, [TRAVEL_LAYER_ID]: true })
+  const showConvertedPlace = (result: LocalConvertToTravelResult) => {
+    if (layerVisibility[TRAVEL_LAYER_ID] === false) {
+      const next = { ...layerVisibility, [TRAVEL_LAYER_ID]: true }
+      setLayerVisibility(next)
+      rememberLayerVisibility(next)
     }
-    rememberAtlasViewState({
-      selectedCountryId: result.countryId,
-      selectedCityId: result.cityId,
-      selectedDayId: result.travelRecordId,
-      selectionMode: 'city',
-      globeDistance: cityDistance,
-      activePage: 'map',
-      pageBeforeUpdate: 'map',
-      journeyViewMode,
-      activeDroneMediaCityId: undefined,
-      activeDroneMediaItemId: undefined,
-      sidebarsOpen: true,
-    })
+    setConvertTarget(undefined)
+    openMobileDetails()
+    setSelectedWantToGoEntityId(undefined)
+    setSelectedWantToGoRecord(undefined)
+    setMapFocusPlace(undefined)
+    setSelectedCountryId(result.countryId)
+    setSelectedCityId(result.cityId)
+    setSelectedDayId(result.travelRecordId)
+    setActiveDroneMediaCityId(undefined)
+    setActiveDroneMediaItemId(undefined)
+    setSelectionMode('city')
+    setGlobeDistance(cityDistance)
+    changePrimaryPage('map')
+    setSidebarsOpen(true)
   }
 
   const selectDroneMedia = (cityId: CityId) => {
@@ -1054,7 +1055,7 @@ function App() {
           <ConvertToTravelDialog
             target={convertTarget}
             onClose={() => setConvertTarget(undefined)}
-            onConverted={rememberConvertedPlace}
+            onConverted={showConvertedPlace}
           />
         </Suspense>
       ) : null}

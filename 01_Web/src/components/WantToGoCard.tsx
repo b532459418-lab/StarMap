@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { useId, useState } from 'react'
 import { EyeOff, Footprints, Heart, X } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
-import { reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorClient'
+import { updateLocalWantToGo } from '../data/localEditorClient'
 import { useTravelAtlas } from '../data/travelAtlas'
 import { wantToGoCardRecordOf, type WantToGoCardRecord } from '../data/derive/wantToGo'
 import { formatRecordDate } from '../data/derive/recordDateLabel'
@@ -85,7 +85,8 @@ export function WantToGoCard({ entityId, explicitRecord, outsideTimeFilter = fal
     setBusy(true)
     setNotice('')
     void updateLocalWantToGo(item.id, { hidden: true })
-      .then(reloadAfterLocalSave)
+      // 3C-5 D: the hidden item leaves the page's data when the write resolves (no reload).
+      .then(() => setBusy(false))
       .catch((error: unknown) => {
         setNotice(editorErrorNotice(error, 'details:hideFailed'))
         setBusy(false)

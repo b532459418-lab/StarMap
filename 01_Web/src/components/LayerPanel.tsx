@@ -6,7 +6,7 @@ import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { editorErrorNotice } from '../i18n/editorErrors'
 import { localEditorAvailable } from '../data/editorState'
-import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorClient'
+import { deleteHiddenLocalWantToGo, updateLocalWantToGo } from '../data/localEditorClient'
 import { useWantToGo } from '../data/wantToGo'
 import { useWorldGraph } from '../data/worldGraph'
 import type { WantToGoItem } from '../data/derive/wantToGo'
@@ -97,7 +97,8 @@ export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onA
     setBusy(true)
     setNotice('')
     void action()
-      .then(reloadAfterLocalSave)
+      // 3C-5 D: the page's data follow when the write resolves (no reload); the panel stays open.
+      .then(() => setBusy(false))
       .catch((error: unknown) => {
         // 失败留在面板里说明，不关闭面板。
         setNotice(editorErrorNotice(error, `mapMenu:${failureKey}`))

@@ -174,8 +174,9 @@ function ConvertToTravelDialogContent({
     setNotice({ key: 'editor:saving' })
     try {
       const result = await convertLocalWantToGoToTravel(input)
+      // 3C-5 D: the footprint is in the page's data when the write resolves (no reload): the App shows it and closes the dialog.
+      setBusy(false)
       onConverted(result)
-      reloadAfterLocalSave()
     } catch (error) {
       // 409 E_JOURNEY_CHOICE_REQUIRED：在对话框里列出候选行程，同一按钮再次提交（第 2C 批）。
       const candidates = journeyChoiceCandidatesOf(error)

@@ -3,7 +3,7 @@ import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useId, useMemo, useState } from 'react'
 import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
-import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorClient'
+import { deleteHiddenLocalWantToGo, updateLocalWantToGo } from '../data/localEditorClient'
 import { useTravelAtlas } from '../data/travelAtlas'
 import { useWantToGo } from '../data/wantToGo'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
@@ -292,7 +292,11 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
     setBusy(true)
     setNotice('')
     void action()
-      .then(reloadAfterLocalSave)
+      // 3C-5 D: the saved data are on the page when the write resolves (no reload); the note editor closes.
+      .then(() => {
+        setEditingNote(false)
+        setBusy(false)
+      })
       .catch((error: unknown) => {
         // 失败留在卡片里说明，不刷新。
         setNotice(editorErrorNotice(error, `collection:${failureKey}`))

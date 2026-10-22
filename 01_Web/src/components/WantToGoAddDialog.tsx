@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Search, X } from 'lucide-react'
-import { addLocalWantToGo, placeChoiceCandidatesOf, reloadAfterLocalSave, searchLocalCities, searchLocalCountries } from '../data/localEditorClient'
+import { addLocalWantToGo, placeChoiceCandidatesOf, searchLocalCities, searchLocalCountries } from '../data/localEditorClient'
 import { placeChoiceKey, placeChoiceStateOf, type PlaceChoiceState } from '../data/placeChoice.ts'
 import type { CitySearchOption, CountrySearchOption, LocalWantToGoInput } from '../data/localEditorApi'
 import { LocationSearchField } from './LocationSearchField'
@@ -26,7 +26,7 @@ const emptyManualCity = { nameZh: '', nameEn: '', lat: '', lng: '' }
  * 「添加想去的地方」对话框（PRD FR-WTG-3 / §7 F1）。只在私人模式下由 App 挂载。
  *
  * 关闭时整个内容卸载，下次打开是一张干净的表单。写入只走 localEditorApi（D26）；
- * 成功后整页刷新（reloadAfterLocalSave），失败把服务端的 error 留在对话框里，不关闭（F1 第 4 步）。
+ * 成功后关闭对话框（3C-5 D：新条目在写入完成时已在页面数据里，不再整页刷新），失败把服务端的 error 留在对话框里，不关闭（F1 第 4 步）。
  */
 export function WantToGoAddDialog({ open, onClose }: WantToGoAddDialogProps) {
   return open ? <WantToGoAddDialogContent onClose={onClose} /> : null
@@ -155,7 +155,8 @@ function WantToGoAddDialogContent({ onClose }: { onClose: () => void }) {
       } else {
         await addLocalWantToGo({ place, note: note.trim() || undefined, ...(choice?.selected?.kind === 'new' ? { createNew: true as const } : {}) })
       }
-      reloadAfterLocalSave()
+      setBusy(false)
+      onClose()
     } catch (error) {
       // 409 E_PLACE_CHOICE_REQUIRED：在对话框里列出候选，同一按钮再次提交（第 2A 批）。
       const candidates = kind === 'city' ? placeChoiceCandidatesOf(error) : undefined

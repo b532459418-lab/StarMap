@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import { useTravelAtlas } from '../data/travelAtlas'
 import { useMediaCatalog } from '../data/mediaCatalog'
 import { useWorldGraph } from '../data/worldGraph'
-import { reloadAfterLocalSave } from '../data/localEditorClient'
 import { isFinishedMediaJob, type MediaJob, type MediaJobPreview } from '../data/mediaJobs.ts'
 import { MEDIA_RECOVERY_OPEN_EVENT, requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { formatEditorError, LocalEditorError } from '../i18n/editorErrors.ts'
@@ -232,7 +231,7 @@ function MediaJobCard({ job, state, selected, onOpenTarget, run }: {
     <div className="atlas-media-recovery-actions">
       {targetExists && country && city && onOpenTarget ? <button type="button" onClick={() => onOpenTarget(job.countryId, job.cityId)}>{t('openTarget')}</button> : null}
       {completed ? <>
-        <button type="button" disabled={blocked} onClick={() => void run(async () => reloadAfterLocalSave())}>{t('reload')}</button>
+        {/* 3C-5 D: the imported media are on the page without a reload (the dev server pushes the new revision). */}
         <button type="button" disabled={blocked || !job.canClose} onClick={() => void run(() => state.close(job.jobId))}>{t('closeTask')}</button>
       </> : !uncertain && targetExists ? <>
         <button type="button" disabled={blocked || !job.canPreview} onClick={() => void run(() => state.preview(job.jobId))}>{t('preview')}</button>

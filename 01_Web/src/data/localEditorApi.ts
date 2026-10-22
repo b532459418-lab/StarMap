@@ -27,34 +27,78 @@ const editorHeaders = {
   'x-travelatlas-local-editor': '1',
 }
 
-// 新库（3C-3 起；3C-4d 起是唯一的写入方式）：页面加载时的全库修订号。./localEditorClient.ts 加载本模块时设一次；不是新库时为 undefined。
-// 一次写入提交成功后改为它回答的修订号：同一个操作接着写第二次（例如先隐藏国家、再彻底删除）时不算过期。
+// 新库（3C-3 起；3C-4d 起是唯一的写入方式）的全库修订号，没有 `storeSync` 时（单元测试；不是新库的页面）用这个固定值：
+// 一次写入提交成功后改为它回答的修订号。不是新库时为 undefined。
 let storeBaseRevision: number | undefined
 export const setStoreBaseRevision = (revision: number | undefined) => {
   storeBaseRevision = Number.isSafeInteger(revision) ? revision : undefined
 }
 
 /**
- * 新库模式的一次写入（3C-3、3C-4a，./storeWriteProtocol.ts）：带上请求编号与修订号；结果不明时用同一个请求编号重试一次，
- * 仍然不明就要求整页刷新。提交成功后，页面的修订号前移到回答里的修订号。
+ * 3C-5 D: how the page keeps its data current without a reload (./storeSync.ts, wired by ./localEditorClient.ts):
+ * the revision of the data the page shows, applying an answer's changed rows, fetching the changes by revision, and
+ * waiting for the dev server to answer again.
+ */
+export interface LocalEditorStoreSync {
+  baseRevision(): number | undefined
+  applySaved(result: unknown): Promise<void>
+  pull(): Promise<void>
+  waitForServer(): Promise<void>
+}
+let storeSync: LocalEditorStoreSync | undefined
+export const setLocalEditorStoreSync = (sync: LocalEditorStoreSync | undefined) => { storeSync = sync }
+const currentBaseRevision = () => (storeSync ? storeSync.baseRevision() : storeBaseRevision)
+
+/** 3C-5 D: a write's options: the revision its draft started from (default: the revision of the data on the page). */
+export interface EditorWriteOptions {
+  readonly baseRevision?: number
+}
+/** E_STALE retries of one write: the changes are fetched and the request sent again on the new revision. */
+export const STALE_RETRIES = 3
+
+/**
+ * 新库模式的一次写入（3C-3、3C-4a，./storeWriteProtocol.ts）：带上请求编号与修订号；结果不明时用同一个请求编号重试，
+ * 仍然不明就要求整页刷新。
+ * 3C-5 D（有 `storeSync` 时）：
+ * - 提交成功后，回答里改动的行套用到页面的数据上（不刷新页面），之后才算写完；
+ * - E_STALE（库在这期间被别处改过，确定没有提交）：先取回这期间的变化，再用新的修订号、新的请求编号重发，至多 STALE_RETRIES 次；
+ * - 结果不明：同一个请求编号立刻重试一次；还不明时等开发服务器重新应答，再用同一个请求编号试最后一次。
  */
 const sendToStore = async <T>(send: (protocol: StoreWriteHeaders) => Promise<T>, baseRevision: number): Promise<T> => {
-  const result = await sendStoreWrite(send, { baseRevision, onUnconfirmed: requireLocalEditorReload })
-  const revision = (result as { revision?: unknown }).revision
-  if (typeof revision === 'number') setStoreBaseRevision(revision)
-  return result
+  let base = baseRevision
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const sync = storeSync
+      const result = await sendStoreWrite(send, {
+        baseRevision: base, onUnconfirmed: requireLocalEditorReload, ...(sync ? { beforeLastTry: () => sync.waitForServer() } : {}),
+      })
+      if (sync) await sync.applySaved(result)
+      else {
+        const revision = (result as { revision?: unknown }).revision
+        if (typeof revision === 'number') setStoreBaseRevision(revision)
+      }
+      return result
+    } catch (error) {
+      const sync = storeSync
+      if (!sync || !(error instanceof LocalEditorError) || error.code !== 'E_STALE' || attempt >= STALE_RETRIES) throw error
+      await sync.pull()
+      const next = sync.baseRevision()
+      if (next === undefined || next === base) throw error
+      base = next
+    }
+  }
 }
 
 /**
  * 8 个编辑端点（JSON 请求体）共用的写入：V2 模式与原来完全相同（同样的请求）；新库模式下经 `sendToStore` 带上协议。
  * `parse` 解析响应（parseResponse 或在它之上再校验）。
  */
-const editorWrite = <T>(path: string, method: 'POST' | 'PUT', body: unknown, parse: (response: Response) => Promise<T>) => {
+const editorWrite = <T>(path: string, method: 'POST' | 'PUT', body: unknown, parse: (response: Response) => Promise<T>, options: EditorWriteOptions = {}) => {
   const send = (protocol: StoreWriteHeaders = {}) => withLocalEditorWrite(async () => {
     const response = await fetch(path, { method, headers: { ...editorHeaders, ...protocol }, body: JSON.stringify(body) })
     return parse(response)
   })
-  const baseRevision = storeBaseRevision
+  const baseRevision = options.baseRevision ?? currentBaseRevision()
   return baseRevision === undefined ? send() : sendToStore(send, baseRevision)
 }
 
@@ -101,8 +145,8 @@ export const searchLocalCities = async (
   return (await parseResponse<{ results: CitySearchOption[] }>(response)).results
 }
 
-export const addLocalCountry = (countryCode: string, visitedDate?: string) =>
-  editorWrite('/__travelatlas/editor/countries', 'POST', { countryCode, visitedDate }, parseResponse<{ countryId: string }>)
+export const addLocalCountry = (countryCode: string, visitedDate?: string, options?: EditorWriteOptions) =>
+  editorWrite('/__travelatlas/editor/countries', 'POST', { countryCode, visitedDate }, parseResponse<{ countryId: string }>, options)
 
 export const readLocalEditorState = async () => {
   const response = await fetch('/__travelatlas/editor/state', { cache: 'no-store' })
@@ -115,8 +159,8 @@ const parseEditorState = async (response: Response) => (await parseResponse<{ st
  * 视图操作（3C-5 C1，`POST /__travelatlas/editor/view`）：排序、隐藏、封面只发这次编辑做了什么（./editorStateDelta.ts 的
  * `*Operations`），服务端在当前的编辑状态上合并、只写变了的行。回答新的修订号（没有改动时是原来的修订号，什么都不提交）。
  */
-export const applyLocalViewOperations = (operations: readonly ViewOperation[]) =>
-  editorWrite('/__travelatlas/editor/view', 'POST', { operations }, parseResponse<{ revision?: number; unchanged?: boolean }>)
+export const applyLocalViewOperations = (operations: readonly ViewOperation[], options?: EditorWriteOptions) =>
+  editorWrite('/__travelatlas/editor/view', 'POST', { operations }, parseResponse<{ revision?: number; unchanged?: boolean }>, options)
 
 /**
  * 整份取回 → 改 → 整份写回（`PUT /state`）。3C-5 C1 起页面改发视图操作（applyLocalViewOperations），不再调用它；
@@ -125,7 +169,7 @@ export const applyLocalViewOperations = (operations: readonly ViewOperation[]) =
 export const updateLocalEditorState = (
   update: (current: TravelAtlasEditorState) => TravelAtlasEditorState,
 ) => {
-  const baseRevision = storeBaseRevision
+  const baseRevision = currentBaseRevision()
   if (baseRevision === undefined) {
     return withLocalEditorWrite(async () => {
       const current = await readLocalEditorState()
@@ -191,7 +235,7 @@ export const previewMediaJob = async (jobId: string, input: MediaJobVersion & {s
   const plan = body.plan as Record<string, unknown>
   const result = {jobId, revision: body.job.revision, plan: {digest: plan.digest, summary: plan.summary}, selectedFileIds: plan.selectedFileIds, blockers: plan.blockers}
   // 3C-4c: the page's own mode decides which preview it accepts; a V2 page never takes a new-library one.
-  assertMediaJobPreview(result, {mode: storeBaseRevision === undefined ? 'v2' : 'store'})
+  assertMediaJobPreview(result, {mode: currentBaseRevision() === undefined ? 'v2' : 'store'})
   if (body.job.canImport !== (result.blockers.length === 0)) throw responseInvalid()
   return result
 }
@@ -209,13 +253,13 @@ export const closeMediaJob = (jobId: string, input: MediaJobVersion, permit: Med
 export const abandonMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('abandon', jobId, input, permit)
 
 /** 彻底删除隐藏媒体。V2 模式的请求不变；新库模式（3C-4c）经 `editorWrite` 带上请求编号与修订号。 */
-export const deleteHiddenLocalMedia = (cityId: string, ids: string[]) => editorWrite('/__travelatlas/editor/media/delete', 'POST', { cityId, ids },
-  parseResponse<{ deletedIds: string[]; deletedSourceFiles: number; output: string }>)
+export const deleteHiddenLocalMedia = (cityId: string, ids: string[], options?: EditorWriteOptions) => editorWrite('/__travelatlas/editor/media/delete', 'POST', { cityId, ids },
+  parseResponse<{ deletedIds: string[]; deletedSourceFiles: number; output: string }>, options)
 
-export const deleteHiddenLocalCountries = (ids: string[]) => editorWrite('/__travelatlas/editor/countries/delete', 'POST', { ids }, parseResponse<{
+export const deleteHiddenLocalCountries = (ids: string[], options?: EditorWriteOptions) => editorWrite('/__travelatlas/editor/countries/delete', 'POST', { ids }, parseResponse<{
   deletedCountryIds: string[]
   deletedRecordCount: number
-}>)
+}>, options)
 
 /**
  * 按名称新增足迹城市。服务端在同一国家找到同名的已有地点时返回 409 `E_PLACE_CHOICE_REQUIRED`（什么都不写），
@@ -247,8 +291,8 @@ export type ExistingPlaceTravelRecordInput = {
 
 export type LocalTravelRecordInput = NamedTravelRecordInput | ExistingPlaceTravelRecordInput
 
-export const addLocalTravelRecord = (input: LocalTravelRecordInput) =>
-  editorWrite('/__travelatlas/editor/records', 'POST', input, parseResponse<{ id: string; countryId: string; cityId: string }>)
+export const addLocalTravelRecord = (input: LocalTravelRecordInput, options?: EditorWriteOptions) =>
+  editorWrite('/__travelatlas/editor/records', 'POST', input, parseResponse<{ id: string; countryId: string; cityId: string }>, options)
 
 // ---- Want to Go（FR-WTG-6 / D26）----
 // 写入路径的唯一出口就是本文件：组件里不得出现任何 fetch。
@@ -270,7 +314,7 @@ export type LocalWantToGoInput = {
 
 export type ExistingPlaceWantToGoInput = { placeId: string; note?: string; addedAt?: string }
 
-export const addLocalWantToGo = (input: LocalWantToGoInput | ExistingPlaceWantToGoInput) =>
+export const addLocalWantToGo = (input: LocalWantToGoInput | ExistingPlaceWantToGoInput, options?: EditorWriteOptions) =>
   editorWrite('/__travelatlas/editor/wanttogo', 'POST', input, async (response) => {
     const result = await parseResponse<{ id: string; item: WantToGoItem; duplicate?: boolean }>(response)
     // 新库模式：开发服务器重启之后重放的请求只带回执（已经提交，页面随即刷新），没有条目可校验。V2 模式没有这个字段。
@@ -279,14 +323,14 @@ export const addLocalWantToGo = (input: LocalWantToGoInput | ExistingPlaceWantTo
       throw new LocalEditorError({ code: 'E_EDITOR_RESPONSE_INVALID', params: { status: response.status } })
     }
     return result
-  })
+  }, options)
 
 /** 修改想去（V2 模式与原来完全相同；新库模式见 `editorWrite`）。 */
-export const updateLocalWantToGo = (id: string, patch: { hidden?: boolean; note?: string }) =>
-  editorWrite('/__travelatlas/editor/wanttogo/update', 'POST', { id, ...patch }, parseResponse<{ item: WantToGoItem }>)
+export const updateLocalWantToGo = (id: string, patch: { hidden?: boolean; note?: string }, options?: EditorWriteOptions) =>
+  editorWrite('/__travelatlas/editor/wanttogo/update', 'POST', { id, ...patch }, parseResponse<{ item: WantToGoItem }>, options)
 
-export const deleteHiddenLocalWantToGo = (ids: string[]) =>
-  editorWrite('/__travelatlas/editor/wanttogo/delete', 'POST', { ids }, parseResponse<{ deletedIds: string[] }>)
+export const deleteHiddenLocalWantToGo = (ids: string[], options?: EditorWriteOptions) =>
+  editorWrite('/__travelatlas/editor/wanttogo/delete', 'POST', { ids }, parseResponse<{ deletedIds: string[] }>, options)
 
 // ---- 想去 → 足迹（PR9，PRD S5 / R13）----
 // 一个端点完成整件事：新增足迹城市（或把 planned 改为已去过）、按需更新国家排序、默认移除想去条目。
@@ -310,8 +354,8 @@ export type LocalConvertToTravelResult = {
   wantToGoRemoved: boolean
 }
 
-export const convertLocalWantToGoToTravel = (input: LocalConvertToTravelInput) =>
-  editorWrite('/__travelatlas/editor/wanttogo/convert', 'POST', input, parseResponse<LocalConvertToTravelResult>)
+export const convertLocalWantToGoToTravel = (input: LocalConvertToTravelInput, options?: EditorWriteOptions) =>
+  editorWrite('/__travelatlas/editor/wanttogo/convert', 'POST', input, parseResponse<LocalConvertToTravelResult>, options)
 
 /** 定义在 ./localEditorCoordination.ts（第 5B 批）：组件经 ./localEditorClient.ts 同步调用它，不必先加载本模块。 */
 export { reloadAfterLocalSave } from './localEditorCoordination.ts'

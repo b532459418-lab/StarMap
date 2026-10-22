@@ -1,6 +1,7 @@
 import type * as LocalEditorApiModule from './localEditorApi.ts'
 import { localEditorAvailable } from './editorState'
-import { storeBaseRevision } from './appStore.ts'
+import { appStore, storeBaseRevision } from './appStore.ts'
+import { loadAppReadModel, storeModuleRevision } from './rawInputs'
 import { createMediaJobs, type MediaJobsApi } from './mediaJobs.ts'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 
@@ -19,6 +20,8 @@ import { LocalEditorError } from '../i18n/editorErrors.ts'
  *
  * 类型仍从 ./localEditorApi.ts 用 `import type` 取，编译后不留下任何导入。
  *
+ * 3C-5 D：新库的页面在 API 加载时同时接上 ./storeSync.ts（写入的回答、推送与窗口重新可见时套用变化，页面不再刷新），编辑写入
+ * 带上页面所显示数据的修订号（或草稿自己的修订号）。不是新库的页面只交给它一次修订号。以下是原说明：
  * 新库模式（3C-3、3C-4a）：API 加载时把页面所显示数据的全库修订号（./appStore.ts 的 `storeBaseRevision`）交给它，8 个编辑写入据此带上
  * 新库的请求协议。这一句也在门后的分支里，构建产物里没有它。
  */
@@ -28,9 +31,19 @@ let loadedApi: LocalEditorApi | undefined
 let loadingApi: Promise<LocalEditorApi> | undefined
 
 export const loadLocalEditorApi = (): Promise<LocalEditorApi> => import.meta.env.DEV && localEditorAvailable
-  ? (loadingApi ??= import('./localEditorApi.ts').then(
-    (api) => {
-      api.setStoreBaseRevision(storeBaseRevision())
+  ? (loadingApi ??= Promise.all([import('./localEditorApi.ts'), import('./storeSync.ts')]).then(
+    ([api, { createStoreSync, listenToDevServer }]) => {
+      if (storeModuleRevision === undefined) api.setStoreBaseRevision(storeBaseRevision())
+      else {
+        // 3C-5 D: a library page keeps its data current without reloading (./storeSync.ts): answers' changed rows, the
+        // dev server's revision pushes, a look when the window comes back.
+        const sync = createStoreSync({
+          store: appStore,
+          loadWhole: async () => { const loaded = await loadAppReadModel(); return loaded.error ? undefined : loaded },
+        })
+        api.setLocalEditorStoreSync({ baseRevision: storeBaseRevision, applySaved: sync.applySaved, pull: sync.pull, waitForServer: sync.waitForServer })
+        listenToDevServer(sync, import.meta.hot)
+      }
       return (loadedApi = api)
     },
     (error: unknown) => {

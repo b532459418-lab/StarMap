@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { Heart } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { localEditorAvailable } from '../data/editorState'
-import { addLocalWantToGo, reloadAfterLocalSave } from '../data/localEditorClient'
+import { addLocalWantToGo } from '../data/localEditorClient'
 import { requireLocalEditorReload } from '../data/localEditorCoordination.ts'
 import { useWantToGo } from '../data/wantToGo'
 import { useWorldGraph } from '../data/worldGraph'
@@ -11,9 +11,9 @@ import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 
 /**
- * Save the selected place by identity, including entries hidden from the map. A write whose result is unconfirmed, or a
- * save the page could not reload after, marks the whole page as needing a reload (localEditorCoordination), so the
- * button stays off after remounting and every other write on the page is refused too.
+ * Save the selected place by identity, including entries hidden from the map. A write whose result is unconfirmed marks
+ * the whole page as needing a reload (localEditorCoordination), so the button stays off after remounting and every other
+ * write on the page is refused too. 3C-5 D: a saved item is in the page's data when the write resolves (no reload).
  */
 export function CityWantToGoAction({ cityId, disabled = false }: { cityId: string; disabled?: boolean }) {
   const { t } = useTranslation(['details', 'editor'])
@@ -41,7 +41,6 @@ export function CityWantToGoAction({ cityId, disabled = false }: { cityId: strin
       await addLocalWantToGo({ placeId: cityId })
       written = true
       setSaved(true)
-      reloadAfterLocalSave()
     } catch (error) {
       if (error instanceof LocalEditorError && error.code === 'E_WTG_EXISTS') setSaved(true)
       if (written || requiresEditorReload(error, { afterWrite: true })) requireLocalEditorReload()

@@ -29,9 +29,9 @@ export const appStore = createAppStore(
 )
 
 if (!usesSampleData) {
-  void loadAppReadModel().then(({ model, error }) => {
+  void loadAppReadModel().then(({ model, identity, error }) => {
     if (error) appStore.fail(model, error)
-    else appStore.replace(model)
+    else appStore.replace(model, identity)
   })
 }
 
