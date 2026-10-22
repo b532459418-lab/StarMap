@@ -2,7 +2,7 @@ import { LocalEditorError, editorErrorNotice } from '../i18n/editorErrors.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
 import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
 import { getMediaSource, useMediaCatalog } from '../data/mediaCatalog'
@@ -23,6 +23,7 @@ import { LocalEditorToolbar } from './LocalEditorToolbar'
 import { MediaRecoveryEntry } from './MediaRecoveryEntry'
 import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { CityWantToGoAction } from './CityWantToGoAction'
+import { DraftConflictNotice } from './DraftConflictNotice'
 import { useFlipLayout } from './useFlipLayout'
 import { useMediaJobs } from './useMediaJobs'
 import { isFinishedMediaJob } from '../data/mediaJobs'
@@ -179,6 +180,24 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     setDraftCoverPhotoId(cityCoverPhoto?.id)
     setBaselinePhotoOrder(isCityMode ? travelAtlasEditorState.mediaOrderByCity[city.id] ?? [] : [])
     setBaselineHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
+  }
+  // 3C-5 D: a list changed elsewhere while its draft is open: the save waits for the user's choice. Keeping the draft
+  // takes the list as it is now as the baseline, so the save writes the draft's order and hidden items over it.
+  const cityConflictId = useId()
+  const photoConflictId = useId()
+  const cityConflict = cityDraft.status === 'changed' || cityDraft.status === 'deleted'
+  const photoConflict = photoDraft.status === 'changed' || photoDraft.status === 'deleted'
+  const keepCityDraft = () => {
+    cityDraft.keepMine()
+    setBaselineCityOrder(country ? travelAtlasEditorState.cityOrderByCountry[country.id] ?? [] : [])
+    setBaselineHiddenCityIds(travelAtlasEditorState.hiddenCityIds)
+    setEditorNotice('')
+  }
+  const keepPhotoDraft = () => {
+    photoDraft.keepMine()
+    setBaselinePhotoOrder(isCityMode ? travelAtlasEditorState.mediaOrderByCity[city.id] ?? [] : [])
+    setBaselineHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
+    setEditorNotice('')
   }
   /** A write of a draft is saved: the page shows the data (3C-5 D: no reload), the editor closes. */
   const draftSaved = (draft: { end(): void }) => {
@@ -525,6 +544,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                       if (!editorActionBusy) photoInputRef.current?.click()
                     }}
                     onSave={savePhotoDraft}
+                    saveBlockedBy={photoConflict ? photoConflictId : undefined}
                   />
                 ) : null}
                 {/* 上传入口与照片工具栏同一道门：公开模式下不渲染（不靠 sr-only 隐藏）。 */}
@@ -570,10 +590,36 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                       if (!editorActionBusy) setShowAddCity((open) => !open)
                     }}
                     onSave={saveCityDraft}
+                    saveBlockedBy={cityConflict ? cityConflictId : undefined}
                   />
                 ) : null}
               </div>
             )}
+
+            {isCountryGrid && cityEditing ? (
+              <DraftConflictNotice
+                id={cityConflictId}
+                status={cityDraft.status}
+                before={cityDraft.baseValue}
+                after={cityDraft.current}
+                busy={editorActionBusy}
+                onKeepMine={keepCityDraft}
+                onTakeTheirs={() => { startCityDraft(); setEditorNotice('') }}
+                onDiscard={() => { cityDraft.end(); resetAddCity() }}
+              />
+            ) : null}
+            {isCityMode && photoEditing ? (
+              <DraftConflictNotice
+                id={photoConflictId}
+                status={photoDraft.status}
+                before={photoDraft.baseValue}
+                after={photoDraft.current}
+                busy={editorActionBusy}
+                onKeepMine={keepPhotoDraft}
+                onTakeTheirs={() => { startPhotoDraft(); setEditorNotice('') }}
+                onDiscard={() => photoDraft.end()}
+              />
+            ) : null}
 
             {isCountryGrid && cityEditing && showAddCity ? (
               <form className="atlas-local-editor-form atlas-local-editor-form-dark" onSubmit={addCity} onClick={(event) => event.stopPropagation()}>

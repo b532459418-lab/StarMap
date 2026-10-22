@@ -7,7 +7,7 @@ import { useUiLocale } from '../i18n/useUiLocale'
 import { regionName } from '../i18n/placeNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { convertLocalWantToGoToTravel, journeyChoiceCandidatesOf, reloadAfterLocalSave } from '../data/localEditorClient'
@@ -19,6 +19,9 @@ import { useWantToGo } from '../data/wantToGo'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 import { useDialogFocus } from './useDialogFocus'
 import { JourneyChoiceList } from './JourneyChoiceList'
+import { DraftConflictNotice } from './DraftConflictNotice'
+import { useDraft, type DraftProbe } from '../data/drafts'
+import { plannedProbe, wishProbe } from '../data/draftProbes'
 
 /**
  * 要转换的条目：想去条目，或来自旅行记录的 planned 条目（FR-WTG-7）。
@@ -91,8 +94,22 @@ function ConvertToTravelDialogContent({
   // 第 2C 批：服务端返回的同名候选行程与用户的选择（属于提交时的行程标题）。
   const [journeyChoice, setJourneyChoice] = useState<JourneyChoiceState>()
 
-  const item = target.source === 'want-to-go' ? wantToGoItemById.get(target.recordId) : undefined
-  const planned = target.source === 'planned' ? plannedRecordById.get(target.recordId) : undefined
+  const liveItem = target.source === 'want-to-go' ? wantToGoItemById.get(target.recordId) : undefined
+  const livePlanned = target.source === 'planned' ? plannedRecordById.get(target.recordId) : undefined
+  // 3C-5 D: the dialog is a draft of the record it converts, from the moment it opens: when the record changes elsewhere
+  // (or goes), the dialog shows the conflict and holds the conversion until the user's choice. It keeps showing the
+  // record as it was when it opened, so a record deleted elsewhere does not take the dialog (and its input) away.
+  const [openedItem] = useState(liveItem)
+  const [openedPlanned] = useState(livePlanned)
+  const item = liveItem ?? openedItem
+  const planned = livePlanned ?? openedPlanned
+  const recordProbe = useMemo(
+    () => (target.source === 'want-to-go' ? wishProbe(target.recordId) : plannedProbe(target.recordId)) as DraftProbe<unknown>,
+    [target.source, target.recordId],
+  )
+  const recordDraft = useDraft(recordProbe, { open: true })
+  const recordConflict = recordDraft.status === 'changed' || recordDraft.status === 'deleted'
+  const recordConflictId = useId()
 
   // 打开时焦点进入第一个输入框（到访日期）。
   useEffect(() => {
@@ -139,7 +156,7 @@ function ConvertToTravelDialogContent({
   const currentJourneyKey = journeyChoiceKey([target.source, target.recordId, item ? tripTitle.trim() : planned?.trip_title ?? ''])
   const activeJourneyChoice = journeyChoice?.key === currentJourneyKey ? journeyChoice : undefined
   const journeyChoicePending = Boolean(activeJourneyChoice && !activeJourneyChoice.selected)
-  const canSubmit = !fieldsDisabled && Boolean(startDate) && !journeyChoicePending
+  const canSubmit = !fieldsDisabled && Boolean(startDate) && !journeyChoicePending && !recordConflict
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -173,7 +190,7 @@ function ConvertToTravelDialogContent({
     setBusy(true)
     setNotice({ key: 'editor:saving' })
     try {
-      const result = await convertLocalWantToGoToTravel(input)
+      const result = await convertLocalWantToGoToTravel(input, recordDraft.writeOptions())
       // 3C-5 D: the footprint is in the page's data when the write resolves (no reload): the App shows it and closes the dialog.
       setBusy(false)
       onConverted(result)
@@ -296,6 +313,16 @@ function ConvertToTravelDialogContent({
             />
           ) : null}
 
+          <DraftConflictNotice
+            id={recordConflictId}
+            status={recordDraft.status}
+            before={recordDraft.baseValue}
+            after={recordDraft.current}
+            busy={busy}
+            onKeepMine={() => { recordDraft.keepMine(); setNotice('') }}
+            onTakeTheirs={onClose}
+            onDiscard={onClose}
+          />
           {notice ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{notice}</p> : null}
           {showWriteResultWarning ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{t('editor:writeResultUnknown')}</p> : null}
           {needsReload && coordination.blocked ? <p className="atlas-local-editor-notice atlas-wtg-dialog-notice" role="status">{t(coordination.otherPending ? 'mediaImport:otherPending' : 'mediaImport:otherWriting')}</p> : null}
@@ -305,7 +332,7 @@ function ConvertToTravelDialogContent({
             // 两个分支都是 <button>，不给不同的 key 时 React 会复用同一个元素，autoFocus 就不会生效。
             <button key="reload" type="button" autoFocus disabled={coordination.blocked} onClick={() => reloadAfterLocalSave()}>{t('editor:reload')}</button>
           ) : (
-            <button key="submit" type="submit" disabled={!canSubmit}>{t('editor:visited')}</button>
+            <button key="submit" type="submit" disabled={!canSubmit} aria-describedby={recordConflict ? recordConflictId : undefined}>{t('editor:visited')}</button>
           )}
         </form>
       </section>

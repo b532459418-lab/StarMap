@@ -141,6 +141,21 @@ test('the editor writes with the sync: E_STALE fetches the changes and retries o
   assert.equal(pulls, 1)
 })
 
+test('the editor writes with the sync: after an E_STALE, a draft whose record changed meanwhile is not sent again (E_DRAFT_CONFLICT)', async () => {
+  let sent = 0
+  let pulls = 0
+  setLocalEditorStoreSync({ baseRevision: () => 9, applySaved: async () => {}, pull: async () => { pulls++ }, waitForServer: async () => {} })
+  const original = globalThis.fetch
+  globalThis.fetch = (async () => {
+    sent++
+    return new Response(JSON.stringify({ ok: false, code: 'E_STALE', error: 'stale' }), { status: 409 })
+  }) as typeof globalThis.fetch
+  try {
+    await assert.rejects(updateLocalWantToGo('wish-1', { note: 'Synthetic' }, { baseRevision: 5, changedMeanwhile: () => true }), { code: 'E_DRAFT_CONFLICT' })
+  } finally { globalThis.fetch = original; setLocalEditorStoreSync(undefined) }
+  assert.deepEqual([sent, pulls], [1, 1], 'the changes fetched, the request not sent again')
+})
+
 test('the editor writes with the sync: an outcome unknown twice waits for the server and tries the same request id once more', async () => {
   const ids: string[] = []
   let waited = 0

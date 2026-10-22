@@ -2,7 +2,7 @@ import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Check, ChevronDown, Drone, GripVertical, MapPin, Plus, RotateCcw, Settings2, SlidersHorizontal, Undo2, X } from 'lucide-react'
 import { withoutListedCountries } from '../data/countrySearchFilter'
 import { useDroneMedia } from '../data/droneMedia'
@@ -16,6 +16,7 @@ import { useTravelAtlas } from '../data/travelAtlas'
 import type { CityId, CountryId } from '../types/travel'
 import { countryFlagUrl } from './countryFlagUrl'
 import { LocationSearchField } from './LocationSearchField'
+import { DraftConflictNotice } from './DraftConflictNotice'
 import { useFlipLayout } from './useFlipLayout'
 
 type CountrySelectorProps = {
@@ -133,6 +134,16 @@ export function CountrySelector({
   const closeCountryDraft = () => {
     countryDraft.end()
     closeAddCountry()
+  }
+  // 3C-5 D: the list changed elsewhere while the draft is open: the save waits for the user's choice. Keeping the draft
+  // takes the list as it is now as the baseline, so the save writes the draft's order and hidden countries over it.
+  const countryConflictId = useId()
+  const countryConflict = countryDraft.status === 'changed' || countryDraft.status === 'deleted'
+  const keepCountryDraft = () => {
+    countryDraft.keepMine()
+    setBaselineCountryOrder(travelAtlasEditorState.countryOrder)
+    setBaselineHiddenCountryIds(travelAtlasEditorState.hiddenCountryIds)
+    setEditorNotice('')
   }
   /** A write of the draft is saved: the page shows the data (3C-5 D: no reload), the editor closes. */
   const countryDraftSaved = () => {
@@ -303,7 +314,7 @@ export function CountrySelector({
               <>
                 <button type="button" onClick={resetCountryDraft} aria-label={t('editor:undoCountries')} title={t('editor:undoTitle')}><Undo2 /></button>
                 <button type="button" onClick={() => setShowAddCountry((open) => !open)} aria-label={t('editor:addCountry')} title={t('editor:addCountry')}><Plus /></button>
-                <button type="button" data-primary="true" onClick={saveCountryDraft} disabled={isSaving} aria-label={t('editor:saveCountries')} title={t('editor:save')}><Check /></button>
+                <button type="button" data-primary="true" onClick={saveCountryDraft} disabled={isSaving || countryConflict} aria-describedby={countryConflict ? countryConflictId : undefined} aria-label={t('editor:saveCountries')} title={t('editor:save')}><Check /></button>
               </>
             ) : null}
             <button
@@ -321,6 +332,19 @@ export function CountrySelector({
           </div>
         ) : null}
       </div>
+
+      {isEditingCountries ? (
+        <DraftConflictNotice
+          id={countryConflictId}
+          status={countryDraft.status}
+          before={countryDraft.baseValue}
+          after={countryDraft.current}
+          busy={isSaving}
+          onKeepMine={keepCountryDraft}
+          onTakeTheirs={() => { startCountryDraft(); setEditorNotice('') }}
+          onDiscard={closeCountryDraft}
+        />
+      ) : null}
 
       {isEditingCountries && showAddCountry ? (
         <form className="atlas-local-editor-form" onSubmit={addCountry}>

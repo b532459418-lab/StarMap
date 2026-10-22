@@ -49,9 +49,14 @@ let storeSync: LocalEditorStoreSync | undefined
 export const setLocalEditorStoreSync = (sync: LocalEditorStoreSync | undefined) => { storeSync = sync }
 const currentBaseRevision = () => (storeSync ? storeSync.baseRevision() : storeBaseRevision)
 
-/** 3C-5 D: a write's options: the revision its draft started from (default: the revision of the data on the page). */
+/**
+ * 3C-5 D: a write's options: the revision its draft is based on (default: the revision of the data on the page), and
+ * whether the record the draft concerns changed meanwhile (asked after an E_STALE and the changes fetched: then the
+ * write is not sent again but refused with E_DRAFT_CONFLICT, and the editor shows the conflict; ./drafts.ts).
+ */
 export interface EditorWriteOptions {
   readonly baseRevision?: number
+  readonly changedMeanwhile?: () => boolean
 }
 /** E_STALE retries of one write: the changes are fetched and the request sent again on the new revision. */
 export const STALE_RETRIES = 3
@@ -61,10 +66,11 @@ export const STALE_RETRIES = 3
  * 仍然不明就要求整页刷新。
  * 3C-5 D（有 `storeSync` 时）：
  * - 提交成功后，回答里改动的行套用到页面的数据上（不刷新页面），之后才算写完；
- * - E_STALE（库在这期间被别处改过，确定没有提交）：先取回这期间的变化，再用新的修订号、新的请求编号重发，至多 STALE_RETRIES 次；
+ * - E_STALE（库在这期间被别处改过，确定没有提交）：先取回这期间的变化；草稿涉及的记录被改过时不重发（E_DRAFT_CONFLICT，
+ *   编辑区显示冲突），否则用新的修订号、新的请求编号重发，至多 STALE_RETRIES 次；
  * - 结果不明：同一个请求编号立刻重试一次；还不明时等开发服务器重新应答，再用同一个请求编号试最后一次。
  */
-const sendToStore = async <T>(send: (protocol: StoreWriteHeaders) => Promise<T>, baseRevision: number): Promise<T> => {
+const sendToStore = async <T>(send: (protocol: StoreWriteHeaders) => Promise<T>, baseRevision: number, options: EditorWriteOptions = {}): Promise<T> => {
   let base = baseRevision
   for (let attempt = 0; ; attempt++) {
     try {
@@ -82,6 +88,7 @@ const sendToStore = async <T>(send: (protocol: StoreWriteHeaders) => Promise<T>,
       const sync = storeSync
       if (!sync || !(error instanceof LocalEditorError) || error.code !== 'E_STALE' || attempt >= STALE_RETRIES) throw error
       await sync.pull()
+      if (options.changedMeanwhile?.()) throw new LocalEditorError({ code: 'E_DRAFT_CONFLICT' })
       const next = sync.baseRevision()
       if (next === undefined || next === base) throw error
       base = next
@@ -99,7 +106,7 @@ const editorWrite = <T>(path: string, method: 'POST' | 'PUT', body: unknown, par
     return parse(response)
   })
   const baseRevision = options.baseRevision ?? currentBaseRevision()
-  return baseRevision === undefined ? send() : sendToStore(send, baseRevision)
+  return baseRevision === undefined ? send() : sendToStore(send, baseRevision, options)
 }
 
 export type CountrySearchOption = {

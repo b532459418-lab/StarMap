@@ -1,9 +1,12 @@
 import { editorErrorNotice, localizedConversionReason } from '../i18n/editorErrors.ts'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
-import { useId, useMemo, useState } from 'react'
+import { useCallback, useId, useMemo, useState } from 'react'
 import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
 import { deleteHiddenLocalWantToGo, updateLocalWantToGo } from '../data/localEditorClient'
+import { useDraft } from '../data/drafts'
+import { wishProbe } from '../data/draftProbes'
+import { DraftConflictNotice } from './DraftConflictNotice'
 import { useTravelAtlas } from '../data/travelAtlas'
 import { useWantToGo } from '../data/wantToGo'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
@@ -89,10 +92,20 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
   const writeAvailable = writeAvailableFor(wantToGoDataSource)
   const showAdd = addAvailableFor(wantToGoDataSource) && onAddWantToGo !== undefined
 
-  const visibleEntries = useMemo(
-    () => filterCollection(entries, { text, status, sort }, locale),
-    [entries, locale, sort, status, text],
-  )
+  // 3C-5 D: a card whose note draft is open stays on the page even when its item leaves the data (deleted in another
+  // tab): the draft is never dropped without the user's choice (the card shows the conflict and offers its text).
+  const [pinned, setPinned] = useState<ReadonlyMap<string, CollectionEntry>>(() => new Map())
+  const pinWhileDrafting = useCallback((entry: CollectionEntry, drafting: boolean) => setPinned((current) => {
+    const next = new Map(current)
+    if (drafting) next.set(collectionEntryKey(entry), entry)
+    else next.delete(collectionEntryKey(entry))
+    return next
+  }), [])
+  const visibleEntries = useMemo(() => {
+    const filtered = filterCollection(entries, { text, status, sort }, locale)
+    const shown = new Set(filtered.map(collectionEntryKey))
+    return [...filtered, ...[...pinned.values()].filter((entry) => !shown.has(collectionEntryKey(entry)))]
+  }, [entries, locale, sort, status, text, pinned])
 
   // 没有编辑器时（公开构建、个人构建、强制样例）数据里没有隐藏项：个人构建不带隐藏内容（第 7 批，S3），
   // 所以不显示「已隐藏」的计数，也不给按隐藏状态筛选的选项。
@@ -215,6 +228,7 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
                 <CollectionCard
                   key={collectionEntryKey(entry)}
                   entry={entry}
+                  onNoteDraft={pinWhileDrafting}
                   onViewOnMap={onViewOnMap}
                   onConvertToTravel={onConvertToTravel}
                 />
@@ -231,17 +245,29 @@ type CollectionCardProps = {
   entry: CollectionEntry
   onViewOnMap: (entry: CollectionEntry) => void
   onConvertToTravel?: (target: ConvertToTravelTarget) => void
+  /** 3C-5 D: the card's note draft opened or closed (the page keeps the card while it is open). */
+  onNoteDraft?: (entry: CollectionEntry, drafting: boolean) => void
 }
 
-function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCardProps) {
+function CollectionCard({ entry, onViewOnMap, onConvertToTravel, onNoteDraft }: CollectionCardProps) {
   const { locale } = useUiLocale()
   const { t } = useTranslation(['collection', 'details', 'journey'])
   const noteId = useId()
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
-  const [editingNote, setEditingNote] = useState(false)
   const [noteDraft, setNoteDraft] = useState('')
+  // 3C-5 D: the note draft remembers the revision and the item as they were when editing started; when the item
+  // changes elsewhere (or goes), the card shows the conflict and the save waits for the user's choice.
+  const noteProbe = useMemo(() => wishProbe(isFromTravelLog(entry) ? undefined : entry.recordId), [entry])
+  const noteDraftHandle = useDraft(noteProbe)
+  const editingNote = noteDraftHandle.active
+  const noteConflict = noteDraftHandle.status === 'changed' || noteDraftHandle.status === 'deleted'
+  const noteConflictId = useId()
+  const endNoteDraft = () => {
+    noteDraftHandle.end()
+    onNoteDraft?.(entry, false)
+  }
   const { travelAtlasDataSource } = useTravelAtlas()
   const { plannedConvertBlockReason, plannedRecordById, wantToGoConvertBlockReason, wantToGoDataSource, wantToGoItemById } = useWantToGo()
   const writeAvailable = writeAvailableFor(wantToGoDataSource)
@@ -294,7 +320,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
     void action()
       // 3C-5 D: the saved data are on the page when the write resolves (no reload); the note editor closes.
       .then(() => {
-        setEditingNote(false)
+        if (editingNote) endNoteDraft()
         setBusy(false)
       })
       .catch((error: unknown) => {
@@ -305,15 +331,16 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   }
 
   const startEditingNote = () => {
+    noteDraftHandle.begin()
     setNoteDraft(entry.note ?? '')
     setNotice('')
-    setEditingNote(true)
+    onNoteDraft?.(entry, true)
   }
 
   const saveNote = () => {
     if (!writableId) return
     // 空串即删除备注（端点负责 trim 与删除）。
-    runWrite(() => updateLocalWantToGo(writableId, { note: noteDraft }), 'saveFailed')
+    runWrite(() => updateLocalWantToGo(writableId, { note: noteDraft }, noteDraftHandle.writeOptions()), 'saveFailed')
   }
 
   const hideEntry = () => {
@@ -351,6 +378,17 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
 
       {editingNote ? (
         <div className="collection-note-editor">
+          <DraftConflictNotice
+            id={noteConflictId}
+            status={noteDraftHandle.status}
+            before={noteDraftHandle.baseValue}
+            after={noteDraftHandle.current}
+            busy={busy}
+            onKeepMine={() => { noteDraftHandle.keepMine(); setNotice('') }}
+            onTakeTheirs={() => { noteDraftHandle.begin(); setNoteDraft(item?.note ?? ''); setNotice('') }}
+            onDiscard={endNoteDraft}
+            copyText={noteDraft}
+          />
           <label htmlFor={noteId} className="sr-only">{t('note', { name })}</label>
           <textarea
             id={noteId}
@@ -369,14 +407,15 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
                 className="collection-action"
                 disabled={busy}
                 aria-label={t('cancelNoteFor', { name })}
-                onClick={() => setEditingNote(false)}
+                onClick={endNoteDraft}
               >
                 {t('cancel')}
               </button>
               <button
                 type="button"
                 className="collection-action collection-action-primary"
-                disabled={busy}
+                disabled={busy || noteConflict || !writableId}
+                aria-describedby={noteConflict ? noteConflictId : undefined}
                 aria-label={t('saveNoteFor', { name })}
                 onClick={saveNote}
               >

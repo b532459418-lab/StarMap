@@ -9,6 +9,8 @@ type LocalEditorToolbarProps = {
   onReset?: () => void
   onSave?: () => void
   onAdd?: () => void
+  /** 3C-5 D: the id of a draft conflict notice that holds the save (the save button is off and points to it). */
+  saveBlockedBy?: string
 }
 
 export function LocalEditorToolbar({
@@ -19,6 +21,7 @@ export function LocalEditorToolbar({
   onReset,
   onSave,
   onAdd,
+  saveBlockedBy,
 }: LocalEditorToolbarProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   return (
@@ -36,7 +39,7 @@ export function LocalEditorToolbar({
             </button>
           ) : null}
           {onSave ? (
-            <button type="button" data-primary="true" onClick={onSave} disabled={busy} aria-label={t('editor:saveFor', { label })} title={t('editor:save')}>
+            <button type="button" data-primary="true" onClick={onSave} disabled={busy || saveBlockedBy !== undefined} aria-describedby={saveBlockedBy} aria-label={t('editor:saveFor', { label })} title={t('editor:save')}>
               <Check />
             </button>
           ) : null}

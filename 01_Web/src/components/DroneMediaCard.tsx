@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { editorErrorNotice } from '../i18n/editorErrors.ts'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Drone, GripVertical, Maximize2, X } from 'lucide-react'
 import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
 import { useMediaCatalog } from '../data/mediaCatalog'
@@ -17,6 +17,7 @@ import type { DroneMediaItem } from '../data/droneMedia'
 import { useDroneMedia } from '../data/droneMedia'
 import type { CityId } from '../types/travel'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
+import { DraftConflictNotice } from './DraftConflictNotice'
 import { MediaRecoveryEntry } from './MediaRecoveryEntry'
 import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { useMediaJobs } from './useMediaJobs'
@@ -116,6 +117,9 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   const droneProbe = useMemo(() => droneListProbe(city?.id), [city?.id])
   const droneDraft = useDraft(droneProbe)
   const editing = droneDraft.active
+  // The list changed elsewhere while the draft is open: the save waits for the user's choice (3C-5 D).
+  const droneConflictId = useId()
+  const droneConflict = droneDraft.status === 'changed' || droneDraft.status === 'deleted'
   const [showUpload, setShowUpload] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
@@ -166,6 +170,13 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
     setDraftHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
     setBaselineItemIds(travelAtlasEditorState.droneOrderByCity[city.id] ?? [])
     setBaselineHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
+  }
+  /** Keep the draft: the list as it is now becomes its baseline (the save writes the draft over it). */
+  const keepDroneDraft = () => {
+    droneDraft.keepMine()
+    setBaselineItemIds(travelAtlasEditorState.droneOrderByCity[city.id] ?? [])
+    setBaselineHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
+    setNotice('')
   }
   /** A write of the draft is saved: the page shows the data (3C-5 D: no reload), the editor closes. */
   const draftSaved = () => {
@@ -359,10 +370,23 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                 setShowUpload((open) => !open)
               }}
               onSave={saveDraft}
+              saveBlockedBy={droneConflict ? droneConflictId : undefined}
             />
           ) : null}
         </div>
 
+        {editing ? (
+          <DraftConflictNotice
+            id={droneConflictId}
+            status={droneDraft.status}
+            before={droneDraft.baseValue}
+            after={droneDraft.current}
+            busy={busy || sessionLocked}
+            onKeepMine={keepDroneDraft}
+            onTakeTheirs={() => { startDroneDraft(); setNotice('') }}
+            onDiscard={() => { droneDraft.end(); setShowUpload(false); setFileDrafts([]) }}
+          />
+        ) : null}
         {editing && showUpload ? (
           <form className="atlas-local-editor-form atlas-local-editor-form-dark" onSubmit={uploadDroneFiles}>
             <p>{t('importHelp')}</p>
