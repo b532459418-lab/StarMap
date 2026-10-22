@@ -5,47 +5,16 @@
  * refusals against the old engine are the double run's (../doubleRun.test.ts).
  */
 import { test } from 'node:test'
+import type { FormalState } from '../../../worldgraph/store/formal.ts'
 import assert from 'node:assert/strict'
-import type { FormalCommand, FormalState } from '../../../worldgraph/store/formal.ts'
-import { applyChangeSet, planCommands } from '../../../worldgraph/store/planner.ts'
-import { memoryReader } from '../../../worldgraph/store/reader.ts'
 import { viewOf } from '../../store/diffV2.fixture.ts'
-import { OFFICIAL, OFFICIAL_POLICY, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
-import { projectStoreToCanonical } from '../../store/projectCanonical.ts'
+import { OFFICIAL, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
 import { migratedFiles, placeNamed } from '../../v2write/v2write.fixture.ts'
-import { OLD_WRITES, doubleRunStore, editorRoute, nativeEngineOf, oldEngine, sameRequest, stepContext, type DoubleRunStore } from '../doubleRun.fixture.ts'
-import { NATIVE_WRITES } from './routes.ts'
+import { OLD_WRITES, doubleRunStore, editorRoute, oldEngine, sameRequest, stepContext } from '../doubleRun.fixture.ts'
+import { canonicalOf, commitAsIs, customEntryOn, landmarkNear, runNative } from './native.fixture.ts'
 
-const native = (route: string) => nativeEngineOf(NATIVE_WRITES[editorRoute(route)])
-const canonicalOf = (state: FormalState) => projectStoreToCanonical(state, { source: 'local', track: false, freeze: false }).canonical
-const NOW = '2026-09-27T09:00:00.000Z'
-const user = (id: string) => ({ sourceId: OFFICIAL.user, recordId: id, evidenceIds: [] })
-
-/** Run a native write on the store; the store moves on. */
-function run(store: DoubleRunStore, route: string, input: unknown, n: number) {
-  const outcome = native(route)(store, sameRequest(route, editorRoute(route), () => { throw new Error('native only') }, input), stepContext(n))
-  if (outcome.state) store.state = outcome.state
-  return outcome
-}
-/** Commit commands as they are (a user's own layer, which the V2 files cannot hold). */
-function commit(store: DoubleRunStore, commands: readonly FormalCommand[]) {
-  const changeSet = planCommands(memoryReader(store.state), commands, { baseRevision: store.state.revision, now: NOW, policy: OFFICIAL_POLICY })
-  store.state = applyChangeSet(store.state, changeSet)
-}
-/** A custom layer (`test:landmarks`) whose entity type refers to a place through a field, and one landmark near `placeId`. */
-const LANDMARK_TYPE = '01990000-0000-7000-8000-00000000a001', LANDMARK_LAYER = '01990000-0000-7000-8000-00000000a002'
-const landmarkNear = (placeId: string): FormalCommand[] => [
-  { op: 'create', table: 'entityTypes', value: { id: LANDMARK_TYPE, revision: 0, title: { names: { en: 'Synthetic landmark' } }, schemaVersion: 1, fields: [{ key: 'near', kind: 'entity_ref' }] } },
-  { op: 'create', table: 'layers', value: { id: LANDMARK_LAYER, revision: 0, title: { names: { en: 'Synthetic landmarks' } }, schemaVersion: 1, acceptedEntityTypes: [LANDMARK_TYPE], entryFields: [] } },
-  { op: 'create', table: 'entities', value: { id: '01990000-0000-7000-8000-00000000a003', revision: 0, typeId: LANDMARK_TYPE, title: { names: { en: 'Synthetic tower' } }, fields: { near: placeId }, source: user('01990000-0000-7000-8000-00000000a003'), visibility: 'private' } },
-  { op: 'create', table: 'entries', value: { id: '01990000-0000-7000-8000-00000000a004', revision: 0, layerId: LANDMARK_LAYER, entityId: '01990000-0000-7000-8000-00000000a003', fields: {}, source: user('01990000-0000-7000-8000-00000000a004'), createdAt: NOW, updatedAt: NOW } },
-]
-/** A custom layer that holds places, with an entry on `placeId`. */
-const PLACE_LAYER = '01990000-0000-7000-8000-00000000b001'
-const customEntryOn = (placeId: string): FormalCommand[] => [
-  { op: 'create', table: 'layers', value: { id: PLACE_LAYER, revision: 0, title: { names: { en: 'Synthetic places' } }, schemaVersion: 1, acceptedEntityTypes: [OFFICIAL.place], entryFields: [] } },
-  { op: 'create', table: 'entries', value: { id: '01990000-0000-7000-8000-00000000b002', revision: 0, layerId: PLACE_LAYER, entityId: placeId, fields: {}, source: user('01990000-0000-7000-8000-00000000b002'), createdAt: NOW, updatedAt: NOW } },
-]
+const run = runNative
+const commit = commitAsIs
 
 test('POST /wanttogo: new rows are starmap:user rows with their own ids; the entry and new places join their orders; no V2-only value', () => {
   const store = doubleRunStore(migratedFiles())

@@ -22,6 +22,7 @@ const ENGINES = enginesFor(NATIVE_WRITES)
 /** The store-native endpoints (3C-5 C1, C2; the native planners land commit by commit; until then they run against the stand-in). */
 const NATIVE_ROUTES = [
   VIEW_ROUTE, editorRoute('wanttogo'), editorRoute('wanttogo/update'), editorRoute('wanttogo/delete'), editorRoute('records'), editorRoute('countries'),
+  editorRoute('countries/delete'),
 ]
 
 type Make = (view: V2Files) => DoubleRunStep

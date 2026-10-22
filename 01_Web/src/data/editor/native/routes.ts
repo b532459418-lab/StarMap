@@ -13,7 +13,7 @@ import type { FormalCommand } from '../../../worldgraph/store/formal.ts'
 import type { OfficialReader } from '../../store/officialReader.ts'
 import type { CatalogCountry } from '../../v2write/transaction.ts'
 import { editorViewWrite } from './editorView.ts'
-import { addCountryWrite, addTravelRecordWrite } from './footprint.ts'
+import { addCountryWrite, addTravelRecordWrite, deleteCountriesWrite } from './footprint.ts'
 import { addWantToGoWrite, deleteWantToGoWrite, updateWantToGoWrite } from './wantToGo.ts'
 
 export interface NativeWriteContext {
@@ -38,6 +38,7 @@ export const NATIVE_WRITES: Readonly<Record<string, NativeWrite>> = Object.freez
   'POST /__travelatlas/editor/view': editorViewWrite,
   'POST /__travelatlas/editor/records': addTravelRecordWrite,
   'POST /__travelatlas/editor/countries': addCountryWrite,
+  'POST /__travelatlas/editor/countries/delete': deleteCountriesWrite,
   'POST /__travelatlas/editor/wanttogo': addWantToGoWrite,
   'POST /__travelatlas/editor/wanttogo/update': updateWantToGoWrite,
   'POST /__travelatlas/editor/wanttogo/delete': deleteWantToGoWrite,

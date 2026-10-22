@@ -33,7 +33,7 @@ const without = (body, keys) => Object.fromEntries(Object.entries(body).filter((
 /** 3C-5 C1: the store-native endpoints (their new rows get their own ids and no V2-only values, design §9). */
 const NATIVE = new Set([
   'POST /__travelatlas/editor/wanttogo', 'POST /__travelatlas/editor/wanttogo/update', 'POST /__travelatlas/editor/wanttogo/delete',
-  'POST /__travelatlas/editor/records', 'POST /__travelatlas/editor/countries',
+  'POST /__travelatlas/editor/records', 'POST /__travelatlas/editor/countries', 'POST /__travelatlas/editor/countries/delete',
 ])
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /**

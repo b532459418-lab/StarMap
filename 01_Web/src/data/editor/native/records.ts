@@ -24,7 +24,7 @@ import { sameOrder, sortCountryIdsByLatestVisit, type CountryVisit } from '../ru
 import { findJourneyCandidates, type JourneyCandidate, type JourneyRecord } from '../rules/journeys.ts'
 import { viewListAccess, type CommandBatch } from './batch.ts'
 import { appendToOriginalOrder } from './originalOrder.ts'
-import { userSource } from './places.ts'
+import { referencesOf, rowOf, userSource } from './places.ts'
 
 const S = VIEW_SCOPES
 
@@ -185,4 +185,41 @@ export function reorderCountries(reader: OfficialReader, batch: CommandBatch, ne
   const place = (id: unknown): ViewTarget | undefined => (typeof id === 'string' && isPlace(id) ? { table: 'entities', id } : undefined)
   const { rows, sink } = viewListAccess(reader, batch, newId)
   viewListWriter(rows, sink).listScope(S.countryOrder, before, after, place, place, false)
+}
+
+/**
+ * Records that go (a country deleted, a planned record converted): their journeys first — the first sequence of a journey
+ * keeps its other members in route order; a journey left without members goes with its sequences — then each record's view
+ * rows and entry.
+ */
+export function removeRecords(reader: OfficialReader, batch: CommandBatch, records: readonly OfficialRecord[], newId: () => string): void {
+  const removed = new Set(records.map((record) => record.entry.id))
+  const touched = new Set<string>()
+  for (const record of records) {
+    const journey = reader.journeyOfEntry(record.entry.id)
+    if (journey) touched.add(journey.journeyId)
+  }
+  for (const journeyId of [...touched].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const journey = reader.journey(journeyId)!
+    const left = reader.journeyMembers(journeyId).filter((member) => !removed.has(member.entry.id))
+    if (!left.length) {
+      for (const sequence of journey.sequences) batch.remove('sequences', sequence)
+      batch.remove('entities', journey.entity)
+      continue
+    }
+    const entryIds = routeOrder(left.map((member) => ({ entryId: member.entry.id, id: member.record.id, start_date: member.record.start_date })))
+    const [sequence] = journey.sequences
+    if (sequence) batch.update('sequences', sequence, { ...sequence, entryIds } satisfies EntrySequence)
+    else {
+      const id = newId()
+      batch.create('sequences', { ...journeySequence(journeyId, journey.entity.id, entryIds, id), source: userSource(id) } satisfies EntrySequence)
+    }
+  }
+  const references = referencesOf(reader)
+  for (const record of records) {
+    for (const ref of references('entries', record.entry.id)) {
+      if (ref.fromTable === 'viewItems' || ref.fromTable === 'viewSettings') batch.remove(ref.fromTable, rowOf(reader, ref.fromTable, ref.fromId))
+    }
+    batch.remove('entries', record.entry)
+  }
 }
