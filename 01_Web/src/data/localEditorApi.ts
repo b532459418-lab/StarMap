@@ -8,6 +8,7 @@ import type { WantToGoItem } from './derive/wantToGo.ts'
 import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
 import { LocalEditorError } from '../i18n/editorErrors.ts'
 import { requireLocalEditorReload, withLocalEditorWrite, type MediaImportPermit } from './localEditorCoordination.ts'
+import { pauseRendering } from './renderPause.ts'
 import { sendStoreWrite, type StoreWriteHeaders } from './storeWriteProtocol.ts'
 import { assertMediaJob, assertMediaJobsRead, assertMediaJobPreview, type MediaJob, type MediaJobsRead, type MediaJobPreview, type MediaJobIntent, type MediaJobVersion } from './mediaJobs.ts'
 
@@ -80,18 +81,33 @@ const sendToStore = async <T>(send: (protocol: StoreWriteHeaders) => Promise<T>,
   let base = baseRevision
   // The revision pushes wait while this write is in flight (it applies its own answer); released whatever happens.
   const release = storeSync?.writeStarted()
+  // A′ (./renderPause.ts): the map pauses from here (the click) until the write's changes are applied, or its first try
+  // fails (refused, outcome unknown), or the watchdog; `finally` ends it in any case.
+  const resume = pauseRendering()
+  const watched = async (protocol: StoreWriteHeaders) => {
+    try {
+      return await send(protocol)
+    } catch (error) {
+      resume('failed')
+      throw error
+    }
+  }
+  const onApplied = () => {
+    resume('applied')
+    options.onApplied?.()
+  }
   try {
     for (let attempt = 0; ; attempt++) {
       try {
         const sync = storeSync
-        const result = await sendStoreWrite(send, {
+        const result = await sendStoreWrite(watched, {
           baseRevision: base, onUnconfirmed: requireLocalEditorReload, ...(sync ? { beforeLastTry: () => sync.waitForServer() } : {}),
         })
-        if (sync) await sync.applySaved(result, options.onApplied)
+        if (sync) await sync.applySaved(result, onApplied)
         else {
           const revision = (result as { revision?: unknown }).revision
           if (typeof revision === 'number') setStoreBaseRevision(revision)
-          options.onApplied?.()
+          onApplied()
         }
         return result
       } catch (error) {
@@ -106,6 +122,7 @@ const sendToStore = async <T>(send: (protocol: StoreWriteHeaders) => Promise<T>,
     }
   } finally {
     release?.()
+    resume()
   }
 }
 

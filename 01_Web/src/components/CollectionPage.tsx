@@ -124,19 +124,30 @@ export const CollectionPage = memo(function CollectionPage({ entries, onViewOnMa
   }), [])
   const visibleEntries = useMemo(() => {
     const filtered = filterCollection(entries, { text, status, sort }, locale)
+    if (pinned.size === 0) return filtered
     const shown = new Set(filtered.map(collectionEntryKey))
     return [...filtered, ...[...pinned.values()].filter((entry) => !shown.has(collectionEntryKey(entry)))]
   }, [entries, locale, sort, status, text, pinned])
 
   // 没有编辑器时（公开构建、个人构建、强制样例）数据里没有隐藏项：个人构建不带隐藏内容（第 7 批，S3），
   // 所以不显示「已隐藏」的计数，也不给按隐藏状态筛选的选项。
-  const stats = useMemo(() => [
-    { value: entries.length, label: t('total') },
-    { value: entries.filter((entry) => entry.location && !entry.hidden).length, label: t('onMap') },
-    ...(localEditorAvailable ? [{ value: entries.filter((entry) => entry.hidden).length, label: t('hidden') }] : []),
-    { value: entries.filter((entry) => !entry.location).length, label: t('noLocation') },
-    { value: entries.filter(isFromTravelLog).length, label: t('fromTravelLog') },
-  ], [entries, t])
+  const stats = useMemo(() => {
+    // One pass over the entries (3C-5 D).
+    let onMap = 0, hidden = 0, noLocation = 0, fromTravelLog = 0
+    for (const entry of entries) {
+      if (entry.location && !entry.hidden) onMap++
+      if (entry.hidden) hidden++
+      if (!entry.location) noLocation++
+      if (isFromTravelLog(entry)) fromTravelLog++
+    }
+    return [
+      { value: entries.length, label: t('total') },
+      { value: onMap, label: t('onMap') },
+      ...(localEditorAvailable ? [{ value: hidden, label: t('hidden') }] : []),
+      { value: noLocation, label: t('noLocation') },
+      { value: fromTravelLog, label: t('fromTravelLog') },
+    ]
+  }, [entries, t])
 
   // 有编辑器但想去数据不在私有文件里时，没有可写的隐藏项：只给「全部 / 显示中」。
   const availableStatusOptions = writeAvailable

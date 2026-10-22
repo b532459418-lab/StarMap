@@ -2,14 +2,18 @@
  * "Save to usable" in a real browser (3C-5 D, spec §2.4; external review §5-5, D9): from the click on a save until the
  * commit is done, the page shows the data of that revision and the next operation can run. Synthetic data only.
  *
- *   node scripts/save-latency-bench.mjs --dir <empty temp dir> [--scale real|small|tiny] [--runs 20] [--ops note,hide,order]
+ *   node scripts/save-latency-bench.mjs --dir <empty temp dir> [--scale real|small|tiny] [--runs 20] [--ops note,hide,order,maphide]
  *                                       [--out result.json] [--profile <file prefix>] [--gpu]
  *
  * - Generates the store root of the scale (./store-mode-bench.mjs generateRoots: real = 100 countries, 2 900 cities,
  *   6 500 visits, 3 000 want-to-go items, 10 000 media) under <dir>, starts `vite --mode personal` on 127.0.0.1:5173 on it
  *   (port 5173 must be free; proxies are not used), and drives Chromium (Playwright) in English.
  * - Operations, each `--runs` times on its own item: `note` (a want-to-go note saved in Collection), `hide` (a want-to-go
- *   item hidden in Collection), `order` (the first country moved down one place by keyboard and the country list saved).
+ *   item hidden in Collection), `order` (the first country moved down one place by keyboard and the country list saved),
+ *   `maphide` (on the map, from the want-to-go card that "View on map" opens: the item hidden; done when its badge has
+ *   left the map).
+ * - 3C-5 D (A′): the map pauses during a save. "Usable" includes the map: its loop runs again and has rendered a frame
+ *   since (development: window.__travelAtlasDebugRenderLoop); each run also keeps how long the map was paused.
  * - The time starts in the page when the save button is clicked (performance.timeOrigin + now, kept in sessionStorage)
  *   and stops in the page, on the first animation frame where the result is shown and the control of the next operation
  *   is enabled. A page that reloads after the save (before 3C-5 D) is measured the same way, in the new document; the
@@ -120,9 +124,12 @@ try {
   async function measureOnce(buttonLabel, condition, args) {
     const before = await browserMetrics()
     const revisionBefore = await page.evaluate(() => document.documentElement.dataset.starmapRevision)
+    const pausesBefore = await page.evaluate(() => window.__travelAtlasDebugRenderLoop?.state().episodes.length)
     const clicked = await page.evaluate(({ buttonLabel }) => {
       performance.clearResourceTimings()
-      const button = [...document.querySelectorAll('button')].find((candidate) => candidate.getAttribute('aria-label') === buttonLabel || candidate.textContent?.trim() === buttonLabel)
+      // `css:<selector>`: the button by a selector (a label shared by buttons of several pages).
+      const button = buttonLabel.startsWith('css:') ? document.querySelector(buttonLabel.slice(4))
+        : [...document.querySelectorAll('button')].find((candidate) => candidate.getAttribute('aria-label') === buttonLabel || candidate.textContent?.trim() === buttonLabel)
       if (!button || button.disabled) return false
       sessionStorage.setItem('starmapBenchStart', String(performance.timeOrigin + performance.now()))
       sessionStorage.setItem('starmapBenchDocument', String(performance.timeOrigin))
@@ -132,22 +139,29 @@ try {
     if (!clicked) throw new Error(`no enabled button ${buttonLabel}`)
     for (let attempt = 0; attempt < 40; attempt++) {
       try {
-        const answer = await page.evaluate(({ source, args, revisionBefore }) => new Promise((resolve) => {
+        const answer = await page.evaluate(({ source, args, revisionBefore, pausesBefore }) => new Promise((resolve) => {
           const check = new Function('args', `return (${source})(args)`)
           const deadline = performance.now() + 120_000
+          // The map (A′): not paused, and a frame rendered since the last pause ended.
+          const mapRendering = () => {
+            const loop = window.__travelAtlasDebugRenderLoop?.state()
+            return !loop || (!loop.paused && loop.frames > loop.framesAtResume)
+          }
           const frame = () => {
             const moved = revisionBefore === undefined || document.documentElement.dataset.starmapRevision !== revisionBefore
-            if (moved && check(args)) {
+            if (moved && check(args) && mapRendering()) {
+              const loop = window.__travelAtlasDebugRenderLoop?.state()
+              const pauses = loop && pausesBefore !== undefined ? loop.episodes.slice(pausesBefore) : undefined
               const start = Number(sessionStorage.getItem('starmapBenchStart')) - performance.timeOrigin
               // The requests of the save (the write, a pull): when they ended after the click, and how long they took.
               const requests = performance.getEntriesByType('resource').filter((entry) => entry.startTime >= start && /__travelatlas/.test(entry.name)).map((entry) => ({ path: new URL(entry.name).pathname.replace('/__travelatlas/', '').slice(0, 40), startMs: Math.round(entry.startTime - start), ms: Math.round(entry.duration) }))
               const timings = window.__starmapTimings ? { ...window.__starmapTimings, startedAt: window.__starmapTimings.startedAt === undefined ? undefined : Math.round(window.__starmapTimings.startedAt - start), committedAt: window.__starmapTimings.committedAt === undefined ? undefined : Math.round(window.__starmapTimings.committedAt - start), shownAt: Math.round(performance.now() - start) } : null
-              resolve({ requests, totalMs: performance.timeOrigin + performance.now() - Number(sessionStorage.getItem('starmapBenchStart')), reloaded: String(performance.timeOrigin) !== sessionStorage.getItem('starmapBenchDocument'), timings })
+              resolve({ pauses, requests, totalMs: performance.timeOrigin + performance.now() - Number(sessionStorage.getItem('starmapBenchStart')), reloaded: String(performance.timeOrigin) !== sessionStorage.getItem('starmapBenchDocument'), timings })
             } else if (performance.now() > deadline) resolve(undefined)
             else requestAnimationFrame(frame)
           }
           frame()
-        }), { source: condition.toString(), args, revisionBefore })
+        }), { source: condition.toString(), args, revisionBefore, pausesBefore })
         if (answer) {
           const after = await browserMetrics()
           const browser = Object.fromEntries(['ScriptDuration', 'RecalcStyleDuration', 'LayoutDuration', 'TaskDuration'].map((key) => [key.replace('Duration', 'Ms'), Math.round((after[key] - before[key]) * 1000)]))
@@ -165,12 +179,19 @@ try {
     throw new Error('the result never showed')
   }
   const goTo = async (name) => {
+    const opening = name === 'Collection' && result.collectionOpenMs === undefined ? performance.now() : undefined
     await page.getByRole('navigation').getByRole('button', { name, exact: true }).click()
+    if (opening === undefined) return
+    // The first opening of Collection (it mounts every card): until its cards are there and a frame has been drawn.
+    await page.locator('.collection-card').first().waitFor()
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    result.collectionOpenMs = Math.round(performance.now() - opening)
+    console.log(`Collection opened in ${result.collectionOpenMs} ms`)
   }
   const record = (op, sample) => {
     const entry = result.ops[op] ??= { samples: [] }
     entry.samples.push(sample)
-    console.log(`${op} #${entry.samples.length}: ${sample.totalMs} ms${sample.reloaded ? ' (reloaded)' : ''}${sample.timings ? ` ${JSON.stringify(sample.timings)}` : ''} requests ${JSON.stringify(sample.requests)} browser ${JSON.stringify(sample.browser)}`)
+    console.log(`${op} #${entry.samples.length}: ${sample.totalMs} ms${sample.reloaded ? ' (reloaded)' : ''}${sample.pauses ? ` paused ${JSON.stringify(sample.pauses)}` : ''}${sample.timings ? ` ${JSON.stringify(sample.timings)}` : ''} requests ${JSON.stringify(sample.requests)} browser ${JSON.stringify(sample.browser)}`)
   }
   // Items of the synthetic data: wish-k is on "City k" (k < cities), every 20th is hidden, odd ones have a note.
   const visibleItems = Array.from({ length: 400 }, (_, k) => k + 1).filter((k) => k % 20 !== 0)
@@ -215,6 +236,27 @@ try {
       }, { first }))
     }
   }
+  if (ops.includes('maphide')) {
+    for (let run = 0; run < runs; run++) {
+      // Places without a planned record (./store-mode-bench.mjs: the city of plan-n is (7n mod cities)): only the hidden
+      // item put them on the want-to-go layer, so the badge leaves the map. Taken from the end (not the other runs' items).
+      const k = visibleItems.filter((item) => item % 7 !== 0 && item % 7 !== 5).at(-1 - run)
+      const name = `City ${k}`
+      // The place's entity id is its place id (./store-mode-bench.mjs syntheticV2Files: the cities follow the countries).
+      const entityId = `01920000-0000-7000-8000-${(scale.countries + k).toString(16).padStart(12, '0')}`
+      await goTo('Collection')
+      const card = page.locator('.collection-card').filter({ has: page.getByRole('button', { name: `Edit note for ${name}`, exact: true }) })
+      await card.getByRole('button', { name: `View on map: ${name}`, exact: true }).click()
+      await page.locator('.atlas-wtg-card .atlas-wtg-card-hide').waitFor()
+      // The camera has arrived and the badge is on the map before the save.
+      await page.waitForFunction((id) => window.__travelAtlasDebugRenderLoop?.entityShowing(id).badge, entityId, { timeout: 20_000 })
+      await page.waitForTimeout(500)
+      record('maphide', await measure('maphide', 'css:.atlas-wtg-card .atlas-wtg-card-hide', ({ entityId }) => {
+        const loop = window.__travelAtlasDebugRenderLoop
+        return Boolean(!document.querySelector('.atlas-wtg-card') && loop && !loop.entityShowing(entityId).badge)
+      }, { entityId }))
+    }
+  }
   for (const [op, entry] of Object.entries(result.ops)) {
     entry.reloaded = entry.samples.some((sample) => sample.reloaded)
     entry.totalMs = stats(entry.samples.map((sample) => sample.totalMs))
@@ -222,7 +264,10 @@ try {
       const values = entry.samples.map((sample) => sample.timings?.[key]).filter((value) => typeof value === 'number')
       if (values.length) entry[key] = stats(values)
     }
-    console.log(`${op}: ${JSON.stringify(entry.totalMs)}${entry.reloaded ? ' (reloads)' : ''}`)
+    // How long the map was paused during each run (A′).
+    const paused = entry.samples.filter((sample) => sample.pauses).map((sample) => sample.pauses.reduce((sum, pause) => sum + pause.pausedMs, 0))
+    if (paused.length) entry.pausedMs = stats(paused)
+    console.log(`${op}: ${JSON.stringify(entry.totalMs)}${entry.reloaded ? ' (reloads)' : ''}${entry.pausedMs ? ` map paused ${JSON.stringify(entry.pausedMs)}` : ''}`)
   }
   if (out) await writeFile(out, `${JSON.stringify(result, null, 2)}\n`)
 } finally {

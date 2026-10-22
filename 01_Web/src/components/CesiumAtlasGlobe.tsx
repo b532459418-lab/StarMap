@@ -46,6 +46,7 @@ import { useUiLocale } from '../i18n/useUiLocale'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
 import { useStableCallback } from './useStableCallback'
 import { useElementCache } from './useElementCache'
+import { bindRenderLoop, renderPauseState, resumeRendering, subscribeRenderPause } from '../data/renderPause'
 import { droneMarkerName } from './droneMediaLabels.ts'
 import { createCameraCommandObserver } from './cameraCommandObservation'
 import type { CameraCommandObservation, CameraCommandState } from './cameraCommandObservation'
@@ -488,9 +489,25 @@ type TravelAtlasDebugCamera = {
   flyToDroneItem: (itemId: string, testHeight?: number) => void
 }
 
+/** 3C-5 D (A′, development only): the render loop and its pauses, for the browser tests and the D9 measurement. */
+type TravelAtlasDebugRenderLoop = {
+  /** The pauses (./renderPause.ts), the frames this viewer rendered, and the frame count when the last pause ended. */
+  state: () => ReturnType<typeof renderPauseState> & {
+    viewer: number
+    frames: number
+    framesAtResume: number
+    useDefaultRenderLoop: boolean | undefined
+  }
+  /** Whether a shown entity of `entityId` is on the map: its place marker, and its want-to-go badge. */
+  entityShowing: (entityId: string) => { place: boolean; badge: boolean }
+  /** Destroy the viewer and make a new one (the tests of a viewer replaced during a pause). */
+  replaceViewer: () => void
+}
+
 declare global {
   interface Window {
     __travelAtlasDebugCamera?: TravelAtlasDebugCamera
+    __travelAtlasDebugRenderLoop?: TravelAtlasDebugRenderLoop
   }
 }
 
@@ -1117,6 +1134,46 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
       if (cursorTrailFrameRef.current !== null) {
         window.cancelAnimationFrame(cursorTrailFrameRef.current)
       }
+    }
+  }, [])
+  // 3C-5 D (A′): the viewer follows the map pauses of the saves (../data/renderPause.ts); a viewer replaced or destroyed
+  // gives back its loop. Hidden, or unmounted, the page ends a pause at once.
+  const [viewerKey, setViewerKey] = useState(0)
+  useEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer) return undefined
+    const unbind = bindRenderLoop(viewer)
+    if (!import.meta.env.DEV) return unbind
+    let frames = 0
+    let framesAtResume = 0
+    const countFrame = () => { frames++ }
+    viewer.scene.postRender.addEventListener(countFrame)
+    const stopListening = subscribeRenderPause((paused) => { if (!paused) framesAtResume = frames })
+    const id = viewerReadyVersion
+    const shown = (key: string, entityId: string) => viewer.entities.values.some((entity) => entity.isShowing
+      && entity.properties?.[key]?.getValue() === entityId)
+    const debug: TravelAtlasDebugRenderLoop = {
+      state: () => ({
+        ...renderPauseState(), viewer: id, frames, framesAtResume,
+        useDefaultRenderLoop: viewer.isDestroyed() ? undefined : viewer.useDefaultRenderLoop,
+      }),
+      entityShowing: (entityId) => ({ place: shown('entityId', entityId), badge: shown('badgeForEntityId', entityId) }),
+      replaceViewer: () => setViewerKey((key) => key + 1),
+    }
+    window.__travelAtlasDebugRenderLoop = debug
+    return () => {
+      stopListening()
+      if (!viewer.isDestroyed()) viewer.scene.postRender.removeEventListener(countFrame)
+      if (window.__travelAtlasDebugRenderLoop === debug) delete window.__travelAtlasDebugRenderLoop
+      unbind()
+    }
+  }, [viewerReadyVersion])
+  useEffect(() => {
+    const hidden = () => { if (document.visibilityState === 'hidden') resumeRendering('hidden') }
+    document.addEventListener('visibilitychange', hidden)
+    return () => {
+      document.removeEventListener('visibilitychange', hidden)
+      resumeRendering('unmount')
     }
   }, [])
   const captureViewer = useCallback(
@@ -1975,6 +2032,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
       data-map-source={mapSource}
     >
       <Viewer
+        key={viewerKey}
         ref={captureViewer}
         full
         animation={false}

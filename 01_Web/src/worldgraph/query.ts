@@ -39,6 +39,7 @@ import type { Anchor, Entity, EntityId, LayerId, LayerMembership, Relation, Worl
 import { membershipRecordRef, recordRefKey, type RecordRef } from './recordIdentity.ts'
 import { isTimeFilterActive } from './timeFilter.ts'
 import { evaluateTimeQueryRecords, type LayerTimeFilters, type TimeQueryContext } from './timeQuery.ts'
+import { entityIndexOf, locationIndexOf } from './graphIndex.ts'
 
 /**
  * 地图渲染一个地点标记需要的最小信息。字段能一一对应到 CesiumAtlasGlobe 的用法。
@@ -118,12 +119,7 @@ const asString = (value: unknown): string | undefined =>
 const asRouteKind = (value: unknown): RouteKind | undefined =>
   routeKinds.find((kind) => kind === value)
 
-/** 坐标必须是有限数字才算数：null / undefined / NaN 都判为"没有坐标"（与 travel 适配器同一判据）。 */
-const isFiniteCoordinate = (anchor: Anchor): boolean =>
-  typeof anchor.lat === 'number' &&
-  Number.isFinite(anchor.lat) &&
-  typeof anchor.lng === 'number' &&
-  Number.isFinite(anchor.lng)
+// 坐标必须是有限数字才算数（null / undefined / NaN 都判为"没有坐标"，与 travel 适配器同一判据）：在 ./graphIndex.ts。
 
 /** 两位字母才算国家代码，统一大写；其它形状一律视为没有。 */
 const asCountryCode = (value: unknown): string | undefined => {
@@ -171,18 +167,11 @@ export const queryVisiblePlaces = (
     mapSubtypesByLayerId.set(layer.id, new Set(layer.mapSubtypes))
   }
 
-  const entityById = new Map<EntityId, Entity>()
-  for (const entity of snapshot.entities) {
-    if (!entityById.has(entity.id)) entityById.set(entity.id, entity)
-  }
+  // 3C-5 D: the indexes are built once per snapshot array and shared with the Collection (./graphIndex.ts).
+  const entityById = entityIndexOf(snapshot.entities)
 
   // ---- location Anchor：每个 Entity 取第一条有有限坐标的 location Anchor ----
-  const locationByEntityId = new Map<EntityId, Anchor>()
-  for (const anchor of snapshot.anchors) {
-    if (anchor.kind !== 'location') continue
-    if (!isFiniteCoordinate(anchor)) continue
-    if (!locationByEntityId.has(anchor.entityId)) locationByEntityId.set(anchor.entityId, anchor)
-  }
+  const locationByEntityId = locationIndexOf(snapshot.anchors)
 
   // ---- Relation 索引 ----
   const visitCountByEntityId = new Map<EntityId, number>()
@@ -432,8 +421,8 @@ interface PendingSegment {
  */
 const buildRoutes = (
   snapshot: WorldGraphSnapshot,
-  entityById: Map<EntityId, Entity>,
-  locationByEntityId: Map<EntityId, Anchor>,
+  entityById: ReadonlyMap<EntityId, Entity>,
+  locationByEntityId: ReadonlyMap<EntityId, Anchor>,
   indexes: RouteIndexes,
 ): LayerRouteSegment[] => {
   const { relatedToRelations, visitJourneyIdsByEntityId, countryIdOf } = indexes

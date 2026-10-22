@@ -32,6 +32,7 @@ import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layer
 import { readLayerTimeFilters, rememberLayerTimeFilters } from './data/layerTimeFilters'
 import { HoldDataWhileHidden, useBrowseProjection, useCollectionEntries, useVisiblePlaces } from './data/appStore'
 import { PausedWhileHidden } from './components/PausedWhileHidden'
+import { resumeRendering } from './data/renderPause'
 import { includedBrowseRecordKeys, countMappedTravelRecords } from './data/derive/browseTimeProjection'
 import { coordinateForRecord } from './data/derive/travelAtlas'
 import { wantToGoCardRecordOf, type WantToGoCardRecord } from './data/derive/wantToGo'
@@ -185,6 +186,8 @@ function App() {
   const [globeDistance, setGlobeDistance] = useState(restoredGlobeDistance)
   const [globeResetVersion, setGlobeResetVersion] = useState(0)
   const [activePage, setActivePage] = useState<AtlasPage>(restoredActivePage)
+  // 3C-5 D (A′): another page ends a map pause of a save at once (../data/renderPause.ts).
+  useEffect(() => resumeRendering('page'), [activePage])
   // 打开过的页面（第 5B 批）：按需加载的 Collection 与更新页从第一次打开起才挂载，切走后保持挂载。
   const [visitedPages, setVisitedPages] = useState<ReadonlySet<AtlasPage>>(() => new Set([restoredActivePage]))
   // 当前页面是否已滚离顶部，决定顶部标题的玻璃背景。页面的滚动位置不随刷新恢复，初值为 false。

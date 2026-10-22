@@ -3818,6 +3818,11 @@ button {
 }
 
 .collection-card {
+  /* 3C-5 D: cards outside the view skip style, layout and paint (they stay in the DOM: find in page, focus and the
+     page's scroll position work as before). 180px is the content box of an average card (rows ~214px with padding);
+     a card once shown keeps its real size (auto). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
   display: flex;
   min-width: 0;
   flex-direction: column;
