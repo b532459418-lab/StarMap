@@ -22,7 +22,7 @@ const ENGINES = enginesFor(NATIVE_WRITES)
 /** The store-native endpoints (3C-5 C1, C2; the native planners land commit by commit; until then they run against the stand-in). */
 const NATIVE_ROUTES = [
   VIEW_ROUTE, editorRoute('wanttogo'), editorRoute('wanttogo/update'), editorRoute('wanttogo/delete'), editorRoute('records'), editorRoute('countries'),
-  editorRoute('countries/delete'),
+  editorRoute('countries/delete'), editorRoute('wanttogo/convert'),
 ]
 
 type Make = (view: V2Files) => DoubleRunStep
@@ -224,6 +224,51 @@ scenario('view operations refused: a hidden city that is no city (the merged lis
   (view) => viewStep('a country as a city', [{ op: 'hide', scope: 'cities', add: [idOf(view, 'Iceland', 'country')], remove: [] }]),
   () => viewStep('an unknown place', [{ op: 'order', scope: 'countries', ids: ['synthetic-missing'], baseline: [] }]),
 ], report => assert.deepEqual(refusedCodes(report), ['E_UNKNOWN_PLACE_REF', 'E_UNKNOWN_PLACE_REF']))
+
+// --- 3C-5 C2: the remaining 3C-4a scenarios (records, countries, conversion), now that every endpoint is native.
+
+const record = (label: string, input: (view: V2Files) => object): Make => (view) => sameRequest(label, editorRoute('records'), OLD_WRITES.records, input(view))
+const convert = (label: string, input: (view: V2Files) => object): Make => (view) => sameRequest(label, editorRoute('wanttogo/convert'), OLD_WRITES.convert, input(view))
+
+scenario('POST /records: a new country and city by name, an existing city joining an existing journey, a new journey of the same title', migratedFiles, [
+  record('named Tokyo', () => ({
+    country: '日本', country_en: 'Japan', city: '东京', city_en: 'Tokyo', start_date: '2026-05-01', end_date: '2026-05-03', lat: 35.68, lng: 139.69, country_code: 'JP',
+  })),
+  record('Nuuk joins the North Atlantic journey', (view) => ({
+    placeId: idOf(view, 'Nuuk'), start_date: '2025-06-20', trip_title: '2025 North Atlantic Demo', journeyId: '2025-north-atlantic-demo', lat: 64.18, lng: -51.72,
+  })),
+  record('Kyoto with a new journey of the same title', () => ({
+    country: '日本', country_en: 'Japan', city: '京都', city_en: 'Kyoto', start_date: '2026-05-04', lat: 35.01, lng: 135.77, country_code: 'JP', trip_title: '日本 · 东京', newJourney: true,
+  })),
+  record('Kyoto again: the journey choice (candidates in order)', () => ({
+    country: '日本', country_en: 'Japan', city: '大阪', city_en: 'Osaka', start_date: '2026-05-06', lat: 34.69, lng: 135.5, country_code: 'JP', trip_title: '日本 · 东京',
+  })),
+  record('Tokyo by name again: the place choice', () => ({
+    country: '日本', country_en: 'Japan', city: '东京', city_en: 'Tokyo', start_date: '2026-06-01', lat: 35.68, lng: 139.69, country_code: 'JP',
+  })),
+  record('Tokyo by id: E_CITY_EXISTS', (view) => ({ placeId: idOf(view, 'Tokyo'), start_date: '2026-06-01' })),
+], report => assert.deepEqual(refusedCodes(report), ['E_JOURNEY_CHOICE_REQUIRED', 'E_PLACE_CHOICE_REQUIRED', 'E_CITY_EXISTS']))
+
+scenario('POST /countries: a new country, a country that only a want-to-go item knew, and one already in the footprint', migratedFiles, [
+  addCountry('DK', '2024-03-02'), addCountry('GL', '2027-01-02'), addCountry('IS', '2024-01-01'),
+], report => assert.deepEqual(refusedCodes(report), ['E_COUNTRY_EXISTS']))
+
+scenario('POST /wanttogo/convert: a want-to-go item, kept; a planned record (D5); refusals', migratedFiles, [
+  convert('Nuuk kept', (view) => ({ source: 'want-to-go', id: wishAt(view, 'Nuuk').id, startDate: '2026-07-01', keepWantToGo: true })),
+  convert('planned Bergen', (view) => ({
+    source: 'planned', recordId: view.travel.records.find((r) => r.placeId === idOf(view, 'Bergen'))!.id, startDate: '2026-08-01', endDate: '2026-08-03',
+  })),
+  convert('Nuuk again: in the footprint now', (view) => ({ source: 'want-to-go', id: wishAt(view, 'Nuuk').id, startDate: '2026-07-01' })),
+  convert('a missing item', () => ({ source: 'want-to-go', id: 'synthetic-missing', startDate: '2026-07-01' })),
+  convert('a missing planned record', () => ({ source: 'planned', recordId: 'synthetic-missing', startDate: '2026-07-01' })),
+], report => assert.deepEqual(refusedCodes(report), ['E_CONVERT_CITY_IN_FOOTPRINT', 'E_WTG_NOT_FOUND', 'E_PLANNED_NOT_FOUND']))
+
+scenario('POST /wanttogo/convert: a removed want-to-go item joining an existing journey', migratedFiles, [
+  wish('Osaka', { place: { kind: 'city', nameZh: '大阪', nameEn: 'Osaka', countryCode: 'JP', lat: 34.69, lng: 135.5 } }),
+  convert('Osaka joins', (view) => ({
+    source: 'want-to-go', id: wishAt(view, 'Osaka').id, startDate: '2025-06-25', tripTitle: '2025 North Atlantic Demo', journeyId: '2025-north-atlantic-demo',
+  })),
+])
 
 // --- Random sequences.
 

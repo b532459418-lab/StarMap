@@ -65,6 +65,8 @@ test('smoke: the native segment (3C-5 C1) runs at the tiny scale: view operation
   for (const label of ['view: order swap', 'view: reverse countries (batch)', 'view: 60 hidden cities (batch)', 'wanttogo', 'wanttogo/update: note', 'wanttogo/update: hide', 'wanttogo/delete']) {
     assert.ok(result[label].plan.n > 0 && result[label].indexUpdate.n === result[label].plan.n, label)
   }
-  for (const label of ['PUT state: order swap', 'PUT state: reverse countries (batch)', 'convert planned, right after a native write (V2 path)', 'convert planned, after a V2 write (V2 path)']) assert.ok(result[label].diff.n > 0, label)
+  for (const label of ['PUT state: order swap', 'PUT state: reverse countries (batch)']) assert.ok(result[label].diff.n > 0, label)
+  // 3C-5 C2: the conversion is native too.
+  for (const label of ['convert planned, right after a native write (V2 path)', 'convert planned, after a V2 write (V2 path)']) assert.ok(result[label].plan.n > 0, label)
   assert.equal(result['view: order swap'].endToEnd.n, scale.updates)
 })

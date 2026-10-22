@@ -34,6 +34,7 @@ const without = (body, keys) => Object.fromEntries(Object.entries(body).filter((
 const NATIVE = new Set([
   'POST /__travelatlas/editor/wanttogo', 'POST /__travelatlas/editor/wanttogo/update', 'POST /__travelatlas/editor/wanttogo/delete',
   'POST /__travelatlas/editor/records', 'POST /__travelatlas/editor/countries', 'POST /__travelatlas/editor/countries/delete',
+  'POST /__travelatlas/editor/wanttogo/convert',
 ])
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /**
@@ -260,22 +261,8 @@ test('without STARMAP_STORE_VERIFY the same change stays invisible until the sto
   assert.equal((await session.moduleExports()).files.wantToGo.items.find((item) => item.id === first.id).note, first.note)
 })
 
-test('a view that does not match the store is E_VIEW_MISMATCH and drops the cache', async (t) => {
-  const { session, write, files, paths, output } = await migratedSession(t)
-  await session.moduleExports()
-  const wish = files.wantToGo.items[0]
-  const db = storeConnection(paths)
-  try {
-    db.prepare("UPDATE entries SET record_id = 'synthetic-renamed', body = json_set(body, '$.source.recordId', 'synthetic-renamed') WHERE source_id = 'v2:want-to-go' AND record_id = ?").run(wish.id)
-  } finally { db.close() }
-  const result = await write('POST /__travelatlas/editor/wanttogo/convert', { source: 'want-to-go', id: wish.id, startDate: '2026-07-01' }, 1, contextOf(1))
-  assert.equal(result.status, 500)
-  assert.deepEqual(result.body.params, { code: 'E_VIEW_MISMATCH' })
-  const read = await session.moduleExports()
-  assert.equal(projections(output.lines), 2, 'projected again')
-  assert.equal(read.revision, 1, 'nothing was written')
-  assert.ok(read.files.wantToGo.items.some((item) => item.id === 'synthetic-renamed'))
-})
+// 3C-5 C2: every editor write but PUT /state is native, and PUT /state changes only view rows, so no write meets a V2 view
+// that does not match the store (E_VIEW_MISMATCH) any more; a native plan the store refuses drops the cache (below).
 
 test('3C-5 C1: a native write planned on a live index that no longer matches the store is refused by the store; the cache is dropped', async (t) => {
   const { session, write, files, paths, output } = await migratedSession(t)

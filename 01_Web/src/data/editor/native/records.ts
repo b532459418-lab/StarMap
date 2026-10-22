@@ -162,6 +162,8 @@ export const isCountryVisitEvidence = (evidence: Evidence) => evidence.sourceId 
 export function reorderCountries(reader: OfficialReader, batch: CommandBatch, newId: () => string, change: {
   readonly visits?: readonly CountryVisit[]
   readonly removedEntries?: ReadonlySet<string>
+  /** A planned record that becomes visited where it is (its visit at its own place in the records). */
+  readonly visitedAt?: { readonly entryId: string; readonly visit: CountryVisit }
   readonly added?: readonly { readonly placeId: PlaceId; readonly visitedDate?: string }[]
   readonly removedAdded?: ReadonlySet<PlaceId>
   readonly countryOrder?: readonly string[]
@@ -171,9 +173,12 @@ export function reorderCountries(reader: OfficialReader, batch: CommandBatch, ne
   const placeOf = change.placeOf ?? ((placeId: PlaceId) => reader.place(placeId))
   const before = reader.editorLists().countryOrder as string[]
   const order = change.countryOrder ?? before
-  const visits: CountryVisit[] = reader.recordsInOrder()
-    .filter((record) => !record.planned && !change.removedEntries?.has(record.entry.id))
-    .map((record) => ({ countryId: countryOfPlace(placeOf(record.record.placeId)), start_date: record.record.start_date, end_date: record.record.end_date }))
+  const visits: CountryVisit[] = []
+  for (const record of reader.recordsInOrder()) {
+    if (record.entry.id === change.visitedAt?.entryId) { visits.push(change.visitedAt.visit); continue }
+    if (record.planned || change.removedEntries?.has(record.entry.id)) continue
+    visits.push({ countryId: countryOfPlace(placeOf(record.record.placeId)), start_date: record.record.start_date, end_date: record.record.end_date })
+  }
   visits.push(...(change.visits ?? []))
   const added = [
     ...reader.addedCountries().filter((country) => !change.removedAdded?.has(country.placeId)).map((country) => country.value as { placeId: PlaceId; visitedDate?: unknown }),
