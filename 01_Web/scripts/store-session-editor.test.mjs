@@ -31,18 +31,26 @@ const contextOf = (n) => ({ newId: sequentialUuids(WRITE_EPOCH_MS + n * 1000), n
 const projections = (lines) => lines.filter((line) => line.includes('读模型')).length
 const without = (body, keys) => Object.fromEntries(Object.entries(body).filter(([key]) => !keys.includes(key)))
 /** 3C-5 C1: the store-native endpoints (their new rows get their own ids and no V2-only values, design §9). */
-const NATIVE = new Set(['POST /__travelatlas/editor/wanttogo', 'POST /__travelatlas/editor/wanttogo/update', 'POST /__travelatlas/editor/wanttogo/delete'])
+const NATIVE = new Set([
+  'POST /__travelatlas/editor/wanttogo', 'POST /__travelatlas/editor/wanttogo/update', 'POST /__travelatlas/editor/wanttogo/delete',
+  'POST /__travelatlas/editor/records', 'POST /__travelatlas/editor/countries',
+])
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-/** A value with UUIDs renamed in the order they first appear, without `source: 'local-editor'` and file times. */
+/**
+ * A value with UUIDs (and 3C-5 C2's `journey-<UUID>` journey ids) renamed in the order they first appear, without the V2-only
+ * values of new records (`source: 'local-editor'`, `type: 'visit'`, `status: 'visited'`) and file times (design §9 changes 1–3).
+ */
+const JOURNEY = /^journey-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const V2_ONLY = { source: 'local-editor', type: 'visit', status: 'visited' }
 function normalized(value) {
   const names = new Map()
-  const rename = (text) => (UUID.test(text) ? (names.has(text) ? names.get(text) : (names.set(text, `#${names.size + 1}`), names.get(text))) : text)
+  const rename = (text) => (UUID.test(text) || JOURNEY.test(text) ? (names.has(text) ? names.get(text) : (names.set(text, `#${names.size + 1}`), names.get(text))) : text)
   const walk = (item) => {
     if (typeof item === 'string') return rename(item)
     if (Array.isArray(item)) return item.map(walk)
     if (item === null || typeof item !== 'object') return item
     return Object.fromEntries(Object.entries(item)
-      .filter(([key, child]) => !['updatedAt', 'generated_at', 'generatedAt'].includes(key) && !(key === 'source' && child === 'local-editor'))
+      .filter(([key, child]) => !['updatedAt', 'generated_at', 'generatedAt'].includes(key) && !(Object.hasOwn(V2_ONLY, key) && child === V2_ONLY[key]))
       .map(([key, child]) => [rename(key), walk(child)]))
   }
   return walk(value)
@@ -64,30 +72,31 @@ async function migratedSession(t, options = {}) {
 test('the eight editor writes: the store equals V2 mode after each, verified, and read without a new projection', async (t) => {
   const { session, output, write, files, paths } = await migratedSession(t, { verify: true })
   let v2 = files
-  const id = (en) => placeNamed(v2, en).id
-  const wish = (en) => v2.wantToGo.items.find((item) => item.placeId === id(en)).id
+  // Each side's input from its own view (3C-5 C1, C2: the native writes give new rows other ids than V2 mode).
+  const id = (view, en) => placeNamed(view, en).id
+  const wish = (view, en) => view.wantToGo.items.find((item) => item.placeId === id(view, en)).id
   const steps = [
     ['POST /__travelatlas/editor/countries', () => ({ countryCode: 'DK', visitedDate: '2024-03-02' })],
     ['POST /__travelatlas/editor/records', () => ({
       country: '日本', country_en: 'Japan', city: '东京', city_en: 'Tokyo', start_date: '2026-05-01', lat: 35.68, lng: 139.69, country_code: 'JP',
     })],
-    ['POST /__travelatlas/editor/wanttogo', () => ({ placeId: id('Bergen'), note: 'Synthetic fjord' })],
-    ['POST /__travelatlas/editor/wanttogo/update', () => ({ id: wish('Nuuk'), note: 'Synthetic note', hidden: true })],
-    ['POST /__travelatlas/editor/wanttogo/convert', () => ({ source: 'planned', recordId: v2.travel.records.find((r) => r.placeId === id('Bergen')).id, startDate: '2026-08-01' })],
-    ['PUT /__travelatlas/editor/state', () => {
-      const state = readEditorStateV1(v2, new Date())
-      return { ...state, countryOrder: [...state.countryOrder].reverse(), hiddenCountryIds: [id('Norway')], hiddenCityIds: [] }
+    ['POST /__travelatlas/editor/wanttogo', (view) => ({ placeId: id(view, 'Bergen'), note: 'Synthetic fjord' })],
+    ['POST /__travelatlas/editor/wanttogo/update', (view) => ({ id: wish(view, 'Nuuk'), note: 'Synthetic note', hidden: true })],
+    ['POST /__travelatlas/editor/wanttogo/convert', (view) => ({ source: 'planned', recordId: view.travel.records.find((r) => r.placeId === id(view, 'Bergen')).id, startDate: '2026-08-01' })],
+    ['PUT /__travelatlas/editor/state', (view) => {
+      const state = readEditorStateV1(view, new Date())
+      return { ...state, countryOrder: [...state.countryOrder].reverse(), hiddenCountryIds: [id(view, 'Norway')], hiddenCityIds: [] }
     }],
-    ['POST /__travelatlas/editor/wanttogo/delete', () => ({ ids: [wish('Tromsø')] })],
-    ['POST /__travelatlas/editor/countries/delete', () => ({ ids: [id('Norway')] })],
+    ['POST /__travelatlas/editor/wanttogo/delete', (view) => ({ ids: [wish(view, 'Tromsø')] })],
+    ['POST /__travelatlas/editor/countries/delete', (view) => ({ ids: [id(view, 'Norway')] })],
   ]
   assert.deepEqual(steps.map(([route]) => route).sort(), Object.keys(V2_EDITOR_ROUTES).sort())
   let revision = (await session.moduleExports()).revision
   assert.equal(revision, 1)
   let native = false
   for (const [index, [route, inputOf]] of steps.entries()) {
-    const input = inputOf()
-    const expected = V2_EDITOR_ROUTES[route].run(v2, structuredClone(input), contextOf(index))
+    const input = inputOf((await session.moduleExports()).files)
+    const expected = V2_EDITOR_ROUTES[route].run(v2, inputOf(v2), contextOf(index))
     v2 = { ...v2, ...Object.fromEntries(expected.writes.map((step) => [step.file, step.value])) }
     const result = await write(route, input, revision, contextOf(index))
     assert.equal(result.status, V2_EDITOR_ROUTES[route].status, `${route}: ${JSON.stringify(result.body)}`)
@@ -133,8 +142,10 @@ test('the cached read model and its V2 view stay one: after an editor write and 
   }
   // A V2 editor write: the read model moves on with the commit's changed rows, the files after the write are its V2 view.
   const [first, second] = files.wantToGo.items
-  const country = await write('POST /__travelatlas/editor/countries', { countryCode: 'DK', visitedDate: '2024-03-02' }, 1, contextOf(1))
-  assert.equal(country.status, 201, JSON.stringify(country.body))
+  // (3C-5 C2: PUT /state is the one write left on the V2 path.)
+  const state = readEditorStateV1((await session.moduleExports()).files, new Date())
+  const country = await write('PUT /__travelatlas/editor/state', { ...state, countryOrder: [...state.countryOrder].reverse() }, 1, contextOf(1))
+  assert.equal(country.status, 200, JSON.stringify(country.body))
   assert.equal(session.lastSnapshot.revision, 2)
   assert.equal(session.lastSnapshot.hasFiles, true)
   await consistent('after a V2 editor write')

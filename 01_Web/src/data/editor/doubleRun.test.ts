@@ -19,8 +19,10 @@ import { NATIVE_WRITES } from './native/routes.ts'
 import { hideDelta } from './rules/editorView.ts'
 
 const ENGINES = enginesFor(NATIVE_WRITES)
-/** The endpoints of 3C-5 C1 (the native planners land commit by commit; until then they run against the stand-in). */
-const C1_ROUTES = [VIEW_ROUTE, editorRoute('wanttogo'), editorRoute('wanttogo/update'), editorRoute('wanttogo/delete')]
+/** The store-native endpoints (3C-5 C1, C2; the native planners land commit by commit; until then they run against the stand-in). */
+const NATIVE_ROUTES = [
+  VIEW_ROUTE, editorRoute('wanttogo'), editorRoute('wanttogo/update'), editorRoute('wanttogo/delete'), editorRoute('records'), editorRoute('countries'),
+]
 
 type Make = (view: V2Files) => DoubleRunStep
 const idOf = (files: V2Files, en: string, subtype?: 'country' | 'city') => placeNamed(files, en, subtype).id
@@ -236,7 +238,6 @@ for (const seed of [3404, 5150, 7777]) {
   })
 }
 
-test('the endpoints of 3C-5 C1 are listed', () => {
-  assert.equal(C1_ROUTES.length, 4)
-  for (const route of ENGINES.native) assert.ok(C1_ROUTES.includes(route), route)
+test('the native endpoints are listed', () => {
+  assert.deepEqual([...ENGINES.native].sort(), [...NATIVE_ROUTES].sort())
 })

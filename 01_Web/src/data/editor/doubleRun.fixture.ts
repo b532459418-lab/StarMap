@@ -153,6 +153,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** File header values (design §9 change 3) and V2-only values of new records (change 2). */
 const HEADER_KEYS = new Set(['updatedAt', 'generatedAt', 'generated_at'])
 const V2_ONLY_SOURCE = 'local-editor'
+/** V2-only values of new and converted records (design §9 change 2): `type: 'visit'`, `status: 'visited'`. */
+const V2_ONLY_VALUES: Readonly<Record<string, unknown>> = { source: V2_ONLY_SOURCE, type: 'visit', status: 'visited' }
+/** A new journey's id (design §9 change 1): `journey-<UUIDv7>` before, the journey entity's UUIDv7 now. */
+const JOURNEY = /^journey-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/
 
 const canonicalOf = (state: FormalState): CanonicalData => projectStoreToCanonical(state, { source: 'local', track: false, freeze: false }).canonical
 
@@ -160,7 +164,7 @@ const canonicalOf = (state: FormalState): CanonicalData => projectStoreToCanonic
 function renameIds(value: unknown, { dropHeaders }: { dropHeaders: boolean }): unknown {
   const names = new Map<string, string>()
   const rename = (text: string) => {
-    if (!UUID.test(text)) return text
+    if (!UUID.test(text) && !JOURNEY.test(text)) return text
     let name = names.get(text)
     if (!name) names.set(text, name = `#${names.size + 1}`)
     return name
@@ -172,7 +176,7 @@ function renameIds(value: unknown, { dropHeaders }: { dropHeaders: boolean }): u
     const out: Record<string, unknown> = {}
     for (const [key, child] of Object.entries(item)) {
       if (dropHeaders && HEADER_KEYS.has(key)) continue
-      if (dropHeaders && key === 'source' && child === V2_ONLY_SOURCE) continue
+      if (dropHeaders && Object.hasOwn(V2_ONLY_VALUES, key) && child === V2_ONLY_VALUES[key]) continue
       out[rename(key)] = walk(child)
     }
     return out

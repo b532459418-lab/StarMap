@@ -8,18 +8,22 @@
  *   resolution); the cities of a country (`citiesOf`, for the city candidates).
  * - Want-to-go items: by their V2 id (`wish`), on a place (`wishesOn`); each with its entry and hidden view row.
  * - The editor state's lists (`editorLists`) and the rows of a view scope (`scope`).
- * - References to a place from any row of any layer (`placeReferences`, for the cleanup of unreferenced places).
+ * - 3C-5 C2: footprint and planned records (`record`, `recordsOn`, `recordById`, `recordsInOrder`, `visitedTitled`), each
+ *   with its entry and the official view's value (recordValueOf); the journey the projection assigns a footprint entry to
+ *   (`journeyOfEntry`) and a journey's members (`journeyMembers`); the added countries (`addedCountries`).
  *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types).
  */
 import type { ViewItem, ViewSetting } from '../../worldgraph/store/formal.ts'
 import type { Ref } from '../../worldgraph/store/reader.ts'
-import type { LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
+import type { EntrySequence, Evidence, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
 import type { ReadModelIndex } from '../../worldgraph/readModel/lookup.ts'
 import type { ReadModelTable } from '../../worldgraph/readModel/types.ts'
 import type { CanonicalEditorState, CanonicalPlace, CanonicalWantToGoItem } from '../canonical/types.ts'
-import { OFFICIAL, VIEW_SCOPES } from './officialDefinitions.ts'
-import { editorListsOf, officialEntryRole, placeValueOf, recordIdOf, wishValueOf, type ViewScopeAccess } from './projectCanonical.ts'
+import { OFFICIAL, V2_SOURCES, VIEW_SCOPES } from './officialDefinitions.ts'
+import {
+  addedCountryValueOf, editorListsOf, officialEntryRole, placeValueOf, recordIdOf, recordValueOf, wishValueOf, type ViewScopeAccess,
+} from './projectCanonical.ts'
 
 /** The index the reader needs: lookups, and reverse references (the host's live index has them). */
 export interface OfficialReaderIndex extends ReadModelIndex {
@@ -36,6 +40,27 @@ export interface OfficialWish {
 }
 
 export type EditorLists = Omit<CanonicalEditorState, 'schemaVersion' | 'addedCountries' | 'updatedAt'>
+
+/** A footprint or planned record with its entry. */
+export interface OfficialRecord {
+  readonly entry: LayerEntry
+  readonly planned: boolean
+  /** The Canonical record (the official view's value: V2 id, place, dates, title, journey, coordinates). */
+  readonly record: Readonly<Record<string, unknown>> & { readonly id: string; readonly placeId: string }
+}
+/** A journey as the projection reads it: its id, its entity and the entity's sequences (id order). */
+export interface OfficialJourney {
+  readonly journeyId: string
+  readonly entity: StoreEntity
+  readonly sequences: readonly EntrySequence[]
+}
+/** An added country: its evidence, the visit entry, and the Canonical value. */
+export interface OfficialAddedCountry {
+  readonly placeId: string
+  readonly evidence: Evidence
+  readonly visit?: LayerEntry
+  readonly value: Readonly<Record<string, unknown>>
+}
 
 export interface OfficialReader {
   readonly index: OfficialReaderIndex
@@ -59,6 +84,26 @@ export interface OfficialReader {
   viewItem(scope: string, table: 'entities' | 'entries' | 'assets', id: string): ViewItem | undefined
   /** The setting of `scope` with `key`, if any. */
   viewSetting(scope: string, key: string): ViewSetting | undefined
+  /** True when `entry` is a footprint or planned record of the official view (its role, on a place). */
+  isRecord(entry: LayerEntry): boolean
+  /** The record of a footprint or planned entry. */
+  record(entry: LayerEntry): OfficialRecord
+  /** The footprint and planned records on a place. */
+  recordsOn(placeId: string): readonly OfficialRecord[]
+  /** The first record, in the official order, whose V2 id is `id`. */
+  recordById(id: string): OfficialRecord | undefined
+  /** Every footprint and planned record, in the official order (recordOrder positions, then creation time and id). */
+  recordsInOrder(): readonly OfficialRecord[]
+  /** The visited records (footprint entries) whose trip title is `title`. */
+  visitedTitled(title: string): readonly OfficialRecord[]
+  /** The journey the projection assigns a footprint entry to, if any. */
+  journeyOfEntry(entryId: string): OfficialJourney | undefined
+  /** The journey with this id (a journey some footprint entry belongs to), if any. */
+  journey(journeyId: string): OfficialJourney | undefined
+  /** The footprint entries the projection assigns to a journey. */
+  journeyMembers(journeyId: string): readonly OfficialRecord[]
+  /** The added countries, in the official order (addedCountryOrder positions, then evidence id). */
+  addedCountries(): readonly OfficialAddedCountry[]
 }
 
 const byPositionThenId = (a: { position: string; id: string }, b: { position: string; id: string }) =>
@@ -119,6 +164,88 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     return (wishes = { byId, byPlace })
   }
 
+  // --- Records (3C-5 C2): the projection's roles, flags, journeys and orders.
+  const isRecord = (entry: LayerEntry): boolean => {
+    const role = officialEntryRole(entry)
+    return (role === 'footprint' || role === 'planned') && isPlaceEntity(entry.entityId)
+  }
+  let homeHidden: Map<string, ViewItem> | undefined
+  const hiddenFromHome = (entryId: string) => {
+    if (!homeHidden) {
+      homeHidden = new Map()
+      for (const item of [...index.viewItemsOf(VIEW_SCOPES.recordHiddenFromHome)].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+        if (!homeHidden.has(item.itemId)) homeHidden.set(item.itemId, item)
+      }
+    }
+    return homeHidden.get(entryId)?.hidden
+  }
+  /** The projection's journeys: sequences of journey entities by id; an entry belongs to the first that lists it. */
+  let journeys: { byEntry: Map<string, OfficialJourney>; byId: Map<string, OfficialJourney>; members: Map<string, LayerEntry[]> } | undefined
+  const journeyIndex = () => {
+    if (journeys) return journeys
+    const byEntry = new Map<string, OfficialJourney>(), byId = new Map<string, OfficialJourney>(), members = new Map<string, LayerEntry[]>()
+    const sequences: { sequence: EntrySequence; entity: StoreEntity }[] = []
+    for (const entity of index.entitiesOfType(OFFICIAL.journey)) for (const sequence of index.sequencesOfEntity(entity.id)) sequences.push({ sequence, entity })
+    sequences.sort((a, b) => (a.sequence.id < b.sequence.id ? -1 : a.sequence.id > b.sequence.id ? 1 : 0))
+    for (const { sequence, entity } of sequences) {
+      const journeyId = entity.source.sourceId === V2_SOURCES.journey ? entity.source.recordId : entity.id
+      for (const entryId of sequence.entryIds) {
+        const entry = index.get('entries', entryId) as LayerEntry | undefined
+        if (!entry || !isRecord(entry) || officialEntryRole(entry) !== 'footprint' || byEntry.has(entryId)) continue
+        let journey = byId.get(journeyId)
+        if (!journey) byId.set(journeyId, journey = { journeyId, entity, sequences: index.sequencesOfEntity(entity.id) })
+        byEntry.set(entryId, journey)
+        const list = members.get(journeyId) ?? []
+        list.push(entry)
+        members.set(journeyId, list)
+      }
+    }
+    return (journeys = { byEntry, byId, members })
+  }
+  const records = new Map<string, OfficialRecord>()
+  const recordOf = (entry: LayerEntry): OfficialRecord => {
+    let found = records.get(entry.id)
+    if (!found) {
+      const value = recordValueOf(entry, hiddenFromHome(entry.id), journeyIndex().byEntry.get(entry.id)?.journeyId, place(entry.entityId)?.location)
+      found = { entry, planned: officialEntryRole(entry) === 'planned', record: value as OfficialRecord['record'] }
+      records.set(entry.id, found)
+    }
+    return found
+  }
+  let ordered: readonly OfficialRecord[] | undefined
+  const recordsInOrder = (): readonly OfficialRecord[] => {
+    if (ordered) return ordered
+    const all = [...index.entriesOfLayer(OFFICIAL.travel), ...index.entriesOfLayer(OFFICIAL.wantToGo)].filter(isRecord)
+    const positioned = new Set<string>(), result: LayerEntry[] = []
+    const isListed = new Set(all.map((entry) => entry.id))
+    for (const item of index.viewItemsOf(VIEW_SCOPES.recordOrder)) {
+      if (item.itemTable !== 'entries' || !isListed.has(item.itemId) || positioned.has(item.itemId)) continue
+      positioned.add(item.itemId)
+      result.push(index.get('entries', item.itemId) as LayerEntry)
+    }
+    const rest = all.filter((entry) => !positioned.has(entry.id))
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    return (ordered = Object.freeze([...result, ...rest].map(recordOf)))
+  }
+  let added: readonly OfficialAddedCountry[] | undefined
+  const addedCountriesOf = (): OfficialAddedCountry[] => {
+    const containers: OfficialAddedCountry[] = []
+    for (const evidence of index.evidenceOfSource(V2_SOURCES.countryVisit)) {
+      if (!isPlaceEntity(evidence.recordId)) continue
+      const visits = index.entriesOfEntity(evidence.recordId).filter((entry) => officialEntryRole(entry) === 'countryVisit' && entry.source.recordId === evidence.recordId)
+      const visit = visits.at(-1)
+      containers.push({ placeId: evidence.recordId, evidence, ...(visit ? { visit } : {}), value: addedCountryValueOf(evidence, visit) })
+    }
+    const at = new Map<string, ViewItem>()
+    for (const item of index.viewItemsOf(VIEW_SCOPES.addedCountryOrder)) if (item.itemTable === 'entities' && !at.has(item.itemId)) at.set(item.itemId, item)
+    return containers.sort((a, b) => {
+      const x = at.get(a.placeId), y = at.get(b.placeId)
+      if (x && y) return byPositionThenId(x, y)
+      if (x || y) return x ? -1 : 1
+      return a.evidence.id < b.evidence.id ? -1 : a.evidence.id > b.evidence.id ? 1 : 0
+    })
+  }
+
   return {
     index,
     place,
@@ -149,5 +276,25 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     viewItem: (scope, table, id) => index.viewItemsOf(scope).filter((item) => item.itemTable === table && item.itemId === id)
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0],
     viewSetting: (scope, key) => index.viewSettingsOf(scope).find((setting) => setting.key === key),
+    isRecord,
+    record: recordOf,
+    recordsOn: (placeId) => index.entriesOfEntity(placeId).filter(isRecord).map(recordOf),
+    recordById(id) {
+      const found = [...index.entriesOfLayer(OFFICIAL.travel), ...index.entriesOfLayer(OFFICIAL.wantToGo)]
+        .filter((entry) => isRecord(entry) && recordIdOf(entry) === id)
+      if (found.length <= 1) return found.length ? recordOf(found[0]) : undefined
+      const order = new Map(recordsInOrder().map((record, index_) => [record.entry.id, index_] as const))
+      return recordOf(found.sort((a, b) => order.get(a.id)! - order.get(b.id)!)[0])
+    },
+    recordsInOrder,
+    visitedTitled: (title) => index.entriesOfLayer(OFFICIAL.travel)
+      .filter((entry) => isRecord(entry) && !recordOf(entry).planned && entry.fields.tripTitle === title).map(recordOf),
+    journeyOfEntry: (entryId) => journeyIndex().byEntry.get(entryId),
+    journey: (journeyId) => journeyIndex().byId.get(journeyId),
+    journeyMembers: (journeyId) => (journeyIndex().members.get(journeyId) ?? []).map(recordOf),
+    addedCountries() {
+      added ??= Object.freeze(addedCountriesOf())
+      return added
+    },
   }
 }
