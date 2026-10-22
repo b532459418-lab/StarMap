@@ -95,7 +95,7 @@ export const editorPrefix = '/__travelatlas/editor/'
 export const authorizedHeaders = { 'x-travelatlas-local-editor': '1', origin: 'http://127.0.0.1:5173', host: '127.0.0.1:5173' }
 
 export function captureMiddleware(plugin, privateModule) {
-  const handlers = [], reloads = [], invalidations = []
+  const handlers = [], reloads = [], pushes = [], invalidations = []
   plugin.configureServer({
     middlewares: { use: (handler) => handlers.push(handler) },
     watcher: { add: () => {}, on: () => {} },
@@ -103,9 +103,10 @@ export function captureMiddleware(plugin, privateModule) {
       getModuleById: (id) => (privateModule?.id === id ? privateModule : undefined),
       invalidateModule: (module) => { invalidations.push(module); module.transformResult = null },
     },
-    ws: { send: (message) => reloads.push(message) },
+    // 3C-5 D: the revision pushes (custom events), apart from the page reloads.
+    ws: { send: (message) => (message?.type === 'custom' ? pushes : reloads).push(message) },
   })
-  return { handlers, reloads, invalidations }
+  return { handlers, reloads, pushes, invalidations }
 }
 
 export async function requestTo(handler, { url, method = 'POST', headers = authorizedHeaders, content = Buffer.from('{}') }) {

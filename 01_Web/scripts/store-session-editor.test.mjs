@@ -103,7 +103,9 @@ test('the eight editor writes: the store equals V2 mode after each, verified, an
     assert.equal(result.status, V2_EDITOR_ROUTES[route].status, `${route}: ${JSON.stringify(result.body)}`)
     assert.equal(result.body.revision, revision + 1, route)
     assert.equal(result.body.duplicate, false)
-    const body = without(result.body, ['revision', 'duplicate', 'receipt'])
+    // 3C-5 D: every committed write answers with its changed rows (`delta`, from the base revision to the new one).
+    assert.deepEqual([result.body.delta?.from, result.body.delta?.to], [revision, revision + 1], `${route}: delta`)
+    const body = without(result.body, ['revision', 'duplicate', 'receipt', 'delta'])
     // After the first native write the store's new ids differ from V2 mode's: compared by first appearance from then on.
     native ||= NATIVE.has(route)
     if (native) assert.deepEqual(normalized(body), normalized({ ok: true, ...expected.result }), `${route}: V2's result`)

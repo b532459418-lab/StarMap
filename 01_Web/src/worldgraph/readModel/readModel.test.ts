@@ -12,7 +12,7 @@ import { StoreError } from '../store/schema.ts'
 import type { EntrySequence, JsonObject, LayerEntry, StoreEntity } from '../store/types.ts'
 import { formalStateOfReadModel, readModelOf } from './build.ts'
 import { readReadModel, validateReadModel } from './check.ts'
-import { applyReadModelDelta } from './delta.ts'
+import { applyReadModelDelta, readModelChangesBetween } from './delta.ts'
 import { indexReadModel } from './lookup.ts'
 import { liveReadModelIndex, type LiveReadModelIndex } from './liveIndex.ts'
 import { selectReadModel } from './select.ts'
@@ -199,6 +199,36 @@ for (const seed of [7, 2026, 90210]) test(`applyReadModelDelta: after every step
     applied++
   }
   assert.ok(applied >= 60, `enough committed steps (${applied})`)
+})
+
+for (const seed of [11, 4096]) test(`readModelChangesBetween: the changes over several commits, applied at once, give the later read model (seed ${seed})`, () => {
+  const random = generator(seed)
+  let counter = 5000
+  const next = () => ++counter
+  let state = formalFixture()
+  let checked = 0
+  for (let round = 0; round < 12; round++) {
+    const before = local(state)
+    // A few commits by "another process".
+    for (let step = 0; step < 8; step++) {
+      const batch = randomBatch(state, random, next)
+      if (!batch.length) continue
+      try { state = applyChangeSet(state, plan(state, batch)) } catch (error) {
+        if (error instanceof StoreError) continue
+        throw error
+      }
+    }
+    const after = local(state)
+    const changes = readModelChangesBetween(before, after)
+    if (after.revision === before.revision) {
+      assert.deepEqual(changes, { upserts: [], deletes: [] })
+      continue
+    }
+    const applied = applyReadModelDelta(before, { baseRevision: before.revision, nextRevision: before.revision + 1, ...changes })
+    assert.deepEqual({ ...applied, revision: after.revision }, after, `round ${round}`)
+    checked++
+  }
+  assert.ok(checked >= 6, `rounds with commits (${checked})`)
 })
 
 test('applyReadModelDelta refuses a change set of another revision, and a deletion of a row it does not have', () => {

@@ -82,3 +82,15 @@ export function shouldHandlePrivateDataChange(event, changedPath, privatePaths) 
   const same = (target) => path.relative(path.resolve(target), path.resolve(changedPath)) === ''
   return same(storeFileOf(privatePaths)) || legacyDataPaths(privatePaths).some(same)
 }
+
+/**
+ * 3C-5 D: a change of the library's files (`data/store/world.sqlite` or its write-ahead log `-wal`): a commit, perhaps by
+ * another process (a command-line import). The plugin then asks the store session to look for it (checkExternal); its
+ * own commits are no change there (the cache already holds them).
+ */
+export function isStoreFileChange(event, changedPath, privatePaths) {
+  if (event !== 'change' && event !== 'add') return false
+  const store = path.resolve(storeFileOf(privatePaths))
+  const changed = path.resolve(changedPath)
+  return changed === store || changed === `${store}-wal`
+}

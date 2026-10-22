@@ -14,6 +14,7 @@ import { quietly, tempPrivateRoot, writeV2Files } from './store-mode.fixture.mjs
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
+import { applyReadModelDelta } from '../src/worldgraph/readModel/delta.ts'
 import { fail } from '../src/data/v2write/errors.ts'
 import { TEST_CATALOG, WRITE_EPOCH_MS, migratedFiles, placeNamed } from '../src/data/v2write/v2write.fixture.ts'
 
@@ -57,9 +58,14 @@ test('a native write: one commit, the live index moved on (= the store read agai
   const { session, output, write, files, storeNow } = await nativeSession(t)
   const wish = files.wantToGo.items[0]
   assert.equal((await session.moduleExports()).revision, 1)
+  const readModelBefore = await storeNow()
   const saved = await write(ROUTE, { id: wish.id, note: 'Synthetic native note' }, 1, contextOf(1))
   assert.equal(saved.status, 200, JSON.stringify(saved.body))
-  assert.deepEqual({ ...saved.body, receipt: undefined }, { ok: true, id: wish.id, note: 'Synthetic native note', revision: 2, duplicate: false, receipt: undefined })
+  assert.deepEqual({ ...saved.body, receipt: undefined, delta: undefined }, { ok: true, id: wish.id, note: 'Synthetic native note', revision: 2, duplicate: false, receipt: undefined, delta: undefined })
+  // 3C-5 D: the commit's changed rows come back with the answer: the page's read model moves on with them.
+  assert.deepEqual([saved.body.delta.from, saved.body.delta.to, saved.body.delta.restoreMark], [1, 2, null])
+  assert.deepEqual(saved.body.delta.upserts.map((change) => change.table), ['entries'])
+  assert.deepEqual(applyReadModelDelta(readModelBefore, { baseRevision: 1, nextRevision: 2, ...saved.body.delta }), await storeNow())
   assert.equal(session.lastSnapshot.revision, 2)
   assert.equal(session.lastSnapshot.hasLive, true, 'the write planned on the live index')
   assert.deepEqual(session.lastSnapshot.model, await storeNow(), 'the live index equals the store read again')

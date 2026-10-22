@@ -11,6 +11,7 @@ import {
   PRIVATE_DATA_WATCH_EVENTS,
   privateDataModuleExports,
   renderPrivateDataModule,
+  isStoreFileChange,
   shouldHandlePrivateDataChange,
 } from './private-data-module.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
@@ -27,6 +28,16 @@ import { withLibraryOperation } from './library-operation-lock.mjs'
 import { assertMediaJobsClear } from './media-job-store.mjs'
 import { mediaJobRoute, handleMediaJobRead, handleMediaJobPreview, handleMediaJobWrite } from './media-job-service.mjs'
 
+/**
+ * 3C-5 D: a media answer that committed once gets that commit's changed rows (`delta`), as the editor writes do; an
+ * answer of several commits, or none, gets nothing (the page fetches the changes by revision).
+ */
+function withDelta(body, session, from) {
+  if (body?.ok !== true || from === undefined || body.delta !== undefined) return body
+  const delta = session.deltaSince(from)
+  return delta ? { ...body, delta } : body
+}
+
 // 3C-4d：新库是私人数据唯一的写入方式。私人根的状态由 ./private-data-source.mjs 的 privateDataState 每次读写现判：
 // - store：App 读新库的读模型（3C-5B；./store-session.mjs，按需加载，公开模式不加载 node:sqlite），经只读端点
 //   GET /__travelatlas/editor/read-model 取得，虚拟模块只给出它的地址；8 个编辑端点（3C-4a，V2
@@ -41,6 +52,12 @@ const virtualPrivateDataId = 'virtual:starmap-private-data'
 // the revision (or, for a root that is not a library yet, the V2 files' digest), so a reload after a save asks for a new
 // address. It is an editor endpoint: the cross-site guard and the read authorization (#70) come first.
 export const READ_MODEL_PATH = '/__travelatlas/editor/read-model'
+/** 3C-5 D: the changes of the library's read model since a revision (`?since=R&libraryId=…&restoreMark=…`). */
+export const READ_MODEL_CHANGES_PATH = '/__travelatlas/editor/read-model/changes'
+/** 3C-5 D: the event the plugin pushes to the pages after every new revision of the library. */
+export const REVISION_EVENT = 'starmap:revision'
+/** 3C-5 D: how often the plugin looks for commits of other processes while a page is connected. */
+export const EXTERNAL_CHECK_MS = 2000
 const resolvedPrivateDataId = `\0${virtualPrivateDataId}`
 let privatePaths
 let privateRoot
@@ -500,7 +517,7 @@ export function travelAtlasLocalEditor(options = {}) {
     await initialized()
     if (storeMode()) {
       const view = await (await storeSession()).moduleExports()
-      return { status: 200, body: bytesOf(view.model), revision: view.revision }
+      return { status: 200, body: bytesOf(view.model), revision: view.revision, identity: view.identity }
     }
     try {
       return { status: 200, body: bytesOf((await unmigratedReadModel()).model) }
@@ -536,9 +553,14 @@ export function travelAtlasLocalEditor(options = {}) {
   // 3C-4b：构建（build:personal）以只读方式打开新库：不写正常关闭标记、不取写锁，开发服务器开着新库时也能构建。
   const storePaths = privatePaths
   let storeSessionLoading
-  const storeSession = () => (storeSessionLoading ??= import('./store-session.mjs').then((module) => module.createStoreSession(storePaths, {
-    countryCatalog: countryCatalogByCode, readOnly: command === 'build',
-  })))
+  // 3C-5 D: every new revision of the library is pushed to the pages (configureServer sets `pushRevision`).
+  let pushRevision = () => {}
+  const storeSession = () => (storeSessionLoading ??= import('./store-session.mjs').then((module) => {
+    const session = module.createStoreSession(storePaths, { countryCatalog: countryCatalogByCode, readOnly: command === 'build' })
+    session.onRevision((revision) => pushRevision(revision))
+    return session
+  }))
+  let externalCheckTimer
   const releaseStore = async () => { if (storeSessionLoading) await (await storeSessionLoading).close() }
   const dataState = () => privateDataState(storePaths)
   const storeMode = () => options.forceSample !== true && dataState().state === 'store'
@@ -624,8 +646,29 @@ export function travelAtlasLocalEditor(options = {}) {
         if (editorMutationDepth > 0 || Date.now() < ignoreWatcherUntil) return
         server.ws.send({ type: 'full-reload' })
       }
+      // 3C-5 D (design §3): the pages learn every new revision of the library by a push (`starmap:revision` with the
+      // library id, restore mark and revision; they fetch the changes themselves). Commits of another process are looked
+      // for when the library's files change (debounced) and every EXTERNAL_CHECK_MS while a page is connected (a file
+      // event can be lost: chokidar drops a second change within 50 ms).
+      pushRevision = (revision) => server.ws.send({ type: 'custom', event: REVISION_EVENT, data: revision })
+      let externalCheckPending
+      const checkExternal = () => {
+        if (!storeMode() || !storeSessionLoading) return
+        void storeSession().then((session) => session.checkExternal()).catch(() => {})
+      }
+      const onStoreFileEvent = (event, changedPath) => {
+        if (!isStoreFileChange(event, changedPath, privatePaths)) return
+        clearTimeout(externalCheckPending)
+        externalCheckPending = setTimeout(checkExternal, 100)
+        externalCheckPending.unref?.()
+      }
+      externalCheckTimer = setInterval(() => { if ((server.ws.clients?.size ?? 0) > 0) checkExternal() }, EXTERNAL_CHECK_MS)
+      externalCheckTimer.unref?.()
       for (const event of PRIVATE_DATA_WATCH_EVENTS) {
-        server.watcher.on(event, (changedPath) => onPrivateDataEvent(event, changedPath))
+        server.watcher.on(event, (changedPath) => {
+          onPrivateDataEvent(event, changedPath)
+          onStoreFileEvent(event, changedPath)
+        })
       }
       server.middlewares.use(async (request, response, next) => {
         const url = new URL(request.url ?? '/', 'http://127.0.0.1')
@@ -682,8 +725,28 @@ export function travelAtlasLocalEditor(options = {}) {
             response.setHeader('cache-control', 'no-store')
             response.setHeader('content-length', String(served.body.length))
             if (served.revision !== undefined) response.setHeader('x-starmap-revision', String(served.revision))
+            // 3C-5 D: which library the read model is of (the page checks the changes it applies against it).
+            if (served.identity) {
+              response.setHeader('x-starmap-library-id', served.identity.libraryId)
+              response.setHeader('x-starmap-restore-mark', served.identity.restoreMark ?? '')
+            }
             response.end(served.body)
             return
+          }
+
+          // 3C-5 D (design §3): the changes since the page's revision, or 410 E_CHANGES_GONE when the page has to read the
+          // whole read model again (the reasons are ./store-change-log.mjs's). A root that is not a library has none.
+          if (request.method === 'GET' && url.pathname === READ_MODEL_CHANGES_PATH) {
+            if (!authorizeRead(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
+            const sinceText = url.searchParams.get('since') ?? ''
+            const since = Number(sinceText)
+            if (!/^(0|[1-9][0-9]*)$/.test(sinceText) || !Number.isSafeInteger(since)) return sendJson(response, 400, v2ErrorBody('E_REQUEST_INVALID'))
+            if (!storeMode()) return sendJson(response, 410, { ok: false, code: 'E_CHANGES_GONE', reason: 'not-a-library' })
+            const libraryId = url.searchParams.get('libraryId') ?? undefined
+            const restoreMark = url.searchParams.has('restoreMark') ? (url.searchParams.get('restoreMark') || null) : undefined
+            const answer = await (await storeSession()).changesSince(since, { libraryId, restoreMark })
+            response.setHeader('cache-control', 'no-store')
+            return sendJson(response, answer.status, answer.body)
           }
 
           if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/catalog/countries') {
@@ -736,6 +799,7 @@ export function travelAtlasLocalEditor(options = {}) {
                   return sendJson(response, preview.status, preview.body)
                 }
                 editorMutationDepth += 1
+                const jobFrom = session.cachedRevision
                 let jobResult
                 try {
                   jobResult = await withLibraryOperation(privatePaths, (leaseToken) => handleMediaJobWrite({
@@ -746,11 +810,12 @@ export function travelAtlasLocalEditor(options = {}) {
                   if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
                   invalidatePrivateDataModule()
                 }
-                return sendJson(response, jobResult.status, jobResult.body)
+                return sendJson(response, jobResult.status, withDelta(jobResult.body, session, jobFrom))
               }
               // 3C-4c：三个媒体端点写新库（./store-media-endpoints.mjs），在库租约之下；有未完成的媒体任务时拒绝，同 V2。
               const mediaInput = mediaRouteName === 'upload' ? undefined : await readJsonBody(request)
               editorMutationDepth += 1
+              const mediaFrom = session.cachedRevision
               let mediaResult
               try {
                 mediaResult = await withLibraryOperation(privatePaths, async (leaseToken) => {
@@ -766,7 +831,7 @@ export function travelAtlasLocalEditor(options = {}) {
                 if (editorMutationDepth === 0) ignoreWatcherUntil = Date.now() + 1_500
                 invalidatePrivateDataModule()
               }
-              return sendJson(response, mediaResult.status, mediaResult.body)
+              return sendJson(response, mediaResult.status, withDelta(mediaResult.body, session, mediaFrom))
             }
             const result = await write({
               headers: request.headers, input: await readJsonBody(request), ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }),
@@ -782,6 +847,7 @@ export function travelAtlasLocalEditor(options = {}) {
     },
     // 3C-3：开发服务器关闭时正常关闭新库（写入「正常关闭」标记）。构建时没有打开过，什么都不做。
     async buildEnd() {
+      if (externalCheckTimer) { clearInterval(externalCheckTimer); externalCheckTimer = undefined }
       await initialized()
       await releaseStore()
     },

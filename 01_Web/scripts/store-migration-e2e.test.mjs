@@ -39,7 +39,7 @@ const JOB_ID = '018bd504-c600-7000-8000-000000000001'
 
 /** The plugin without a server, its module cache and file events captured (local-editor-plugin.test.mjs's harness). */
 function served(plugin) {
-  const handlers = [], reloads = [], invalidations = [], events = new Map()
+  const handlers = [], reloads = [], pushes = [], invalidations = [], events = new Map()
   const privateModule = { id: plugin.resolveId('virtual:starmap-private-data'), transformResult: { code: 'cached' } }
   plugin.configureServer({
     middlewares: { use: (handler) => handlers.push(handler) },
@@ -48,9 +48,9 @@ function served(plugin) {
       getModuleById: (id) => (id === privateModule.id ? privateModule : undefined),
       invalidateModule: (module) => { invalidations.push(module); module.transformResult = null },
     },
-    ws: { send: (message) => reloads.push(message) },
+    ws: { send: (message) => (message?.type === 'custom' ? pushes : reloads).push(message) },
   })
-  return { handler: handlers[1], reloads, invalidations, events, privateModule }
+  return { handler: handlers[1], reloads, pushes, invalidations, events, privateModule }
 }
 const moduleOf = (plugin) => servedModuleOf(plugin)
 

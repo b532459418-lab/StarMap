@@ -58,3 +58,29 @@ export function applyReadModelDelta(model: ReadModel, changeSet: Pick<ChangeSet,
   }
   return next as unknown as ReadModel
 }
+
+/**
+ * The changed rows between two read models of one library (3C-5 D: a commit by another process, which the host learns
+ * about by reading the store again): every row of `after` that `before` lacks or holds at another row revision, and every
+ * row of `before` that `after` lacks. Rows are compared by id and row revision only: the planner raises a row's revision
+ * with every change and never gives a deleted id back (tombstones), so within one library an unchanged (id, revision) is
+ * an unchanged row. Never use it across libraries or across a restore.
+ */
+export function readModelChangesBetween(before: ReadModel, after: ReadModel): {
+  readonly upserts: readonly { readonly table: ReadModelTable; readonly row: ReadModelRow }[]
+  readonly deletes: readonly { readonly table: ReadModelTable; readonly id: string }[]
+} {
+  const upserts: { table: ReadModelTable; row: ReadModelRow }[] = []
+  const deletes: { table: ReadModelTable; id: string }[] = []
+  for (const table of READ_MODEL_TABLES) {
+    const old = before[table] as readonly ReadModelRow[], now = after[table] as readonly ReadModelRow[]
+    if (old === now) continue
+    const revisions = new Map(old.map((row) => [row.id, row.revision]))
+    for (const row of now) {
+      if (revisions.get(row.id) !== row.revision) upserts.push({ table, row })
+      revisions.delete(row.id)
+    }
+    for (const id of revisions.keys()) deletes.push({ table, id })
+  }
+  return { upserts, deletes }
+}
