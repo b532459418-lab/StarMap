@@ -4,15 +4,15 @@ import { usePlaceNames } from '../i18n/usePlaceNames'
 import { editorErrorNotice } from '../i18n/editorErrors.ts'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Drone, GripVertical, Maximize2, X } from 'lucide-react'
-import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
-import { allImportedMediaItems } from '../data/mediaCatalog'
+import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
+import { useMediaCatalog } from '../data/mediaCatalog'
 import { applyLocalViewOperations, deleteHiddenLocalMedia, mediaJobs, reloadAfterLocalSave } from '../data/localEditorClient'
 import { droneDraftOperations, hideIdsOperation, restoreHiddenOperation } from '../data/editorStateDelta'
 import { readDroneFileMetadata } from '../data/droneMetadata'
-import { cityById } from '../data/travelAtlas'
+import { useTravelAtlas } from '../data/travelAtlas'
 import { isFinishedMediaJob } from '../data/mediaJobs'
 import type { DroneMediaItem } from '../data/droneMedia'
-import { getDroneMediaForCity } from '../data/droneMedia'
+import { useDroneMedia } from '../data/droneMedia'
 import type { CityId } from '../types/travel'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
 import { MediaRecoveryEntry } from './MediaRecoveryEntry'
@@ -95,6 +95,10 @@ const pendingDraft = (file: File, index: number): DroneFileDraft => ({
 export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanorama }: DroneMediaCardProps) {
   const { t } = useTranslation('droneEditor')
   const { name } = usePlaceNames()
+  const { cityById } = useTravelAtlas()
+  const travelAtlasEditorState = useTravelAtlasEditorState()
+  const { allImportedMediaItems } = useMediaCatalog()
+  const { getDroneMediaForCity } = useDroneMedia()
   const city = cityId ? cityById[cityId] : undefined
   const importTarget = city ? JSON.stringify([city.countryId, city.id, 'drone']) : undefined
   const session = useMediaJobs()
@@ -102,7 +106,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   const sessionLocked = coordination.blocked
   const mediaLocked = session.loading || session.busy || Boolean(session.error || session.status)
     || session.jobs.some(job => !isFinishedMediaJob(job))
-  const items = useMemo(() => getDroneMediaForCity(cityId), [cityId])
+  const items = useMemo(() => getDroneMediaForCity(cityId), [cityId, getDroneMediaForCity])
   const metadataRunRef = useRef(0)
   const mountedRef = useRef(true)
   const [editing, setEditing] = useState(false)

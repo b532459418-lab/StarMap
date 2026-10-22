@@ -2,7 +2,7 @@ import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CalendarDays, MapPin } from 'lucide-react'
-import { cityById, countryById, journeyDays, shouldHideCityFromNavigation } from '../data/travelAtlas'
+import { useTravelAtlas } from '../data/travelAtlas'
 import type { City, Country } from '../types/travel'
 import { buildBrowseTimeProjection, journeyTimeContext, type BrowseTimeProjection } from '../data/derive/browseTimeProjection'
 import type { MatchedTimeRecord } from '../worldgraph/timeQuery'
@@ -22,7 +22,9 @@ type YearGroup = {
   countries: CountryYearGroup[]
 }
 
-const buildYearGroups = (projection: BrowseTimeProjection): YearGroup[] => {
+type TravelAtlas = ReturnType<typeof useTravelAtlas>
+
+const buildYearGroups = (projection: BrowseTimeProjection, { cityById, countryById, shouldHideCityFromNavigation }: TravelAtlas): YearGroup[] => {
   const sources = [...projection.journeyYears, ...(projection.uncertainJourneyRecords.length
     ? [{ year: undefined, records: projection.uncertainJourneyRecords }] : [])]
   return sources.map(({ year, records }) => {
@@ -55,7 +57,11 @@ const buildYearGroups = (projection: BrowseTimeProjection): YearGroup[] => {
 export function JourneyYearCards({ projection }: { projection?: BrowseTimeProjection } = {}) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
-  const yearGroups = useMemo(() => buildYearGroups(projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {})), [projection])
+  const travelAtlas = useTravelAtlas()
+  const yearGroups = useMemo(
+    () => buildYearGroups(projection ?? buildBrowseTimeProjection(journeyTimeContext(travelAtlas.journeyDays, travelAtlas.cityById), {}), travelAtlas),
+    [projection, travelAtlas],
+  )
   const unknownDate = t('journey:unknownDate')
   const uncertainDate = t('journey:uncertainDate')
   const yearOnly = t('journey:includesYearOnly')

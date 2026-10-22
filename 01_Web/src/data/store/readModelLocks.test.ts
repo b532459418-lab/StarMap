@@ -11,7 +11,7 @@
  * The 3C-1b tests themselves are unchanged.
  *
  * 3C-5B: the App's own path is checked too: the read model as the virtual module inlines it (JSON), read with
- * readReadModel and seen through officialViewOf (./projectCanonical.ts; ../appData.ts and ../rawInputs.ts make exactly
+ * readReadModel and seen through officialViewOf (./projectCanonical.ts; ../appStoreCore.ts and ../rawInputs.ts make exactly
  * these calls). Its derived baseline must hit the same locks and its time query context must equal the readV2 path's.
  */
 import { test } from 'node:test'

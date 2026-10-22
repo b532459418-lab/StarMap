@@ -1,41 +1,13 @@
-import { appData } from './appData'
-import type { City, JourneyDay, Route, TravelMapRecord } from '../types/travel'
+import { useAppData } from './appStore.ts'
 
-// 数据来源的选择在 ./rawInputs.ts，派生（V2 Reader → Canonical → 派生）在 ./appData.ts
-// （RFC-LOC-1 PR2；PR5a 起只读 V2 文件）；本文件以原名导出。
-const derived = appData.travelAtlas
+// 足迹的派生在 ./canonical/derive.ts，数据经 ./appStore.ts 的快照（读模型 → 官方视图 → 派生）。
+// 3C-5 D: the data are no module constants any more: components read them through the hook below (./appStore.ts), so a
+// save moves them on without a reload and react-hooks/exhaustive-deps sees every dependency on them. Names and types are those of the module constants before D.
 
-// 声明成 string：与 PR1 之前的导出类型（`localTravelMap ? 'local' : 'sample'` 推断出的 string）保持一致。
-export const travelAtlasDataSource: string = derived.travelAtlasDataSource
-
-export const travelAtlasDisplay = derived.travelAtlasDisplay
-
-// FR-TA-5：planned 记录与国家代码表供调用方传给 Core 的 plannedRecords 适配器，
-// 说明见 ./canonical/derive.ts 里 plannedRecords 的注释。
-export const plannedRecords: TravelMapRecord[] = derived.plannedRecords
-export const travelAtlasCountryCodes: Record<string, string> = derived.travelAtlasCountryCodes
-
-export const travelAtlasMeta = derived.travelAtlasMeta
-
-export const hiddenHomeRecords = derived.hiddenHomeRecords
-
-export const countries = derived.countries
-
-export const cities: City[] = derived.cities
-
-export const journeyDays: JourneyDay[] = derived.journeyDays
-
-export const routes: Route[] = derived.routes
-
-export const countryById = derived.countryById
-
-export const cityById = derived.cityById
-
-export const getCitiesForCountry = derived.getCitiesForCountry
-
-export const shouldHideCityFromNavigation = derived.shouldHideCityFromNavigation
-
-export const missingCoordinateCities = derived.missingCoordinateCities
-
-// RFC-LOC-1 PR3b-1 §2.5：城市 → 所属国家（含被 editor 隐藏的城市）。UI 不得再从 id 的结构推断国家。
-export const countryIdOfCity = derived.countryIdOfCity
+/**
+ * 足迹的全部派生：travelAtlasDataSource、travelAtlasDisplay、plannedRecords、travelAtlasCountryCodes（FR-TA-5：供
+ * plannedRecords 适配器）、travelAtlasMeta、hiddenHomeRecords、countries、cities、journeyDays、routes、countryById、cityById、
+ * getCitiesForCountry、shouldHideCityFromNavigation、missingCoordinateCities，以及 countryIdOfCity（RFC-LOC-1 PR3b-1 §2.5：
+ * 城市 → 所属国家，含被 editor 隐藏的城市；UI 不得再从 id 的结构推断国家）。
+ */
+export const useTravelAtlas = () => useAppData().travelAtlas

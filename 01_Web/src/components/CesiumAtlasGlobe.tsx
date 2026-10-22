@@ -28,7 +28,7 @@ import {
   Viewer,
 } from 'resium'
 import type { CesiumComponentRef } from 'resium'
-import { droneMediaById, droneMediaItems } from '../data/droneMedia'
+import { useDroneMedia } from '../data/droneMedia'
 import type { DroneMediaItem } from '../data/droneMedia'
 import { GooglePhotorealisticTiles } from '../extensions/GooglePhotorealisticTiles'
 import { createMapSourceLayers } from '../extensions/mapSources'
@@ -497,6 +497,8 @@ const installDebugCameraApi = (
   executeCameraCommand: ExecuteCameraCommand,
   activateDebugDroneCameraLock: () => void,
   readCameraCommand: () => Readonly<CameraCommandState> | undefined,
+  /** The drone media of the data on the page (3C-5 D: they change without a reload; the API stays installed). */
+  readDroneMediaById: () => Readonly<Record<string, DroneMediaItem | undefined>>,
 ) => {
   if (import.meta.env.PROD) return undefined
 
@@ -522,7 +524,7 @@ const installDebugCameraApi = (
   }
 
   const flyToDroneItem = (itemId: string, testHeight: number) => {
-    const item = droneMediaById[itemId]
+    const item = readDroneMediaById()[itemId]
 
     if (!item || !hasDronePosition(item)) {
       console.warn('[debug-direct-drone-camera-command]', JSON.stringify({
@@ -618,6 +620,10 @@ export function CesiumAtlasGlobe({
   focusPlace,
 }: CesiumAtlasGlobeProps) {
   const { locale, t } = useUiLocale()
+  const { droneMediaById, droneMediaItems } = useDroneMedia()
+  // The debug camera API reads the current drone media through this ref, so new data do not reinstall it.
+  const droneMediaByIdRef = useRef(droneMediaById)
+  useEffect(() => { droneMediaByIdRef.current = droneMediaById }, [droneMediaById])
   const viewerRef = useRef<CesiumComponentRef<CesiumViewer>>(null)
   const globeShellRef = useRef<HTMLDivElement>(null)
   const cursorGlowRef = useRef<HTMLDivElement>(null)
@@ -958,7 +964,7 @@ export function CesiumAtlasGlobe({
             item.cityId === activeDroneMediaCityId && hasDronePosition(item)
           ))
         : [],
-    [activeDroneMediaCityId],
+    [activeDroneMediaCityId, droneMediaItems],
   )
   const selectedDroneMediaCandidate = activeDroneMediaItemId
     ? droneMediaById[activeDroneMediaItemId]
@@ -1412,6 +1418,7 @@ export function CesiumAtlasGlobe({
       executeCameraCommand,
       activateDebugDroneCameraLock,
       () => viewer.isDestroyed() ? undefined : observer.read(viewer),
+      () => droneMediaByIdRef.current,
     )
 
     return () => {

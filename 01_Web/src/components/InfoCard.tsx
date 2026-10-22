@@ -4,14 +4,14 @@ import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Compass, GripVertical, Layers3, Star, X } from 'lucide-react'
-import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
-import { allImportedMediaItems, getCityCoverPhoto, getCityPhotos, getMediaSource } from '../data/mediaCatalog'
+import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
+import { getMediaSource, useMediaCatalog } from '../data/mediaCatalog'
 import { addLocalTravelRecord, applyLocalViewOperations, deleteHiddenLocalMedia, journeyChoiceCandidatesOf, placeChoiceCandidatesOf, reloadAfterLocalSave, searchLocalCities } from '../data/localEditorClient'
 import { placeChoiceKey, placeChoiceStateOf, type PlaceChoiceState } from '../data/placeChoice.ts'
 import { journeyChoiceInput, journeyChoiceKey, journeyChoiceStateOf, type JourneyChoiceState } from '../data/journeyChoice.ts'
 import { cityDraftOperations, hideIdsOperation, photoDraftOperations, restoreHiddenOperation } from '../data/editorStateDelta'
 import type { CitySearchOption } from '../data/localEditorApi'
-import { cityById, countryById, countryIdOfCity, getCitiesForCountry } from '../data/travelAtlas'
+import { useTravelAtlas } from '../data/travelAtlas'
 import type { CityId, Country, CountryId, SelectionMode, TravelMapRecord } from '../types/travel'
 import type { CityPhotoGalleryRequest } from './CityPhotoGalleryModal'
 import { LocationSearchField } from './LocationSearchField'
@@ -47,11 +47,14 @@ const getContinentName = (country?: Country) => continentOfCountry(country) ?? '
 export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTravelRecordIds, matchingCountryVisitDates, outsideTimeFilter = false, onClearTimeFilter, onSelectCity, onOpenCityPhotos }: InfoCardProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
+  const { cityById, countryById, countryIdOfCity, getCitiesForCountry } = useTravelAtlas()
+  const travelAtlasEditorState = useTravelAtlasEditorState()
+  const { allImportedMediaItems, getCityCoverPhoto, getCityPhotos } = useMediaCatalog()
   const country = selectedCountryId ? countryById[selectedCountryId] : undefined
   const city = selectedCityId ? cityById[selectedCityId] : undefined
   const isCityMode = mode === 'city' && city && country
   const isOverview = mode === 'overview' || !country
-  const memoryCities = useMemo(() => country ? getCitiesForCountry(country.id) : [], [country])
+  const memoryCities = useMemo(() => country ? getCitiesForCountry(country.id) : [], [country, getCitiesForCountry])
   const matchingRecordIds = useMemo(() => matchingTravelRecordIds === undefined ? undefined : new Set(matchingTravelRecordIds), [matchingTravelRecordIds])
   const browseMemoryCities = useMemo(() => matchingRecordIds === undefined ? memoryCities
     : memoryCities.filter((item) => item.records?.some((record) => matchingRecordIds.has(record.id))), [memoryCities, matchingRecordIds])
@@ -76,11 +79,11 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
     ? [...new Set(records.map(recordDateLabel))].join(' · ')
     : matchingCountryVisitDates?.length ? matchingCountryVisitDates.map(countryVisitLabel).join(' · ') : t('details:noMatchingVisits')
   const isCountryGrid = mode === 'country' && Boolean(country)
-  const cityPhotos = useMemo(() => isCityMode ? getCityPhotos(city.id) : [], [city, isCityMode])
+  const cityPhotos = useMemo(() => isCityMode ? getCityPhotos(city.id) : [], [city, isCityMode, getCityPhotos])
   const isCityPhotoGrid = isCityMode && cityPhotos.length > 0
   const usesMemoryGridPreview = isCountryGrid || Boolean(isCityMode)
   const memorySectionLabel = isCityMode ? t('details:cityPhotos') : t('details:cityCards')
-  const cityCoverPhoto = useMemo(() => isCityMode ? getCityCoverPhoto(city.id) : undefined, [city, isCityMode])
+  const cityCoverPhoto = useMemo(() => isCityMode ? getCityCoverPhoto(city.id) : undefined, [city, isCityMode, getCityCoverPhoto])
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [cityEditing, setCityEditing] = useState(false)
   const [photoEditing, setPhotoEditing] = useState(false)

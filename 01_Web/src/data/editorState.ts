@@ -1,13 +1,15 @@
-import { appData } from './appData'
+import { useAppData } from './appStore.ts'
 import { isLocalEditorAvailable } from './localEditorAvailability.ts'
 import { forceSampleData } from './rawInputs'
 
-// 类型与 orderBySavedIds 在纯派生层（./derive/editorState.ts，RFC-LOC-1 PR1）；
-// 数据来源的选择在 ./rawInputs.ts，经 Canonical 重建的结果在 ./appData.ts（PR2）；本文件以原名导出。
+// 类型与 orderBySavedIds 在纯派生层（./derive/editorState.ts，RFC-LOC-1 PR1）；数据经 ./appStore.ts 的快照。
+// 3C-5 D: the data are no module constants any more: components read them through the hook below (./appStore.ts), so a
+// save moves them on without a reload and react-hooks/exhaustive-deps sees every dependency on them. 
 export type { LocalEditorCountry, TravelAtlasEditorState } from './derive/editorState.ts'
 export { orderBySavedIds } from './derive/editorState.ts'
 
-export const travelAtlasEditorState = appData.editorState.travelAtlasEditorState
+/** 编辑状态（各列表的顺序、隐藏、封面）。 */
+export const useTravelAtlasEditorState = () => useAppData().editorState.travelAtlasEditorState
 
 // 本地编辑只在开发服务器的个人配置下、且不是强制样例时可用（规则见 ./localEditorAvailability.ts）。
 // 公开构建与强制样例下恒为 false：编辑控件根本不渲染，不靠 CSS 隐藏。

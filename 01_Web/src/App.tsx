@@ -23,12 +23,12 @@ import { JourneyViewToggle } from './components/JourneyViewToggle'
 import type { JourneyViewMode } from './components/JourneyViewToggle'
 import { JourneyYearCards } from './components/JourneyYearCards'
 import type { DroneMediaItem } from './data/droneMedia'
-import { droneMediaById, hasDroneMedia } from './data/droneMedia'
+import { useDroneMedia } from './data/droneMedia'
 import { localEditorAvailable } from './data/editorState'
 import type { LocalConvertToTravelResult } from './data/localEditorApi'
 import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
 import { readLayerTimeFilters, rememberLayerTimeFilters } from './data/layerTimeFilters'
-import { timeQueryContext } from './data/appData'
+import { useTimeQueryContext } from './data/appStore'
 import { buildBrowseTimeProjection, includedBrowseRecordKeys, countMappedTravelRecords } from './data/derive/browseTimeProjection'
 import { coordinateForRecord } from './data/derive/travelAtlas'
 import { wantToGoCardRecordOf, type WantToGoCardRecord } from './data/derive/wantToGo'
@@ -40,11 +40,11 @@ import { getInitialMapLabelsEnabled, rememberMapLabelsEnabled } from './extensio
 import { getInitialMapSource, mapSourceHasLabelOverlay, rememberMapSource } from './extensions/mapSources'
 import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
-import { cityById, countryById, getCitiesForCountry, journeyDays, travelAtlasDisplay } from './data/travelAtlas'
-import { worldGraphSnapshot } from './data/worldGraph'
+import { useTravelAtlas } from './data/travelAtlas'
+import { useWorldGraph } from './data/worldGraph'
 import { useUiLocale } from './i18n/useUiLocale'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
-import { hiddenWantToGoItems } from './data/wantToGo'
+import { useWantToGo } from './data/wantToGo'
 import { queryCollection } from './worldgraph/collection'
 import type { CollectionEntry } from './worldgraph/collection'
 import { officialLayers, TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from './worldgraph/layers'
@@ -89,9 +89,6 @@ const sidebarMediaQuery = '(min-width: 1100px)'
 const mobilePanelMediaQuery = '(width < 768px)'
 // 可滚动页面滚离顶部超过这个距离（px），顶部标题才换上玻璃背景。
 const headerBackdropScrollThreshold = 12
-// 概览视角目标点（PR3c）：模块级数据，引用恒定，由这里传给地图，地图不再自己读 travelAtlas。
-const overviewTarget = travelAtlasDisplay.overviewTarget
-
 type CameraScale = 'city' | 'country' | 'world'
 type MobilePanel = 'countries' | 'details'
 type ImageryTuning = {
@@ -111,6 +108,14 @@ const cameraScaleForDistance = (distance: number): CameraScale => {
 
 function App() {
   const { locale, t } = useUiLocale()
+  // 3C-5 D: the data of the page, through hooks (a save moves them on without a reload).
+  const { cityById, countryById, getCitiesForCountry, journeyDays, travelAtlasDisplay } = useTravelAtlas()
+  const { droneMediaById, hasDroneMedia } = useDroneMedia()
+  const { worldGraphSnapshot } = useWorldGraph()
+  const { hiddenWantToGoItems } = useWantToGo()
+  const timeQueryContext = useTimeQueryContext()
+  // 概览视角目标点（PR3c），由这里传给地图，地图不再自己读 travelAtlas。
+  const overviewTarget = travelAtlasDisplay.overviewTarget
   useEffect(() => {
     if (!localEditorAvailable) return
     const discover = () => { void mediaJobs.refresh().catch(() => undefined) }
@@ -397,17 +402,22 @@ function App() {
 
   // 地图相机要用的选中项（PR3c）：在 App 侧查表后经 prop 传给地图。字段名与原 City / Country 一致。
   // 必须 useMemo：地图的相机焦点 useMemo 依赖这两个对象，每次渲染传新对象会让焦点被反复重算。
-  const selectedCityFocus = useMemo(() => {
-    const city = selectedCityId ? cityById[selectedCityId] : undefined
-    return city ? { id: city.id, lat: city.lat, lng: city.lng } : undefined
-  }, [selectedCityId])
+  // 3C-5 D: keyed by the values the camera uses, so new data (a save) with the same place keep the same objects.
+  const focusCity = selectedCityId ? cityById[selectedCityId] : undefined
+  const [focusCityId, focusCityLat, focusCityLng] = [focusCity?.id, focusCity?.lat, focusCity?.lng]
+  const selectedCityFocus = useMemo(
+    () => focusCityId !== undefined && focusCityLat !== undefined && focusCityLng !== undefined ? { id: focusCityId, lat: focusCityLat, lng: focusCityLng } : undefined,
+    [focusCityId, focusCityLat, focusCityLng],
+  )
 
-  const selectedCountryFocus = useMemo(() => {
-    const country = selectedCountryId ? countryById[selectedCountryId] : undefined
-    return country
-      ? { id: country.id, centerLat: country.centerLat, centerLng: country.centerLng, accent: country.accent }
-      : undefined
-  }, [selectedCountryId])
+  const focusCountry = selectedCountryId ? countryById[selectedCountryId] : undefined
+  const [focusCountryId, focusCountryLat, focusCountryLng, focusCountryAccent] = [focusCountry?.id, focusCountry?.centerLat, focusCountry?.centerLng, focusCountry?.accent]
+  const selectedCountryFocus = useMemo(
+    () => focusCountryId !== undefined && focusCountryLat !== undefined && focusCountryLng !== undefined && focusCountryAccent !== undefined
+      ? { id: focusCountryId, centerLat: focusCountryLat, centerLng: focusCountryLng, accent: focusCountryAccent }
+      : undefined,
+    [focusCountryId, focusCountryLat, focusCountryLng, focusCountryAccent],
+  )
 
   // 图层可见性 → 可见图层 id → 地图要渲染的地点与路线（PRD FR-MR-1 / FR-LR-3）。
   // 两层 useMemo 都只依赖 layerVisibility：引用稳定，地图侧才不会被无谓重算连累（AC-8）。
@@ -415,9 +425,9 @@ function App() {
     () => officialLayers.filter((layer) => layerVisibility[layer.id] !== false).map((layer) => layer.id),
     [layerVisibility],
   )
-  const layerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds, { context: timeQueryContext, filters: timeFilters }), [visibleLayerIds, timeFilters])
-  const unfilteredLayerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds), [visibleLayerIds])
-  const browseProjection = useMemo(() => buildBrowseTimeProjection(timeQueryContext, timeFilters), [timeFilters])
+  const layerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds, { context: timeQueryContext, filters: timeFilters }), [worldGraphSnapshot, visibleLayerIds, timeQueryContext, timeFilters])
+  const unfilteredLayerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds), [worldGraphSnapshot, visibleLayerIds])
+  const browseProjection = useMemo(() => buildBrowseTimeProjection(timeQueryContext, timeFilters), [timeQueryContext, timeFilters])
   const includedRecordKeys = useMemo(() => includedBrowseRecordKeys(browseProjection), [browseProjection])
   const dateQualityCounts = useMemo(() => {
     const counts = { partial: 0, missing: 0, invalid: 0 }
@@ -459,10 +469,10 @@ function App() {
   }
 
   // Collection 列表（PR7）：想去图层的全部条目，含已隐藏与无坐标，不受图层可见性影响（FR-LP-6）。
-  // 快照是模块级常量；语言切换时重算名称排序，写入后整页刷新拿到新数据。
-  const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID, locale), [locale])
+  // 快照随数据更新（3C-5 D）；语言切换时重算名称排序。
+  const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID, locale), [worldGraphSnapshot, locale])
 
-  const mappedTravelRecordIds = useMemo(() => new Set(Object.values(cityById).flatMap(city => (city.records ?? []).filter(record => coordinateForRecord(record)).map(record => record.id))), [])
+  const mappedTravelRecordIds = useMemo(() => new Set(Object.values(cityById).flatMap(city => (city.records ?? []).filter(record => coordinateForRecord(record)).map(record => record.id))), [cityById])
   const atlasStats = useMemo(
     () => [
       { value: `${browseProjection.travelStats.definite.countries}`, label: t('journey:countries') },

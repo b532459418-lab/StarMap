@@ -2,7 +2,7 @@ import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, Clock3, MapPin, Sparkles } from 'lucide-react'
-import { cityById, countryById, journeyDays } from '../data/travelAtlas'
+import { useTravelAtlas } from '../data/travelAtlas'
 import type { JourneyDay } from '../types/travel'
 import { buildBrowseTimeProjection, journeyTimeContext, type BrowseTimeProjection } from '../data/derive/browseTimeProjection'
 import { countryFlagUrl } from './countryFlagUrl'
@@ -16,7 +16,8 @@ type TimelineProps = {
 export function Timeline({ selectedDayId, onSelectDay, projection }: TimelineProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
-  const browse = useMemo(() => projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {}), [projection])
+  const { cityById, countryById, journeyDays } = useTravelAtlas()
+  const browse = useMemo(() => projection ?? buildBrowseTimeProjection(journeyTimeContext(journeyDays, cityById), {}), [projection, journeyDays, cityById])
   const unknownDate = t('journey:unknownDate')
   const uncertainDate = t('journey:uncertainDate')
   const yearOnly = t('journey:yearOnly')
@@ -25,7 +26,7 @@ export function Timeline({ selectedDayId, onSelectDay, projection }: TimelinePro
   const orderedDays = useMemo(() => {
     const daysById = new Map(journeyDays.map(day => [day.id, day]))
     return browse.orderedJourneyRecords.map(match => daysById.get(match.record.recordId)).filter((day): day is JourneyDay => day !== undefined)
-  }, [browse])
+  }, [browse, journeyDays])
   const knownYear = (day: JourneyDay) => {
     const evidence = browse.travelMatchesById.get(day.id)?.record.date
     return !unknownRecordIds.has(day.id) && evidence?.range.from

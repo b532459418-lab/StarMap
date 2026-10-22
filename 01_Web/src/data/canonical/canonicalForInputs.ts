@@ -3,7 +3,7 @@
  *
  *   五个 V2 文件（私人目录 data/v2/，或公开样例 src/data/v2-sample/）──V2 Reader──> Canonical ──> 派生（./derive.ts）
  *
- * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。App（`../appData.ts`）与基线工具
+ * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。App（`../appStoreCore.ts`）与基线工具
  * （`scripts/baseline.mjs` 的个人模式与 `--sample`）都只调这一个函数，所以两边读同一份文件得到的 Canonical 相同。
  * PR5a 删除了 legacy 分支：App 不再经 Legacy Adapter 读旧格式文件，公开构建也就不再包含它。
  *

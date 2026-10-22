@@ -1,5 +1,5 @@
 import { LocalEditorError, editorErrorNotice, requiresEditorReload } from '../i18n/editorErrors.ts'
-import { worldGraphSnapshot } from '../data/worldGraph'
+import { useWorldGraph } from '../data/worldGraph'
 import { WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
 import { usePlaceNames } from '../i18n/usePlaceNames'
@@ -14,8 +14,8 @@ import { convertLocalWantToGoToTravel, journeyChoiceCandidatesOf, reloadAfterLoc
 import { requireLocalEditorReload } from '../data/localEditorCoordination.ts'
 import { journeyChoiceInput, journeyChoiceKey, journeyChoiceStateOf, type JourneyChoiceState } from '../data/journeyChoice.ts'
 import type { LocalConvertToTravelInput, LocalConvertToTravelResult } from '../data/localEditorApi'
-import { travelAtlasCountryCodes } from '../data/travelAtlas'
-import { plannedRecordById, wantToGoItemById } from '../data/wantToGo'
+import { useTravelAtlas } from '../data/travelAtlas'
+import { useWantToGo } from '../data/wantToGo'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 import { useDialogFocus } from './useDialogFocus'
 import { JourneyChoiceList } from './JourneyChoiceList'
@@ -72,6 +72,9 @@ function ConvertToTravelDialogContent({
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { locale } = useUiLocale()
   const { name, subtitle } = usePlaceNames()
+  const { worldGraphSnapshot } = useWorldGraph()
+  const { travelAtlasCountryCodes } = useTravelAtlas()
+  const { plannedRecordById, wantToGoItemById } = useWantToGo()
   const coordination = useLocalEditorCoordination()
   const titleId = useId()
   const summaryId = useId()

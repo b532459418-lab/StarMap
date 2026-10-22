@@ -1,7 +1,7 @@
 /**
  * 派生基线工具（RFC-LOC-1 PR1 §3.3；PR5b 由 legacy-baseline.mjs 改名；3C-5B 规格 §2.7 起读读模型）。
  *
- * 把「App 从某份数据派生出的全部结果」固定成一份可逐字节比较的 JSON，管线与 App 相同（src/data/appData.ts）：
+ * 把「App 从某份数据派生出的全部结果」固定成一份可逐字节比较的 JSON，管线与 App 相同（src/data/appStoreCore.ts）：
  * 读模型 → 官方视图（src/data/store/projectCanonical.ts 的 officialViewOf）→ src/data/canonical/derive.ts 的
  * deriveAppDataFromCanonical → src/data/derive/baseline.ts 的 buildBaseline / stableStringify。
  * 只读：除 --out 指定的文件外不写任何东西。
@@ -182,7 +182,7 @@ const checkPrivacyGate = (mode, target) => {
   }
 }
 
-/** 读模型 → 官方视图 → deriveAppDataFromCanonical → 基线，末尾换行。与 App 的管线相同（src/data/appData.ts）。 */
+/** 读模型 → 官方视图 → deriveAppDataFromCanonical → 基线，末尾换行。与 App 的管线相同（src/data/appStoreCore.ts）。 */
 const baselineTextOf = (model, source) =>
   `${stableStringify(buildBaseline(deriveAppDataFromCanonical(officialViewOf(model, source), { now: BASELINE_NOW }), { now: BASELINE_NOW }))}\n`
 

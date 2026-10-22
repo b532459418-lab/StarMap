@@ -1,12 +1,12 @@
 /**
  * Want to Go 应用数据层（PRD FR-WTG-2 / FR-PUB-1）。
  *
- * 这里【不是】 StarMap Core：它经 ./appData.ts 依赖 Vite 虚拟模块与 import.meta.env，
+ * 这里【不是】 StarMap Core：它经 ./appStore.ts 依赖 Vite 虚拟模块与 import.meta.env，
  * 只能在 Vite 里跑。3C-5B 起数据是读模型经官方视图（./store/projectCanonical.ts）得到的 Canonical，投影的纯逻辑在
  * src/worldgraph/adapters/wantToGo.ts；
  * 应用侧派生（隐藏条目、按记录 id 反查条目的两张表、「想去 → 足迹」的禁用原因）
  * 经 Canonical 计算（./canonical/derive.ts；PR1 的旧派生 deriveWantToGo 在 PR5b 删除）。
- * 本文件只以原名导出。坏数据在迁移时就被拒绝（迁移不接受 readV2 会跳过的记录），读模型里没有。
+ * 3C-5 D 起经 hook 取用（见下）。坏数据在迁移时就被拒绝（迁移不接受 readV2 会跳过的记录），读模型里没有。
  *
  * 数据来源规则（FR-PUB-1）在 ./rawInputs.ts，按顺序判定：
  *
@@ -22,29 +22,14 @@
  * 这是 localEditorAvailable 之外的另一层门控。
  */
 
-import { appData } from './appData'
-import type { WantToGoItem } from './derive/wantToGo.ts'
+import { useAppData } from './appStore.ts'
 
-const derived = appData.wantToGo
+// 3C-5 D: the data are no module constants any more: components read them through the hook below (./appStore.ts), so a
+// save moves them on without a reload and react-hooks/exhaustive-deps sees every dependency on them. 
 
-export const wantToGoDataSource: 'local' | 'sample' | 'none' = derived.wantToGoDataSource
-
-export const wantToGoItems: WantToGoItem[] = derived.wantToGoItems
-
-/** 被丢弃的坏数据说明。非空不代表出错，只代表有条目没能进入图层。 */
-export const wantToGoProblems: string[] = derived.wantToGoProblems
-
-/** 图层面板「已隐藏 N 项」列出的条目（FR-WTG-5），最近加入的在前。planned 记录只读，不会出现在这里。 */
-export const hiddenWantToGoItems: WantToGoItem[] = derived.hiddenWantToGoItems
-
-/** 想去条目 id → 想去条目（同一 id 第一条胜出）。Collection、想去卡片与转足迹对话框按成员关系的 recordId 查它。 */
-export const wantToGoItemById = derived.wantToGoItemById
-
-/** planned 旅行记录 id → 记录（FR-WTG-7，只读）。Collection、想去卡片与转足迹对话框按成员关系的 recordId 查它。 */
-export const plannedRecordById = derived.plannedRecordById
-
-// ---- 想去 → 足迹（PR9）的前置条件：返回 undefined 表示可以转换。规则与写入端点共用 ./canonical/convertRules.ts（审查 C2）----
-
-export const wantToGoConvertBlockReason = derived.wantToGoConvertBlockReason
-
-export const plannedConvertBlockReason = derived.plannedConvertBlockReason
+/**
+ * 想去的全部派生：wantToGoDataSource（'local' | 'sample' | 'none'）、wantToGoItems、wantToGoProblems、hiddenWantToGoItems、
+ * wantToGoItemById、plannedRecordById，以及「想去 → 足迹」（PR9）的前置条件 wantToGoConvertBlockReason、
+ * plannedConvertBlockReason（返回 undefined 表示可以转换；规则与写入端点共用 ./canonical/convertRules.ts，审查 C2）。
+ */
+export const useWantToGo = () => useAppData().wantToGo

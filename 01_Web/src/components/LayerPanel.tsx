@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, Footprints, Heart, Layers, Plus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -7,8 +7,8 @@ import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { editorErrorNotice } from '../i18n/editorErrors'
 import { localEditorAvailable } from '../data/editorState'
 import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorClient'
-import { wantToGoDataSource } from '../data/wantToGo'
-import { worldGraphSnapshot } from '../data/worldGraph'
+import { useWantToGo } from '../data/wantToGo'
+import { useWorldGraph } from '../data/worldGraph'
 import type { WantToGoItem } from '../data/derive/wantToGo'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
@@ -25,8 +25,10 @@ const layerIcons: Record<string, LucideIcon> = {
 // FR-LP-5：面板列出全部官方图层，顺序固定按 Registry 的 order。
 const panelLayers = [...officialLayers].sort((left, right) => left.order - right.order)
 
+type WorldGraphSnapshot = ReturnType<typeof useWorldGraph>['worldGraphSnapshot']
+
 // Hidden items keep their record identity; use their registry title only for display.
-const wantToGoEntityIds = new Map(worldGraphSnapshot.memberships
+const wantToGoEntityIdsOf = (worldGraphSnapshot: WorldGraphSnapshot) => new Map(worldGraphSnapshot.memberships
   .filter((membership) => membership.layerId === WANT_TO_GO_LAYER_ID
     && membership.metadata?.source !== PLANNED_SOURCE && membership.recordId !== undefined)
   .map((membership) => [membership.recordId, membership.entityId]))
@@ -44,6 +46,9 @@ type LayerPanelProps = {
 export function LayerPanel({ visibility, onToggle, hiddenWantToGoItems = [], onAddWantToGo, onOpenTimeFilter }: LayerPanelProps) {
   const { t } = useTranslation(['mapMenu', 'layer'])
   const { name, subtitle } = usePlaceNames()
+  const { worldGraphSnapshot } = useWorldGraph()
+  const { wantToGoDataSource } = useWantToGo()
+  const wantToGoEntityIds = useMemo(() => wantToGoEntityIdsOf(worldGraphSnapshot), [worldGraphSnapshot])
   const wantToGoLayer = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)
   const wantToGoLabel = wantToGoLayer ? t(wantToGoLayer.labelKey) : ''
   const hiddenPlace = (item: WantToGoItem) => ({

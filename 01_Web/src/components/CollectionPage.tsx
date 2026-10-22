@@ -4,14 +4,8 @@ import { useId, useMemo, useState } from 'react'
 import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
 import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorClient'
-import { travelAtlasDataSource } from '../data/travelAtlas'
-import {
-  plannedConvertBlockReason,
-  plannedRecordById,
-  wantToGoConvertBlockReason,
-  wantToGoDataSource,
-  wantToGoItemById,
-} from '../data/wantToGo'
+import { useTravelAtlas } from '../data/travelAtlas'
+import { useWantToGo } from '../data/wantToGo'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
 import { collectionEntryKey, filterCollection } from '../worldgraph/collection'
 import { originalNameSubtitle, resolveName } from '../worldgraph/localizedText'
@@ -39,19 +33,19 @@ const noteMaxLength = 200
  * 写入是否可用（PR7 规格 §1，沿用 PR6 双重门控）：私人模式的本地编辑器可用，【且】想去数据来自私有文件。
  * 公开构建与强制样例下 localEditorAvailable 恒为 false，写入控件根本不渲染，不靠 CSS 隐藏（AC-10）。
  */
-const writeAvailable = localEditorAvailable && wantToGoDataSource === 'local'
+const writeAvailableFor = (wantToGoDataSource: string) => localEditorAvailable && wantToGoDataSource === 'local'
 
 /**
  * 添加是否可用：与图层面板的添加入口同一规则（只排除样例）。私有想去文件还不存在（'none'）时
  * 也要能添加，否则第一次使用的人在 Collection 里加不进第一条。其余写入仍用上面更严的 writeAvailable。
  */
-const addAvailable = localEditorAvailable && wantToGoDataSource !== 'sample'
+const addAvailableFor = (wantToGoDataSource: string) => localEditorAvailable && wantToGoDataSource !== 'sample'
 
 /**
  * planned 条目「标记为去过」的门控（PR9 规格 §3.6）：写的是旅行记录，所以看足迹的数据来源，
  * 而不是想去的。强制样例模式下 travelAtlasDataSource 恒为 'sample'。
  */
-const plannedConvertAvailable = localEditorAvailable && travelAtlasDataSource === 'local'
+const plannedConvertAvailableFor = (travelAtlasDataSource: string) => localEditorAvailable && travelAtlasDataSource === 'local'
 
 const wantToGoLayer = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)
 
@@ -91,7 +85,9 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
   const [text, setText] = useState('')
   const [status, setStatus] = useState<CollectionStatusFilter>('all')
   const [sort, setSort] = useState<CollectionSort>('recent')
-  const showAdd = addAvailable && onAddWantToGo !== undefined
+  const { wantToGoDataSource } = useWantToGo()
+  const writeAvailable = writeAvailableFor(wantToGoDataSource)
+  const showAdd = addAvailableFor(wantToGoDataSource) && onAddWantToGo !== undefined
 
   const visibleEntries = useMemo(
     () => filterCollection(entries, { text, status, sort }, locale),
@@ -246,6 +242,10 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   const [notice, setNotice] = useLocalizedNotice()
   const [editingNote, setEditingNote] = useState(false)
   const [noteDraft, setNoteDraft] = useState('')
+  const { travelAtlasDataSource } = useTravelAtlas()
+  const { plannedConvertBlockReason, plannedRecordById, wantToGoConvertBlockReason, wantToGoDataSource, wantToGoItemById } = useWantToGo()
+  const writeAvailable = writeAvailableFor(wantToGoDataSource)
+  const plannedConvertAvailable = plannedConvertAvailableFor(travelAtlasDataSource)
 
   const fromTravelLog = isFromTravelLog(entry)
   // 按这一行背后的记录 id 查（Core 方案 C3）：想去条目只查想去表，planned 条目只查 planned 表。

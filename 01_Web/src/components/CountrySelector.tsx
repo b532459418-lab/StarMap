@@ -5,12 +5,12 @@ import { useTranslation } from 'react-i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Drone, GripVertical, MapPin, Plus, RotateCcw, Settings2, SlidersHorizontal, Undo2, X } from 'lucide-react'
 import { withoutListedCountries } from '../data/countrySearchFilter'
-import { hasDroneMedia } from '../data/droneMedia'
-import { localEditorAvailable, travelAtlasEditorState } from '../data/editorState'
+import { useDroneMedia } from '../data/droneMedia'
+import { localEditorAvailable, useTravelAtlasEditorState } from '../data/editorState'
 import { addLocalCountry, applyLocalViewOperations, deleteHiddenLocalCountries, reloadAfterLocalSave, searchLocalCountries } from '../data/localEditorClient'
 import { countryDraftOperations, hideIdsOperation, restoreHiddenOperation } from '../data/editorStateDelta'
 import type { CountrySearchOption } from '../data/localEditorApi'
-import { countries, getCitiesForCountry, shouldHideCityFromNavigation } from '../data/travelAtlas'
+import { useTravelAtlas } from '../data/travelAtlas'
 import type { CityId, CountryId } from '../types/travel'
 import { countryFlagUrl } from './countryFlagUrl'
 import { LocationSearchField } from './LocationSearchField'
@@ -76,6 +76,9 @@ export function CountrySelector({
 }: CountrySelectorProps) {
   const { t } = useTranslation(['details', 'editor', 'journey'])
   const { name, subtitle } = usePlaceNames()
+  const { countries, getCitiesForCountry, shouldHideCityFromNavigation } = useTravelAtlas()
+  const travelAtlasEditorState = useTravelAtlasEditorState()
+  const { hasDroneMedia } = useDroneMedia()
   const selectedCountry = selectedCountryId ? countries.find((country) => country.id === selectedCountryId) : undefined
   const committedDistanceRef = useRef(globeDistance)
   const hasDraftDistanceChangeRef = useRef(false)
@@ -108,7 +111,7 @@ export function CountrySelector({
     const results = await searchLocalCountries(query, signal)
     // 目录候选的 id 是名字 slug，V2 下国家的 id 是地点 UUID：按 id 或国家代码判断「已在列表里」（RFC-LOC-1 PR3b-2）。
     return withoutListedCountries(results, countries)
-  }, [])
+  }, [countries])
 
   const resetCountryDraft = () => {
     setDraftCountryIds(defaultCountryIds)

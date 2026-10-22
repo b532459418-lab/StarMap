@@ -3,7 +3,7 @@
  * 「读哪份数据」集中在这里。
  *
  * 这里【不是】 StarMap Core：它 import 了 Vite 虚拟模块、样例 JSON 与 import.meta.env，只能在 Vite 里跑。
- * 结果交给 ./appData.ts：读模型 → 官方视图（./store/projectCanonical.ts 的 officialViewOf）→ Canonical → 派生。
+ * 结果交给 ./appStore.ts（快照在 ./appStoreCore.ts）：读模型 → 官方视图（./store/projectCanonical.ts 的 officialViewOf）→ Canonical → 派生。
  * 脚本 scripts/baseline.mjs 按同一套规则在 Node 里选数据（公开样例：`--sample`；私人目录：默认）。
  *
  * 3C-5B 起只有一种输入：读模型 `starmap.read-model`（src/worldgraph/readModel/types.ts），读之前过 readReadModel（表头与
@@ -16,7 +16,8 @@
  * 2. 个人模式 → 私人数据的读模型，来源 'local'：新库的读模型；还不是新库时是 data/v2/ 的文件在内存里迁移一次得到的
  *    读模型（没有数据时为空，不回落到样例，决定 E）。旧格式的私人文件 App 不读。私人目录有没迁移的旧数据时，虚拟模块另报
  *    `privateLegacyUnmigrated`，下面的 `legacyUnmigrated` 据此让页面显示迁移提示（./privateDataNotice.ts）。
- *    读模型从不内联在虚拟模块里（3C-5B）：模块只给出地址 `privateReadModelUrl`，这里在模块加载时（顶层 await）取回它。
+ *    读模型从不内联在虚拟模块里（3C-5B）：模块只给出地址 `privateReadModelUrl`。3C-5 D 起没有顶层 await：
+ *    ./appStore.ts 在页面启动时调用 `loadAppReadModel()` 取回它，取回之前页面显示加载中（../main.tsx）。
  *    开发服务器是只读端点 `/__travelatlas/editor/read-model?revision=N`，个人构建是数据文件 `data/read-model.<hash>.json`。
  *    读不到或格式不对时，`appDataLoadError` 说明是哪个地址、为什么（端点拒绝时带它的错误代码与问题），../main.tsx 显示
  *    错误页（../components/DataLoadError.tsx），数据当作空的读模型，页面不会是一片空白。
@@ -30,6 +31,7 @@ import { readModelOf } from '../worldgraph/readModel/build.ts'
 import { readReadModel } from '../worldgraph/readModel/check.ts'
 import type { ReadModel } from '../worldgraph/readModel/types.ts'
 import { emptyFormalState } from '../worldgraph/store/formal.ts'
+import type { AppDataLoadError } from './appStoreCore.ts'
 
 /** 原 worldGraph.ts 的 worldGraphSessionNow：模块加载时固定一次，适配器要求 now 必填且不读时钟。 */
 export const sessionNow: string = new Date().toISOString()
@@ -51,14 +53,9 @@ export const appDataSource: 'local' | 'sample' = useSampleData ? 'sample' : 'loc
 
 /**
  * App 的数据没有加载成功：哪个地址（开发服务器的端点、个人构建的数据文件，或样例），为什么；开发服务器的端点拒绝时还有它的
- * 错误代码与问题（例如 E_MIGRATION_REFUSED：data/v2/ 的文件不能迁移，问题只列文件、路径与规则，不含值）。
+ * 错误代码与问题（例如 E_MIGRATION_REFUSED：data/v2/ 的文件不能迁移，问题只列文件、路径与规则，不含值）。类型在 ./appStoreCore.ts。
  */
-export interface AppDataLoadError {
-  readonly file: string
-  readonly reason: string
-  readonly code?: string
-  readonly problems?: readonly string[]
-}
+export type { AppDataLoadError }
 
 class DataLoadFailure extends Error {
   readonly code?: string
@@ -81,7 +78,7 @@ const refusalOf = (body: unknown): { code?: string; problems?: readonly string[]
 }
 
 /** 上面两种来源之一的读模型；读不到或格式不对时是空的读模型加上原因。 */
-async function loadAppReadModel(): Promise<{ readonly model: ReadModel; readonly error?: AppDataLoadError }> {
+export async function loadAppReadModel(): Promise<{ readonly model: ReadModel; readonly error?: AppDataLoadError }> {
   const file = useSampleData ? 'sample/sample.read-model.json' : (privateReadModelUrl ?? 'virtual:starmap-private-data').replace(/\?.*$/, '')
   try {
     if (useSampleData) return { model: readReadModel(sampleReadModelJson) }
@@ -102,13 +99,11 @@ async function loadAppReadModel(): Promise<{ readonly model: ReadModel; readonly
     return { model: readModelOf(emptyFormalState(), { origin: useSampleData ? 'sample' : 'local' }), error: { file, reason, ...refusal } }
   }
 }
-const loaded = await loadAppReadModel()
+/** 读公开样例时（公开模式、强制样例）为 true：读模型在模块里，同步可得（`sampleReadModel`），不必取回。 */
+export const usesSampleData: boolean = useSampleData
 
-/** App 读的读模型（上面两种来源之一）。 */
-export const appReadModel: ReadModel = loaded.model
-
-/** 读模型没有加载成功的原因（3C-5B）；成功时为 undefined。../main.tsx 据此显示错误页。 */
-export const appDataLoadError: AppDataLoadError | undefined = loaded.error
+/** 原生公开样例的读模型（3C-5A），读之前过 readReadModel。 */
+export const sampleReadModel = (): ReadModel => readReadModel(sampleReadModelJson)
 
 /**
  * 个人模式下私人目录有没迁移的旧数据（RFC-LOC-1 PR5a 决定 I；判定在 scripts/legacy-data.mjs，插件经虚拟模块注入）。
@@ -121,11 +116,10 @@ export const legacyUnmigrated: boolean = !useSampleData && privateLegacyUnmigrat
  * 和这个修订号；还不是新库（只读）、公开模式与强制样例下为 undefined。只有本地编辑器（经 ./localEditorClient.ts 的门）用它：
  * 「修改想去」的请求带上它作为 x-starmap-base-revision。
  */
-export const storeRevision: number | undefined = useSampleData || privateStoreRevision === undefined
-  ? undefined
-  // 3C-5B: the revision of the read model the App actually shows (the endpoint answers with the current one), so the base
-  // revision of a write always matches the data on the page.
-  : loaded.error ? privateStoreRevision : appReadModel.revision
+// 3C-5 D: the revision itself is the read model's (./appStore.ts `storeBaseRevision`): the revision of the data the
+// App actually shows. This says only whether the page writes to a library, and the module's revision when the read
+// model could not be loaded.
+export const storeModuleRevision: number | undefined = useSampleData ? undefined : privateStoreRevision
 
 /**
  * 新库模式（3C-4b）：新库没有通过打开检查（可能已损坏），只能读取。数据照常显示，写入一律被拒绝（E_STORE_READ_ONLY）；
