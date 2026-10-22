@@ -7,7 +7,10 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { V2Files } from '../canonical/v2Schema.ts'
+import { validateV2Files, type V2Files } from '../canonical/v2Schema.ts'
+import { readV2 } from '../canonical/v2Reader.ts'
+import { serializeV2 } from '../canonical/v2Serializer.ts'
+import { projectStoreToCanonical } from '../store/projectCanonical.ts'
 import { readEditorStateV1 } from '../v2write/index.ts'
 import { WRITE_NOW, migratedFiles, placeNamed } from '../v2write/v2write.fixture.ts'
 import { edgeCaseFixture } from '../store/v2Store.fixture.ts'
@@ -273,12 +276,18 @@ scenario('POST /wanttogo/convert: a removed want-to-go item joining an existing 
 // --- Random sequences.
 
 for (const seed of [3404, 5150, 7777]) {
-  test(`double run: random sequence of 240 steps (seed ${seed}), native and old-path endpoints mixed`, () => {
+  test(`double run: random sequence of 240 steps (seed ${seed}) over the eight editor endpoints`, () => {
     const report = runRandomSequence(seed, 240, migratedFiles(), ENGINES)
     assertSame(report)
     // Every kind of step happened, and both engines saved and refused along the way.
     const labels = [...report.tally.keys()].sort()
-    for (const label of ['countries', 'records/named', 'view/lists', 'wanttogo/named', 'wanttogo/placeId', 'wanttogo/update', 'wanttogo/delete']) assert.ok(labels.includes(label), label)
+    for (const label of ['countries', 'countries/delete', 'records/named', 'records/placeId', 'view/lists', 'wanttogo/named', 'wanttogo/placeId', 'wanttogo/update',
+      'wanttogo/delete', 'convert/want-to-go', 'convert/planned']) assert.ok(labels.includes(label), label)
+    // Design 3C-5 §3, condition 5: what the native writes wrote exports to V2 (store:export-v2's path), valid, and reads back.
+    const { canonical, v2Meta } = projectStoreToCanonical(report.state, { source: 'local', track: false, freeze: false })
+    const exported = serializeV2(canonical, v2Meta)
+    assert.deepEqual(validateV2Files(exported), [])
+    assert.deepEqual(readV2(exported), canonical)
     const totals = [...report.tally.values()].reduce(([a, b], [c, d]) => [a + c, b + d], [0, 0])
     assert.ok(totals[0] > 60 && totals[1] > 20, JSON.stringify(totals))
   })

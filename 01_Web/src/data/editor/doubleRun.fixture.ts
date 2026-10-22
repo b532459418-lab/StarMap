@@ -449,6 +449,8 @@ export interface RunReport {
   readonly differences: readonly string[]
   /** The second engine's outcome of every step. */
   readonly outcomes: readonly EngineOutcome[]
+  /** The store after the last step (the second engine's). */
+  readonly state: FormalState
 }
 
 /** Run one step in both engines from `store`'s state, compare, and go on from the second engine's state. */
@@ -477,7 +479,7 @@ export function runSteps(files: V2Files, steps: readonly ((view: V2Files) => Dou
     if (engines.native.has(request.route)) native++
     return doubleRunStep(store, request, engines.engineFor(request.route), startAt + index, report)
   })
-  return { steps: steps.length, native, ...report, outcomes }
+  return { steps: steps.length, native, ...report, outcomes, state: store.state }
 }
 
 /** Run `count` random steps from `files` (seed `seed`) in both engines (see runSteps). */

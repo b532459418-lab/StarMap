@@ -20,20 +20,19 @@
  *   rows with the header) and the store-wide revision. 3C-5 C1: the cache holds the live index of the read model
  *   (src/worldgraph/readModel/liveIndex.ts, built on first use): the native writes plan on it, every commit moves it on
  *   with the commit's changed rows, and the read model is built from it when asked for. The App reads the read model
- *   through the official view. The V2 view (the five V2 files) is kept only for the code that still
- *   works on it, the V2 write functions of the editor writes (until 3C-5 C) and the media service (until C2): it is
- *   built from the read model on first use (store-projection.mjs projectToV2Files), never read from data/v2/.
+ *   through the official view. 3C-5 C2: the session keeps no V2 view. Where the V2 shape is still needed (PUT /state,
+ *   GET /state, the media rules of the media service and tasks, tests) it is generated from the read model through the
+ *   official view when asked for (store-projection.mjs projectToV2Files), never cached and never read from data/v2/.
  * - Incremental refresh (3C-4a, 3C-5B): after a committed write the read model of the new revision is the old one with
- *   the commit's changed rows applied (applyReadModelDelta; the host returns them with the receipt); after an editor
- *   write the files after the V2 write become its V2 view. The store is not read again. The cache is keyed by the
+ *   the commit's changed rows applied (the live index, or applyReadModelDelta; the host returns them with the receipt).
+ *   The store is not read again. The cache is keyed by the
  *   store's library id, revision and restore mark: when they differ from the store's (another process wrote, the store
  *   was restored), the cache is dropped and the store read again. With STARMAP_STORE_VERIFY=1 (tests, development; or
- *   the `verify` option) every commit is followed by a fresh read compared with the cache (the read model, and the V2
- *   view's Canonical against the official view): a difference is E_STORE_VERIFY (500 E_STORE_FAILED), the fresh read
- *   replaces the cache, and the log says so.
- * - Writes (`writeRoute`): the editor endpoints. 3C-5 C1: the store-native ones (NATIVE_WRITE_ROUTES: the view
- *   operations and the three want-to-go endpoints) plan their commands on the live index with the official reader
- *   (src/data/editor/native/); the others still run the V2 write functions of ./v2-editor-store.mjs (STORE_WRITE_ROUTES). Media uploads,
+ *   the `verify` option) every commit is followed by a fresh read compared with the cache (the read model): a difference
+ *   is E_STORE_VERIFY (500 E_STORE_FAILED), the fresh read replaces the cache, and the log says so.
+ * - Writes (`writeRoute`): the editor endpoints. 3C-5 C1, C2: every editor endpoint but PUT /state is store-native
+ *   (src/data/editor/native/): it plans its commands on the live index with the official reader. PUT /state, which the
+ *   page no longer sends (sub-batch E removes it), still runs the V2 write function of ./v2-editor-store.mjs. Media uploads,
  *   imports, deletions and media tasks (3C-4c) go through ./store-media-endpoints.mjs, ./media-job-service.mjs and the
  *   media service with `mediaStore()`; their commits are queued with the editor writes.
  * - Read-only sessions (`readOnly: true`, 3C-4b): `build:personal` reads the store while a dev server may have it open
@@ -80,10 +79,8 @@ import { skippedCounts, projectToV2Files } from './store-projection.mjs'
 import { StoreHostError, openStore } from './store-host.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, v2FailureResponse } from './v2-editor-store.mjs'
 import { isUuidV7, uuidv7 } from '../src/data/canonical/uuidv7.ts'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { diffV2ToCommands } from '../src/data/store/diffV2.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
-import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { formalStateOfReadModel } from '../src/worldgraph/readModel/build.ts'
 import { applyReadModelDelta } from '../src/worldgraph/readModel/delta.ts'
 import { liveReadModelIndex } from '../src/worldgraph/readModel/liveIndex.ts'
@@ -366,12 +363,12 @@ export function createStoreSession(privatePaths, {
   }
 
   /**
-   * A cache entry: the read model of one revision (`model`, or the live index it is built from), the live index and the
-   * V2 view, the last two built on first use (`live`: carried on from the previous entry after a commit; `files`: given
-   * when an editor write already has them). An entry is replaced by the next after a commit: the live index it shares
-   * has moved on then.
+   * A cache entry: the read model of one revision (`model`, or the live index it is built from) and the live index, built
+   * on first use (carried on from the previous entry after a commit). An entry is replaced by the next after a commit:
+   * the live index it shares has moved on then. `files`: the V2 view of the entry's read model, generated through the
+   * official view each time it is asked for (3C-5 C2: never cached).
    */
-  function cacheEntry(key, { model, live, files, timings = {} }) {
+  function cacheEntry(key, { model, live, timings = {} }) {
     const revision = live ? live.revision : model.revision
     return Object.freeze({
       key, revision, timings,
@@ -381,17 +378,13 @@ export function createStoreSession(privatePaths, {
       get index() { return this.live },
       get hasLive() { return live !== undefined },
       get files() {
-        if (files !== undefined) return files
         const started = performance.now()
-        const { projection, files: built } = projectToV2Files(formalStateOfReadModel(this.model))
-        files = Object.freeze(built)
+        const { projection, files } = projectToV2Files(formalStateOfReadModel(this.model))
         const skipped = Object.entries(skippedCounts(projection.skipped)).map(([table, count]) => `${table} ${count}`)
-        log(`[StarMap store] V2 视图（修订号 ${revision}）：投影与 serializeV2 ${ms(started)} ms`
+        log(`[StarMap store] V2 视图（修订号 ${revision}，按需生成，不缓存）：官方视图与 serializeV2 ${ms(started)} ms`
           + (skipped.length ? `；投影跳过 ${projection.skipped.length} 行（${skipped.join('，')}）` : ''))
-        return files
+        return Object.freeze(files)
       },
-      /** Whether the V2 view was built or given. */
-      get hasFiles() { return files !== undefined },
     })
   }
 
@@ -416,33 +409,29 @@ export function createStoreSession(privatePaths, {
   }
 
   /**
-   * After a write: the cache moves to the new revision with the commit's changed rows (and `files`, the V2 view after
-   * an editor write). A cache of another revision, or a result without changes, drops it.
+   * After a write: the cache moves to the new revision with the commit's changed rows. A cache of another revision, or a
+   * result without changes, drops it.
    */
-  function advanceCache(opened, view, result, files) {
+  function advanceCache(opened, view, result) {
     if (result?.status !== 'committed' || !result.changes || view?.revision !== result.changes.baseRevision) { cache = undefined; return }
     const key = cacheKeyOf(opened.meta())
-    const rest = files === undefined ? {} : { files }
     if (view.hasLive) {
       const { live } = view
       live.apply(result.changes)
-      cache = cacheEntry(key, { live, ...rest })
-    } else cache = cacheEntry(key, { model: applyReadModelDelta(view.model, result.changes), ...rest })
+      cache = cacheEntry(key, { live })
+    } else cache = cacheEntry(key, { model: applyReadModelDelta(view.model, result.changes) })
   }
 
   /**
    * STARMAP_STORE_VERIFY: the store read again (readRowsUnchecked, as its read model) must equal the cached read model
-   * (built from the live index when there is one), and the cached V2 view (when there is one) must read (readV2) as the
-   * official view of that read model.
+   * (built from the live index when there is one).
    */
   function verifyCache(opened) {
     const fresh = opened.readModel()
-    const sameModel = cache !== undefined && isDeepStrictEqual(cache.model, fresh)
-    const sameView = !sameModel || !cache.hasFiles || isDeepStrictEqual(officialViewOf(fresh, 'local'), readV2(cache.files))
-    if (sameModel && sameView) return
+    if (cache !== undefined && isDeepStrictEqual(cache.model, fresh)) return
     cache = cacheEntry(cacheKeyOf(opened.meta()), { model: fresh })
-    log(`[StarMap store] 校验失败（STARMAP_STORE_VERIFY）：修订号 ${fresh.revision} 的${sameModel ? ' V2 视图' : '读模型'}与库不一致，已改用重新读出的读模型。`)
-    const error = new Error('E_STORE_VERIFY: the store read again differs from the cached read model or V2 view')
+    log(`[StarMap store] 校验失败（STARMAP_STORE_VERIFY）：修订号 ${fresh.revision} 的读模型与库不一致，已改用重新读出的读模型。`)
+    const error = new Error('E_STORE_VERIFY: the store read again differs from the cached read model')
     error.code = 'E_STORE_VERIFY'
     throw error
   }
@@ -518,8 +507,8 @@ export function createStoreSession(privatePaths, {
             requestId: protocol.requestId, baseRevision: protocol.baseRevision, kind, actor: STORE_ACTOR, commands: plan.diff.commands,
           })
           const commitMs = ms(committing)
-          // The incremental refresh: the read model with the changed rows, and the files after the write as its V2 view.
-          advanceCache(opened, view, result, Object.freeze(after))
+          // The incremental refresh: the read model with the changed rows.
+          advanceCache(opened, view, result)
           const response = { status: route.status, body: { ok: true, ...outcome.result, revision: result.revision, duplicate: result.status === 'duplicate', receipt: result.receipt } }
           remember(protocol.requestId, response)
           if (result.status === 'committed') countCommit()
@@ -626,7 +615,7 @@ export function createStoreSession(privatePaths, {
     open,
     /**
      * The virtual module's data: `{ model, revision, readOnly, files }` (the read model, the store-wide revision, whether
-     * the store is damaged and read-only, and `files`, its V2 view, built on first use: tests compare it).
+     * the store is damaged and read-only, and `files`, its V2 view, generated when asked for: tests compare it).
      */
     async moduleExports() {
       const view = await snapshot()
@@ -639,7 +628,7 @@ export function createStoreSession(privatePaths, {
     async isDamaged() {
       try { return damaged(await open()) } catch { return false }
     },
-    /** The cache in use ({ revision, model, index, files, hasFiles, timings }; timings of the last read, empty after a write), or undefined. */
+    /** The cache in use ({ revision, model, live, index, hasLive, files, timings }; timings of the last read, empty after a write), or undefined. */
     get lastSnapshot() { return cache },
     /** GET /editor/state in the new-library mode: `{ status, body }` with the V1 editor state of the read model. */
     async readEditorState(at = new Date()) {
@@ -652,10 +641,10 @@ export function createStoreSession(privatePaths, {
       return writes[`${method} ${pathname}`]
     },
     /**
-     * 3C-4c: the store as the media service uses it (./media-service.mjs): the V2 view at the current revision, the
-     * registry, the media entities, a reader, receipt lookups, and commits and file settlements queued with this
-     * process's editor writes. A committed media write moves the cached read model on with its changed rows (3C-5B); it
-     * was not made by a V2 write function, so its V2 view is built again from the read model when it is next asked for.
+     * 3C-4c: the store as the media service uses it (./media-service.mjs): the V2 view at the current revision (3C-5 C2:
+     * generated from the read model through the official view for each call, for the media rules that still take the V2
+     * shape), the registry, the media entities, a reader, receipt lookups, and commits and file settlements queued with
+     * this process's editor writes. A committed media write moves the cached read model on with its changed rows.
      */
     async mediaStore() {
       const opened = await open()
@@ -678,7 +667,6 @@ export function createStoreSession(privatePaths, {
             if (result.status === 'committed') countCommit()
             return result
           } finally {
-            // A media write was not made by a V2 write function: the next V2 view is built again from the read model.
             advanceCache(opened, view, result)
           }
         }),

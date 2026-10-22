@@ -129,7 +129,7 @@ test('the eight editor writes: the store equals V2 mode after each, verified, an
   } finally { await reopened.close() }
 })
 
-test('the cached read model and its V2 view stay one: after an editor write and a media commit they equal the store read again', async (t) => {
+test('the cached read model stays the store\'s after a V2 write, a native write and a media commit; the V2 view, generated when asked for, reads as its official view', async (t) => {
   const { session, output, write, files, paths } = await migratedSession(t)
   await session.moduleExports()
   const storeNow = async () => {
@@ -141,20 +141,18 @@ test('the cached read model and its V2 view stay one: after an editor write and 
     assert.deepEqual(cached.model, await storeNow(), `${label}: the read model`)
     assert.deepEqual(officialViewOf(cached.model, 'local'), readV2(cached.files), `${label}: the V2 view`)
   }
-  // A V2 editor write: the read model moves on with the commit's changed rows, the files after the write are its V2 view.
+  // A V2 editor write (PUT /state, the last one): the read model moves on with the commit's changed rows.
   const [first, second] = files.wantToGo.items
   // (3C-5 C2: PUT /state is the one write left on the V2 path.)
   const state = readEditorStateV1((await session.moduleExports()).files, new Date())
   const country = await write('PUT /__travelatlas/editor/state', { ...state, countryOrder: [...state.countryOrder].reverse() }, 1, contextOf(1))
   assert.equal(country.status, 200, JSON.stringify(country.body))
   assert.equal(session.lastSnapshot.revision, 2)
-  assert.equal(session.lastSnapshot.hasFiles, true)
   await consistent('after a V2 editor write')
   // A native write (3C-5 C1): the live index moves on; the V2 view is built again from the read model when asked for.
   const saved = await write('POST /__travelatlas/editor/wanttogo/update', { id: first.id, note: 'Synthetic one cache' }, 2, contextOf(2))
   assert.equal(saved.status, 200, JSON.stringify(saved.body))
   assert.equal(session.lastSnapshot.revision, 3)
-  assert.equal(session.lastSnapshot.hasFiles, false)
   await consistent('after a native write')
   // A media commit: the read model moves on; its V2 view is built again from the read model when asked for.
   const media = await session.mediaStore()
@@ -165,7 +163,6 @@ test('the cached read model and its V2 view stay one: after an editor write and 
   })
   assert.equal(committed.status, 'committed')
   assert.equal(session.lastSnapshot.revision, 4)
-  assert.equal(session.lastSnapshot.hasFiles, false)
   await consistent('after a media commit')
   assert.equal((await session.moduleExports()).files.wantToGo.items.find((item) => item.id === second.id).note, 'Synthetic media commit')
   assert.equal(projections(output.lines), 1, 'the store was read once, at start-up')
