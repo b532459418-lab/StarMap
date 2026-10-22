@@ -245,7 +245,7 @@ test('country ordering retains every management target and its draft when time r
   await year(page, 2023)
   await closeFilters(page)
   expect(await rows.evaluateAll((elements) => elements.map((element) => element.dataset.countrySortId))).toEqual(draftIds)
-  const saved = page.waitForResponse((response) => response.url().endsWith('/editor/state') && response.request().method() === 'PUT')
+  const saved = page.waitForResponse((response) => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
   await page.getByRole('button', { name: 'Save country changes', exact: true }).click()
   expect((await saved).ok()).toBe(true)
   await expect.poll(async () => (await readFixture('editorState')).countryOrder).toEqual(draftIds)

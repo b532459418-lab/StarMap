@@ -49,16 +49,17 @@
 import type { FormalCommand, FormalRow, FormalState, FormalTable, ViewItem, ViewItemTable, ViewSetting } from '../../worldgraph/store/formal.ts'
 import { memoryReader, type StoreReader } from '../../worldgraph/store/reader.ts'
 import { positionBetween } from '../../worldgraph/store/position.ts'
-import { StoreError, jsonKey, reject } from '../../worldgraph/store/primitives.ts'
+import { jsonKey, reject } from '../../worldgraph/store/primitives.ts'
 import type { EntrySequence, Evidence, JsonObject, JsonValue, LayerEntry, SourceDefinition, StoreAnchor, StoreEntity, StoreRelation } from '../../worldgraph/store/types.ts'
 import type { CanonicalPlace } from '../canonical/types.ts'
 import { V2_FILE_KEYS, type V2Files, type V2TravelRecord } from '../canonical/v2Schema.ts'
-import { DISPLAY_SETTING_KEYS, OFFICIAL, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES, mapListScope, v2SourceDefinition } from './officialDefinitions.ts'
+import { DISPLAY_SETTING_KEYS, OFFICIAL, V2_SOURCES, VIEW_SCOPES, v2SourceDefinition } from './officialDefinitions.ts'
 import {
   countryEvidence, countryEvidenceId, countryVisitEntry, journeyEntity, journeyOf, journeySequence, journeySequenceId, listPositions,
-  orderedJourneyMembers, placeAnchor, placeAnchorId, placeEntity, placeRelation, placeRelationId, recordPlacement, resolveListElements,
-  travelRecordEntry, unresolvedSetting, v2HeaderOf, viewItemRow, viewSettingRow, wantToGoEntry, type ViewTarget,
+  orderedJourneyMembers, placeAnchor, placeAnchorId, placeEntity, placeRelation, placeRelationId, recordPlacement,
+  travelRecordEntry, v2HeaderOf, viewItemRow, viewSettingRow, wantToGoEntry, type ViewTarget,
 } from './v2RecordRows.ts'
+import { positionsForRuns, viewListWriter, writeEditorLists } from './viewListRows.ts'
 
 /** Core's reader plus the one scan the diff needs: every view row of one scope (the host answers it from its scope index). */
 export interface DiffReader extends StoreReader {
@@ -95,7 +96,6 @@ const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const later = (a: string, b: string): string => (Date.parse(a) >= Date.parse(b) ? a : b)
 const withoutRevision = (row: object): string => jsonKey({ ...row, revision: 0 })
 const byId = <T extends { readonly id: string }>(rows: readonly T[]) => new Map(rows.map(row => [row.id, row] as const))
-const isPosition = (error: unknown) => error instanceof StoreError && error.code === 'E_POSITION'
 /** The journey id a journey entity projects to (projectStoreToCanonical). */
 const projectedJourneyId = (entity: StoreEntity) => (entity.source.sourceId === V2_SOURCES.journey ? entity.source.recordId : entity.id)
 
@@ -225,7 +225,8 @@ export function diffV2ToCommands(before: V2Files, after: V2Files, context: DiffC
       }
       if (text(old) === text(place)) continue
       const entity = get<StoreEntity>('entities', id) ?? mismatch('places')
-      update('places', 'entities', entity, placeEntity(place))
+      // The source is the row's identity: a place the store-native writes created (starmap:user, 3C-5 C1) keeps its own.
+      update('places', 'entities', entity, { ...placeEntity(place), source: entity.source })
       const parts = partsOf(id)
       placePart('anchors', parts.anchor, (rowId) => placeAnchor(place, rowId), placeAnchorId(id))
       placePart('relations', parts.relation, (rowId) => placeRelation(place, rowId), placeRelationId(id))
@@ -233,7 +234,7 @@ export function diffV2ToCommands(before: V2Files, after: V2Files, context: DiffC
   }
   function placePart<T extends StoreAnchor | StoreRelation>(table: 'anchors' | 'relations', current: T | undefined, desiredOf: (id: string) => T | undefined, base: string) {
     const desired = desiredOf(current?.id ?? freshId(table, base))
-    if (current && desired) update('placeParts', table, current, desired)
+    if (current && desired) update('placeParts', table, current, { ...desired, source: current.source })
     else if (current) remove('placeParts', table, current)
     else if (desired) create('placeParts', table, desired)
   }
@@ -443,6 +444,23 @@ export function diffV2ToCommands(before: V2Files, after: V2Files, context: DiffC
   const mediaIds = new Set(after.media.items.map(m => m.id))
   const mediaTarget = (id: unknown): ViewTarget | undefined => (typeof id === 'string' && mediaIds.has(id) ? { table: 'assets', id } : undefined)
   const beforePlace = placeIn(beforePlaces), afterPlace = placeIn(afterPlaces)
+  // The lists' rows (./viewListRows.ts, shared with the store-native view operations).
+  const lists = viewListWriter({
+    viewScope: (scope) => reader.viewScope(scope),
+    setting: (scope, key) => {
+      const id = reader.findViewSetting(scope, key)
+      return id === undefined ? undefined : get<ViewSetting>('viewSettings', id)
+    },
+  }, {
+    create: (table, row) => create('views', table, row),
+    update: (table, current, desired) => update('views', table, current, desired),
+    remove: (table, row) => remove('view', table, row),
+    removes: (table, id) => removedRows.has(rowKey(table, id)),
+    newRowId: newViewId,
+    settingId: (scope, key) => freshId('viewSettings', `${scope}#${key}`),
+    renumbered: (scope) => { renumbered.push(scope) },
+  })
+  const { listScope } = lists
 
   /**
    * An original-order scope: one row per record, keyed by the record's V2 id. Records that stay keep their rows and
@@ -509,97 +527,6 @@ export function diffV2ToCommands(before: V2Files, after: V2Files, context: DiffC
     })
   }
 
-  /**
-   * An editor or display list: its elements are view items and unresolved settings ordered by position. The longest
-   * run of rows still in order keeps its positions; the others move between their kept neighbours.
-   */
-  function listScope(scope: string, beforeValues: readonly unknown[], afterValues: readonly unknown[], resolveBefore: (value: unknown) => ViewTarget | undefined,
-    resolveAfter: (value: unknown) => ViewTarget | undefined, hidden: boolean, layerId?: string) {
-    if (text(beforeValues) === text(afterValues)) return
-    const rows = reader.viewScope(scope)
-    type Current = { readonly row: ViewItem | ViewSetting; readonly position: string; readonly value: unknown; readonly item: boolean }
-    const current: Current[] = []
-    for (const row of rows.items) {
-      const target = resolveBefore(row.itemId)
-      if (target && target.table === row.itemTable && !removedRows.has(rowKey('viewItems', row.id))) current.push({ row, position: row.position, value: row.itemId, item: true })
-    }
-    for (const row of rows.settings) {
-      const v = row.value
-      if (row.key.startsWith(UNRESOLVED_KEY_PREFIX) && plain(v) && typeof v.position === 'string' && Object.hasOwn(v, 'id')) current.push({ row, position: v.position, value: v.id, item: false })
-    }
-    current.sort((x, y) => compare(x.position, y.position) || compare(x.row.id, y.row.id))
-    const elements = resolveListElements(afterValues, resolveAfter)
-    // Match every element with a current row: an item by its target, an unresolved element by its value, in order.
-    const byTarget = new Map<string, number>(), byValue = new Map<string, number[]>()
-    current.forEach((c, index) => {
-      if (c.item) byTarget.set(text([(c.row as ViewItem).itemTable, c.value]), index)
-      else { const list = byValue.get(text(c.value)) ?? []; list.push(index); byValue.set(text(c.value), list) }
-    })
-    const matched = elements.map(({ value, target }) => {
-      if (target) { const index = byTarget.get(text([target.table, target.id])); if (index !== undefined) byTarget.delete(text([target.table, target.id])); return index }
-      return byValue.get(text(value))?.shift()
-    })
-    const keep = longestIncreasing(matched)
-    const used = new Set(matched.filter((index): index is number => index !== undefined))
-    current.forEach((c, index) => { if (!used.has(index)) remove('view', c.item ? 'viewItems' : 'viewSettings', c.row) })
-    const positions = positionsForRuns(elements.length, (i) => keep.has(i), (i) => current[matched[i]!].position)
-    let numbers: readonly string[] | undefined
-    if (!positions) { renumbered.push(scope); numbers = listPositions(elements.length) }
-    elements.forEach(({ value, target }, i) => {
-      const index = matched[i]
-      const position = numbers ? numbers[i] : positions!.get(i) ?? current[index!].position
-      const existing = index === undefined ? undefined : current[index]
-      if (target) {
-        if (existing) update('views', 'viewItems', existing.row, viewItemRow(scope, existing.row.id, target, position, hidden, layerId))
-        else create('views', 'viewItems', viewItemRow(scope, newViewId(scope), target, position, hidden, layerId))
-        return
-      }
-      // An unresolved element's key is its position: moving it is a new row (keys stay unique within the batch).
-      if (existing && existing.position === position) return
-      if (existing) remove('view', 'viewSettings', existing.row)
-      create('views', 'viewSettings', unresolvedSetting(scope, newViewId(scope), position, value))
-    })
-  }
-
-  /** A map of lists keyed by place id: a key setting per key (ref to the place), its list in mapListScope. */
-  function mapScope(scope: string, beforeMap: Readonly<Record<string, readonly unknown[]>>, afterMap: Readonly<Record<string, readonly unknown[]>>,
-    resolveBefore: (value: unknown) => ViewTarget | undefined, resolveAfter: (value: unknown) => ViewTarget | undefined, hidden: boolean) {
-    if (text(beforeMap) === text(afterMap)) return
-    for (const key of Object.keys(beforeMap)) {
-      if (Object.hasOwn(afterMap, key)) continue
-      const settingId = reader.findViewSetting(scope, key)
-      const setting = settingId === undefined ? undefined : get<ViewSetting>('viewSettings', settingId)
-      if (setting) remove('view', 'viewSettings', setting)
-      const rows = reader.viewScope(mapListScope(scope, key))
-      for (const row of rows.items) remove('view', 'viewItems', row)
-      for (const row of rows.settings) remove('view', 'viewSettings', row)
-    }
-    for (const [key, values] of Object.entries(afterMap)) {
-      const old = Object.hasOwn(beforeMap, key) ? beforeMap[key] : undefined
-      if (old === undefined) {
-        const settingId = reader.findViewSetting(scope, key)
-        const existing = settingId === undefined ? undefined : get<ViewSetting>('viewSettings', settingId)
-        const desired = viewSettingRow(scope, existing?.id ?? freshId('viewSettings', `${scope}#${key}`), key, { ref: { table: 'entities', id: key } })
-        if (existing) update('views', 'viewSettings', existing, desired); else create('views', 'viewSettings', desired)
-      }
-      listScope(mapListScope(scope, key), old ?? [], values, resolveBefore, resolveAfter, hidden)
-    }
-  }
-
-  /** One setting per key of a record of strings (covers): a ref to the asset, or the raw value. */
-  function settingScope(scope: string, beforeMap: Readonly<Record<string, string>>, afterMap: Readonly<Record<string, string>>, resolve: (value: unknown) => ViewTarget | undefined) {
-    if (text(beforeMap) === text(afterMap)) return
-    for (const key of new Set([...Object.keys(beforeMap), ...Object.keys(afterMap)])) {
-      const had = Object.hasOwn(beforeMap, key), has = Object.hasOwn(afterMap, key)
-      if (had && has && beforeMap[key] === afterMap[key]) continue
-      const id = reader.findViewSetting(scope, key)
-      const existing = id === undefined ? undefined : get<ViewSetting>('viewSettings', id)
-      if (!has) { if (existing) remove('view', 'viewSettings', existing); continue }
-      const target = resolve(afterMap[key])
-      const desired = viewSettingRow(scope, existing?.id ?? freshId('viewSettings', `${scope}#${key}`), key, target ? { ref: target } : { value: afterMap[key] })
-      if (existing) update('views', 'viewSettings', existing, desired); else create('views', 'viewSettings', desired)
-    }
-  }
   /** One display setting with a value (overviewTarget, regionIncludes). */
   function valueSetting(key: string, beforeValue: unknown, afterValue: unknown) {
     if (text(beforeValue) === text(afterValue)) return
@@ -640,15 +567,7 @@ export function diffV2ToCommands(before: V2Files, after: V2Files, context: DiffC
   if (before.editorState !== after.editorState) {
     const e0 = before.editorState, e1 = after.editorState
     orderScope(S.addedCountryOrder, e0.addedCountries.map(c => c.placeId), e1.addedCountries.map(c => c.placeId), identityTargets('entities'))
-    listScope(S.countryOrder, e0.countryOrder, e1.countryOrder, beforePlace, afterPlace, false)
-    listScope(S.hiddenCountries, e0.hiddenCountryIds, e1.hiddenCountryIds, beforePlace, afterPlace, true)
-    mapScope(S.cityOrderByCountry, e0.cityOrderByCountry, e1.cityOrderByCountry, beforePlace, afterPlace, false)
-    listScope(S.hiddenCities, e0.hiddenCityIds, e1.hiddenCityIds, beforePlace, afterPlace, true)
-    mapScope(S.mediaOrderByCity, e0.mediaOrderByCity, e1.mediaOrderByCity, mediaTarget, mediaTarget, false)
-    listScope(S.hiddenMedia, e0.hiddenMediaIds, e1.hiddenMediaIds, mediaTarget, mediaTarget, true)
-    settingScope(S.coverMediaByCity, e0.coverMediaByCity, e1.coverMediaByCity, mediaTarget)
-    mapScope(S.droneOrderByCity, e0.droneOrderByCity, e1.droneOrderByCity, mediaTarget, mediaTarget, false)
-    listScope(S.hiddenDroneMedia, e0.hiddenDroneMediaIds, e1.hiddenDroneMediaIds, mediaTarget, mediaTarget, true)
+    writeEditorLists(lists, e0, e1, { before: beforePlace, after: afterPlace }, mediaTarget)
   }
 
   const commands = [
@@ -659,43 +578,5 @@ export function diffV2ToCommands(before: V2Files, after: V2Files, context: DiffC
   return Object.freeze({ commands: Object.freeze(commands), renumbered: Object.freeze(renumbered) })
 }
 
-/**
- * New positions for the elements that are not kept, between their kept neighbours (`kept` positions must increase).
- * `keptPosition` is asked only for the kept neighbours of a run (null: that element has no position). Undefined when
- * a run cannot get positions: the caller renumbers the scope.
- */
-export function positionsForRuns(count: number, kept: (index: number) => boolean, keptPosition: (index: number) => string | null): Map<number, string> | undefined {
-  const out = new Map<number, string>()
-  for (let start = 0; start < count;) {
-    if (kept(start)) { start++; continue }
-    let end = start
-    while (end + 1 < count && !kept(end + 1)) end++
-    const lower = start > 0 ? keptPosition(start - 1) : undefined
-    const upper = end + 1 < count ? keptPosition(end + 1) : undefined
-    if (lower === null || upper === null) return undefined
-    let previous = lower
-    try {
-      for (let i = start; i <= end; i++) { previous = positionBetween(previous, upper); out.set(i, previous) }
-    } catch (error) {
-      if (isPosition(error)) return undefined
-      throw error
-    }
-    start = end + 1
-  }
-  return out
-}
-
-/** Indices (into `values`) of a longest strictly increasing subsequence of the defined values. */
-export function longestIncreasing(values: readonly (number | undefined)[]): Set<number> {
-  const tails: number[] = [], previous = new Array<number>(values.length).fill(-1)
-  values.forEach((value, i) => {
-    if (value === undefined) return
-    let lo = 0, hi = tails.length
-    while (lo < hi) { const mid = (lo + hi) >>> 1; if (values[tails[mid]]! < value) lo = mid + 1; else hi = mid }
-    if (lo > 0) previous[i] = tails[lo - 1]
-    tails[lo] = i
-  })
-  const kept = new Set<number>()
-  for (let i = tails.length ? tails[tails.length - 1] : -1; i >= 0; i = previous[i]) kept.add(i)
-  return kept
-}
+/** Moved to ./viewListRows.ts (3C-5 C1); re-exported for the 3C-4a tests. */
+export { longestIncreasing, positionsForRuns } from './viewListRows.ts'

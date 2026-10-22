@@ -113,6 +113,22 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.equal(canonical.places.find((place) => place.id === country.body.countryId).externalIds.iso3166Alpha2, 'JP')
     })
 
+    await t.test('the view operations reach the store-native write (3C-5 C1): POST /editor/view, and the module is invalidated', async () => {
+      const before = servedCanonical(await moduleOf(plugin))
+      // A new country order (nothing hidden: the build below reads as what the dev server serves).
+      const order = before.places.filter((place) => place.subtype === 'country').map((place) => place.id).reverse()
+      const saved = await requestTo(handler, {
+        url: `${editorPrefix}view`, content: Buffer.from(JSON.stringify({ operations: [{ op: 'order', scope: 'countries', ids: order, baseline: before.editorState.countryOrder }] })),
+        headers: { ...authorizedHeaders, 'x-starmap-request-id': '01960000-0000-7000-8000-00000000e004', 'x-starmap-base-revision': '3' },
+      })
+      assert.equal(saved.status, 200, JSON.stringify(saved.body))
+      assert.equal(saved.body.revision, 4)
+      assert.equal(privateModule.transformResult, null, 'the module is invalidated')
+      const module = await moduleOf(plugin)
+      assert.equal(module.privateStoreRevision, 4)
+      assert.deepEqual(servedCanonical(module).editorState.countryOrder.slice(0, order.length), order)
+    })
+
     await t.test('media tasks reach the store-mode task service (3C-4c): the list reads, an unknown task is 404, nothing written', async () => {
       // The library lease's generation counter (operations/) moves with every leased request.
       const before = outsideOperations(await treeDigest(root))

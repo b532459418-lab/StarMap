@@ -17,6 +17,8 @@
  *   ... --segment editors    (3C-4a) the eight editor writes over HTTP in each mode, on freshly generated roots: per
  *                            endpoint the client's end to end and, in the store mode, the host's V2 write, diff, commit
  *                            and total
+ *   ... --segment native     (3C-5 C1) the store-native endpoints (view operations, want-to-go) over HTTP, normal edits
+ *                            and batches, with the PUT /state path of the same view changes (G4a) beside them
  *   ... --segment media      (3C-4b) media files for the store root's media items (derivatives, originals with folder
  *                            pins, the media source index); run after generate
  *   ... --segment backup     (3C-4b) store:backup of the store root with its media into <dir>/backup: the time under the
@@ -270,6 +272,8 @@ const BENCH_COUNTRY_CODES = Object.freeze([
 
 /** The host's line of one store write (store-session.mjs): V2 write, diff, commit and total milliseconds. */
 const HOST_LINE = /：V2 写入 ([\d.]+) ms，差异 ([\d.]+) ms（(\d+) 条命令(?:，重新编号 \d+ 个 scope)?），提交 ([\d.]+) ms（修订号 \d+），共 ([\d.]+) ms$/
+/** 3C-5 C1: a store-native write (the view operations and the want-to-go endpoints): plan, commit, index update, total. */
+const NATIVE_LINE = /（原生）：规划 ([\d.]+) ms（(\d+) 条命令），提交 ([\d.]+) ms（修订号 \d+），更新索引 ([\d.]+) ms，共 ([\d.]+) ms$/
 
 /**
  * `editors` (3C-4a spec §2.5): the eight editor writes over HTTP through the plugin, in each mode, on freshly generated
@@ -310,12 +314,17 @@ export async function editorsSegment(dir, scale) {
         const endToEnd = ms(started)
         if (!body.ok) throw new Error(`${mode} ${label} failed: ${body.code}`)
         if (mode === 'store') revision = body.revision
-        const entry = timings[label] ??= { endToEnd: [], v2Write: [], diff: [], commands: [], commit: [], host: [] }
+        const entry = timings[label] ??= { endToEnd: [], v2Write: [], diff: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [] }
         entry.endToEnd.push(endToEnd)
         const host = lines.slice(before).map((line) => HOST_LINE.exec(line)).find(Boolean)
         if (host) {
           entry.v2Write.push(Number(host[1])); entry.diff.push(Number(host[2])); entry.commands.push(Number(host[3]))
           entry.commit.push(Number(host[4])); entry.host.push(Number(host[5]))
+        }
+        const native = lines.slice(before).map((line) => NATIVE_LINE.exec(line)).find(Boolean)
+        if (native) {
+          entry.plan.push(Number(native[1])); entry.commands.push(Number(native[2])); entry.commit.push(Number(native[3]))
+          entry.indexUpdate.push(Number(native[4])); entry.host.push(Number(native[5]))
         }
         await load()
         return body
@@ -454,16 +463,124 @@ export async function restoreSegment(dir) {
   return { totalMs: ms(started), revision: restoredFrom.revision, restored: await treeSize(to) }
 }
 
+/**
+ * `native` (3C-5 C1 spec §2.6): the store-native endpoints over HTTP through the plugin, on freshly generated roots
+ * (<dir>/native), with the G4a path of the same view changes (PUT /state: V2 write function, diff, commit) beside them:
+ * - normal edits: a country order swap as a view operation and as PUT /state (`scale.updates` each), a want-to-go item
+ *   added (a new city), its note, hiding it, and deleting it (its city goes too), `scale.updates` each;
+ * - batches (50 rows and more): the 100 countries' order reversed, and 60 cities hidden or shown again, as view
+ *   operations and as PUT /state (`batches` each);
+ * - mixed paths: a V2-path write (a planned record marked visited) right after a native one (it builds the V2 view
+ *   again), and the same write after a V2 write (its view is cached), `batches` times each.
+ * Per label: the client's end to end and the host's plan (or V2 write and diff), commit, index update, commands and total.
+ * The module is not loaded between writes (no page reload: the in-host times do not depend on it).
+ */
+export async function nativeSegment(dir, scale) {
+  const base = path.join(dir, 'native')
+  await rm(base, { recursive: true, force: true })
+  await generateRoots(base, scale)
+  const lines = []
+  const { plugin, handlers, restoreConsole } = await pluginFor(rootsOf(base).store, (line) => lines.push(line))
+  const { server, url } = await serve(handlers)
+  const timings = {}
+  let requestCount = 0
+  const batches = Math.max(2, Math.round(scale.updates / 3))
+  try {
+    let revision = (await servedModuleOf(plugin)).privateStoreRevision
+    const send = async (label, method, route, input) => {
+      const headers = {
+        'content-type': 'application/json', 'x-travelatlas-local-editor': '1',
+        'x-starmap-request-id': `01980000-0000-7000-8000-${hex(++requestCount)}`, 'x-starmap-base-revision': String(revision),
+      }
+      const before = lines.length
+      const started = performance.now()
+      const body = await requestJson(method, `${url}/__travelatlas/editor/${route}`, headers, JSON.stringify(input))
+      const endToEnd = ms(started)
+      if (!body.ok) throw new Error(`${label} failed: ${body.code} ${JSON.stringify(body.params ?? {})}`)
+      revision = body.revision
+      const entry = timings[label] ??= { endToEnd: [], v2Write: [], diff: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [], protocol: [] }
+      entry.endToEnd.push(endToEnd)
+      const added = lines.slice(before)
+      const host = added.map((line) => HOST_LINE.exec(line)).find(Boolean)
+      if (host) {
+        entry.v2Write.push(Number(host[1])); entry.diff.push(Number(host[2])); entry.commands.push(Number(host[3]))
+        entry.commit.push(Number(host[4])); entry.host.push(Number(host[5])); entry.protocol.push(Math.round((endToEnd - Number(host[5])) * 10) / 10)
+      }
+      const native = added.map((line) => NATIVE_LINE.exec(line)).find(Boolean)
+      if (native) {
+        entry.plan.push(Number(native[1])); entry.commands.push(Number(native[2])); entry.commit.push(Number(native[3]))
+        entry.indexUpdate.push(Number(native[4])); entry.host.push(Number(native[5])); entry.protocol.push(Math.round((endToEnd - Number(native[5])) * 10) / 10)
+      }
+      return body
+    }
+    const state = async () => (await requestJson('GET', `${url}/__travelatlas/editor/state`, {}, undefined)).state
+    const swap = (order) => { const next = [...order]; [next[0], next[1]] = [next[1], next[0]]; return next }
+    // Normal edits: a country order swap, as a view operation and as PUT /state.
+    for (let n = 0; n < scale.updates; n++) {
+      const { countryOrder } = await state()
+      await send('view: order swap', 'POST', 'view', { operations: [{ op: 'order', scope: 'countries', ids: swap(countryOrder), baseline: countryOrder }] })
+    }
+    for (let n = 0; n < scale.updates; n++) {
+      const current = await state()
+      await send('PUT state: order swap', 'PUT', 'state', { ...current, countryOrder: swap(current.countryOrder) })
+    }
+    // Batches: the countries reversed; 60 cities hidden, then shown again.
+    for (let n = 0; n < batches; n++) {
+      const { countryOrder } = await state()
+      await send('view: reverse countries (batch)', 'POST', 'view', { operations: [{ op: 'order', scope: 'countries', ids: [...countryOrder].reverse(), baseline: countryOrder }] })
+      const current = await state()
+      await send('PUT state: reverse countries (batch)', 'PUT', 'state', { ...current, countryOrder: [...current.countryOrder].reverse() })
+    }
+    const cities = Array.from({ length: Math.min(60, scale.cities) }, (_, n) => placeId(scale.countries + (n * 7) % scale.cities))
+    // Each write flips them: the view operation hides (or shows) the 60, the PUT /state shows (or hides) them again.
+    for (let n = 0; n < batches; n++) {
+      const before = (await state()).hiddenCityIds
+      const shown = !cities.some((id) => before.includes(id))
+      await send('view: 60 hidden cities (batch)', 'POST', 'view', { operations: [{ op: 'hide', scope: 'cities', add: shown ? cities : [], remove: shown ? [] : cities }] })
+      const current = await state()
+      const hidden = shown ? current.hiddenCityIds.filter((id) => !cities.includes(id)) : [...current.hiddenCityIds, ...cities]
+      await send('PUT state: 60 hidden cities (batch)', 'PUT', 'state', { ...current, hiddenCityIds: hidden })
+    }
+    // Want-to-go: add a new city, note, hide, delete (the city goes with it).
+    const codes = BENCH_COUNTRY_CODES.slice(0, scale.updates)
+    const wishes = []
+    for (const [n, code] of codes.entries()) {
+      wishes.push((await send('wanttogo', 'POST', 'wanttogo', {
+        place: { kind: 'city', nameZh: `想去城市 ${n}`, nameEn: `Native wish ${n}`, countryCode: code, lat: 30 + n, lng: 40 + n }, createNew: true,
+      })).id)
+    }
+    for (const [n, id] of wishes.entries()) await send('wanttogo/update: note', 'POST', 'wanttogo/update', { id, note: `Synthetic native note ${n}` })
+    for (const id of wishes) await send('wanttogo/update: hide', 'POST', 'wanttogo/update', { id, hidden: true })
+    for (const id of wishes) await send('wanttogo/delete', 'POST', 'wanttogo/delete', { ids: [id] })
+    // Mixed paths: a V2-path write right after a native one builds the V2 view again.
+    for (let n = 0; n < batches; n++) {
+      await send('wanttogo/update: note (before a V2 write)', 'POST', 'wanttogo/update', { id: `wish-${(n * 97) % scale.wishes}`, note: `Synthetic mixed ${n}` })
+      // Nothing reads the V2 view in between (the page reads the read model): the V2 write builds it again itself.
+      await send('convert planned, right after a native write (V2 path)', 'POST', 'wanttogo/convert', { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' })
+    }
+    for (let n = batches; n < 2 * batches; n++) {
+      await send('convert planned, after a V2 write (V2 path)', 'POST', 'wanttogo/convert', { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' })
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+    await plugin.buildEnd()
+    restoreConsole()
+  }
+  return Object.fromEntries(Object.entries(timings).map(([label, entry]) => [label, Object.fromEntries(
+    Object.entries(entry).filter(([, values]) => values.length).map(([key, values]) => [key, stats(values)]),
+  )]))
+}
+
 const SEGMENTS = {
   generate: generateRoots, read: readSegment, http: httpSegment, pipeline: pipelineSegment, editors: editorsSegment,
-  media: mediaSegment, backup: backupSegment, restore: restoreSegment,
+  media: mediaSegment, backup: backupSegment, restore: restoreSegment, native: nativeSegment,
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const arg = (name) => { const at = process.argv.indexOf(name); return at > 0 ? process.argv[at + 1] : undefined }
   const dir = arg('--dir'), segment = arg('--segment'), scaleName = arg('--scale') ?? 'real'
   if (!dir || !Object.hasOwn(SEGMENTS, segment) || !Object.hasOwn(MODE_BENCH_SCALES, scaleName)) {
-    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline|editors|media|backup|restore [--scale real|tiny] [--derivative-kb N --original-kb N]')
+    console.error('用法：node scripts/store-mode-bench.mjs --dir <工作目录> --segment generate|read|http|pipeline|editors|native|media|backup|restore [--scale real|tiny] [--derivative-kb N --original-kb N]')
     process.exitCode = 1
   } else {
     mkdirSync(dir, { recursive: true })

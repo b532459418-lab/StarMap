@@ -286,7 +286,7 @@ test('keyboard hiding the current cover photo clears the draft cover, and hiding
   await page.keyboard.press('Enter')
   await expect(cover).toHaveCount(0)
   await saveAndWaitForReload(page, async () => {
-    const saved = page.waitForResponse((response) => response.url().endsWith('/editor/state') && response.request().method() === 'PUT')
+    const saved = page.waitForResponse((response) => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
     await info.getByRole('button', { name: 'Save city photos', exact: true }).click()
     expect((await saved).ok()).toBe(true)
   })
@@ -426,9 +426,9 @@ test.describe('the new library: editor writes', () => {
     const expected = [before.at(-1), ...before.slice(0, -1)]
     await expect.poll(order).toEqual(expected)
     const sent = []
-    page.on('request', (request) => { if (request.url().endsWith('/editor/state') && request.method() === 'PUT') sent.push(request.headers()) })
+    page.on('request', (request) => { if (request.url().endsWith('/editor/view') && request.method() === 'POST') sent.push(request.headers()) })
     await saveAndWaitForReload(page, async () => {
-      const saved = page.waitForResponse((response) => response.url().endsWith('/editor/state') && response.request().method() === 'PUT')
+      const saved = page.waitForResponse((response) => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
       await info.getByRole('button', { name: 'Save cities', exact: true }).click()
       expect((await saved).status()).toBe(200)
     })

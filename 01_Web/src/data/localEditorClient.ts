@@ -54,8 +54,8 @@ export const searchLocalCities: LocalEditorApi['searchLocalCities'] = (...args) 
   withApi((api) => api.searchLocalCities(...args))
 export const addLocalCountry: LocalEditorApi['addLocalCountry'] = (...args) =>
   withApi((api) => api.addLocalCountry(...args))
-export const updateLocalEditorState: LocalEditorApi['updateLocalEditorState'] = (...args) =>
-  withApi((api) => api.updateLocalEditorState(...args))
+export const applyLocalViewOperations: LocalEditorApi['applyLocalViewOperations'] = (...args) =>
+  withApi((api) => api.applyLocalViewOperations(...args))
 export const deleteHiddenLocalMedia: LocalEditorApi['deleteHiddenLocalMedia'] = (...args) =>
   withApi((api) => api.deleteHiddenLocalMedia(...args))
 export const deleteHiddenLocalCountries: LocalEditorApi['deleteHiddenLocalCountries'] = (...args) =>

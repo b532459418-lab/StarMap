@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  MODE_BENCH_SCALES, backupSegment, editorsSegment, generateRoots, httpSegment, mediaSegment, pipelineSegment, readSegment, restoreSegment,
+  MODE_BENCH_SCALES, backupSegment, editorsSegment, generateRoots, httpSegment, mediaSegment, nativeSegment, pipelineSegment, readSegment, restoreSegment,
   syntheticV2Files,
 } from './store-mode-bench.mjs'
 import { tempPrivateRoot } from './store-mode.fixture.mjs'
@@ -56,4 +56,15 @@ test('smoke: the media, backup and restore segments (3C-4b) run at the tiny scal
   const restore = await restoreSegment(directory)
   assert.equal(restore.revision, backup.revision)
   assert.ok(restore.restored.files >= backup.mediaFiles + 1)
+})
+
+test('smoke: the native segment (3C-5 C1) runs at the tiny scale: view operations and their PUT /state counterparts, the want-to-go writes', async (t) => {
+  const { directory } = await tempPrivateRoot(t, 'starmap-store-mode-bench-')
+  const scale = MODE_BENCH_SCALES.tiny
+  const result = await nativeSegment(directory, scale)
+  for (const label of ['view: order swap', 'view: reverse countries (batch)', 'view: 60 hidden cities (batch)', 'wanttogo', 'wanttogo/update: note', 'wanttogo/update: hide', 'wanttogo/delete']) {
+    assert.ok(result[label].plan.n > 0 && result[label].indexUpdate.n === result[label].plan.n, label)
+  }
+  for (const label of ['PUT state: order swap', 'PUT state: reverse countries (batch)', 'convert planned, right after a native write (V2 path)', 'convert planned, after a V2 write (V2 path)']) assert.ok(result[label].diff.n > 0, label)
+  assert.equal(result['view: order swap'].endToEnd.n, scale.updates)
 })

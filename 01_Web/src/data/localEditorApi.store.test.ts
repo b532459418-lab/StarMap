@@ -1,13 +1,14 @@
 /// <reference types="node" />
 /**
- * The client wrappers of the eight editor writes (3C-4a spec §2.4) and of the deletion of hidden media (3C-4c): in V2 mode the requests are exactly as before; in
+ * The client wrappers of the eight editor writes (3C-4a spec §2.4), of the deletion of hidden media (3C-4c) and of the view
+ * operations (3C-5 C1): in V2 mode the requests are exactly as before; in
  * the new-library mode each one carries the request id and base revision, retries an unknown outcome once with the same
  * request id, and a committed answer moves the page's base revision (two writes of one action are not stale).
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  addLocalCountry, addLocalTravelRecord, addLocalWantToGo, convertLocalWantToGoToTravel, deleteHiddenLocalCountries, deleteHiddenLocalMedia,
+  addLocalCountry, addLocalTravelRecord, applyLocalViewOperations, addLocalWantToGo, convertLocalWantToGoToTravel, deleteHiddenLocalCountries, deleteHiddenLocalMedia,
   deleteHiddenLocalWantToGo, setStoreBaseRevision, updateLocalEditorState, updateLocalWantToGo,
 } from './localEditorApi.ts'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './storeWriteProtocol.ts'
@@ -45,6 +46,8 @@ const writes = [
   ['wanttogo/convert', () => convertLocalWantToGoToTravel({ source: 'want-to-go', id: 'wish-1', startDate: '2026-04-01' })],
   ['state', () => updateLocalEditorState((current) => ({ ...current, hiddenCountryIds: ['country-1'] }))],
   ['media/delete', () => deleteHiddenLocalMedia('city-1', ['media-1'])],
+  // 3C-5 C1: the view operations (the page no longer sends PUT /state).
+  ['view', () => applyLocalViewOperations([{ op: 'hide', scope: 'countries', add: ['country-1'], remove: [] }])],
 ] as const
 
 async function withFetch(fetch: typeof globalThis.fetch, run: () => Promise<void>) {
@@ -62,6 +65,9 @@ test('V2 mode: the eight writes and the media deletion send the editor headers o
   assert.deepEqual(server.sent.map((request) => request.url.replace('/__travelatlas/editor/', '')), writes.map(([path]) => path))
   for (const request of server.sent) assert.deepEqual(request.headers, { 'content-type': 'application/json', 'x-travelatlas-local-editor': '1' })
   assert.equal(server.sent.find((request) => request.url.endsWith('/state'))!.method, 'PUT')
+  const view = server.sent.find((request) => request.url.endsWith('/view'))!
+  assert.equal(view.method, 'POST')
+  assert.deepEqual(view.body, { operations: [{ op: 'hide', scope: 'countries', add: ['country-1'], remove: [] }] })
 })
 
 test('new-library mode: every write carries a request id and the base revision; a committed answer moves the base', async () => {

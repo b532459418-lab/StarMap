@@ -193,7 +193,7 @@ async function seedHiddenAndRemovedMedia(page, first) {
   const hiddenId = assetOf(await stored(), baseline.name)
   expect(hiddenId).toMatch(UUID_V7)
   await page.locator(`.atlas-info-panel [data-flip-id="${hiddenId}"]`).getByRole('button', { name: 'Hide photo', exact: true }).click()
-  const saved = page.waitForResponse(response => response.url().endsWith('/editor/state') && response.request().method() === 'PUT')
+  const saved = page.waitForResponse(response => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
   // Ordinary city-photo saves reload the document; finish that navigation before the next batch.
   const reloaded = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 45000 })
   const [, response] = await Promise.all([
@@ -762,7 +762,7 @@ test.describe('new-library mode: media', () => {
     let editor = await photoEditor(page)
     await editor.locator(`[data-flip-id="${id}"]`).getByRole('button', { name: 'Hide photo', exact: true }).click()
     await saveAndWaitForReload(page, async () => {
-      const saved = page.waitForResponse(response => response.url().endsWith('/editor/state') && response.request().method() === 'PUT')
+      const saved = page.waitForResponse(response => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
       await page.getByRole('button', { name: 'Save city photos', exact: true }).click()
       expect((await saved).status()).toBe(200)
     })

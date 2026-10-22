@@ -24,6 +24,7 @@ import { EDITOR_STATE_SCHEMA_VERSION, type V2FileKey, type V2Files } from '../ca
 import { jsonClone } from '../canonical/v2Serializer.ts'
 import type { TravelAtlasEditorState } from '../derive/editorState.ts'
 import { V2WriteError } from './errors.ts'
+import { checkEditorStatePlaces } from '../editor/rules/editorState.ts'
 import { completeForWrite, integrityProblems, runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 
 /** V2 editor-state → 客户端看到的 V1 形状。 */
@@ -81,22 +82,7 @@ export const editorStateFromV1 = (
   const droneOrderByCity = recordOf(input, 'droneOrderByCity', isStringArray)
   const hiddenDroneMediaIds = stringArray(input, 'hiddenDroneMediaIds')
 
-  const expect = (field: string, ids: Iterable<string>, expected: 'country' | 'city') => {
-    for (const id of ids) {
-      const subtype = subtypeOf(id)
-      if (subtype !== expected) {
-        throw new V2WriteError('E_UNKNOWN_PLACE_REF', { field, id, expected, actual: subtype ?? 'missing' })
-      }
-    }
-  }
-  expect('countryOrder', countryOrder, 'country')
-  expect('hiddenCountryIds', hiddenCountryIds, 'country')
-  expect('cityOrderByCountry', Object.keys(cityOrderByCountry), 'country')
-  for (const [countryId, cityIds] of Object.entries(cityOrderByCountry)) expect(`cityOrderByCountry.${countryId}`, cityIds, 'city')
-  expect('hiddenCityIds', hiddenCityIds, 'city')
-  expect('mediaOrderByCity', Object.keys(mediaOrderByCity), 'city')
-  expect('coverMediaByCity', Object.keys(coverMediaByCity), 'city')
-  expect('droneOrderByCity', Object.keys(droneOrderByCity), 'city')
+  checkEditorStatePlaces({ countryOrder, hiddenCountryIds, cityOrderByCountry, hiddenCityIds, mediaOrderByCity, coverMediaByCity, droneOrderByCity }, subtypeOf)
 
   return {
     schemaVersion: EDITOR_STATE_SCHEMA_VERSION,

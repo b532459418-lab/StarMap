@@ -14,20 +14,14 @@ import { indexPlaces, reconstructWantToGoItem } from '../canonical/reconstruct.t
 import type { CanonicalWantToGoItem, PlaceId } from '../canonical/types.ts'
 import type { V2FileKey, V2Files } from '../canonical/v2Schema.ts'
 import type { WantToGoItem } from '../derive/wantToGo.ts'
-import { fail } from './errors.ts'
+import { ensureCountryPlace, fillMissingLocation, newOrChosenCityPlace } from './common.ts'
 import {
-  COUNTRY_CODE_PATTERN,
-  DATE_PATTERN,
-  bodyOf,
-  createNewOf,
-  ensureCountryPlace,
-  fillMissingLocation,
-  isObject,
-  localDate,
-  newOrChosenCityPlace,
-  numberInRange,
-  requireText,
-} from './common.ts'
+  parseAddWantToGo, parseDeleteWantToGo, parseUpdateWantToGo, requireAllHidden, requireNotListed, wishNotFound,
+} from '../editor/rules/wantToGo.ts'
+import { fail } from './errors.ts'
+
+/** 判定在 ../editor/rules/wantToGo.ts（3C-5 C1），这里沿用原来的导出名。 */
+export { normalizeNote } from '../editor/rules/wantToGo.ts'
 import { removeUnreferencedPlaces, runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 
 type WriteList = { file: V2FileKey; onFailure?: string }[]
@@ -36,46 +30,6 @@ type WriteList = { file: V2FileKey; onFailure?: string }[]
 const itemV1Of = (files: V2Files, item: CanonicalWantToGoItem): WantToGoItem =>
   reconstructWantToGoItem(item, indexPlaces(files.places.places))
 
-/** 旧 store normalizeNote：trim 后 ≤ 200 字；空串表示「没有备注」。新库模式（3C-4a 起）同样运行本文件的写入函数，规则只有这一份。 */
-export const normalizeNote = (value: unknown): string | undefined => {
-  if (value === undefined || value === null) return undefined
-  if (typeof value !== 'string') fail('E_NOTE_NOT_TEXT')
-  const note = (value as string).trim()
-  if (note.length > 200) fail('E_NOTE_TOO_LONG')
-  return note
-}
-
-interface PlaceInput {
-  kind: 'city' | 'country'
-  nameZh: string
-  nameEn: string
-  /** 用户实际给出的中文名（找候选只比实际给出的名字；`nameZh` 缺时用英文名补齐，只用于新建）。 */
-  givenZh?: string
-  countryCode: string
-  location?: { lat: number; lng: number }
-}
-
-/** 旧 store normalizePlace：类型、英文名、国家代码必填；中文名缺时用英文名；坐标可空但须成对。 */
-const normalizePlace = (value: unknown): PlaceInput => {
-  const place = isObject(value) ? value : {}
-  if (place.kind !== 'city' && place.kind !== 'country') fail('E_WTG_KIND_INVALID')
-  const nameEn = requireText(place.nameEn, 'nameEn')
-  const givenZh = typeof place.nameZh === 'string' && place.nameZh.trim() ? place.nameZh.trim() : undefined
-  const nameZh = givenZh ?? nameEn
-  const countryCode = requireText(place.countryCode, 'countryCode').toUpperCase()
-  if (!COUNTRY_CODE_PATTERN.test(countryCode)) fail('E_COUNTRY_CODE_INVALID')
-  const hasLat = place.lat !== undefined && place.lat !== null && place.lat !== ''
-  const hasLng = place.lng !== undefined && place.lng !== null && place.lng !== ''
-  if (hasLat !== hasLng) fail('E_COORDINATES_PAIR')
-  return {
-    kind: place.kind as 'city' | 'country',
-    nameZh,
-    nameEn,
-    ...(givenZh !== undefined ? { givenZh } : {}),
-    countryCode,
-    ...(hasLat ? { location: { lat: numberInRange(place.lat, -90, 90, 'lat'), lng: numberInRange(place.lng, -180, 180, 'lng') } } : {}),
-  }
-}
 
 // ---------------------------------------------------------------------------
 // POST /wanttogo
@@ -93,21 +47,12 @@ const normalizePlace = (value: unknown): PlaceInput => {
  * 写盘：地点注册表（有改动时）→ 想去。
  */
 export function addWantToGo(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<{ id: string; item: WantToGoItem }> {
-  const body = bodyOf(input)
-  const referencesPlace = Object.hasOwn(body, 'placeId')
-  if (referencesPlace && (typeof body.placeId !== 'string' || !body.placeId.trim() || Object.hasOwn(body, 'place') || Object.hasOwn(body, 'createNew'))) {
-    fail('E_UNKNOWN_PLACE_REF')
-  }
-  const place = referencesPlace ? undefined : normalizePlace(body.place)
-  const createNew = referencesPlace ? false : createNewOf(body)
-  const note = normalizeNote(body.note)
-  const addedAt = body.addedAt === undefined || body.addedAt === null || body.addedAt === ''
-    ? localDate(ctx.now)
-    : requireText(body.addedAt, 'addedAt')
-  if (!DATE_PATTERN.test(addedAt)) fail('E_DATE_FORMAT', { field: 'addedAt' })
+  const request = parseAddWantToGo(input, ctx.now)
+  const referencesPlace = request.placeId !== undefined
+  const { place, createNew, note, addedAt } = request
 
   return runV2Transaction(files, ctx, (draft) => {
-    let target = referencesPlace ? draft.placeById(body.placeId as string) : undefined
+    let target = referencesPlace ? draft.placeById(request.placeId as string) : undefined
     let placesChanged = false
     if (referencesPlace && !target) fail('E_UNKNOWN_PLACE_REF')
     if (place) {
@@ -128,7 +73,7 @@ export function addWantToGo(files: V2FilesOrEmpty | undefined, input: unknown, c
       }
     }
     const targetId = target?.id ?? fail('E_UNKNOWN_PLACE_REF')
-    if (draft.files.wantToGo.items.some((item) => item.placeId === targetId)) fail('E_WTG_EXISTS', { placeId: targetId })
+    requireNotListed(draft.files.wantToGo.items.some((item) => item.placeId === targetId), targetId)
 
     const item: CanonicalWantToGoItem = {
       id: ctx.newId(),
@@ -153,22 +98,17 @@ export function addWantToGo(files: V2FilesOrEmpty | undefined, input: unknown, c
 
 /** 按条目 id 改 `hidden` / `note`（传空串删除备注）。校验与文案同旧 store。写盘：想去。 */
 export function updateWantToGo(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<{ item: WantToGoItem }> {
-  const body = bodyOf(input)
-  const id = requireText(body.id, 'id')
-  const hasHidden = body.hidden !== undefined
-  const hasNote = body.note !== undefined
-  if (!hasHidden && !hasNote) fail('E_WTG_UPDATE_EMPTY')
-  if (hasHidden && typeof body.hidden !== 'boolean') fail('E_HIDDEN_NOT_BOOLEAN')
-  const note = hasNote ? normalizeNote(body.note) : undefined
+  const request = parseUpdateWantToGo(input)
+  const { id } = request
 
   return runV2Transaction(files, ctx, (draft) => {
     const items = draft.files.wantToGo.items
     const index = items.findIndex((item) => item.id === id)
-    if (index < 0) fail('E_WTG_NOT_FOUND', { id })
+    if (index < 0) wishNotFound(id)
     const next: CanonicalWantToGoItem = { ...items[index] }
-    if (hasHidden) next.hidden = body.hidden as boolean
-    if (hasNote) {
-      if (note) next.note = note
+    if (request.hidden !== undefined) next.hidden = request.hidden
+    if (request.note) {
+      if (request.note.value) next.note = request.note.value
       else delete next.note
     }
     items[index] = next
@@ -191,17 +131,12 @@ export const WTG_DELETE_PLACES_FAILURE = '想去记录已删除，但地点注�
  * 写盘：想去 → 地点注册表（有地点可删时）。
  */
 export function deleteHiddenWantToGo(files: V2FilesOrEmpty | undefined, input: unknown, ctx: V2WriteContext): V2WriteOutcome<{ deletedIds: string[] }> {
-  const body = bodyOf(input)
-  const ids = Array.isArray(body.ids)
-    ? [...new Set(body.ids.filter((id): id is string => typeof id === 'string' && id.trim() !== '').map((id) => id.trim()))]
-    : []
-  if (ids.length === 0) fail('E_WTG_DELETE_EMPTY')
+  const ids = parseDeleteWantToGo(input)
 
   return runV2Transaction(files, ctx, (draft) => {
     const items = draft.files.wantToGo.items
     const itemsById = new Map(items.map((item) => [item.id, item]))
-    const invalid = ids.filter((id) => itemsById.get(id)?.hidden !== true)
-    if (invalid.length > 0) fail('E_WTG_DELETE_NOT_HIDDEN', { ids: invalid })
+    requireAllHidden(ids, (id) => itemsById.get(id)?.hidden === true)
 
     const removed = new Set(ids)
     const candidates: PlaceId[] = []
