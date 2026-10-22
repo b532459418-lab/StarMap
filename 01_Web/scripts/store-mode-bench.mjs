@@ -473,7 +473,8 @@ export async function restoreSegment(dir) {
  * - batches (50 rows and more): the 100 countries' order reversed, and 60 cities hidden or shown again, as view
  *   operations and as PUT /state (`batches` each);
  * - mixed paths: a V2-path write (a planned record marked visited) right after a native one (it builds the V2 view
- *   again), and the same write after a V2 write (its view is cached), `batches` times each.
+ *   again), and the same write after a V2 write (its view is cached), `batches` times each. Since 3C-5 C2 the conversion
+ *   is native too and the session keeps no V2 view; the labels stay as they were so that runs compare across batches.
  * Per label: the client's end to end and the host's plan (or V2 write and diff), commit, index update, commands and total.
  * The module is not loaded between writes (no page reload: the in-host times do not depend on it).
  */
@@ -554,10 +555,10 @@ export async function nativeSegment(dir, scale) {
     for (const [n, id] of wishes.entries()) await send('wanttogo/update: note', 'POST', 'wanttogo/update', { id, note: `Synthetic native note ${n}` })
     for (const id of wishes) await send('wanttogo/update: hide', 'POST', 'wanttogo/update', { id, hidden: true })
     for (const id of wishes) await send('wanttogo/delete', 'POST', 'wanttogo/delete', { ids: [id] })
-    // Mixed paths: a V2-path write right after a native one builds the V2 view again.
+    // Mixed paths: a V2-path write right after a native one built the V2 view again (3C-5 C1; native since C2).
     for (let n = 0; n < batches; n++) {
       await send('wanttogo/update: note (before a V2 write)', 'POST', 'wanttogo/update', { id: `wish-${(n * 97) % scale.wishes}`, note: `Synthetic mixed ${n}` })
-      // Nothing reads the V2 view in between (the page reads the read model): the V2 write builds it again itself.
+      // Nothing reads the V2 view in between (the page reads the read model): in 3C-5 C1 the V2 write built it again itself.
       await send('convert planned, right after a native write (V2 path)', 'POST', 'wanttogo/convert', { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' })
     }
     for (let n = batches; n < 2 * batches; n++) {

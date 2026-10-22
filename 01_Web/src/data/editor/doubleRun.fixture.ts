@@ -188,7 +188,8 @@ function renameIds(value: unknown, { dropHeaders }: { dropHeaders: boolean }): u
 
 /**
  * The derived baseline of a state, as JSON with every UUID renamed `#n` in the order it first appears (keys too), the file
- * headers left out, and V2-only `source: 'local-editor'` values dropped. `adjust` changes the official view first.
+ * headers left out, and the V2-only values (`source: 'local-editor'`, `type: 'visit'`, `status: 'visited'`) dropped; a new
+ * journey's `journey-<UUID>` is renamed like a UUID. `adjust` changes the official view first.
  */
 export function normalizedBaseline(state: FormalState, adjust?: (canonical: CanonicalData) => CanonicalData): unknown {
   const canonical = adjust ? adjust(canonicalOf(state)) : canonicalOf(state)
