@@ -16,7 +16,7 @@ import { tempPrivateRoot } from './store-mode.fixture.mjs'
 /** A scan with a hash counter. */
 async function counted(paths, cache = []) {
   let calls = 0
-  const result = await scanInbox({ privatePaths: paths, places: syntheticPlaces(), cache, hashFile: (file) => { calls += 1; return sha256File(file) } })
+  const result = await scanInbox({ privatePaths: paths, places: syntheticPlaces().places, cache, hashFile: (file) => { calls += 1; return sha256File(file) } })
   return { ...result, calls }
 }
 const cacheOf = (facts) => scanCacheEntriesOf(facts).map(({ path: pathValue, size, mtimeMs, sha256 }) => ({ pathKey: pathKeyOf(pathValue), size, mtimeMs, sha256 }))

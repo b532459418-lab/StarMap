@@ -4,7 +4,7 @@
  * unfinished and that the store is not read-only. Kept apart from the plugin so the tests drive them on temporary roots.
  *
  * - Upload writes only the Inbox (the file, a new folder's place.json, a drone sidecar entry), exactly as in V2; the
- *   place registry comes from the store's view. It commits nothing.
+ *   places come from the store's official reader (3C-5 E). It commits nothing.
  * - Import and deletion are store writes with the client protocol of 3C-3 (x-starmap-request-id, x-starmap-base-revision).
  *   A retried request answers with its receipt. Import: the paths in `sourcePaths` (what the page just uploaded) are
  *   explicit additions (review §8-3); the rest of the Inbox is scanned. Source matches that need confirming refuse the
@@ -39,13 +39,14 @@ function explicitPathsOf(input, normalize) {
  * mediaStore(); `deps` the plugin's helpers (as for V2: safeSegment, reserveDestination, writeUpload, updateDroneSidecar,
  * normalizeInboxRelativePath). Resolves { status, body }.
  */
-export async function handleStoreMediaRoute({ routeName, privatePaths, mediaStore, query, request, input, headers, deps, leaseToken, now, allocateId }) {
+export async function handleStoreMediaRoute({ routeName, privatePaths, mediaStore, query, request, input, headers, deps, leaseToken, allocateId }) {
   // An upload decodes the file with sharp too: no Inbox file stays open (see releaseImageFiles).
   releaseImageFiles()
-  if (routeName === 'upload') return handleV2Upload({ privatePaths, query, request, deps, files: (await mediaStore.view()).files })
+  // 3C-5 E: the upload target from the official reader (read at once by handleV2Upload, before any other await).
+  if (routeName === 'upload') return handleV2Upload({ privatePaths, query, request, deps, reader: (await mediaStore.official()).reader })
   const protocol = storeProtocolOf(headers)
   if (protocol.failure) return protocol.failure
-  const service = createMediaService({ privatePaths, store: mediaStore, ...(now ? { now } : {}), ...(allocateId ? { allocateId } : {}) })
+  const service = createMediaService({ privatePaths, store: mediaStore, ...(allocateId ? { allocateId } : {}) })
   try {
     if (routeName === 'import') {
       const explicitPaths = explicitPathsOf(input, deps.normalizeInboxRelativePath)

@@ -105,7 +105,7 @@ export async function seedMediaRegistry({ privatePaths, places, media, records, 
 
   // A library without an Inbox has no source to register (the scan would only report the missing folder).
   const hasInbox = await lstat(privatePaths.inboxRoot).then((info) => info.isDirectory(), () => false)
-  const scan = hasInbox ? await scanInbox({ privatePaths, places, hashFile }) : { facts: [], errors: [] }
+  const scan = hasInbox ? await scanInbox({ privatePaths, places: places?.places ?? [], hashFile }) : { facts: [], errors: [] }
   const sources = []
   const registered = new Set()
   let present = 0, missing = 0, unregistered = 0

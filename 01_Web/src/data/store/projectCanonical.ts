@@ -151,6 +151,18 @@ export function addedCountryValueOf(evidence: Evidence, visit: LayerEntry | unde
   return value
 }
 
+/**
+ * A media item's Canonical value from its media entity and asset: the asset's metadata, its V2 id (the asset's V2 media
+ * record, else the asset id), the entity's place, and its title (the entity's, unless it is empty and the V2 title was
+ * kept). The caller checks that the place is a place.
+ */
+export function mediaValueOf(entity: StoreEntity, asset: AssetReference): Json {
+  const kept = v2Of(entity).title
+  const title = Object.keys(entity.title.names).length ? entity.title : plain(kept) ? kept : undefined
+  const id = asset.source.sourceId === V2_SOURCES.media ? asset.source.recordId : asset.id
+  return { ...asset.attributes, id, placeId: entity.fields.place as string, ...(title !== undefined ? { title: title as Json } : {}) }
+}
+
 /** The view rows of one scope, as the projection reads them (its own groups, or a read model index). */
 export interface ViewScopeAccess {
   /** Items of a scope, in any order. */
@@ -346,10 +358,7 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
     const placeId = entity.fields.place
     if (!asset || typeof placeId !== 'string' || !isPlace(placeId) || mediaAssets.has(asset.id)) continue
     mediaAssets.add(asset.id)
-    const kept = v2Of(entity).title
-    const title = Object.keys(entity.title.names).length ? entity.title : plain(kept) ? kept : undefined
-    const id = asset.source.sourceId === V2_SOURCES.media ? asset.source.recordId : asset.id
-    media.push({ itemId: asset.id, value: { ...asset.attributes, id, placeId, ...(title !== undefined ? { title: title as Json } : {}) }, after: ['', entity.id] })
+    media.push({ itemId: asset.id, value: mediaValueOf(entity, asset), after: ['', entity.id] })
     consume('entities', entity.id); consume('assets', asset.id)
   }
 

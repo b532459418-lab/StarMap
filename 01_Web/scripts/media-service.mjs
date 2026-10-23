@@ -20,10 +20,13 @@
  * give now (mediaRecords.ts rereadMediaRecordCommands), and their sources the new description digest. A record whose
  * present sources describe it differently is refused and listed; a source whose file is gone or changed is listed.
  *
- * `store` is the media store adapter: { readOnly, meta(), view() → { files, revision } (3C-5 C2: the V2 shape of the read model,
- * generated through the official view for each call, for the media rules that still take it), mediaRegistry(), mediaEntities(),
- * read(reader → value), lookup(requestId), commit(request, { leaseToken }), settleFileOps(work, { leaseToken }) }:
- * store-session.mjs mediaStore() for the dev server, handleMediaStore(handle) for a command line.
+ * `store` is the media store adapter: { readOnly, meta(), official() → { revision, reader } (3C-5 E: the official reader at the
+ * store's current revision, ../src/data/store/officialReader.ts; the media rules read their places, editor lists and media
+ * items from it, never a V2 shape), mediaRegistry(), mediaEntities(), read(reader → value), lookup(requestId),
+ * commit(request, { leaseToken }), settleFileOps(work, { leaseToken }) }: store-session.mjs mediaStore() for the dev server,
+ * handleMediaStore(handle) for a command line. The session's reader answers from its live index, which moves on with the
+ * next commit: what an operation needs is read from it at once, before any await, and every commit carries the
+ * reader's revision as its base (a plan made before another commit is refused, E_STALE).
  */
 import { open, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -34,9 +37,10 @@ import { runPendingFileOps } from './media-file-ops.mjs'
 import { classifyScan, liveRecordsOf, pinsFor, registryDeltaOf, resolveClassification } from './media-registry.mjs'
 import { IMPORT_BLOCKING_PATTERN, describeMediaFile, scanInbox } from './media-scan.mjs'
 import { directoryOf, pathKeyOf } from './store-media-registry.mjs'
-import { projectToV2Files } from './store-projection.mjs'
 import { publishGeneratedFiles } from './v2-media-import.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
+import { officialReader } from '../src/data/store/officialReader.ts'
+import { indexReadModel } from '../src/worldgraph/readModel/lookup.ts'
 import { createMediaRecordCommands, removeMediaRecordCommands, rereadChanges, rereadMediaRecordCommands } from '../src/data/store/mediaRecords.ts'
 import { deletableMediaOf, generatedDirectoriesOf } from '../src/data/v2media/editorWrites.ts'
 import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
@@ -77,14 +81,14 @@ export function assetsOfPaths(store, keys, created) {
   return ids
 }
 
-/** The media store adapter of an open store handle (a command line, tests): the view is projected on each call. */
+/** The media store adapter of an open store handle (a command line, tests): the official reader of a fresh read model on each call. */
 export function handleMediaStore(handle) {
   return {
     get readOnly() { return handle.readOnly },
     meta: () => handle.meta(),
-    async view() {
-      const rows = handle.readRowsUnchecked()
-      return { files: projectToV2Files(rows).files, revision: rows.revision }
+    async official() {
+      const model = handle.readModel()
+      return { revision: model.revision, reader: officialReader(indexReadModel(model)) }
     },
     mediaRegistry: () => handle.mediaRegistry(),
     mediaEntities: () => handle.mediaEntities(),
@@ -104,10 +108,9 @@ async function syncDirectory(directory) {
 }
 
 /**
- * The service for one private root. `now` gives the time of the V2 rules (deletion) and `allocateId` the UUIDv7 of new
- * rows (tests inject both); `hashFile` is injectable.
+ * The service for one private root. `allocateId` gives the UUIDv7 of new rows (tests inject it); `hashFile` is injectable.
  */
-export function createMediaService({ privatePaths, store, allocateId = () => uuidv7(), now = () => new Date(), hashFile = sha256File }) {
+export function createMediaService({ privatePaths, store, allocateId = () => uuidv7(), hashFile = sha256File }) {
   releaseImageFiles()
 
   /** A request already committed: its receipt (a retry); the same id with another body or base is E_OPERATION_CONFLICT. */
@@ -124,12 +127,16 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
    * matches }, blocked, nothingToWrite, registry, records }. `explicitPaths` are portable `MediaInbox/…` paths added on
    * purpose (§8-3); confirmations apply only with `acceptSourceMatches` and `acceptFolderBindings`; `blockOnWarnings`
    * applies the editor importer's rule for uncertain information (the endpoint and tasks; the command line imports with it).
+   * `editorLists` are the official editor lists at the plan's revision (a task's preview appends to its city's order).
    */
   async function planImport({ explicitPaths = [], acceptSourceMatches = false, acceptFolderBindings = false, blockOnWarnings = true } = {}) {
-    const view = await store.view()
+    const { revision, reader } = await store.official()
+    // Read at once (see the file header): the places of the scan and the editor lists.
+    const places = reader.places()
+    const editorLists = reader.editorLists()
     const registry = store.mediaRegistry()
     const records = liveRecordsOf({ entities: store.mediaEntities() }, registry.assetFiles)
-    const scan = await scanInbox({ privatePaths, places: view.files.places, cache: registry.scanCache, hashFile })
+    const scan = await scanInbox({ privatePaths, places, cache: registry.scanCache, hashFile })
     const explicit = new Set(explicitPaths.map((value) => pathKeyOf(value)))
     const classification = classifyScan({ sources: registry.sources, records, facts: scan.facts, explicit })
     // Describe what would be created once every match is confirmed, so the preview shows its problems too.
@@ -157,7 +164,7 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     const cacheChanged = registryDeltaOf({ newRecords: [], moves: [], reappeared: [], gone: [] }, { created: new Map(), files: new Map(), registeredFiles: new Set(), facts: scan.facts, cache: registry.scanCache }).scanCache.length > 0
     const nothingToWrite = proposed.newRecords.length === 0 && classification.moves.length === 0 && classification.confirmations.length === 0
       && classification.reappeared.length === 0 && classification.gone.length === 0 && !cacheChanged
-    return { revision: view.revision, files: view.files, scan, classification, decisions, newRecords, pins, warnings, blockers, blocked, nothingToWrite, registry, records }
+    return { revision, editorLists, scan, classification, decisions, newRecords, pins, warnings, blockers, blocked, nothingToWrite, registry, records }
   }
 
   /** Lines of a plan (the endpoint's `output`, the command line's report). Paths only where the importer printed them. */
@@ -255,9 +262,9 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     if (store.readOnly) fail('E_STORE_READ_ONLY')
     const replay = replayOf(requestId, kind, baseRevision)
     if (replay) return replay
-    const view = await store.view()
-    if (baseRevision !== undefined && view.revision !== baseRevision) fail('E_STALE')
-    const { ids, items } = deletableMediaOf(view.files, input, now())
+    const { revision, reader } = await store.official()
+    if (baseRevision !== undefined && revision !== baseRevision) fail('E_STALE')
+    const { ids, items } = deletableMediaOf(reader, input)
     generatedDirectoriesOf(items)
     const registry = store.mediaRegistry()
     const entities = store.mediaEntities()
@@ -281,7 +288,7 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
           .map((sha256) => ({ kind: 'delete-generated', target: directoryOf(sha256), detail: { sha256 } })),
       ],
     })
-    const result = await store.commit({ requestId, baseRevision: view.revision, kind, actor, commands: [...commands], media }, { leaseToken })
+    const result = await store.commit({ requestId, baseRevision: revision, kind, actor, commands: [...commands], media }, { leaseToken })
     const drained = await runPendingFileOps({ privatePaths, store, leaseToken, hashFile })
     return { deletedIds: ids, revision: result.revision, receipt: result.receipt, drained }
   }
@@ -292,10 +299,11 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
    * { assetId, sources }), problems (lines) }. `changes` lists what differs (place, title, described keys).
    */
   async function planReread({ paths }) {
-    const view = await store.view()
+    const { revision, reader } = await store.official()
+    const places = reader.places()
     const registry = store.mediaRegistry()
     const assetOf = new Map(store.mediaEntities().map((row) => [row.id, row.fields.asset]))
-    const scan = await scanInbox({ privatePaths, places: view.files.places, cache: registry.scanCache, hashFile })
+    const scan = await scanInbox({ privatePaths, places, cache: registry.scanCache, hashFile })
     const facts = new Map(scan.facts.map((fact) => [fact.pathKey, fact]))
     const scopes = paths.map((value) => pathKeyOf(value).replace(/\/+$/, ''))
     const inScope = (key) => scopes.some((scope) => key === scope || key.startsWith(`${scope}/`))
@@ -331,7 +339,7 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
         digest: described[0].fact.descriptionDigest, seqs: described.filter(({ source }) => source.descriptionDigest !== described[0].fact.descriptionDigest).map(({ source }) => source.seq),
       })
     }
-    return { revision: view.revision, records, conflicts, problems }
+    return { revision, records, conflicts, problems }
   }
 
   /**

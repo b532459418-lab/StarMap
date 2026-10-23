@@ -8,6 +8,8 @@
  *   resolution); the cities of a country (`citiesOf`, for the city candidates).
  * - Want-to-go items: by their V2 id (`wish`), on a place (`wishesOn`); each with its entry and hidden view row.
  * - The editor state's lists (`editorLists`) and the rows of a view scope (`scope`).
+ * - 3C-5 E: every place in the official order (`places`, the media rules' place index) and a media item by its V2 id
+ *   (`mediaItem`, the media deletion rule).
  * - 3C-5 C2: footprint and planned records (`record`, `recordsOn`, `recordById`, `recordsInOrder`, `visitedTitled`), each
  *   with its entry and the official view's value (recordValueOf); the journey the projection assigns a footprint entry to
  *   (`journeyOfEntry`) and a journey's members (`journeyMembers`); the added countries (`addedCountries`).
@@ -16,13 +18,13 @@
  */
 import type { ViewItem, ViewSetting } from '../../worldgraph/store/formal.ts'
 import type { Ref } from '../../worldgraph/store/reader.ts'
-import type { EntrySequence, Evidence, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
+import type { AssetReference, EntrySequence, Evidence, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
 import type { ReadModelIndex } from '../../worldgraph/readModel/lookup.ts'
 import type { ReadModelTable } from '../../worldgraph/readModel/types.ts'
-import type { CanonicalEditorState, CanonicalPlace, CanonicalWantToGoItem } from '../canonical/types.ts'
+import type { CanonicalEditorState, CanonicalMediaItem, CanonicalPlace, CanonicalWantToGoItem } from '../canonical/types.ts'
 import { OFFICIAL, V2_SOURCES, VIEW_SCOPES } from './officialDefinitions.ts'
 import {
-  addedCountryValueOf, editorListsOf, officialEntryRole, placeValueOf, recordIdOf, recordValueOf, wishValueOf, type ViewScopeAccess,
+  addedCountryValueOf, editorListsOf, mediaValueOf, officialEntryRole, placeValueOf, recordIdOf, recordValueOf, wishValueOf, type ViewScopeAccess,
 } from './projectCanonical.ts'
 
 /** The index the reader needs: lookups, and reverse references (the host's live index has them). */
@@ -76,6 +78,8 @@ export interface OfficialReader {
   /** True when `id` is a place (an entity of the place type): place(id) is defined. */
   isPlace(id: string): boolean
   subtypeOf(id: string): 'country' | 'city' | undefined
+  /** Every place, in the official order (the official view's places). */
+  places(): readonly CanonicalPlace[]
   /** Every country, in the official order. */
   countries(): readonly CanonicalPlace[]
   /** The cities whose country (first part-of relation to a place) is `countryId`, in the official order. */
@@ -86,6 +90,11 @@ export interface OfficialReader {
   wishesOn(placeId: string): readonly OfficialWish[]
   /** The editor state's lists (the official view's editorState without the added countries and headers). */
   editorLists(): EditorLists
+  /**
+   * The media item with this V2 id, as the official view gives it (the asset's metadata, V2 id, place and title), if
+   * any. Two assets with one V2 id (no valid library has them): the first by media entity id answers.
+   */
+  mediaItem(id: string): CanonicalMediaItem | undefined
   /** The items and settings of one view scope. */
   scope(scope: string): { readonly items: readonly ViewItem[]; readonly settings: readonly ViewSetting[] }
   /** The view item of `scope` that targets `table`/`id`, if any. */
@@ -156,6 +165,23 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     }).map((id) => place(id)!)
   }
   let countryList: readonly CanonicalPlace[] | undefined
+  let placeList: readonly CanonicalPlace[] | undefined
+  /** The media items by V2 id: the projection's rule (media entities by id, each asset once, on a place). */
+  let mediaItems: Map<string, CanonicalMediaItem> | undefined
+  const mediaIndex = () => {
+    if (mediaItems) return mediaItems
+    mediaItems = new Map()
+    const used = new Set<string>()
+    for (const entity of index.entitiesOfType(OFFICIAL.media)) {
+      const asset = typeof entity.fields.asset === 'string' ? index.get('assets', entity.fields.asset) as AssetReference | undefined : undefined
+      const placeId = entity.fields.place
+      if (!asset || typeof placeId !== 'string' || !isPlaceEntity(placeId) || used.has(asset.id)) continue
+      used.add(asset.id)
+      const item = mediaValueOf(entity, asset) as unknown as CanonicalMediaItem
+      if (!mediaItems.has(item.id)) mediaItems.set(item.id, item)
+    }
+    return mediaItems
+  }
   const scopeAccess: ViewScopeAccess = { items: (scope) => index.viewItemsOf(scope), settings: (scope) => index.viewSettingsOf(scope) }
   let lists: EditorLists | undefined
   let wishes: { byId: Map<string, OfficialWish>; byPlace: Map<string, OfficialWish[]> } | undefined
@@ -289,6 +315,10 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
       const subtype = entity?.typeId === OFFICIAL.place ? entity.fields.subtype : undefined
       return subtype === 'country' || subtype === 'city' ? subtype : undefined
     },
+    places() {
+      placeList ??= Object.freeze(inOfficialOrder(index.entitiesOfType(OFFICIAL.place).map((entity) => entity.id)))
+      return placeList
+    },
     countries() {
       countryList ??= Object.freeze(inOfficialOrder(index.entitiesOfType(OFFICIAL.place)
         .filter((entity) => entity.fields.subtype === 'country').map((entity) => entity.id)))
@@ -305,6 +335,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
       lists ??= editorListsOf(scopeAccess, isPlaceEntity, (id) => index.get('assets', id) !== undefined) as unknown as EditorLists
       return lists
     },
+    mediaItem: (id) => mediaIndex().get(id),
     scope: (scope) => ({ items: index.viewItemsOf(scope), settings: index.viewSettingsOf(scope) }),
     viewItem: (scope, table, id) => index.viewItemsOf(scope).filter((item) => item.itemTable === table && item.itemId === id)
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0],

@@ -3,7 +3,8 @@
  * (walkInbox of ./v2-media-import.mjs: the same folders, bindings, sidecars and messages) and returns one fact per media
  * file, without merging files of the same content (D2: each confirmed source is one record) and without covers.
  *
- * - The places come from the caller (the store's V2 view), never from `data/v2/`.
+ * - The places come from the caller (3C-5 E: the official reader's places, in the official order; a migration's V2
+ *   places file), never from `data/v2/`.
  * - Hashing: a path whose size and modification time match its scan cache row (media_scan_cache) reuses that SHA-256;
  *   every other file is hashed as a stream. Emptying the cache only makes the next scan hash again.
  * - Each fact carries a description digest: the place, kind and sidecar entry the scan resolves for the file. The
@@ -22,11 +23,9 @@ import { sha256File } from './file-hash.mjs'
 import { portablePath } from './library-backup.mjs'
 import { INBOX_PREFIX, pathKeyOf } from './store-media-registry.mjs'
 import { extensionProblemOf, unlabelledDroneWarning, walkInbox } from './v2-media-import.mjs'
-import { validateV2Files } from '../src/data/canonical/v2Schema.ts'
 import {
   buildMediaItem, contentHashOf, createMediaPlaceIndex, generatedFilesOf, isLikelyEquirectangularPanorama, isStillMedia, orientedDimensions,
 } from '../src/data/v2media/importPlan.ts'
-import { completeForWrite } from '../src/data/v2write/transaction.ts'
 import { jsonKey } from '../src/worldgraph/store/primitives.ts'
 
 const toPosix = (value) => value.split(path.sep).join('/')
@@ -47,7 +46,7 @@ export const descriptionDigestOf = ({ placeId, kind, metadata }) => createHash('
   .update(jsonKey({ placeId, kind, metadata: metadata ?? {} })).digest('hex')
 
 /**
- * Scan the Inbox of `privatePaths` against `places` (the V2 places file of the store's view). `cache` is the scan cache
+ * Scan the Inbox of `privatePaths` against `places` (CanonicalPlace values: the official reader's places). `cache` is the scan cache
  * (`[{ pathKey, size, mtimeMs, sha256 }]`, media_scan_cache); `hashFile` is injectable (tests count it).
  * Resolves { facts, errors, warnings, pins, hashed }:
  * - facts: `{ path, pathKey, relativePath, absolutePath, size, mtimeMs, sha256, fromCache, extension, kind, unlabelled,
@@ -57,19 +56,15 @@ export const descriptionDigestOf = ({ placeId, kind, metadata }) => createHash('
  * - pins: folder bindings found by name, `{ folder, directory, placeId, subtype, names, source }` (`folder` portable);
  * - hashed: how many files were hashed (the others came from the cache).
  */
-export async function scanInbox({ privatePaths, places, cache = [], hashFile = sha256File, now = () => new Date() }) {
+export async function scanInbox({ privatePaths, places, cache = [], hashFile = sha256File }) {
   const inboxRoot = privatePaths.inboxRoot
   const errors = []
   const warnings = []
   const pins = []
   const facts = []
   let hashed = 0
-  const placeProblems = validateV2Files(completeForWrite({ places }, now())).filter((problem) => problem.file === 'places')
-  if (placeProblems.length > 0) {
-    errors.push(`新库的地点没有通过校验（${placeProblems.length} 处），无法解析照片归属：${placeProblems.slice(0, 5).map((problem) => `${problem.path}：${problem.message}`).join('；')}`)
-    return { facts, errors, warnings, pins, hashed }
-  }
-  const index = createMediaPlaceIndex(places?.places ?? [])
+  // 3C-5 E: the store's places, checked by Core when they were written (no V2 validation of a places file any more).
+  const index = createMediaPlaceIndex(places)
   const cached = new Map(cache.map((row) => [row.pathKey, row]))
   await walkInbox({
     inboxRoot, index, errors, warnings, pins,

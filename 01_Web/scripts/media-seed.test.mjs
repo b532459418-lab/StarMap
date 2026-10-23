@@ -68,7 +68,7 @@ async function firstScan(paths) {
   try { rows = handle.readRowsUnchecked(); registry = handle.mediaRegistry(); problems = handle.check().problems } finally { await handle.close() }
   const { files } = projectToV2Files(rows)
   let hashed = 0
-  const scan = await scanInbox({ privatePaths: paths, places: files.places, cache: registry.scanCache, hashFile: (file) => { hashed += 1; return sha256File(file) } })
+  const scan = await scanInbox({ privatePaths: paths, places: files.places.places, cache: registry.scanCache, hashFile: (file) => { hashed += 1; return sha256File(file) } })
   const classification = classifyScan({ sources: registry.sources, records: liveRecordsOf(rows, registry.assetFiles), facts: scan.facts })
   return { classification, hashed, registry, rows, files, problems }
 }

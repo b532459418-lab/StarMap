@@ -283,11 +283,11 @@ test('RD-07 received-file modifications and deleted targets are never accepted a
       await rename(replacement, source)
     }
     if (change === 'target') {
-      // The task's city is gone from the library: the store's view without it.
+      // The task's city is gone from the library: the store's official reader without it (3C-5 E: a reader, not a V2 view).
       const real = env.storeMedia.mediaStore
-      env.storeMedia = { mediaStore: { ...real, async view() {
-        const view = await real.view()
-        return { ...view, files: { ...view.files, places: { ...view.files.places, places: view.files.places.places.filter((place) => place.id !== ID.city) } } }
+      env.storeMedia = { mediaStore: { ...real, async official() {
+        const { revision, reader } = await real.official()
+        return { revision, reader: { ...reader, place: (id) => (id === ID.city ? undefined : reader.place(id)) } }
       } } }
     }
     if (change === 'pin') await writeFile(path.join(env.paths.inboxRoot, 'Test Country', 'Test City', 'place.json'), JSON.stringify({ placeId: ID.otherCity }))

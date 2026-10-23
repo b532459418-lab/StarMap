@@ -21,8 +21,9 @@
  *   (src/worldgraph/readModel/liveIndex.ts, built on first use): the native writes plan on it, every commit moves it on
  *   with the commit's changed rows, and the read model is built from it when asked for. The App reads the read model
  *   through the official view. 3C-5 C2: the session keeps no V2 view. Where the V2 shape is still needed (PUT /state,
- *   GET /state, the media rules of the media service and tasks, tests) it is generated from the read model through the
+ *   GET /state, tests) it is generated from the read model through the
  *   official view when asked for (store-projection.mjs projectToV2Files), never cached and never read from data/v2/.
+ *   3C-5 E: the media rules read the official reader over the live index (mediaStore().official()), never a V2 shape.
  * - Incremental refresh (3C-4a, 3C-5B): after a committed write the read model of the new revision is the old one with
  *   the commit's changed rows applied (the live index, or applyReadModelDelta; the host returns them with the receipt).
  *   The store is not read again. The cache is keyed by the
@@ -747,19 +748,19 @@ export function createStoreSession(privatePaths, {
       return writes[`${method} ${pathname}`]
     },
     /**
-     * 3C-4c: the store as the media service uses it (./media-service.mjs): the V2 view at the current revision (3C-5 C2:
-     * generated from the read model through the official view for each call, for the media rules that still take the V2
-     * shape), the registry, the media entities, a reader, receipt lookups, and commits and file settlements queued with
-     * this process's editor writes. A committed media write moves the cached read model on with its changed rows.
+     * 3C-4c: the store as the media service uses it (./media-service.mjs): the official reader at the current revision
+     * (3C-5 E: over the cached live index, as the editor writes plan; read at once, it moves on with the next commit), the
+     * registry, the media entities, a reader, receipt lookups, and commits and file settlements queued with this process's
+     * editor writes. A committed media write moves the cached read model on with its changed rows.
      */
     async mediaStore() {
       const opened = await open()
       return {
         get readOnly() { return opened.readOnly },
         meta: () => opened.meta(),
-        async view() {
-          const { files, revision } = await snapshot()
-          return { files, revision }
+        async official() {
+          const live = (await snapshot()).live
+          return { revision: live.revision, reader: officialReader(live) }
         },
         mediaRegistry: () => opened.mediaRegistry(),
         mediaEntities: () => opened.mediaEntities(),
