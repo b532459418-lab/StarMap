@@ -68,9 +68,9 @@ memory requirement.
 
 The formal store host (`scripts/store-host.mjs`, SQLite through `node:sqlite`,
 Node 24.15 or newer) backs the new library (root README; since 3C-4d the only way personal data is written): the
-plugin reads it through `scripts/store-session.mjs` and the projection of
-`scripts/compat/store-projection.mjs`, and `store:migrate`, `store:backup`,
-`store:restore` and `store:export-v2` are its tools. It runs the rollback journal in
+plugin reads it through `scripts/store-session.mjs`, and `store:backup`, `store:restore`, `store:upgrade` and
+`store:export-read-model` are its tools (`store:migrate` and `store:export-v2`, which read and write V2 files, are in
+`scripts/compat/`). It runs the rollback journal in
 TRUNCATE mode with `synchronous=EXTRA` and `auto_vacuum=INCREMENTAL`. Opening
 checks the header, versions, schema and `store_meta` only; `quick_check` runs at
 open only when the last writer did not close the store (its `clean_shutdown`
@@ -87,16 +87,18 @@ places, 10,000 entries and 10,000 media entities, where the targets apply) and
 measured on the plugin path with synthetic V2 data migrated at the real scale (since 3C-4d its write segments measure
 the store only): `npm run store:bench:mode -- --dir <absolute work directory> --segment generate|read|http|pipeline|editors|native|records|media|backup|restore`
 (see the header of `scripts/store-mode-bench.mjs`; `npm test` runs a tiny scale). Since 3C-5 C1 and C2 every editor
-write is store-native — the view operations (`POST /__travelatlas/editor/view`: orders, hidden lists and covers, which
-the page sends instead of `GET` + `PUT /state`), the three Want to Go endpoints, records, countries, country deletion and
+write is store-native — the view operations (`POST /__travelatlas/editor/view`: orders, hidden lists and covers), the three Want to Go endpoints, records, countries, country deletion and
 conversion: the host plans the commands on its live read-model index through the official reader
 (`src/data/store/officialReader.ts`) with the decision layer the V2 write functions also use (`src/data/editor/rules/`,
 planners in `src/data/editor/native/`), commits once, and moves the index on with the commit's changed rows; new rows
-are `starmap:user` rows (a planned record marked visited keeps its identity). Only `PUT /state`, which the page no
-longer sends, still runs V2's write function and `src/data/store/diffV2.ts`. The session keeps no V2 view: where the
-V2 shape is still needed (`PUT /state`, `GET /state`, the media rules of the media service) it is generated from the
-read model through the official view when asked for. A test-only double run (`src/data/editor/doubleRun.fixture.ts`)
-runs a request in both engines from the same store and compares refusals and the derived baseline.
+are `starmap:user` rows (a planned record marked visited keeps its identity). 3C-5 E retired the V2 write layer
+(`src/data/v2write/`, `diffV2ToCommands`, `GET` and `PUT /__travelatlas/editor/state`): nothing writes V2 files any
+more, and the media rules read the official reader directly. Before the retirement the double run compared both
+engines step by step; its outcome is frozen as the golden output (`src/data/editor/fixtures/editor-golden.json`: every
+scenario and three random sequences, refusals with their codes and parameters, results and derived baselines with ids
+renamed), which the native engine must reproduce step by step (`src/data/editor/golden.test.ts`, with the export round
+trip `serializeV2` → `validateV2Files` + `readV2`; `STARMAP_RECORD_GOLDEN=1` records it again, only for a deliberate
+change of behaviour).
 `STARMAP_STORE_VERIFY=1` makes the dev server read the store after every commit and compare it with its cache
 (development and tests). Every connection to a store file, tests and benchmarks included, is
 opened through `scripts/store-sqlite.mjs` in the same TRUNCATE journal mode: on Windows a connection in SQLite's
@@ -115,6 +117,17 @@ plugin path (see its header; `npm test` runs a tiny scale). 3C-4d: `scripts/priv
 needs recovery (leftovers under `data/store/`) or is empty; only a store is written, an empty root gets its empty
 library from the dev server (`scripts/store-init.mjs`), and everything else answers `E_STORE_MIGRATION_REQUIRED`,
 `E_LEGACY_UNMIGRATED` or `E_STORE_RECOVERY_REQUIRED` before reading a request body.
+What still reads or writes V2 files lives in two compat directories (3C-5 E): `src/data/compat/v2/` (the V2 schema,
+reader and serializer, `canonicalForInputs`, the integrity check, the migration `migrateV2`, the store bridge and the
+V2 media files) and `scripts/compat/` (`store:migrate` and the in-memory migration of a root that awaits migration,
+`store:export-v2`, the V2 projection, the media seed, the V2 sample and the read-only V2 media preview). They serve
+only the migration, the read-only display of a root that awaits migration and the export; `scripts/compat-boundary.test.mjs`
+fails when ordinary code imports them (the App never; a script only when it is listed there with its reason).
+Store format 3 (3C-5 E): an added country is a `starmap:travel` entry on a place whose `subtype` is `country`, whatever
+its source, citing the evidence that holds its region (before, the evidence of the V2 source `v2:country-visit` was the
+added country, and only a dated one had an entry). A store of format 1 or 2 opens with `E_STORE_UPGRADE_REQUIRED`;
+`npm run store:upgrade` takes it to format 3 in one transaction (format 1's media seed, and a visit entry for each
+added country that had none; `src/data/store/storeFormatUpgrades.ts`).
 The read model `starmap.read-model` (3C-5A) is a read-only copy of the store's rows (Core `src/worldgraph/readModel/`):
 the host builds it with `readModel()`, without tombstones, review receipts or the host's own tables, and
 `npm run store:export-read-model -- --out <new file> [--public]` writes it (`--public`: `src/data/store/publicReadModel.ts`;
@@ -289,9 +302,9 @@ For each public update, bump the package version, create a matching semantic-ver
 - `src/data/mediaCatalog.ts` receives personal media only in personal mode; `src/data/droneMedia.ts` contains no built-in user media.
 - `scripts/private-profile.mjs` resolves the external private root without reading or printing secrets.
 - `scripts/local-editor-plugin.mjs` provides the loopback-only editor in personal development and injects no private data in public mode; `scripts/private-data-module.mjs` holds its virtual-module and file-watch rules. `scripts/local-editor-request-guard.mjs` holds its request checks: in the personal profile Vite's CORS is off, a guard ahead of Vite's own middlewares refuses cross-site and same-site browser requests other than page navigations (so another local page cannot read the private-data module, `/media/user/*`, `/@fs/` or the editor), and the read-only endpoints and `/media/user/*` accept only same-origin reads. `vite preview` (`npm run preview`) may serve a personal build, so in every mode it grants no CORS and runs the same cross-site guard ahead of its own middlewares. See `03_Reference/TravelAtlas_open_source_privacy_boundary.md`.
-- `scripts/v2-editor-store.mjs` and `scripts/v2-media-store.mjs` read and write `data/v2/` behind the editor's write endpoints; the rules themselves, including Mark as visited, are pure functions in `src/data/v2write/` and `src/data/v2media/`.
-- `src/data/store/` is the App side of the formal World Graph store (`src/worldgraph/store/`); nothing reads or writes it yet. `officialDefinitions.ts` holds the official `starmap:*` entity types, layers, relation type and sources, the `v2:*` import sources, and one view scope per V2 semantic. `migrateV2.ts` turns the five V2 files into one dependency-ordered command batch that `planCommands` writes into an empty store; it refuses, generating nothing, when any record would be lost, and keeps every value without a formal field verbatim in the row's `extensions.v2`. `projectCanonical.ts` projects the store back to `CanonicalData`, so the existing derivation and `serializeV2` (export as V2) work unchanged; rows that Canonical cannot express, such as entries of another layer, are listed as skipped.
-- `scripts/import-media.mjs` (`npm run media:check`, `npm run media:import`) runs the media importer in `scripts/compat/v2-media-import.mjs`.
+- `scripts/v2-media-store.mjs` chooses the Inbox folder of an upload and receives it for the new library's media endpoints (the name is historical: it no longer touches `data/v2/`); the editor's rules, including Mark as visited, are pure functions in `src/data/editor/rules/` and `src/data/v2media/`, and the store-native writes are planned in `src/data/editor/native/`.
+- `src/data/store/` is the App side of the formal World Graph store (`src/worldgraph/store/`). `officialDefinitions.ts` holds the official `starmap:*` entity types, layers, relation type and sources, the `v2:*` import sources, and one view scope per V2 semantic. `projectCanonical.ts` projects the store back to `CanonicalData` (the official view the App reads, and `serializeV2` for the export); rows that Canonical cannot express, such as entries of another layer, are listed as skipped. `officialReader.ts` answers the native writes from the live read-model index; `v2RecordRows.ts` builds the rows the migration and the native writes share; `storeFormatUpgrades.ts` holds the rows a format upgrade writes. The migration (`src/data/compat/v2/migrateV2.ts`) turns the five V2 files into one dependency-ordered command batch that `planCommands` writes into an empty store; it refuses, generating nothing, when any record would be lost, and keeps every value without a formal field verbatim in the row's `extensions.v2`.
+- `scripts/import-media.mjs` (`npm run media:check`, `npm run media:import`) runs the new library's media import (`scripts/store-media-cli.mjs`; the Inbox walk and the publisher of generated files are `scripts/media-inbox.mjs`); on a root that awaits migration `media:check` is the read-only V2 preview of `scripts/compat/v2-media-import.mjs`.
 - `scripts/json-file.mjs` holds the JSON read, backup, and atomic-write helpers shared by the editor, the importer, and the migration tool.
 - `scripts/public-release-check.mjs` rebuilds a clean Git archive in the OS temporary directory, so public-release verification cannot see the private layer.
 - Project-level rules, contribution guide, and edition boundaries live one directory above this web workspace (`AGENTS.md`, `CONTRIBUTING.md`, `docs/editions.md`).
