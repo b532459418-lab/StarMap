@@ -162,8 +162,11 @@ const JOURNEY = /^journey-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 
 const canonicalOf = (state: FormalState): CanonicalData => projectStoreToCanonical(state, { source: 'local', track: false, freeze: false }).canonical
 
-/** Strings renamed `#n` in the order they first appear when they are UUIDs (keys too); other values as they are. */
-function renameIds(value: unknown, { dropHeaders }: { dropHeaders: boolean }): unknown {
+/**
+ * Strings renamed `#n` in the order they first appear when they are UUIDs (keys too); other values as they are. With
+ * `dropHeaders`, the file headers and the V2-only values of new records are left out (design §9 changes 2, 3).
+ */
+export function renameIdsForComparison(value: unknown, { dropHeaders }: { dropHeaders: boolean }): unknown {
   const names = new Map<string, string>()
   const rename = (text: string) => {
     if (!UUID.test(text) && !JOURNEY.test(text)) return text
@@ -193,7 +196,7 @@ function renameIds(value: unknown, { dropHeaders }: { dropHeaders: boolean }): u
  */
 export function normalizedBaseline(state: FormalState, adjust?: (canonical: CanonicalData) => CanonicalData): unknown {
   const canonical = adjust ? adjust(canonicalOf(state)) : canonicalOf(state)
-  return renameIds(JSON.parse(stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW }))), { dropHeaders: true })
+  return renameIdsForComparison(JSON.parse(stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW }))), { dropHeaders: true })
 }
 
 /**
@@ -234,7 +237,7 @@ export function compareOutcomes(before: FormalState, old: EngineOutcome, native:
     const out: string[] = []
     if (old.error.code !== native.error.code) out.push(`code: old ${old.error.code} / native ${native.error.code}`)
     // New places get different ids in the two engines: compared by first appearance.
-    const params = (error: NonNullable<EngineOutcome['error']>) => text(renameIds(error.params, { dropHeaders: false }))
+    const params = (error: NonNullable<EngineOutcome['error']>) => text(renameIdsForComparison(error.params, { dropHeaders: false }))
     if (params(old.error) !== params(native.error)) out.push(`params: old ${text(old.error.params)} / native ${text(native.error.params)}`)
     return out
   }
@@ -246,7 +249,7 @@ export function compareOutcomes(before: FormalState, old: EngineOutcome, native:
     while (i < a.length && a[i] === b[i]) i++
     out.push(`${what} differs at ${i}: old …${a.slice(Math.max(0, i - 160), i + 160)}… / native …${b.slice(Math.max(0, i - 160), i + 160)}…`)
   }
-  if (result) differ('result', text(renameIds(old.result, { dropHeaders: true })), text(renameIds(native.result, { dropHeaders: true })))
+  if (result) differ('result', text(renameIdsForComparison(old.result, { dropHeaders: true })), text(renameIdsForComparison(native.result, { dropHeaders: true })))
   differ('derived baseline', text(normalizedBaseline(old.state!, viewOperation ? withoutUnknownMediaBrought(before) : undefined)), text(normalizedBaseline(native.state!)))
   return out
 }
