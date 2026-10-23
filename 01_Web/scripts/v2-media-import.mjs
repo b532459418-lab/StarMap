@@ -5,10 +5,11 @@
  * 私人目录有没有没迁移的旧数据（有则拒绝，退出码 2），然后调用这里的 runV2MediaImport。
  *
  * 3C-4d：个人数据只写新库。media:import 只走 ./store-media-cli.mjs；在不是新库的私人根上，media:check 用这里做只读预检
- * （apply 为 false，不取库租约）。runV2MediaImport 的写入（apply 为 true）保留到 3C-5：
- * 生产代码已经没有入口；只用来为测试生成迁移输入（./media-inbox.fixture.mjs 等）。
+ * （不取库租约，不写任何文件）。3C-5 E 删除了 runV2MediaImport 的写入（3C-4d 起生产代码已经没有入口，只为测试生成迁移
+ * 输入）：测试要的「V2 导入之后的库」由 ./v2-media-import.fixture.mjs 按这里的只读计划写出。
  * 扫描（scanV2MediaImport）与生成文件的发布（publishGeneratedFiles）新库照常共用。
- * 流程与旧导入器相同——扫描投递箱 → 打印报告（预检）→ 加 --apply 时生成三级网页文件并写目录——只有三处不同：
+ * 预检的流程与旧导入器相同（扫描投递箱 → 打印报告），规则只有三处不同（下面「写盘」与「发布」两条说的是 3C-5 E 之前的写入，
+ * 计划与发布函数照旧：测试夹具按计划写，新库的导入用同一个发布函数）：
  *
  * - **归属**：从地点注册表（data/v2/places.local.json）建索引，国家文件夹按 place.json → 旧 country.json 的 countryId
  *   （经 legacyKeys）→ 文件夹名解析，城市文件夹按 place.json → 文件夹名解析；不读旧足迹文件，也不回落到样例。
@@ -43,7 +44,6 @@ import path from 'node:path'
 import sharp from 'sharp'
 
 import { sha256File } from './file-hash.mjs'
-import { atomicJsonWrite } from './json-file.mjs'
 import { V2_FILE_KEYS, validateV2Files } from '../src/data/canonical/v2Schema.ts'
 import {
   DRONE_FOLDER_ALIASES,
@@ -53,7 +53,6 @@ import {
   STILL_EXTENSIONS,
   VIDEO_EXTENSIONS,
   buildMediaItem,
-  catalogIntegrityProblems,
   contentHashOf,
   createMediaPlaceIndex,
   droneKindOf,
@@ -61,19 +60,15 @@ import {
   isLikelyEquirectangularPanorama,
   isStillMedia,
   markCovers,
-  mediaCatalogFileOf,
-  mediaSourceIndexFileOf,
   metadataForFile,
   normalizeName,
   orientedDimensions,
   folderBindingLine,
-  placeConfigOf,
   placeDisplayName,
   resolveCityFolder,
   resolveCountryFolder,
   resolveFileOverride,
   shouldPinFolder,
-  sourcesByIdOf,
   uniqueById,
 } from '../src/data/v2media/importPlan.ts'
 import { completeForWrite } from '../src/data/canonical/v2Integrity.ts'
@@ -211,11 +206,9 @@ const readV2DataFiles = async (privatePaths) => {
   return files
 }
 
-/** 预检与拒绝时列出待确认绑定的标题（本地编辑器的导入器按这几个字判断预检没有通过）。 */
+/** 预检列出待确认绑定的标题（本地编辑器的导入器按这几个字判断预检没有通过）。 */
 export const FOLDER_BINDINGS_HEADING = '待确认的文件夹绑定'
 const FOLDER_BINDINGS_HINT = '确认无误后运行 npm run media:import -- --accept-folder-bindings；不对时在该文件夹里放 place.json 指定地点。'
-/** --apply 遇到待确认的文件夹绑定、又没有 --accept-folder-bindings 时的退出码（什么都不写）。 */
-export const FOLDER_BINDINGS_EXIT_CODE = 2
 
 /**
  * A media file's extension against its kind (the old importer's rule): undefined when supported; `{ error }` for a format
@@ -368,12 +361,10 @@ export async function walkInbox({ inboxRoot, index, errors, warnings, pins, onFi
 }
 
 /**
- * 运行 V2 导入。`apply` 为 false 时只预检（不写任何文件）。`apply` 为 true 的写入（3C-4d 起，保留到 3C-5）：
- * 生产代码已经没有入口；只用来为测试生成迁移输入。返回退出码：0 完成（可能有提醒），1 有需要处理的问题或读写失败，
- * 2 有待确认的文件夹绑定而没有 `acceptFolderBindings`（第 2A 批；什么都不写）。
- * `now` 与两个输出函数可注入（测试用）。
+ * V2 导入的预检（只读，不写任何文件；3C-5 E 删除了写入）。返回退出码：0 通过（可能有提醒或待确认的文件夹绑定），1 有需要
+ * 处理的问题或读失败。`capturePlan` 时不打印，返回计划（scanV2MediaImport）。`now` 与两个输出函数可注入（测试用）。
  */
-export async function runV2MediaImport({ privatePaths, apply = false, verify = false, acceptFolderBindings = false, excludeSourcePaths = [], now = () => new Date(), log = console.log, logError = console.error, capturePlan = false }) {
+export async function runV2MediaImport({ privatePaths, verify = false, excludeSourcePaths = [], now = () => new Date(), log = console.log, logError = console.error, capturePlan = false }) {
   const inboxRoot = privatePaths.inboxRoot
   // 彻底删除的预检（第 1 批 D5）按「删除之后」的投递箱扫描：要删的源文件不参与。只用于只读扫描。
   const sourceKey = (target) => (process.platform === 'win32' ? path.resolve(target).toLowerCase() : path.resolve(target))
@@ -396,7 +387,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, verify = f
       result[item.kind] = (result[item.kind] ?? 0) + 1
       return result
     }, {})
-    log(`StarMap 媒体${apply ? '导入' : '预检'}：${items.length} 个文件`)
+    log(`StarMap 媒体预检：${items.length} 个文件`)
     log(`普通照片 ${counts.photo ?? 0} | 360 全景 ${counts.panorama360 ?? 0} | 航拍照片 ${counts.aerialPhoto ?? 0} | 视频 ${counts.video ?? 0}`)
     if (warnings.length > 0) {
       log(`\n提醒（${warnings.length}）：`)
@@ -406,11 +397,11 @@ export async function runV2MediaImport({ privatePaths, apply = false, verify = f
       logError(`\n需要处理（${errors.length}）：`)
       for (const error of errors) logError(`- ${error}`)
     }
-    if (pins.length > 0 && !(apply && acceptFolderBindings)) {
+    if (pins.length > 0) {
       log(`\n${FOLDER_BINDINGS_HEADING}（${pins.length}）：以下文件夹按名称（或旧 country.json）匹配到地点，确认之后才会写入 place.json 并按它导入：`)
       for (const pin of pins) log(`- ${folderBindingLine(toPosix(relative(pin.directory)), pin)}`)
     }
-    if (!apply && errors.length === 0) {
+    if (errors.length === 0) {
       log(pins.length > 0
         ? `\n预检通过，但有按名称匹配的文件夹绑定需要确认。${FOLDER_BINDINGS_HINT}`
         : '\n预检通过。确认无误后运行 npm run media:import。')
@@ -520,28 +511,7 @@ export async function runV2MediaImport({ privatePaths, apply = false, verify = f
   if (verify) await verifyGeneratedOriginals({ files, unique, outputRoot, errors, log })
   printReport(items)
 
-  if (errors.length > 0) {
-    if (apply) logError('\n未写入任何新目录。请先处理以上问题。')
-    return 1
-  }
-  if (!apply) return 0
-  if (pins.length > 0 && !acceptFolderBindings) {
-    logError(`\n未写入任何文件：有 ${pins.length} 个按名称匹配的文件夹绑定还没有确认（见上）。${FOLDER_BINDINGS_HINT}`)
-    return FOLDER_BINDINGS_EXIT_CODE
-  }
-
-  // ---- 写盘：先检查，再生成网页文件，最后原子写两个 JSON ----
-  const generatedAt = now().toISOString()
-  const catalog = mediaCatalogFileOf(items, generatedAt)
-  const problems = catalogIntegrityProblems(files, catalog, now())
-  if (problems.length > 0) {
-    logError(`\n需要处理（1）：\n- 新的媒体目录放进 V2 数据后没有通过完整性检查（${problems.length} 处）：${problems.slice(0, 5).join('；')}`)
-    logError('\n未写入任何新目录。请先处理以上问题。')
-    return 1
-  }
-
-  await applyV2MediaImportScan({ privatePaths, scan: captured(files, unique, items), now, log, acceptFolderBindings })
-  return 0
+  return errors.length > 0 ? 1 : 0
 }
 
 /**
@@ -568,14 +538,14 @@ async function verifyGeneratedOriginals({ files, unique, outputRoot, errors, log
 }
 
 /** The CLI and durable task planner share exactly one Inbox scanner. Never writes. */
-export const scanV2MediaImport = (options) => runV2MediaImport({ ...options, apply: false, capturePlan: true })
+export const scanV2MediaImport = (options) => runV2MediaImport({ ...options, capturePlan: true })
 
 /**
  * The generated files of one content (D7): the original copied, the derivatives made by sharp, each written to a
  * temporary file, fsynced and published without overwriting; a final path that exists counts as published. Temporary
  * files other processes left in the directory are removed first. `entry`: { sourcePath, outputDirectory, outputPath,
- * derivatives: [{ outputPath, maxEdge, quality }] }. Shared by the V2 import and the new library's (3C-4c). The caller
- * holds the library lease.
+ * derivatives: [{ outputPath, maxEdge, quality }] }. The new library's import uses it (3C-4c), and the test fixture that
+ * writes a V2 import (./v2-media-import.fixture.mjs, 3C-5 E). The caller holds the library lease.
  */
 export async function publishGeneratedFiles(entry) {
   await mkdir(entry.outputDirectory, { recursive: true })
@@ -593,38 +563,3 @@ export async function publishGeneratedFiles(entry) {
   }
 }
 
-/**
- * Caller validates the full plan and holds the library lease before entering. Folder bindings found by name are
- * pinned only when the caller passes `acceptFolderBindings` (batch 2A); otherwise nothing is written.
- */
-async function applyV2MediaImportScan({ privatePaths, scan, now = () => new Date(), log = () => {}, onStage = async () => {}, acceptFolderBindings = false }) {
-  const { unique, planned, pins, items } = scan
-  if (pins.length > 0 && !acceptFolderBindings) {
-    throw Object.assign(new Error('E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED'), { code: 'E_MEDIA_FOLDER_BINDINGS_UNCONFIRMED' })
-  }
-  const inboxRoot = privatePaths.inboxRoot
-  const relative = (filePath) => path.relative(inboxRoot, filePath)
-  const generatedAt = now().toISOString()
-  const catalog = mediaCatalogFileOf(items, generatedAt)
-  for (const entry of unique) await publishGeneratedFiles(entry)
-  await onStage('generated')
-
-  // RFC ID-6：已确认的按名称（或旧 country.json）匹配的文件夹写入 place.json，此后按 id 解析、不再按名字重新匹配。
-  // 已有 place.json 的文件夹不在 pins 里，不动。
-  for (const pin of pins) await atomicJsonWrite(path.join(pin.directory, 'place.json'), placeConfigOf(pin.placeId))
-  await onStage('pins')
-  if (pins.length > 0) {
-    log(`\n已确认 ${pins.length} 个按名称匹配的文件夹绑定，写入 place.json，固定为地点 id：`)
-    for (const pin of pins) log(`- ${toPosix(relative(pin.directory))}/place.json`)
-  }
-
-  await atomicJsonWrite(privatePaths.v2FilePaths.media, catalog)
-  await onStage('catalog')
-  const sourcesById = sourcesByIdOf(planned.map((entry) => ({ id: entry.id, sourcePath: toPosix(relative(entry.sourcePath)) })))
-  const index = mediaSourceIndexFileOf(sourcesById, generatedAt)
-  await atomicJsonWrite(privatePaths.v2MediaSourceIndexPath, index)
-  await onStage('index')
-  log('\n已更新私人目录 data/v2/ 中的媒体目录与源文件索引。')
-  log('开发预览会自动刷新媒体目录；若页面未更新，请手动刷新一次。')
-  return { mediaIds: items.map((item) => item.id), catalog, index }
-}

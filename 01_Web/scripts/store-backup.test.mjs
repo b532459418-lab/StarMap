@@ -15,7 +15,7 @@ import { privateDataSource, storeFileOf } from './private-data-source.mjs'
 import {
   BACKUP_FILES, backupStore, exportStoreV2, exportedV2Of, mediaCopyInProgress, restoreStore, runStoreBackupCli, verifyBackup,
 } from './store-backup.mjs'
-import { runV2MediaImport } from './v2-media-import.mjs'
+import { writeV2MediaImport } from './v2-media-import.fixture.mjs'
 import { openStore } from './store-host.mjs'
 import { applyMigration } from './store-migrate.mjs'
 import { projectToV2Files } from './store-projection.mjs'
@@ -223,7 +223,7 @@ async function migratedWithMedia(t) {
   await writeJson(path.join(city, 'place.json'), { placeId: fixtureIds.reykjavik })
   await mkdir(path.join(city, 'photos'), { recursive: true })
   await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 80, g: 140, b: 190 } } }).png().toFile(path.join(city, 'photos', 'neutral.png'))
-  assert.equal(await runV2MediaImport({ privatePaths: paths, apply: true, log: () => {}, logError: () => {} }), 0)
+  await writeV2MediaImport({ privatePaths: paths })
   await applyMigration(paths, { now: NOW })
   assert.equal(privateDataSource(paths), 'store')
   return { ...context, at: (name) => path.join(context.directory, name) }

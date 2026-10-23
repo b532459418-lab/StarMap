@@ -27,7 +27,7 @@ try {
     process.exitCode = 2
   } else {
     if (verify) await (await import('./media-job-service.mjs')).reportMediaJobReceipts(privatePaths)
-    process.exitCode = await runV2MediaImport({ privatePaths, apply: false, verify, acceptFolderBindings: process.argv.includes('--accept-folder-bindings') })
+    process.exitCode = await runV2MediaImport({ privatePaths, verify })
     console.log(`\n${NOT_A_STORE_IMPORT_MESSAGES[state]}`)
   }
 } catch (error) {

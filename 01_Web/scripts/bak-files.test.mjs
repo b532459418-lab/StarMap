@@ -28,6 +28,7 @@ import { getPrivatePaths } from './private-profile.mjs'
 import { atomicJsonWrite } from './json-file.mjs'
 import { readV2Inputs } from './store-migrate.mjs'
 import { runV2MediaImport } from './v2-media-import.mjs'
+import { writeV2MediaImport } from './v2-media-import.fixture.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
@@ -215,11 +216,13 @@ const importInto = async (root, { withBak, images }) => {
   if (withBak) await addInboxBaks(paths)
   const preflight = runScript('import-media.mjs', [], root)
   // 第 2A 批：这里的投递箱按文件夹名匹配，要明确确认文件夹绑定（本用例测的是 .bak，不是绑定确认）。
-  // 3C-4d：media:import 只写新库；V2 导入器的写入只用来为测试生成迁移输入，这里在进程内直接调用（预检仍走 CLI）。
+  // 3C-4d：media:import 只写新库；3C-5 E 起 V2 导入器只做预检：报告取进程内预检的输出（预检也走 CLI），
+  // 目录、索引与生成文件由测试夹具按导入器的计划写出（./v2-media-import.fixture.mjs）。
   const lines = []
   const log = (line) => lines.push(String(line))
-  const status = await runV2MediaImport({ privatePaths: paths, apply: true, acceptFolderBindings: true, log, logError: log })
+  const status = await runV2MediaImport({ privatePaths: paths, log, logError: log })
   assert.equal(status, 0, lines.join('\n'))
+  await writeV2MediaImport({ privatePaths: paths, acceptFolderBindings: true })
   return {
     preflight: preflight.stdout + preflight.stderr,
     output: lines.join('\n').replaceAll(root, '<root>'),

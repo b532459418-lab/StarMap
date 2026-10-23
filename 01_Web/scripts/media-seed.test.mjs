@@ -20,7 +20,8 @@ import { applyMigration, previewMigration } from './store-migrate.mjs'
 import { downgradeStoreToFormat1, tempPrivateRoot } from './store-mode.fixture.mjs'
 import { projectToV2Files } from './store-projection.mjs'
 import { upgradeStore } from './store-upgrade.mjs'
-import { runV2MediaImport, scanV2MediaImport } from './v2-media-import.mjs'
+import { scanV2MediaImport } from './v2-media-import.mjs'
+import { writeV2MediaImport } from './v2-media-import.fixture.mjs'
 import { OFFICIAL, OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 // libvips keeps recently read files open (sharp.cache: 20 files by default); Windows then refuses to rewrite an Inbox
@@ -28,7 +29,6 @@ import { OFFICIAL, OFFICIAL_POLICY } from '../src/data/store/officialDefinitions
 sharp.cache({ files: 0 })
 
 const NOW = '2026-10-16T00:00:00.000Z'
-const quiet = () => {}
 const EXPLICIT = 'MediaInbox/Second Land/River Town/drone/explicit.jpg'
 const HILL_COPY = 'MediaInbox/Synthland/Hill Town/photos/a.jpg'
 
@@ -49,7 +49,7 @@ async function v2Library(t, afterImport) {
     'drone/pano-1.jpg': { kind: 'panorama360', titleEn: 'Synthetic panorama', date: '2026-07-03', resolution: '200 × 100' },
     'drone/explicit.jpg': { kind: 'aerialPhoto', id: 'synthetic-explicit', date: '2026-07-04', resolution: '64 × 48' },
   })
-  assert.equal(await runV2MediaImport({ privatePaths: paths, apply: true, now: () => new Date(NOW), log: quiet, logError: quiet }), 0)
+  await writeV2MediaImport({ privatePaths: paths, now: () => new Date(NOW) })
   await afterImport?.(paths, files)
   return { ...context, files }
 }
