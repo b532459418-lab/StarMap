@@ -826,15 +826,27 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     expect(after.episodes.length).toBe(episodes + 1)
     // The viewer is replaced (destroyed and made again) during a pause: the new one renders once the save is applied.
     const viewer = after.viewer
+    // The main thread's long tasks from here on (making the new viewer is one; with software rendering, seconds).
+    const clickedAt = await page.evaluate(() => {
+      if (!PerformanceObserver.supportedEntryTypes.includes('longtask')) throw new Error('No long task timing in this browser')
+      window.__starmapLongTasks = []
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) window.__starmapLongTasks.push([entry.startTime, entry.startTime + entry.duration])
+      }).observe({ type: 'longtask' })
+      return performance.now()
+    })
     await page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click()
     await expectPaused(page)
     await page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer())
     await expect.poll(async () => (await loop(page))?.viewer, { timeout: 10000 }).not.toBe(viewer)
     await expect(page.getByRole('button', { name: 'Hide: Akureyri', exact: true })).toBeVisible()
-    // Ended by the applying, or by the watchdog; making the new viewer is one long task of the main thread, and the
-    // watchdog's timer can only fire after it (so the pause may run past the limit by that task).
+    // Ended by the applying, or by the watchdog; the watchdog's timer can only fire once the main thread is free, so
+    // the pause may run past the limit by the long tasks during it (the window ends a little late: the click itself).
     const replaced = await expectRendering(page)
-    expect(['applied', 'limit']).toContain(replaced.episodes.at(-1).endedBy)
-    expect(replaced.episodes.at(-1).pausedMs).toBeLessThan(3000)
+    const { endedBy, pausedMs } = replaced.episodes.at(-1)
+    expect(['applied', 'limit']).toContain(endedBy)
+    const blockedMs = await page.evaluate(([from, to]) => window.__starmapLongTasks
+      .reduce((sum, [start, end]) => sum + Math.max(0, Math.min(end, to) - Math.max(start, from)), 0), [clickedAt, clickedAt + pausedMs + 250])
+    expect(pausedMs, `long tasks during the pause: ${Math.round(blockedMs)} ms`).toBeLessThan(1500 + blockedMs + 500)
   })
 })
