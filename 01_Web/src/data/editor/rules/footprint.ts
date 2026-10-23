@@ -12,7 +12,7 @@
 
 import { EN, ZH } from '../../canonical/reconstruct.ts'
 import type { CanonicalPlace, PlaceId } from '../../canonical/types.ts'
-import { V2WriteError, fail } from '../../v2write/errors.ts'
+import { V2WriteError, fail } from '../errors.ts'
 import {
   COUNTRY_CODE_PATTERN, DATE_PATTERN, bodyOf, createNewOf, optionalText, requireText, requiredNumberInRange, visitDates,
 } from './input.ts'

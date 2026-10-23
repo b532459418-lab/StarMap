@@ -12,9 +12,9 @@ import type { FormalCommand, FormalState, ViewItem } from '../../../worldgraph/s
 import { applyChangeSet, planCommands } from '../../../worldgraph/store/planner.ts'
 import { memoryReader } from '../../../worldgraph/store/reader.ts'
 import type { LayerEntry } from '../../../worldgraph/store/types.ts'
-import { viewOf } from '../../store/diffV2.fixture.ts'
+import { viewOf } from '../../store/v2Store.fixture.ts'
 import { OFFICIAL, OFFICIAL_POLICY, V2_SOURCES, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
-import { migratedFiles, placeNamed } from '../../v2write/v2write.fixture.ts'
+import { migratedFiles, placeNamed } from '../editor.fixture.ts'
 import { doubleRunStore } from '../doubleRun.fixture.ts'
 import { canonicalOf, runNative } from './native.fixture.ts'
 

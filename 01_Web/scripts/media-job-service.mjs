@@ -55,7 +55,7 @@ import { assertUploadPath, stageUpload, publishUpload } from './local-editor-upl
 import { prepareV2Upload } from './v2-media-store.mjs'
 import { atomicJsonWrite, readJson } from './json-file.mjs'
 import { droneUploadMetadataOf, uploadTargetOf } from '../src/data/v2media/editorWrites.ts'
-import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
+import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 import { isDeepStrictEqual } from 'node:util'
 import { pathKeyOf } from './store-media-registry.mjs'
 import { isUuidV7 } from '../src/data/canonical/uuidv7.ts'

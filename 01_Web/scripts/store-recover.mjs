@@ -31,7 +31,7 @@ import { V2_PRIVATE_FILE_KEYS, getPrivatePaths } from './private-profile.mjs'
 import { privateDataSource, privateDataState, storeFileOf } from './private-data-source.mjs'
 import { checkStoreFile, openStore } from './store-host.mjs'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
-import { completeForWrite, integrityProblems } from '../src/data/v2write/transaction.ts'
+import { completeForWrite, integrityProblems } from '../src/data/canonical/v2Integrity.ts'
 
 /** 'store' when `data/store/world.sqlite` exists, otherwise 'v2' (./private-data-source.mjs, shared with the plugin and the store tools). */
 export const libraryMode = privateDataSource

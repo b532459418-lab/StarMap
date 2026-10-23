@@ -17,7 +17,7 @@ import { convertDates, convertTripTitle, defaultTripTitle, firstVisitRegion, par
 import type { JourneyChoice } from '../editor/rules/journeys.ts'
 import type { PlaceId } from '../canonical/types.ts'
 import type { V2FileKey, V2TravelRecord } from '../canonical/v2Schema.ts'
-import { fail } from './errors.ts'
+import { fail } from '../editor/errors.ts'
 import { isCountryInFootprint, reorderCountries } from './common.ts'
 import { REORDER_FAILURE } from './footprint.ts'
 import { journeyIdFor } from './journeyChoice.ts'

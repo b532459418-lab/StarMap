@@ -10,8 +10,17 @@
 
 import { findCityCandidates, resolveCountry } from '../../canonical/placeResolver.ts'
 import type { CanonicalPlace, PlaceId } from '../../canonical/types.ts'
-import type { CatalogCountry } from '../../v2write/transaction.ts'
-import { V2WriteError, fail } from '../../v2write/errors.ts'
+import { V2WriteError, fail } from '../errors.ts'
+
+/** One country of the country catalog (the plugin's world-countries catalog, keyed by upper-case ISO code). */
+export interface CatalogCountry {
+  nameZh: string
+  nameEn: string
+  countryCode: string
+  centerLat: number
+  centerLng: number
+  region?: string
+}
 
 /** 国家的判定：已有的国家地点，或按目录新建（目录项与大写代码）。 */
 export type CountryChoice =

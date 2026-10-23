@@ -8,7 +8,7 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import { fail } from '../../v2write/errors.ts'
+import { fail } from '../errors.ts'
 
 export const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

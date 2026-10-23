@@ -11,7 +11,7 @@
  */
 
 import type { PlaceId } from '../../canonical/types.ts'
-import { V2WriteError } from '../../v2write/errors.ts'
+import { V2WriteError } from '../errors.ts'
 
 /** 编辑状态里带地点 id 的列表与表。 */
 export interface EditorStatePlaceLists {

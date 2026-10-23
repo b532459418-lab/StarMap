@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 
 import { readV2 } from '../canonical/v2Reader.ts'
 import { V2_FILE_KEYS, validateV2Files, type V2Files } from '../canonical/v2Schema.ts'
-import { V2WriteError, V2_WRITE_ERROR_CODES, errorBody, messageFor } from './errors.ts'
+import { V2WriteError, V2_WRITE_ERROR_CODES, errorBody, messageFor } from '../editor/errors.ts'
 import {
   completeForWrite,
   danglingPlaceRefs,

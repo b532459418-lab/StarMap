@@ -7,9 +7,9 @@
 import { test } from 'node:test'
 import type { FormalState } from '../../../worldgraph/store/formal.ts'
 import assert from 'node:assert/strict'
-import { viewOf } from '../../store/diffV2.fixture.ts'
+import { viewOf } from '../../store/v2Store.fixture.ts'
 import { OFFICIAL, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
-import { migratedFiles, placeNamed } from '../../v2write/v2write.fixture.ts'
+import { migratedFiles, placeNamed } from '../editor.fixture.ts'
 import { OLD_WRITES, doubleRunStore, editorRoute, oldEngine, sameRequest, stepContext } from '../doubleRun.fixture.ts'
 import { canonicalOf, commitAsIs, customEntryOn, landmarkNear, runNative } from './native.fixture.ts'
 

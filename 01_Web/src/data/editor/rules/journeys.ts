@@ -19,7 +19,7 @@
 import { compareCodePoints, compareJourneyRecords } from '../../canonical/journeyRoutes.ts'
 import { EN, ZH } from '../../canonical/reconstruct.ts'
 import type { PlaceId } from '../../canonical/types.ts'
-import { V2WriteError, fail } from '../../v2write/errors.ts'
+import { V2WriteError, fail } from '../errors.ts'
 
 /** 候选里最多列出的城市数（另附总数）。 */
 export const JOURNEY_CANDIDATE_CITY_LIMIT = 5

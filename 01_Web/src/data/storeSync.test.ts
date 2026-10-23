@@ -18,10 +18,10 @@ import { NATIVE_WRITES } from './editor/native/routes.ts'
 import { setLocalEditorStoreSync, updateLocalWantToGo } from './localEditorApi.ts'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './storeWriteProtocol.ts'
 import { createStoreSync, READ_MODEL_CHANGES_PATH } from './storeSync.ts'
-import { viewOf } from './store/diffV2.fixture.ts'
+import { viewOf } from './store/v2Store.fixture.ts'
 import { OFFICIAL_POLICY } from './store/officialDefinitions.ts'
 import { officialReader } from './store/officialReader.ts'
-import { migratedFiles } from './v2write/v2write.fixture.ts'
+import { migratedFiles } from './editor/editor.fixture.ts'
 
 const OPTIONS = { source: 'local', now: '2026-10-22T00:00:00.000Z' } as const
 const LIBRARY = { libraryId: '01990000-0000-7000-8000-00000000d001', restoreMark: null }

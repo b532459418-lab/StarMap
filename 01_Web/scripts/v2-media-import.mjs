@@ -76,7 +76,7 @@ import {
   sourcesByIdOf,
   uniqueById,
 } from '../src/data/v2media/importPlan.ts'
-import { completeForWrite } from '../src/data/v2write/transaction.ts'
+import { completeForWrite } from '../src/data/canonical/v2Integrity.ts'
 
 const toPosix = (value) => value.split(path.sep).join('/')
 

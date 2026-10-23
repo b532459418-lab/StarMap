@@ -23,7 +23,7 @@ import type { CanonicalEditorState, PlaceId } from '../canonical/types.ts'
 import { EDITOR_STATE_SCHEMA_VERSION, type V2FileKey, type V2Files } from '../canonical/v2Schema.ts'
 import { jsonClone } from '../canonical/v2Serializer.ts'
 import type { TravelAtlasEditorState } from '../derive/editorState.ts'
-import { V2WriteError } from './errors.ts'
+import { V2WriteError } from '../editor/errors.ts'
 import { checkEditorStatePlaces } from '../editor/rules/editorState.ts'
 import { completeForWrite, integrityProblems, runV2Transaction, type V2FilesOrEmpty, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 

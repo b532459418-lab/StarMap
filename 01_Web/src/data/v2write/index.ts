@@ -10,7 +10,7 @@
 
 export { convertToTravel } from './convert.ts'
 export { putEditorState, readEditorStateV1 } from './editorState.ts'
-export { V2WriteError, errorBody, messageFor, type V2WriteErrorCode } from './errors.ts'
+export { V2WriteError, errorBody, messageFor, type V2WriteErrorCode } from '../editor/errors.ts'
 export { addCountry, addTravelRecord, deleteHiddenCountries } from './footprint.ts'
 export { integrityProblems, type CatalogCountry, type V2FilesOrEmpty, type V2Write, type V2WriteContext, type V2WriteOutcome } from './transaction.ts'
 export { addWantToGo, deleteHiddenWantToGo, updateWantToGo } from './wantToGo.ts'

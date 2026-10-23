@@ -46,8 +46,7 @@
  *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types).
  */
-import type { FormalCommand, FormalRow, FormalState, FormalTable, ViewItem, ViewItemTable, ViewSetting } from '../../worldgraph/store/formal.ts'
-import { memoryReader, type StoreReader } from '../../worldgraph/store/reader.ts'
+import type { FormalCommand, FormalRow, FormalTable, ViewItem, ViewItemTable, ViewSetting } from '../../worldgraph/store/formal.ts'
 import { positionBetween } from '../../worldgraph/store/position.ts'
 import { jsonKey, reject } from '../../worldgraph/store/primitives.ts'
 import type { EntrySequence, Evidence, JsonObject, JsonValue, LayerEntry, SourceDefinition, StoreAnchor, StoreEntity, StoreRelation } from '../../worldgraph/store/types.ts'
@@ -60,11 +59,10 @@ import {
   travelRecordEntry, v2HeaderOf, viewItemRow, viewSettingRow, wantToGoEntry, type ViewTarget,
 } from './v2RecordRows.ts'
 import { positionsForRuns, viewListWriter, writeEditorLists } from './viewListRows.ts'
+import { memoryScopeReader, type ScopeReader } from './scopeReader.ts'
 
 /** Core's reader plus the one scan the diff needs: every view row of one scope (the host answers it from its scope index). */
-export interface DiffReader extends StoreReader {
-  viewScope(scope: string): { readonly items: readonly ViewItem[]; readonly settings: readonly ViewSetting[] }
-}
+export type DiffReader = ScopeReader
 export interface DiffContext {
   /** The store at the revision the V2 view was projected from. */
   readonly reader: DiffReader
@@ -99,20 +97,8 @@ const byId = <T extends { readonly id: string }>(rows: readonly T[]) => new Map(
 /** The journey id a journey entity projects to (projectStoreToCanonical). */
 const projectedJourneyId = (entity: StoreEntity) => (entity.source.sourceId === V2_SOURCES.journey ? entity.source.recordId : entity.id)
 
-/** A reader over an in-memory FormalState with the scope scan (tests, benchmarks). */
-export function memoryDiffReader(state: FormalState): DiffReader {
-  const reader = memoryReader(state)
-  const scopes = new Map<string, { items: ViewItem[]; settings: ViewSetting[] }>()
-  const scopeOf = (scope: string) => {
-    let rows = scopes.get(scope)
-    if (!rows) { rows = { items: [], settings: [] }; scopes.set(scope, rows) }
-    return rows
-  }
-  for (const item of state.viewItems) scopeOf(item.scope).items.push(item)
-  for (const setting of state.viewSettings) scopeOf(setting.scope).settings.push(setting)
-  const none = Object.freeze({ items: Object.freeze([]), settings: Object.freeze([]) })
-  return Object.freeze({ ...reader, viewScope: (scope: string) => scopes.get(scope) ?? none })
-}
+/** The scope reader of a formal state (./scopeReader.ts). */
+export const memoryDiffReader = memoryScopeReader
 
 /** The commands that turn the store (whose V2 view is `before`) into the store whose V2 view is `after`. */
 export function diffV2ToCommands(before: V2Files, after: V2Files, context: DiffContext): StoreDiff {

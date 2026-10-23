@@ -11,7 +11,7 @@ import { validateV2Files } from '../canonical/v2Schema.ts'
 import { readV2 } from '../canonical/v2Reader.ts'
 import { serializeV2 } from '../canonical/v2Serializer.ts'
 import { projectStoreToCanonical } from '../store/projectCanonical.ts'
-import { migratedFiles } from '../v2write/v2write.fixture.ts'
+import { migratedFiles } from './editor.fixture.ts'
 import {
   OLD_WRITES, VIEW_ROUTE, doubleRunStore, editorRoute, enginesFor, normalizedBaseline, oldEngine, runRandomSequence, runSteps, sameRequest,
   standInEngine, stepContext, viewStep, compareOutcomes, type RunReport,

@@ -13,14 +13,14 @@
  * 3C-5 E: the upload target and the deletion rule read the official reader (../store/officialReader.ts: a place by id,
  * the editor lists, a media item by V2 id), never a V2 shape of the library: the store's rows are checked by Core, so
  * there is no whole-file integrity check of the input any more.
- * 错误抛 `V2WriteError`，文案沿用旧模式（码表在 ../v2write/errors.ts）。
+ * 错误抛 `V2WriteError`，文案沿用旧模式（码表在 ../editor/errors.ts）。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
 import type { CanonicalMediaItem, CanonicalPlace, PlaceId } from '../canonical/types.ts'
 import type { OfficialReader } from '../store/officialReader.ts'
-import { V2WriteError, fail } from '../v2write/errors.ts'
+import { V2WriteError, fail } from '../editor/errors.ts'
 import {
   runV2Transaction,
   type V2FilesOrEmpty,

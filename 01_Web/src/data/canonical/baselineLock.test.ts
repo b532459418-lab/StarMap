@@ -33,10 +33,10 @@ test('a matching lock writes nothing unless a capture directory is configured, t
 }))
 
 test('a mismatch without an expected baseline writes the actual one and says how to get the difference', () => withDirectory((directory) => {
-  const outcome = checkBaselineLock('../v2write/fixtures/migrated-files.json', after, baselineLockSha256(before), { STARMAP_BASELINE_LOCK_DIR: directory })
+  const outcome = checkBaselineLock('../editor/fixtures/migrated-files.json', after, baselineLockSha256(before), { STARMAP_BASELINE_LOCK_DIR: directory })
   assert.equal(outcome.ok, false)
   if (outcome.ok) return
-  assert.equal(outcome.actualPath, path.join(directory, '_v2write_fixtures_migrated-files.json.actual.json'))
+  assert.equal(outcome.actualPath, path.join(directory, '_editor_fixtures_migrated-files.json.actual.json'))
   assert.equal(readFileSync(outcome.actualPath, 'utf8'), `${after}\n`)
   assert.equal(outcome.diffPath, undefined)
   assert.match(outcome.message, new RegExp(baselineLockSha256(after)))

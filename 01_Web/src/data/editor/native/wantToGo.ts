@@ -24,7 +24,7 @@ import { OFFICIAL, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
 import type { OfficialReader } from '../../store/officialReader.ts'
 import { officialEntryRole, wishValueOf } from '../../store/projectCanonical.ts'
 import { placeAnchor, viewItemRow, wantToGoEntry } from '../../store/v2RecordRows.ts'
-import { fail } from '../../v2write/errors.ts'
+import { fail } from '../errors.ts'
 import { chooseCountry, requireNoCityCandidates } from '../rules/places.ts'
 import {
   parseAddWantToGo, parseDeleteWantToGo, parseUpdateWantToGo, requireAllHidden, requireNotListed, wishNotFound,

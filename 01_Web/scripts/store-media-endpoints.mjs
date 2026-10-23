@@ -17,7 +17,7 @@ import { MEDIA_KINDS, assetsOfPaths, createMediaService, releaseImageFiles } fro
 import { pathKeyOf } from './store-media-registry.mjs'
 import { storeFailureResponse, storeProtocolOf, storeRequestKind } from './store-session.mjs'
 import { handleV2Upload } from './v2-media-store.mjs'
-import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
+import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 
 const withDetails = (code, lines, status = 400) => {
   const body = errorBody(new V2WriteError(code))

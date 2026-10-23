@@ -17,7 +17,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 import { isSafePathSegment } from './media-path-segment.mjs'
 import { relativeInside } from './path-containment.mjs'
 

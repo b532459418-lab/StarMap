@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import type { V2Files } from '../canonical/v2Schema.ts'
 import { readEditorStateV1 } from '../v2write/index.ts'
-import { WRITE_NOW, migratedFiles, placeNamed } from '../v2write/v2write.fixture.ts'
+import { WRITE_NOW, migratedFiles, placeNamed } from './editor.fixture.ts'
 import { edgeCaseFixture } from '../store/v2Store.fixture.ts'
 import { OLD_WRITES, editorRoute, sameRequest, viewStep, type DoubleRunStep, type RunReport } from './doubleRun.fixture.ts'
 import { hideDelta } from './rules/editorView.ts'

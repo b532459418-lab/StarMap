@@ -23,7 +23,7 @@ import { migratedCanonical } from './frozen.fixture.ts'
 import { readV2 } from './v2Reader.ts'
 import { V2_FILE_KEYS, validateV2Files, type V2Files } from './v2Schema.ts'
 import { buildBaseline, stableStringify } from '../derive/baseline.ts'
-import { migratedFiles } from '../v2write/v2write.fixture.ts'
+import { migratedFiles } from '../editor/editor.fixture.ts'
 
 const NOW = '2000-01-01T00:00:00.000Z'
 
@@ -32,7 +32,7 @@ const baselineText = (data: ReturnType<typeof deriveAppDataFromCanonical>) => st
 
 /**
  * PR3a 的迁移：中性个人模式数据 consistentPersonalRaw → V2 文件（M 与 write(M)）。PR5b 起是冻结的静态数据
- * （../v2write/fixtures/migrated-files.json 与 ./frozen.fixture.ts 的 `migratedCanonical('personal')`；
+ * （../editor/fixtures/migrated-files.json 与 ./frozen.fixture.ts 的 `migratedCanonical('personal')`；
  * 删除迁移工具之前用当时的代码生成）。
  */
 const migrated = (): { files: V2Files; M: ReturnType<typeof migratedCanonical>['canonical'] } =>

@@ -1,7 +1,10 @@
 /**
- * V2 写入的错误码（RFC-LOC-1 MSG-2 的过渡形态，PR3b-2 规格 §2.5）。
+ * The editor's error codes (RFC-LOC-1 MSG-2's transitional form, PR3b-2 spec §2.5): the codes and messages of every
+ * refusal of the editor writes, the media endpoints, media tasks and the local editor's host. 3C-5 E: moved here from
+ * the retired V2 write layer (src/data/v2write/); the class keeps its name, `V2WriteError`, which every caller and
+ * the page's error handling know.
  *
- * `src/data/v2write/` 是 App 层（Node 写入端点用的纯函数），【不是】 StarMap Core。
+ * `src/data/editor/` 是 App 层，【不是】 StarMap Core。
  *
  * V2 写入的错误响应是 `{ ok: false, error: '<中文文案>', code: 'E_…', params?: {…} }`：
  * - `error` 仍是字符串，客户端保留原文供恢复逻辑判断；

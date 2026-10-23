@@ -1,6 +1,6 @@
 /**
  * The synthetic private root of the browser tests (`npm run test:browser`; tests/browser/). Only neutral tracked
- * unit-test data (src/data/v2write/fixtures/migrated-files.json); no owner data or environment files.
+ * unit-test data (src/data/editor/fixtures/migrated-files.json); no owner data or environment files.
  *
  * 3C-4d: the new library is the only write path, so the fixture is a store by default. Its five V2 files are written
  * and migrated (`store:migrate --apply`) before the dev server starts. `mode: 'v2'` leaves the V2 files unmigrated (a
@@ -33,7 +33,7 @@ import { rawConnection } from './store-sqlite.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { diffV2ToCommands } from '../src/data/store/diffV2.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
-import { integrityProblems } from '../src/data/v2write/transaction.ts'
+import { integrityProblems } from '../src/data/canonical/v2Integrity.ts'
 
 export const fixtureIds = Object.freeze({
   iceland: '019b76da-a801-7000-8000-000000000001',
@@ -51,7 +51,7 @@ const DEV_SERVER = { host: '127.0.0.1', port: 5173 }
 
 /** The fixture's five V2 files. */
 export async function fixtureFiles({ large = false } = {}) {
-  const files = JSON.parse(await readFile(new URL('../src/data/v2write/fixtures/migrated-files.json', import.meta.url), 'utf8'))
+  const files = JSON.parse(await readFile(new URL('../src/data/editor/fixtures/migrated-files.json', import.meta.url), 'utf8'))
   files.media.items = []
   files.editorState.coverMediaByCity = {}
   files.editorState.hiddenCityIds = []

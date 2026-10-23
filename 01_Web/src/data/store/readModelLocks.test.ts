@@ -38,7 +38,7 @@ const lockOf = (text: string) => createHash('sha256').update(`${text}\n`).digest
 /** Locks by migrationInputs name; the inputs without one are compared with the readV2 path only. */
 const LOCKS: Record<string, string> = {
   'public sample (src/data/v2-sample)': V2_SAMPLE_BASELINE_SHA256,
-  'v2write/fixtures/migrated-files.json': V2_FILES_LOCKS.find(([relative]) => relative.endsWith('/migrated-files.json'))![1],
+  'editor/fixtures/migrated-files.json': V2_FILES_LOCKS.find(([relative]) => relative.endsWith('/migrated-files.json'))![1],
   ...Object.fromEntries(Object.entries(MIGRATED_LOCKS).map(([name, lock]) => [`canonical/fixtures/migrated-canonical.json ${name}`, lock])),
   ...Object.fromEntries(Object.entries(V2_SPACE_LOCKS).map(([name, lock]) => [`canonical/fixtures/v2-space-canonical.json ${name}`, lock])),
 }

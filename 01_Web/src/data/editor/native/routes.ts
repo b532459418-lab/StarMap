@@ -11,7 +11,7 @@
  */
 import type { FormalCommand } from '../../../worldgraph/store/formal.ts'
 import type { OfficialReader } from '../../store/officialReader.ts'
-import type { CatalogCountry } from '../../v2write/transaction.ts'
+import type { CatalogCountry } from '../rules/places.ts'
 import { convertWrite } from './convert.ts'
 import { editorViewWrite } from './editorView.ts'
 import { addCountryWrite, addTravelRecordWrite, deleteCountriesWrite } from './footprint.ts'

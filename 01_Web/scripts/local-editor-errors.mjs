@@ -1,4 +1,4 @@
-import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
+import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 
 /** Keep structured editor errors and raw diagnostics separate from system errno codes. */
 export function normalizeLocalEditorError(error, fallbackCode = 'E_UNEXPECTED') {

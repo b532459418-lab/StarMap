@@ -10,8 +10,8 @@ import { sequentialUuids } from '../canonical/v2.fixture.ts'
 import { validateV2Files } from '../canonical/v2Schema.ts'
 import type { CanonicalMediaItem } from '../canonical/types.ts'
 import { removeMediaFromEditorState } from '../v2media/editorWrites.ts'
-import { memoryDiffReader } from './diffV2.ts'
-import { storeFrom, viewOf } from './diffV2.fixture.ts'
+import { memoryScopeReader } from './scopeReader.ts'
+import { storeFrom, viewOf } from './v2Store.fixture.ts'
 import { createMediaRecordCommands, removeMediaRecordCommands, rereadChanges, rereadMediaRecordCommands, type NewMediaRecord } from './mediaRecords.ts'
 import { OFFICIAL, OFFICIAL_POLICY, VIEW_SCOPES } from './officialDefinitions.ts'
 import { NOW, edgeCaseFixture } from './v2Store.fixture.ts'
@@ -37,7 +37,7 @@ test('created records project as V2 media items with the asset id, at the end of
     { assetId: allocateId(), entityId: allocateId(), item: item({ placeId: city.id, originalFileName: 'new-photo.jpg', title: { names: { en: 'Synthetic new' } } }), appendToCityOrder: true },
     { assetId: allocateId(), entityId: allocateId(), item: item({ placeId: city.id, kind: 'aerialPhoto', originalFileName: 'flight.jpg', status: 'needsMetadata' }) },
   ]
-  const plan = createMediaRecordCommands(records, { reader: memoryDiffReader(store.state), allocateId })
+  const plan = createMediaRecordCommands(records, { reader: memoryScopeReader(store.state), allocateId })
   const state = apply(store.state, plan.commands)
   const view = viewOf(state)
   assert.deepEqual(validateV2Files(view), [])
@@ -60,11 +60,11 @@ test('covers follow markCovers in the cities whose photos change: a photo named 
   const existing = store.view.media.items.find(media => media.placeId === city.id && media.kind === 'photo')!
   assert.equal(existing.isCover, true)
   const record = { assetId: allocateId(), entityId: allocateId(), item: item({ placeId: city.id, originalFileName: 'cover-new.jpg' }) }
-  const state = apply(store.state, createMediaRecordCommands([record], { reader: memoryDiffReader(store.state), allocateId }).commands)
+  const state = apply(store.state, createMediaRecordCommands([record], { reader: memoryScopeReader(store.state), allocateId }).commands)
   const view = viewOf(state)
   assert.deepEqual([view.media.items.find(media => media.id === record.assetId)!.isCover, view.media.items.find(media => media.id === existing.id)!.isCover], [true, false])
   // Removing it gives the cover back.
-  const removed = apply(state, removeMediaRecordCommands([record.assetId], { reader: memoryDiffReader(state) }).commands)
+  const removed = apply(state, removeMediaRecordCommands([record.assetId], { reader: memoryScopeReader(state) }).commands)
   assert.equal(viewOf(removed).media.items.find(media => media.id === existing.id)!.isCover, true)
 })
 
@@ -72,7 +72,7 @@ test('removing a record removes it everywhere the editor state names it, as V2â€
   const { store } = fixtureStore()
   const view = store.view
   const id = view.editorState.hiddenMediaIds.find(mediaId => view.media.items.some(media => media.id === mediaId))!
-  const plan = removeMediaRecordCommands([id], { reader: memoryDiffReader(store.state) })
+  const plan = removeMediaRecordCommands([id], { reader: memoryScopeReader(store.state) })
   const state = apply(store.state, plan.commands)
   const after = viewOf(state)
   const expected = removeMediaFromEditorState(view, [id], { now: new Date(NOW), countryCatalog: new Map(), newId: () => 'unused' }).writes[0].value as typeof view.editorState
@@ -94,7 +94,7 @@ test('when no position fits after the last element, the scope is renumbered in t
   const crowded = apply(store.state, [{ op: 'update', table: 'viewItems', id: last.id, expectedRevision: last.revision, value: { ...last, revision: last.revision + 1, position: 'z'.repeat(64) } as ViewItem }])
   const before = viewOf(crowded).media.items.map(media => media.id)
   const record = { assetId: allocateId(), entityId: allocateId(), item: item({ placeId: cities[0].id, originalFileName: 'late.jpg' }) }
-  const plan = createMediaRecordCommands([record], { reader: memoryDiffReader(crowded), allocateId })
+  const plan = createMediaRecordCommands([record], { reader: memoryScopeReader(crowded), allocateId })
   assert.deepEqual(plan.renumbered, [VIEW_SCOPES.mediaOrder])
   const state = apply(crowded, plan.commands)
   assert.deepEqual(viewOf(state).media.items.map(media => media.id), [...before, record.assetId])
@@ -104,7 +104,7 @@ test('a title the store cannot hold stays verbatim and projects back', () => {
   const { store, cities, allocateId } = fixtureStore()
   const title = { names: { 'not a tag!': 'Synthetic' } }
   const record = { assetId: allocateId(), entityId: allocateId(), item: item({ placeId: cities[0].id, originalFileName: 't.jpg', title: title as CanonicalMediaItem['title'] }) }
-  const state = apply(store.state, createMediaRecordCommands([record], { reader: memoryDiffReader(store.state), allocateId }).commands)
+  const state = apply(store.state, createMediaRecordCommands([record], { reader: memoryScopeReader(store.state), allocateId }).commands)
   assert.deepEqual(viewOf(state).media.items.find(media => media.id === record.assetId)!.title, title)
 })
 
@@ -113,11 +113,11 @@ test('re-reading a description: city, title and described keys follow the Inbox;
   const [city, other] = cities
   const record: NewMediaRecord = { assetId: allocateId(), entityId: allocateId(), appendToCityOrder: true,
     item: item({ placeId: city.id, kind: 'aerialPhoto', originalFileName: 'drone.jpg', status: 'needsMetadata', title: { names: { en: 'Synthetic old' } } }) }
-  const created = apply(store.state, createMediaRecordCommands([record], { reader: memoryDiffReader(store.state), allocateId }).commands)
+  const created = apply(store.state, createMediaRecordCommands([record], { reader: memoryScopeReader(store.state), allocateId }).commands)
   const before = viewOf(created)
   const described = item({ placeId: other.id, kind: 'aerialPhoto', originalFileName: 'drone.jpg', status: 'ready', date: '2026-08-01', resolution: '4 Ã— 3',
     title: { names: { en: 'Synthetic new' } } } as Partial<CanonicalMediaItem> & { placeId: string; originalFileName: string })
-  const reader = memoryDiffReader(created)
+  const reader = memoryScopeReader(created)
   assert.deepEqual(rereadChanges({ assetId: record.assetId, item: described }, { reader }).sort(), ['date', 'place', 'resolution', 'status', 'title'])
   assert.deepEqual(rereadChanges({ assetId: record.assetId, item: record.item }, { reader }), [], 'the same description changes nothing')
   assert.deepEqual(rereadMediaRecordCommands([{ assetId: record.assetId, item: record.item }], { reader }).commands, [])
@@ -132,6 +132,6 @@ test('re-reading a description: city, title and described keys follow the Inbox;
   assert.deepEqual(view.editorState.droneOrderByCity, before.editorState.droneOrderByCity, 'the city order stays')
   assert.ok(state.entities.some(row => row.id === record.entityId) && state.assets.some(row => row.id === record.assetId))
   // A description without a date removes it again.
-  const again = apply(state, rereadMediaRecordCommands([{ assetId: record.assetId, item: { ...described, date: undefined } as unknown as CanonicalMediaItem }], { reader: memoryDiffReader(state) }).commands)
+  const again = apply(state, rereadMediaRecordCommands([{ assetId: record.assetId, item: { ...described, date: undefined } as unknown as CanonicalMediaItem }], { reader: memoryScopeReader(state) }).commands)
   assert.equal(viewOf(again).media.items.find(entry => entry.id === record.assetId)!.date, undefined)
 })

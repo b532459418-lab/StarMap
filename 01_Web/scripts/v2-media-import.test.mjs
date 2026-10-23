@@ -27,7 +27,7 @@ import { getPrivatePaths } from './private-profile.mjs'
 import { runV2MediaImport } from './v2-media-import.mjs'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { V2_MEDIA_SOURCE_INDEX_FILE_NAME } from '../src/data/v2media/importPlan.ts'
-import { completeForWrite, integrityProblems } from '../src/data/v2write/transaction.ts'
+import { completeForWrite, integrityProblems } from '../src/data/canonical/v2Integrity.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const NOW = new Date(Date.UTC(2026, 8, 29, 8))

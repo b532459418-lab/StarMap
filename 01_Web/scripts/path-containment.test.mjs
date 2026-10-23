@@ -13,7 +13,7 @@ import { assertUploadPath } from './local-editor-upload.mjs'
 import { shouldHandlePrivateDataChange } from './private-data-module.mjs'
 import { isAllowedPrivateOutput, isInsideDirectory, isInsideRepository, mayBeInsideDirectory } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot } from './private-profile.mjs'
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 
 const root = path.join(tmpdir(), 'starmap-containment-root')
 

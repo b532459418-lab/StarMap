@@ -14,7 +14,7 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import type { V2WriteErrorCode } from '../../v2write/errors.ts'
+import type { V2WriteErrorCode } from '../errors.ts'
 import type { CanonicalPlace, PlaceId } from '../../canonical/types.ts'
 
 /** 想去条目不能转为足迹的原因（按检查顺序）。 */

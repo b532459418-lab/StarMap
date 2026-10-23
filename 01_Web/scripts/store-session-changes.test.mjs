@@ -13,7 +13,7 @@ import { quietly, tempPrivateRoot, writeV2Files } from './store-mode.fixture.mjs
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
-import { TEST_CATALOG, WRITE_EPOCH_MS, migratedFiles } from '../src/data/v2write/v2write.fixture.ts'
+import { TEST_CATALOG, WRITE_EPOCH_MS, migratedFiles } from '../src/data/editor/editor.fixture.ts'
 import { applyReadModelDelta } from '../src/worldgraph/readModel/delta.ts'
 
 const MIGRATED_AT = '2026-09-26T00:00:00.000Z'

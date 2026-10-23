@@ -7,7 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { decideJourney, findJourneyCandidates, type JourneyRecord } from './journeys.ts'
-import { V2WriteError } from '../../v2write/errors.ts'
+import { V2WriteError } from '../errors.ts'
 
 const NAMES: Record<string, Record<string, string>> = { a: { en: 'A', 'zh-Hans': '甲', fr: 'A' }, b: { en: 'B' }, c: { 'zh-Hans': '丙' } }
 const records: JourneyRecord[] = [

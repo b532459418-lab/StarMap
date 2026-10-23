@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import type { V2Files } from '../canonical/v2Schema.ts'
 import type { TravelAtlasEditorState } from '../derive/editorState.ts'
 import { putEditorState, readEditorStateV1 } from './editorState.ts'
-import { V2WriteError } from './errors.ts'
+import { V2WriteError } from '../editor/errors.ts'
 import { WRITE_NOW, applyWrites, assertIntact, migratedFiles, placeNamed, testContext, writeOrder } from './v2write.fixture.ts'
 
 const assertV2Error = (run: () => unknown, code: string, check?: (error: V2WriteError) => void) => {

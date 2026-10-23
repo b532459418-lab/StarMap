@@ -19,12 +19,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
-import { viewOf } from '../store/diffV2.fixture.ts'
+import { viewOf } from '../store/v2Store.fixture.ts'
 import { VIEW_ROUTE, doubleRunStore, oldEngine, stepContext, withoutUnknownMediaBrought, nativeEngineOf, type DoubleRunStep } from './doubleRun.fixture.ts'
 import { SCENARIOS, SEQUENCE_SEEDS, SEQUENCE_STEPS } from './editorScenarios.fixture.ts'
 import { GOLDEN_URL, firstDifference, goldenEntryOf, nativeEntries, readGolden, sequenceSteps, type GoldenEntry, type GoldenFile } from './golden.fixture.ts'
 import { NATIVE_WRITES } from './native/routes.ts'
-import { migratedFiles } from '../v2write/v2write.fixture.ts'
+import { migratedFiles } from './editor.fixture.ts'
 import type { V2Files } from '../canonical/v2Schema.ts'
 
 const golden = readGolden()

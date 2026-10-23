@@ -5,7 +5,7 @@ import { createInstance } from 'i18next'
 import { resources } from './resources.ts'
 import { DEFAULT_UI_LOCALE, EN_UI_LOCALE } from '../data/uiLocale.ts'
 import { LocalEditorError, editorErrorNotice, formatEditorError, localizedConversionReason, requiresEditorReload } from './editorErrors.ts'
-import { V2_WRITE_ERROR_CODES, messageFor } from '../data/v2write/errors.ts'
+import { V2_WRITE_ERROR_CODES, messageFor } from '../data/editor/errors.ts'
 // @ts-expect-error The server refusal is an erasable JavaScript module without browser dependencies.
 import { legacyWriteRefusal } from '../../scripts/legacy-data.mjs'
 

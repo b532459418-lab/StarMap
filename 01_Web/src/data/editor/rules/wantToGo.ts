@@ -8,7 +8,7 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import { fail } from '../../v2write/errors.ts'
+import { fail } from '../errors.ts'
 import { COUNTRY_CODE_PATTERN, DATE_PATTERN, bodyOf, createNewOf, isObject, localDate, numberInRange, requireText } from './input.ts'
 
 /** 旧 store normalizeNote：trim 后 ≤ 200 字；空串表示「没有备注」。 */

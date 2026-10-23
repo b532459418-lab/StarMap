@@ -18,7 +18,7 @@ import { ensureCountryPlace, fillMissingLocation, newOrChosenCityPlace } from '.
 import {
   parseAddWantToGo, parseDeleteWantToGo, parseUpdateWantToGo, requireAllHidden, requireNotListed, wishNotFound,
 } from '../editor/rules/wantToGo.ts'
-import { fail } from './errors.ts'
+import { fail } from '../editor/errors.ts'
 
 /** 判定在 ../editor/rules/wantToGo.ts（3C-5 C1），这里沿用原来的导出名。 */
 export { normalizeNote } from '../editor/rules/wantToGo.ts'

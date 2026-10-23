@@ -27,7 +27,7 @@
 import { EN, ZH, isoOf, namesOf } from '../canonical/reconstruct.ts'
 import type { CanonicalMediaItem, CanonicalPlace, PlaceId } from '../canonical/types.ts'
 import { MEDIA_SCHEMA_VERSION, type V2MediaFile } from '../canonical/v2Schema.ts'
-import { completeForWrite, integrityProblems, type V2FilesOrEmpty } from '../v2write/transaction.ts'
+import { completeForWrite, integrityProblems, type V2FilesOrEmpty } from '../canonical/v2Integrity.ts'
 
 export type MediaKind = 'photo' | 'panorama360' | 'aerialPhoto' | 'video'
 

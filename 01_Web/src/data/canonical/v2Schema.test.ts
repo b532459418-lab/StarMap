@@ -265,7 +265,7 @@ test('id 唯一（审查 D10）：公开 V2 样例与全部冻结夹具仍然通
   assert.deepEqual(validateV2Files(sample), [], 'src/data/v2-sample')
 
   for (const relative of [
-    '../v2write/fixtures/migrated-files.json',
+    '../editor/fixtures/migrated-files.json',
     '../../../scripts/fixtures/bak-files-v2.json',
     '../../../scripts/fixtures/baseline-v2.json',
     '../../../scripts/fixtures/editor-store-v2.json',

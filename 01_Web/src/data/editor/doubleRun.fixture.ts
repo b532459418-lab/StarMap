@@ -40,7 +40,7 @@ import {
   readEditorStateV1, updateWantToGo,
 } from '../v2write/index.ts'
 import type { V2WriteContext, V2WriteOutcome } from '../v2write/transaction.ts'
-import { TEST_CATALOG, WRITE_EPOCH_MS, WRITE_NOW } from '../v2write/v2write.fixture.ts'
+import { TEST_CATALOG, WRITE_EPOCH_MS, WRITE_NOW } from './editor.fixture.ts'
 import type { NativeWrite } from './native/routes.ts'
 import { applyViewOperations, type ViewLists, type ViewOperation } from './rules/editorView.ts'
 import { applySetDelta, mergeOrder } from '../editorStateDelta.ts'

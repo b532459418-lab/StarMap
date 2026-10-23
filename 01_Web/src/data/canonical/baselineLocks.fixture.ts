@@ -66,7 +66,7 @@ export const MIGRATED_LOCKS: Record<(typeof MIGRATED_CANONICAL_NAMES)[number], s
 
 /** 冻结的五个 V2 文件（相对本文件的路径）。前两份是同一批中性个人数据迁移后的文件，后三份是三个脚本测试的私人根。 */
 export const V2_FILES_LOCKS: [string, string][] = [
-  ['../v2write/fixtures/migrated-files.json', PERSONAL_V2_LOCK],
+  ['../editor/fixtures/migrated-files.json', PERSONAL_V2_LOCK],
   ['../../../scripts/fixtures/bak-files-v2.json', 'd6c598158e8e427b70d12543107664f678fce5b27a03a94059f34b5456858e36'],
   ['../../../scripts/fixtures/baseline-v2.json', 'ecaba5cc00770a5a85189f963bc17e04f85ded3d62dd259163f770e15217a7ea'],
   ['../../../scripts/fixtures/editor-store-v2.json', 'ea18048301cdab27de440776265de4f4aff0a83e13bcce2d6172d03d89195025'],

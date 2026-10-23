@@ -17,7 +17,7 @@
 import { createHash } from 'node:crypto'
 import { resolveClassification } from './media-registry.mjs'
 import { INBOX_PREFIX, pathKeyOf } from './store-media-registry.mjs'
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 
 const hash = (value) => createHash('sha256').update(value).digest('hex')
 const normalized = (value) => {

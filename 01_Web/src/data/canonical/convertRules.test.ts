@@ -6,7 +6,7 @@
  * 核心断言是「界面与服务端一致」：同一份五个 V2 文件，一边交给写入端点 `convertToTravel`（../v2write/convert.ts），
  * 一边经 V2 Reader 与派生得到界面用的 `wantToGoConvertBlockReason` / `plannedConvertBlockReason`，
  * 端点拒绝的码对应的文案必须就是界面给出的禁用原因；端点接受时界面没有禁用原因。
- * 数据是 V2 写入测试的中性个人模式文件（../v2write/fixtures/migrated-files.json）。
+ * 数据是 V2 写入测试的中性个人模式文件（../editor/fixtures/migrated-files.json）。
  */
 
 /// <reference types="node" />
@@ -15,7 +15,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { convertToTravel } from '../v2write/convert.ts'
-import { V2WriteError, messageFor, type V2WriteErrorCode } from '../v2write/errors.ts'
+import { V2WriteError, messageFor, type V2WriteErrorCode } from '../editor/errors.ts'
 import { migratedFiles, placeNamed, testContext } from '../v2write/v2write.fixture.ts'
 import { convertRuleDataOfCanonical, convertRuleDataOfV2Files, convertRules } from './convertRules.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'

@@ -44,7 +44,7 @@ import { indexReadModel } from '../src/worldgraph/readModel/lookup.ts'
 import { createMediaRecordCommands, removeMediaRecordCommands, rereadChanges, rereadMediaRecordCommands } from '../src/data/store/mediaRecords.ts'
 import { deletableMediaOf, generatedDirectoriesOf } from '../src/data/v2media/editorWrites.ts'
 import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 
 /**
  * libvips keeps recently read files open through its operation cache. On Windows a file it holds can then not be

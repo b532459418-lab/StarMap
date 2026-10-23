@@ -2,39 +2,15 @@
 /** Test helpers for the incremental write path (3C-4a): a migrated store, its V2 view, and one V2 write applied the way
  * the new-library mode applies it (V2 function on the view -> diffV2ToCommands -> planCommands -> applyChangeSet).
  * Only tracked neutral fixtures and invented values. Not imported by the App. */
-import type { FormalState } from '../../worldgraph/store/formal.ts'
 import { memoryReader } from '../../worldgraph/store/reader.ts'
 import { applyChangeSet, planCommands } from '../../worldgraph/store/planner.ts'
-import type { BridgeManifest } from '../canonical/storeBridgeIdentity.ts'
-import { sequentialUuids } from '../canonical/v2.fixture.ts'
-import { serializeV2 } from '../canonical/v2Serializer.ts'
 import type { V2FileKey, V2Files } from '../canonical/v2Schema.ts'
 import type { V2Write, V2WriteContext, V2WriteOutcome } from '../v2write/transaction.ts'
 import { OFFICIAL_POLICY } from './officialDefinitions.ts'
-import { projectStoreToCanonical } from './projectCanonical.ts'
 import { diffV2ToCommands, memoryDiffReader, type StoreDiff } from './diffV2.ts'
-import { migrateIntoEmptyStore } from './v2Store.fixture.ts'
+import { storeFrom, viewOf, type StoreUnderTest } from './v2Store.fixture.ts'
 
-export interface StoreUnderTest {
-  state: FormalState
-  /** The V2 view the App reads: serializeV2 of the projection (the cache after the first read). */
-  view: V2Files
-  readonly manifest: BridgeManifest
-  /** Fresh ids of the diff (store rows), apart from the V2 write's ids. */
-  readonly allocateId: () => string
-}
-
-/** The V2 view of a store: what the plugin's virtual module serves. */
-export function viewOf(state: FormalState): V2Files {
-  const { canonical, v2Meta } = projectStoreToCanonical(state, { source: 'local' })
-  return serializeV2(canonical, v2Meta)
-}
-
-/** Migrate `files` into an empty store and read its view. */
-export function storeFrom(files: V2Files, allocatorYear = 2031): StoreUnderTest {
-  const { state, result } = migrateIntoEmptyStore(files)
-  return { state, view: viewOf(state), manifest: result.manifest, allocateId: sequentialUuids(Date.UTC(allocatorYear, 0, 1)) }
-}
+export { storeFrom, viewOf, type StoreUnderTest }
 
 /** The five files after `writes`, sharing every file that was not written (as the session builds them). */
 export const filesAfter = (files: V2Files, writes: readonly V2Write[]): V2Files =>

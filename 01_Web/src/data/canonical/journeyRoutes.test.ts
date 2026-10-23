@@ -2,7 +2,7 @@
  * 行程先后与路线类型（canonical/journeyRoutes.ts，审查 C3）的单元测试，以及它在派生、时间查询与只读存储桥上的效果。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
- * 数据是 V2 写入测试的中性个人模式文件（../v2write/fixtures/migrated-files.json）：一个行程依次经过冰岛的雷克雅未克、
+ * 数据是 V2 写入测试的中性个人模式文件（../editor/fixtures/migrated-files.json）：一个行程依次经过冰岛的雷克雅未克、
  * 维克（editor 隐藏）、阿克雷里，再到法罗群岛的托尔斯港、杰格夫、克拉克斯维克。
  */
 
@@ -12,7 +12,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { deriveTimeQueryContext } from '../derive/timeQueryContext.ts'
-import { migratedFiles, placeNamed } from '../v2write/v2write.fixture.ts'
+import { migratedFiles, placeNamed } from '../editor/editor.fixture.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
 import { compareCodePoints, compareJourneyRecords, routeTypeBetween } from './journeyRoutes.ts'
 import { bridgeV2 } from './storeBridge.ts'

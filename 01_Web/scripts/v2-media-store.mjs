@@ -32,7 +32,7 @@ import {
   uploadTargetOf,
 } from '../src/data/v2media/editorWrites.ts'
 import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
-import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
+import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 
 /** 三个媒体端点 → 处理方式。与 v2-editor-store.mjs 的 V2_EDITOR_ROUTES 不相交，两者合起来是全部 11 个写入端点。 */
 export const V2_MEDIA_ROUTES = Object.freeze({
