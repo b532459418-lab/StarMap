@@ -71,8 +71,8 @@ export async function servedLibrary(t, prefix) {
       return entities.find((entity) => entity.id === source?.recordId)?.fields.asset
     },
     async hide(ids, base) {
-      const { body } = await requestTo(handler, { url: `${editorPrefix}state`, method: 'GET', headers: {} })
-      const hidden = await library.write('state', { ...body.state, hiddenMediaIds: [...body.state.hiddenMediaIds, ...ids] }, base, undefined, 'PUT')
+      // The view operation the page sends (3C-5 C1; PUT /state is gone since 3C-5 E).
+      const hidden = await library.write('view', { operations: [{ op: 'hide', scope: 'media', add: ids, remove: [] }] }, base)
       assert.equal(hidden.status, 200, JSON.stringify(hidden.body))
       return hidden.body.revision
     },

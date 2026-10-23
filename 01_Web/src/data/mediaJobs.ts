@@ -122,24 +122,23 @@ export function assertMediaJobsRead(value: unknown): asserts value is MediaJobsR
   if (value.jobs.filter(job => !isFinishedMediaJob(job)).length > 1) throw invalid()
 }
 /**
- * The preview of a task, strictly. `mode` is the library's: a V2 preview has a hash for every output and neither
- * `sourceMatches` nor `missing`; a new-library preview (3C-4c) has both, and outputs it has not generated yet carry
- * `sha256: null`. Without `mode` (a preview this page already accepted) the shape says which it is.
+ * The preview of a task, strictly: the new library's (3C-4c), with `sourceMatches` and `missing`; outputs it has not
+ * generated yet carry `sha256: null`. 3C-5 E: the V2 preview (a hash for every output, neither field) is gone with the
+ * V2 import; a preview without the two fields is refused.
  */
-export function assertMediaJobPreview(value: unknown, { mode }: {mode?: 'v2' | 'store'} = {}): asserts value is MediaJobPreview {
+export function assertMediaJobPreview(value: unknown): asserts value is MediaJobPreview {
   if (!record(value) || !uuid(value.jobId) || !Number.isSafeInteger(value.revision) || Number(value.revision) < 0 || !strings(value.selectedFileIds)
     || !value.selectedFileIds.length || !value.selectedFileIds.every(uuid) || new Set(value.selectedFileIds).size !== value.selectedFileIds.length
     || !Array.isArray(value.blockers) || value.blockers.some(item => !record(item) || typeof item.code !== 'string' || (item.sourcePath !== undefined && !relativePath(item.sourcePath)))
     || !record(value.plan) || !hash(value.plan.digest) || !record(value.plan.summary)) throw invalid()
   const summary = value.plan.summary
-  const store = mode === undefined ? summary.sourceMatches !== undefined : mode === 'store'
-  if (store ? !Array.isArray(summary.sourceMatches) || summary.missing === undefined : summary.sourceMatches !== undefined || summary.missing !== undefined) throw invalid()
+  if (!Array.isArray(summary.sourceMatches) || summary.missing === undefined) throw invalid()
   if (!strings(summary.addedIds) || !strings(summary.updatedIds) || !strings(summary.removedIds)
     || !Array.isArray(summary.sources) || summary.sources.some(item => !record(item) || typeof item.id !== 'string' || !relativePath(item.sourcePath) || !hash(item.sha256) || !Number.isSafeInteger(item.bytes) || Number(item.bytes) <= 0 || !['photo', 'aerialPhoto', 'panorama360', 'video'].includes(String(item.kind)) || !uuid(item.placeId))
     || !Array.isArray(summary.pins) || summary.pins.some(item => !record(item) || !relativePath(item.sourcePath) || !uuid(item.placeId)
       || !relativePath(item.folder) || item.sourcePath !== `${item.folder}/place.json` || !['city', 'country'].includes(String(item.subtype))
       || !['name', 'country.json'].includes(String(item.source)) || !record(item.names) || Object.values(item.names).some(name => typeof name !== 'string'))
-    || !Array.isArray(summary.outputs) || summary.outputs.some(item => !record(item) || typeof item.id !== 'string' || !relativePath(item.path) || !(hash(item.sha256) || (store && item.sha256 === null)))
+    || !Array.isArray(summary.outputs) || summary.outputs.some(item => !record(item) || typeof item.id !== 'string' || !relativePath(item.path) || !(hash(item.sha256) || item.sha256 === null))
     || !record(summary.editorEffects) || !strings(summary.editorEffects.restoredMediaIds) || !record(summary.editorEffects.orders)
     || Object.values(summary.editorEffects.orders).some(table => !record(table) || Object.values(table).some(ids => !strings(ids)))
     || (summary.sourceMatches !== undefined && (!Array.isArray(summary.sourceMatches) || summary.sourceMatches.some(item => !record(item) || !relativePath(item.sourcePath)

@@ -20,6 +20,7 @@ import { createStoreSession } from './store-session.mjs'
 import { tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 
 test('the browser fixture is a store by default, V2 files that need migrating on request', async (t) => {
   const { root, paths, directory } = await tempPrivateRoot(t, 'starmap-browser-fixture-')
@@ -108,7 +109,7 @@ test('the damaged store of the 3C-4b case: the fixture\'s store set aside, a dam
   try {
     const read = await session.moduleExports()
     assert.equal(read.readOnly, true)
-    assert.deepEqual(readV2(read.files), readV2(pristine))
+    assert.deepEqual(officialViewOf(read.model, 'local'), readV2(pristine))
   } finally { await session.close() }
   await leave()
   assert.equal(privateDataSource(paths), 'v2')

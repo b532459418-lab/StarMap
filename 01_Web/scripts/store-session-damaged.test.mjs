@@ -22,6 +22,7 @@ import {
 } from './store-mode.fixture.mjs'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 
 const NOW = '2026-10-15T00:00:00.000Z'
 const UPDATE = 'POST /__travelatlas/editor/wanttogo/update'
@@ -71,7 +72,7 @@ test('a damaged page found by the open check: the store opens read-only, the dat
   const committedId = requestId()
   const committed = await before.writeRoute(...UPDATE.split(' '))({ headers: headers(committedId, 1), input: { id: wish.id, note: 'Synthetic before damage' } })
   assert.equal(committed.status, 200, JSON.stringify(committed.body))
-  const expected = readV2((await before.moduleExports()).files)
+  const expected = officialViewOf((await before.moduleExports()).model, 'local')
   await before.close()
 
   markUnclean(file)
@@ -84,10 +85,9 @@ test('a damaged page found by the open check: the store opens read-only, the dat
   const read = await session.moduleExports()
   assert.equal(read.readOnly, true)
   assert.equal(read.revision, 2)
-  assert.deepEqual(readV2(read.files), expected, 'the data projects as before')
+  assert.deepEqual(officialViewOf(read.model, 'local'), expected, 'the data projects as before')
   assert.equal(await session.isDamaged(), true)
   assert.match(lines[0], /^\[StarMap store\] 新库没有通过打开检查（E_STORE_CORRUPT），以只读方式打开：.*E_STORE_READ_ONLY.*npm run store:restore/)
-  assert.equal((await session.readEditorState(new Date(NOW))).status, 200)
 
   // Every editor write is refused, confirmed not committed; the replay of the committed request answers with its receipt.
   const writes = [
@@ -151,8 +151,9 @@ test('the plugin: the virtual module exports privateStoreReadOnly, every write e
     assert.equal(module.privateStoreRevision, 1)
     assert.deepEqual(servedCanonical(module), readV2(context.files))
     const handler = captureMiddleware(plugin).handlers[1]
-    const state = await requestTo(handler, { url: `${editorPrefix}state`, method: 'GET', headers: {} })
-    assert.equal(state.status, 200)
+    // Reads work (3C-5 E: the read model's endpoint; GET /state is gone).
+    const read = await requestTo(handler, { url: `${editorPrefix}read-model`, method: 'GET', headers: {} })
+    assert.equal(read.status, 200)
     const protocol = { ...authorizedHeaders, ...headers(requestId(), 1) }
     const editor = await requestTo(handler, { url: `${editorPrefix}wanttogo/update`, headers: protocol, content: Buffer.from(JSON.stringify({ id: wish.id, note: 'Synthetic' })) })
     assert.deepEqual([editor.status, editor.body.code], [409, 'E_STORE_READ_ONLY'])

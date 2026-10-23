@@ -35,7 +35,7 @@ test('smoke: every segment of the new-library benchmark runs at the tiny scale',
   // 3C-4a: the eight editor writes (the store mode only since 3C-4d).
   const editors = await editorsSegment(directory, scale)
   assert.deepEqual(Object.keys(editors), ['store'])
-  const endpoints = ['countries', 'records', 'wanttogo', 'wanttogo/update', 'wanttogo/convert', 'state', 'wanttogo/delete', 'countries/delete']
+  const endpoints = ['countries', 'records', 'wanttogo', 'wanttogo/update', 'wanttogo/convert', 'view', 'wanttogo/delete', 'countries/delete']
   // The tiny scale has a single hidden want-to-go item to delete.
   const count = (endpoint) => (endpoint === 'wanttogo/delete' ? 1 : scale.updates)
   for (const endpoint of endpoints) {
@@ -59,16 +59,15 @@ test('smoke: the media, backup and restore segments (3C-4b) run at the tiny scal
   assert.ok(restore.restored.files >= backup.mediaFiles + 1)
 })
 
-test('smoke: the native segment (3C-5 C1) runs at the tiny scale: view operations and their PUT /state counterparts, the want-to-go writes', async (t) => {
+test('smoke: the native segment (3C-5 C1) runs at the tiny scale: view operations, the want-to-go writes, consecutive conversions', async (t) => {
   const { directory } = await tempPrivateRoot(t, 'starmap-store-mode-bench-')
   const scale = MODE_BENCH_SCALES.tiny
   const result = await nativeSegment(directory, scale)
   for (const label of ['view: order swap', 'view: reverse countries (batch)', 'view: 60 hidden cities (batch)', 'wanttogo', 'wanttogo/update: note', 'wanttogo/update: hide', 'wanttogo/delete']) {
     assert.ok(result[label].plan.n > 0 && result[label].indexUpdate.n === result[label].plan.n, label)
   }
-  for (const label of ['PUT state: order swap', 'PUT state: reverse countries (batch)']) assert.ok(result[label].diff.n > 0, label)
   // 3C-5 C2: the conversion is native too.
-  for (const label of ['convert planned, right after a native write (V2 path)', 'convert planned, after a V2 write (V2 path)']) assert.ok(result[label].plan.n > 0, label)
+  for (const label of ['convert planned, right after a want-to-go note', 'convert planned, after a conversion']) assert.ok(result[label].plan.n > 0, label)
   assert.equal(result['view: order swap'].endToEnd.n, scale.updates)
 })
 

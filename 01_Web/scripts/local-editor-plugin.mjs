@@ -16,11 +16,10 @@ import {
 } from './private-data-module.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { privateDataState } from './private-data-source.mjs'
-import { createV2WriteContext, readV2EditorState, v2EditorRoute, v2ErrorBody } from './v2-editor-store.mjs'
 import { v2MediaRoute } from './v2-media-store.mjs'
 import { V2WriteError } from '../src/data/editor/errors.ts'
 import { filterReadModelForPersonalBuild } from '../src/data/store/personalBuildReadModel.ts'
-import { normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
+import { createEditorWriteContext, editorErrorBody, normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 import { allowedOrigins, authorizeRead, crossSiteRequestGuard, isLoopbackRequest } from './local-editor-request-guard.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
 import { firstUnsafeComponent, isPathInside } from './path-containment.mjs'
@@ -40,8 +39,9 @@ function withDelta(body, session, from) {
 
 // 3C-4d：新库是私人数据唯一的写入方式。私人根的状态由 ./private-data-source.mjs 的 privateDataState 每次读写现判：
 // - store：App 读新库的读模型（3C-5B；./store-session.mjs，按需加载，公开模式不加载 node:sqlite），经只读端点
-//   GET /__travelatlas/editor/read-model 取得，虚拟模块只给出它的地址；8 个编辑端点（3C-4a，V2
-//   写入规则作为规则引擎）、3 个媒体端点与媒体任务（3C-4c，./store-media-endpoints.mjs、./media-service.mjs）都写新库。
+//   GET /__travelatlas/editor/read-model 取得，虚拟模块只给出它的地址；8 个编辑端点（3C-5 C1、C2 起是存储原生的写入，
+//   ./store-session.mjs 的 STORE_WRITE_ROUTES；3C-5 E 删除了 GET / PUT /state）、3 个媒体端点与媒体任务（3C-4c，
+//   ./store-media-endpoints.mjs、./media-service.mjs）都写新库。
 // - migration-required：有 V2 数据（或没迁移的旧格式数据）、还没有新库。只读显示 data/v2/ 的文件（3C-5B 起在内存里迁移成读模型
 //   再给 App），页面提示运行迁移；
 //   全部写入端点、媒体端点与媒体任务（含任务列表）返回 409 E_STORE_MIGRATION_REQUIRED（旧格式：E_LEGACY_UNMIGRATED）。
@@ -465,7 +465,7 @@ const storeMediaDeps = () => ({
  */
 const notWritableResponse = (state) => {
   if (state.state === 'migration-required' && state.reason === 'legacy') return legacyWriteRefusal(legacyDataStateOf(privatePaths))
-  return { status: 409, body: v2ErrorBody(state.state === 'migration-required' ? 'E_STORE_MIGRATION_REQUIRED' : 'E_STORE_RECOVERY_REQUIRED') }
+  return { status: 409, body: editorErrorBody(state.state === 'migration-required' ? 'E_STORE_MIGRATION_REQUIRED' : 'E_STORE_RECOVERY_REQUIRED') }
 }
 
 export function travelAtlasLocalEditor(options = {}) {
@@ -714,18 +714,6 @@ export function travelAtlasLocalEditor(options = {}) {
             const result = await handleMediaJobRead({ privatePaths, route: jobRoute, storeMedia: { mediaStore: await (await storeSession()).mediaStore() } })
             return sendJson(response,result.status,result.body)
           }
-          if (request.method === 'GET' && url.pathname === '/__travelatlas/editor/state') {
-            if (!authorizeRead(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
-            // 3C-3 新库模式：读新库的投影，不读 V2 文件。
-            if (storeMode()) {
-              const stored = await (await storeSession()).readEditorState()
-              return sendJson(response, stored.status, stored.body)
-            }
-            // RFC-LOC-1 PR3b-2：读 data/v2/ 的 editor-state，转成 V1 形状返回。
-            const result = await readV2EditorState({ privatePaths })
-            return sendJson(response, result.status, result.body)
-          }
-
           // 3C-5B（审查）：App 启动时从这里取读模型（只读；增量接口与推送是子批 D 的事）。地址里的修订号只为让保存后的整页
           // 刷新换一个地址；回答的总是当前的读模型，它的修订号在头里（x-starmap-revision），也在读模型本身的 revision 里。
           if (request.method === 'GET' && url.pathname === READ_MODEL_PATH) {
@@ -751,7 +739,7 @@ export function travelAtlasLocalEditor(options = {}) {
             if (!authorizeRead(request)) return sendJson(response, 403, normalizeLocalEditorError(new V2WriteError('E_EDITOR_READ_FORBIDDEN')))
             const sinceText = url.searchParams.get('since') ?? ''
             const since = Number(sinceText)
-            if (!/^(0|[1-9][0-9]*)$/.test(sinceText) || !Number.isSafeInteger(since)) return sendJson(response, 400, v2ErrorBody('E_REQUEST_INVALID'))
+            if (!/^(0|[1-9][0-9]*)$/.test(sinceText) || !Number.isSafeInteger(since)) return sendJson(response, 400, editorErrorBody('E_REQUEST_INVALID'))
             if (!storeMode()) return sendJson(response, 410, { ok: false, code: 'E_CHANGES_GONE', reason: 'not-a-library' })
             const libraryId = url.searchParams.get('libraryId') ?? undefined
             const restoreMark = url.searchParams.has('restoreMark') ? (url.searchParams.get('restoreMark') || null) : undefined
@@ -795,10 +783,10 @@ export function travelAtlasLocalEditor(options = {}) {
             const write = session.writeRoute(request.method, url.pathname)
             if (!write) {
               const mediaRouteName = v2MediaRoute(request.method, url.pathname)
-              const known = jobRoute || mediaRouteName || v2EditorRoute(request.method, url.pathname)
-              if (!known) return sendJson(response, 404, v2ErrorBody('E_UNKNOWN_ENDPOINT'))
+              const known = jobRoute || mediaRouteName
+              if (!known) return sendJson(response, 404, editorErrorBody('E_UNKNOWN_ENDPOINT'))
               // 3C-4c：只读的库（损坏）上，媒体端点与媒体任务一律 409 E_STORE_READ_ONLY，什么文件都不写（上传也一样）。
-              if (await session.isDamaged()) return sendJson(response, 409, v2ErrorBody('E_STORE_READ_ONLY'))
+              if (await session.isDamaged()) return sendJson(response, 409, editorErrorBody('E_STORE_READ_ONLY'))
               if (jobRoute) {
                 // 3C-4c：媒体任务走新库（media-job-service.mjs 的 storeMedia）。预览只读、不取租约，其余在库租约之下，同 V2。
                 const { releaseImageFiles } = await import('./media-service.mjs')
@@ -845,7 +833,7 @@ export function travelAtlasLocalEditor(options = {}) {
               return sendJson(response, mediaResult.status, withDelta(mediaResult.body, session, mediaFrom))
             }
             const result = await write({
-              headers: request.headers, input: await readJsonBody(request), ctx: createV2WriteContext({ countryCatalog: countryCatalogByCode }),
+              headers: request.headers, input: await readJsonBody(request), ctx: createEditorWriteContext({ countryCatalog: countryCatalogByCode }),
             })
             // 提交之后（以及结果不明时）让虚拟模块失效；客户端照旧整页刷新。
             invalidatePrivateDataModuleOnce()

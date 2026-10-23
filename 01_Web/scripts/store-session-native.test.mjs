@@ -1,8 +1,8 @@
 /**
  * The host's store-native write flow (3C-5 C1 spec §2.1), with a stand-in planner: the protocol headers and the receipt
  * lookup as before, E_STALE against the live index, the planner's refusal as it is, one commit, the live index moved on
- * with the commit's changed rows (equal to the store read again, STARMAP_STORE_VERIFY), and V2 writes that keep working
- * on the same cache.
+ * with the commit's changed rows (equal to the store read again, STARMAP_STORE_VERIFY), and the real planners working on
+ * the same cache.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -16,6 +16,7 @@ import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { applyReadModelDelta } from '../src/worldgraph/readModel/delta.ts'
 import { fail } from '../src/data/editor/errors.ts'
+import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
 import { TEST_CATALOG, WRITE_EPOCH_MS, migratedFiles, placeNamed } from '../src/data/editor/editor.fixture.ts'
 
 const MIGRATED_AT = '2026-09-26T00:00:00.000Z'
@@ -97,18 +98,18 @@ test('a native write refuses a stale base revision, a page without the protocol 
   assert.equal((await storeNow()).revision, 1)
 })
 
-test('native and V2 writes share the cache: a V2 write after a native one sees it, and the live index follows both', async (t) => {
-  const { session, write, files, storeNow } = await nativeSession(t)
+test('a stand-in planner and the real ones share the cache: a real write after the stand-in sees it, and the live index follows both', async (t) => {
+  const { session, write, files, storeNow } = await nativeSession(t, { ...NATIVE_WRITES, [ROUTE]: noteWrite })
   const wish = files.wantToGo.items[0]
   await session.moduleExports()
-  assert.equal((await write(ROUTE, { id: wish.id, note: 'Synthetic before V2' }, 1, contextOf(1))).body.revision, 2)
-  // A V2 write (its V2 view is built again from the live index's read model).
+  assert.equal((await write(ROUTE, { id: wish.id, note: 'Synthetic before the real write' }, 1, contextOf(1))).body.revision, 2)
+  // A real native write (3C-5 E: before, a V2 write here; every endpoint is native now).
   const country = await write('POST /__travelatlas/editor/countries', { countryCode: 'DK', visitedDate: '2024-03-02' }, 2, contextOf(2))
   assert.equal(country.status, 201, JSON.stringify(country.body))
   assert.equal(session.lastSnapshot.hasLive, true)
   assert.deepEqual(session.lastSnapshot.model, await storeNow())
-  assert.equal(officialViewOf(session.lastSnapshot.model, 'local').wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic before V2')
-  // The next native write plans on the index the V2 write moved on.
+  assert.equal(officialViewOf(session.lastSnapshot.model, 'local').wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic before the real write')
+  // The next stand-in write plans on the index the real write moved on.
   const after = await write(ROUTE, { id: wish.id, note: 'Synthetic after' }, 3, contextOf(3))
   assert.equal(after.status, 200, JSON.stringify(after.body))
   assert.deepEqual(session.lastSnapshot.model, await storeNow())
@@ -118,7 +119,7 @@ test('native and V2 writes share the cache: a V2 write after a native one sees i
 
 const VIEW = 'POST /__travelatlas/editor/view'
 
-test('POST /editor/view: the operations merged into the current lists; a drag writes one row; nothing to change commits nothing; refusals as PUT /state', async (t) => {
+test('POST /editor/view: the operations merged into the current lists; a drag writes one row; nothing to change commits nothing; refusals as the old PUT /state', async (t) => {
   const { session, write, files, storeNow, output } = await nativeSession(t, null)
   await session.moduleExports()
   const lists = () => officialViewOf(session.lastSnapshot.model, 'local').editorState

@@ -3,8 +3,8 @@
  * personal data is written since 3C-4d.
  *
  * Why a separate file: the plugin imports sharp / undici / world-countries and resolves the private root at module
- * scope, so it cannot be loaded under node --test as it is. Like ./v2-editor-store.mjs for V2, this file holds what the
- * plugin does with the store, and the end-to-end tests drive it directly on temporary private roots.
+ * scope, so it cannot be loaded under node --test as it is. This file holds what the plugin does with the store, and the
+ * end-to-end tests drive it directly on temporary private roots.
  *
  * - One writable connection per dev server process (`open`): opened when the server starts, kept until it closes
  *   (`close`, which writes the clean-shutdown mark). A store that another process is writing makes the open
@@ -20,10 +20,8 @@
  *   rows with the header) and the store-wide revision. 3C-5 C1: the cache holds the live index of the read model
  *   (src/worldgraph/readModel/liveIndex.ts, built on first use): the native writes plan on it, every commit moves it on
  *   with the commit's changed rows, and the read model is built from it when asked for. The App reads the read model
- *   through the official view. 3C-5 C2: the session keeps no V2 view. Where the V2 shape is still needed (PUT /state,
- *   GET /state, tests) it is generated from the read model through the
- *   official view when asked for (store-projection.mjs projectToV2Files), never cached and never read from data/v2/.
- *   3C-5 E: the media rules read the official reader over the live index (mediaStore().official()), never a V2 shape.
+ *   through the official view. 3C-5 C2, E: the session has no V2 view at all; the media rules read the official reader
+ *   over the live index (mediaStore().official()), as the editor writes do.
  * - Incremental refresh (3C-4a, 3C-5B): after a committed write the read model of the new revision is the old one with
  *   the commit's changed rows applied (the live index, or applyReadModelDelta; the host returns them with the receipt).
  *   The store is not read again. The cache is keyed by the
@@ -31,9 +29,9 @@
  *   was restored), the cache is dropped and the store read again. With STARMAP_STORE_VERIFY=1 (tests, development; or
  *   the `verify` option) every commit is followed by a fresh read compared with the cache (the read model): a difference
  *   is E_STORE_VERIFY (500 E_STORE_FAILED), the fresh read replaces the cache, and the log says so.
- * - Writes (`writeRoute`): the editor endpoints. 3C-5 C1, C2: every editor endpoint but PUT /state is store-native
- *   (src/data/editor/native/): it plans its commands on the live index with the official reader. PUT /state, which the
- *   page no longer sends (sub-batch E removes it), still runs the V2 write function of ./v2-editor-store.mjs. Media uploads,
+ * - Writes (`writeRoute`): the eight editor endpoints (STORE_WRITE_ROUTES), store-native since 3C-5 C1 and C2
+ *   (src/data/editor/native/): each plans its commands on the live index with the official reader. 3C-5 E removed
+ *   PUT and GET /state (the page had stopped sending them) with the V2 write functions. Media uploads,
  *   imports, deletions and media tasks (3C-4c) go through ./store-media-endpoints.mjs, ./media-job-service.mjs and the
  *   media service with `mediaStore()`; their commits are queued with the editor writes.
  * - Read-only sessions (`readOnly: true`, 3C-4b): `build:personal` reads the store while a dev server may have it open
@@ -42,7 +40,7 @@
  *   run. A read that meets a writer's commit (E_STORE_BUSY) is retried like a busy open. Such a session never writes
  *   and never prunes.
  *
- * One write (design 3B §4.4 and §4.5; the rules are V2's, the storage is the store):
+ * One write (design 3B §4.4 and §4.5; design 3C-5 §3):
  * 1. The request carries `x-starmap-request-id` (UUIDv7, one per user action, kept on retries) and
  *    `x-starmap-base-revision` (the store revision the page was built from, or the revision a previous write of the
  *    same page answered). Without them the page predates the new-library mode: E_STALE (reload). Malformed:
@@ -51,16 +49,16 @@
  *    intent (`kind` carries the route and a SHA-256 of the request body) and base revision answers with its original
  *    response (kept in memory for the last REMEMBERED_RESPONSES requests; after a restart, the receipt only) and writes
  *    nothing; a different intent is E_OPERATION_CONFLICT.
- * 3. The base revision must be the cached view's revision (E_STALE otherwise). The V2 write function runs on the view;
- *    its refusal is returned as it is (400, or 409 for a place or journey choice).
- * 4. diffV2ToCommands turns the view before and after into commands (in a read transaction, at the base revision),
- *    and they are committed on the base revision; the host checks the receipt, the revision and the plan again inside
- *    BEGIN IMMEDIATE.
- * 5. Success: the cache becomes the files after the write at the new revision; the response is V2's result plus the
- *    revision and the receipt. The plugin invalidates the virtual module.
+ * 3. The base revision must be the live index's revision (E_STALE otherwise). The native planner turns the request into
+ *    commands with the official reader; its refusal is returned as it is (400, or 409 for a place or journey choice).
+ *    A request that changes nothing commits nothing (`unchanged: true`).
+ * 4. The commands are committed on the base revision; the host checks the receipt, the revision and the plan again
+ *    inside BEGIN IMMEDIATE.
+ * 5. Success: the commit's changed rows move the live index on; the response is the planner's result plus the revision,
+ *    the receipt and the changed rows (3C-5 D). The plugin invalidates the virtual module.
  * Outcomes: 409 E_STALE, E_OPERATION_CONFLICT, E_LIBRARY_BUSY, E_STORE_BUSY (confirmed not committed); 500
  * E_OUTCOME_UNKNOWN (the client retries once with the same request id); 500 E_STORE_FAILED for any other failure
- * (E_VIEW_MISMATCH also drops the cache).
+ * (a plan the store refuses also drops the cache).
  *
  * Record retention (3C-4b; design 3B §4.6 with v1.1 §16.2-5 and -6): the host's pruneLogs (receipts by the rule that
  * keeps more, op_log by the rule that keeps fewer, then incremental_vacuum) runs in this process, on this connection,
@@ -76,20 +74,17 @@ import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 import { storeFileOf } from './private-data-source.mjs'
-import { skippedCounts, projectToV2Files } from './store-projection.mjs'
 import { StoreHostError, openStore } from './store-host.mjs'
 import { changeEntryOf, createChangeLog } from './store-change-log.mjs'
-import { V2_EDITOR_ROUTES, createV2WriteContext, v2FailureResponse } from './v2-editor-store.mjs'
+import { createEditorWriteContext, editorFailureResponse } from './local-editor-errors.mjs'
 import { isUuidV7, uuidv7 } from '../src/data/canonical/uuidv7.ts'
-import { diffV2ToCommands } from '../src/data/store/diffV2.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
-import { formalStateOfReadModel } from '../src/worldgraph/readModel/build.ts'
 import { applyReadModelDelta, readModelChangesBetween } from '../src/worldgraph/readModel/delta.ts'
 import { liveReadModelIndex } from '../src/worldgraph/readModel/liveIndex.ts'
 import { officialReader } from '../src/data/store/officialReader.ts'
 import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
 import { jsonKey } from '../src/worldgraph/store/primitives.ts'
-import { V2WriteError, errorBody, readEditorStateV1 } from '../src/data/v2write/index.ts'
+import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 
 /** Attempts to open a store another process is writing: the first one and OPEN_RETRIES more, OPEN_RETRY_DELAY_MS apart. */
 export const OPEN_RETRIES = 5
@@ -126,11 +121,13 @@ export function storeOpenMessage(code) {
 }
 
 /**
- * Write endpoints of the new-library mode: `METHOD /path` → the request `kind` prefix. They are the eight editor
- * endpoints of V2 (./v2-editor-store.mjs, same functions and statuses); the want-to-go update keeps its 3C-3 kind.
+ * The editor's write endpoints: `METHOD /path` → the request `kind` prefix. Each has a store-native planner
+ * (src/data/editor/native/routes.ts NATIVE_WRITES). Their kinds are those of the V2 endpoints they replaced (3C-5 C1, C2),
+ * so a request committed before still answers with its receipt; the want-to-go update keeps its 3C-3 kind, and the view
+ * operations (3C-5 C1) replaced PUT /state, which 3C-5 E removed.
  */
 export const STORE_WRITE_ROUTES = Object.freeze({
-  'PUT /__travelatlas/editor/state': 'starmap.editor.state',
+  'POST /__travelatlas/editor/view': 'starmap.editor.view',
   'POST /__travelatlas/editor/records': 'starmap.editor.records',
   'POST /__travelatlas/editor/countries': 'starmap.editor.countries',
   'POST /__travelatlas/editor/countries/delete': 'starmap.editor.countries.delete',
@@ -138,18 +135,6 @@ export const STORE_WRITE_ROUTES = Object.freeze({
   'POST /__travelatlas/editor/wanttogo/update': 'starmap.wanttogo.update',
   'POST /__travelatlas/editor/wanttogo/delete': 'starmap.editor.wanttogo.delete',
   'POST /__travelatlas/editor/wanttogo/convert': 'starmap.editor.wanttogo.convert',
-})
-
-/**
- * 3C-5 C1: the store-native write endpoints (`METHOD /path` → the request `kind` prefix and the planner of
- * src/data/editor/native/routes.ts). Their kinds are those of the V2 endpoints they replace, so a request committed
- * before still answers with its receipt; the view operations are new.
- */
-export const NATIVE_WRITE_ROUTES = Object.freeze({
-  'POST /__travelatlas/editor/view': 'starmap.editor.view',
-  'POST /__travelatlas/editor/wanttogo': 'starmap.editor.wanttogo',
-  'POST /__travelatlas/editor/wanttogo/update': 'starmap.wanttogo.update',
-  'POST /__travelatlas/editor/wanttogo/delete': 'starmap.editor.wanttogo.delete',
 })
 
 /** The client protocol's request headers (lowercase, as Node delivers them). */
@@ -259,8 +244,8 @@ async function readWithRetry(read, { retries = OPEN_RETRIES, retryDelayMs = OPEN
 
 /**
  * The store session of one plugin instance. `privatePaths` is getPrivatePaths() of the private root; `now` gives the
- * host time and the time of the V2 writes (tests); `log` receives the timing lines; `retry` overrides the open retries
- * ({ retries, retryDelayMs, sleep }); `countryCatalog` is the plugin's country catalog (the V2 write context when a
+ * host time and the time of the editor writes (tests); `log` receives the timing lines; `retry` overrides the open retries
+ * ({ retries, retryDelayMs, sleep }); `countryCatalog` is the plugin's country catalog (the write context when a
  * caller gives none); `verify` compares every commit with a fresh projection (default: STARMAP_STORE_VERIFY=1);
  * `newId` gives the ids of new store rows (default UUIDv7); `nativeWrites` replaces the native planners (tests:
  * NATIVE_WRITES of src/data/editor/native/routes.ts by route); `prune` sets the record pruning schedule
@@ -367,8 +352,7 @@ export function createStoreSession(privatePaths, {
   /**
    * A cache entry: the read model of one revision (`model`, or the live index it is built from) and the live index, built
    * on first use (carried on from the previous entry after a commit). An entry is replaced by the next after a commit:
-   * the live index it shares has moved on then. `files`: the V2 view of the entry's read model, generated through the
-   * official view each time it is asked for (3C-5 C2: never cached).
+   * the live index it shares has moved on then.
    */
   function cacheEntry(key, { model, live, timings = {}, identity }) {
     const revision = live ? live.revision : model.revision
@@ -379,14 +363,6 @@ export function createStoreSession(privatePaths, {
       /** The live index (3C-5B's `index`). */
       get index() { return this.live },
       get hasLive() { return live !== undefined },
-      get files() {
-        const started = performance.now()
-        const { projection, files } = projectToV2Files(formalStateOfReadModel(this.model))
-        const skipped = Object.entries(skippedCounts(projection.skipped)).map(([table, count]) => `${table} ${count}`)
-        log(`[StarMap store] V2 视图（修订号 ${revision}，按需生成，不缓存）：官方视图与 serializeV2 ${ms(started)} ms`
-          + (skipped.length ? `；投影跳过 ${projection.skipped.length} 行（${skipped.join('，')}）` : ''))
-        return Object.freeze(files)
-      },
     })
   }
 
@@ -525,84 +501,15 @@ export function createStoreSession(privatePaths, {
     while (remembered.size > REMEMBERED_RESPONSES) remembered.delete(remembered.keys().next().value)
   }
 
-  /** One editor write (see the file header). Resolves `{ status, body }`. */
-  function writeHandler(routeKey) {
-    const route = V2_EDITOR_ROUTES[routeKey]
-    const prefix = STORE_WRITE_ROUTES[routeKey]
-    const label = routeKey.replace(' /__travelatlas/editor/', ' ')
-    return async function write({ headers, input, ctx }) {
-      const protocol = storeProtocolOf(headers)
-      if (protocol.failure) return protocol.failure
-      let kind
-      try { kind = storeRequestKind(prefix, input) } catch { return storeFailureResponse(new V2WriteError('E_REQUEST_INVALID', { reason: '请求体不是 JSON。' })) }
-      return serialized(async () => {
-        const started = performance.now()
-        try {
-          const opened = await open()
-          const previous = opened.lookup(protocol.requestId)
-          if (previous.found) {
-            if (previous.receipt.kind !== kind || previous.receipt.baseRevision !== protocol.baseRevision) {
-              return storeFailureResponse(new V2WriteError('E_OPERATION_CONFLICT'))
-            }
-            const known = remembered.get(protocol.requestId)
-            const body = known?.body.receipt?.requestId === protocol.requestId ? known.body : { ok: true, revision: previous.receipt.revision, receipt: previous.receipt }
-            return { status: known?.status ?? route.status, body: { ...body, duplicate: true } }
-          }
-          // A read-only handle (a damaged store, or a build) writes nothing: confirmed not committed.
-          if (opened.readOnly) return storeFailureResponse(new V2WriteError('E_STORE_READ_ONLY'))
-          const view = await snapshot()
-          if (view.revision !== protocol.baseRevision) return storeFailureResponse(new V2WriteError('E_STALE'))
-          const writeContext = ctx ?? createV2WriteContext({ countryCatalog, ...(now ? { now: new Date(now()) } : {}) })
-          let outcome
-          const running = performance.now()
-          const files = view.files
-          try { outcome = route.run(files, input, writeContext) } catch (error) { return v2FailureResponse(error) }
-          const runMs = ms(running)
-          const after = { ...files, ...Object.fromEntries(outcome.writes.map((step) => [step.file, step.value])) }
-          const diffing = performance.now()
-          // An error thrown inside a read transaction would turn into a store error: the plan returns its failure instead.
-          const plan = opened.read((reader) => {
-            if (reader.revision !== protocol.baseRevision) return { failure: new V2WriteError('E_STALE') }
-            try {
-              return { diff: diffV2ToCommands(files, after, { reader, identity: reader.idMapping, now: writeContext.now.toISOString(), allocateId: newId }) }
-            } catch (error) { return { failure: error } }
-          })
-          const diffMs = ms(diffing)
-          if (plan.failure) {
-            if (plan.failure?.code === 'E_VIEW_MISMATCH') cache = undefined
-            return storeFailureResponse(plan.failure)
-          }
-          const committing = performance.now()
-          const result = await opened.commit({
-            requestId: protocol.requestId, baseRevision: protocol.baseRevision, kind, actor: STORE_ACTOR, commands: plan.diff.commands,
-          })
-          const commitMs = ms(committing)
-          // The incremental refresh: the read model with the changed rows.
-          advanceCache(opened, view, result)
-          const delta = recordCommit(opened, result)
-          const response = { status: route.status, body: { ok: true, ...outcome.result, revision: result.revision, duplicate: result.status === 'duplicate', receipt: result.receipt, ...(delta ? { delta } : {}) } }
-          remember(protocol.requestId, response)
-          if (result.status === 'committed') countCommit()
-          if (verify) verifyCache(opened)
-          log(`[StarMap store] ${label}：V2 写入 ${runMs} ms，差异 ${diffMs} ms（${plan.diff.commands.length} 条命令`
-            + `${plan.diff.renumbered.length ? `，重新编号 ${plan.diff.renumbered.length} 个 scope` : ''}），提交 ${commitMs} ms（修订号 ${result.revision}），共 ${ms(started)} ms`)
-          return response
-        } catch (error) {
-          if (REOPEN_CODES.has(error?.code)) await dropHandle()
-          return storeFailureResponse(error)
-        }
-      })
-    }
-  }
   /**
-   * One store-native write (3C-5 C1, design 3C-5 §3): the protocol and the receipt lookup as for the V2 writes; the base
+   * One store-native write (3C-5 C1, design 3C-5 §3; see the file header): the protocol and the receipt lookup; the base
    * revision must be the live index's (E_STALE); the native planner turns the request into commands with the official
    * reader (its refusal is the same V2WriteError, 400 or 409); the commit (the host plans again inside BEGIN IMMEDIATE);
    * the commit's changed rows move the live index on. Resolves `{ status, body }` (the planner's result, the revision,
    * the receipt).
    */
   function nativeWriteHandler(routeKey, native) {
-    const prefix = NATIVE_WRITE_ROUTES[routeKey] ?? STORE_WRITE_ROUTES[routeKey]
+    const prefix = STORE_WRITE_ROUTES[routeKey]
     const label = routeKey.replace(' /__travelatlas/editor/', ' ')
     return async function write({ headers, input, ctx }) {
       const protocol = storeProtocolOf(headers)
@@ -628,12 +535,12 @@ export function createStoreSession(privatePaths, {
           const live = view.live
           const indexMs = ms(indexing)
           if (live.revision !== protocol.baseRevision) return storeFailureResponse(new V2WriteError('E_STALE'))
-          const writeContext = ctx ?? createV2WriteContext({ countryCatalog, ...(now ? { now: new Date(now()) } : {}) })
+          const writeContext = ctx ?? createEditorWriteContext({ countryCatalog, ...(now ? { now: new Date(now()) } : {}) })
           const planning = performance.now()
           let plan
           try {
             plan = native.plan(officialReader(live), input, { now: writeContext.now, newId, countryCatalog: writeContext.countryCatalog ?? countryCatalog })
-          } catch (error) { return v2FailureResponse(error) }
+          } catch (error) { return editorFailureResponse(error) }
           const planMs = ms(planning)
           // A request that changes nothing commits nothing: no new revision, no receipt (a retry plans it again).
           if (plan.commands.length === 0) {
@@ -650,7 +557,7 @@ export function createStoreSession(privatePaths, {
           } catch (error) {
             // The store refused a plan made on the live index at its own revision (Core's check inside BEGIN IMMEDIATE):
             // the index no longer matches the store (a change behind the host's back). Nothing was written; the cache
-            // is dropped and the store read again (as E_VIEW_MISMATCH does for the V2 writes).
+            // is dropped and the store read again.
             if (error?.outcome === 'not_committed' && !Object.hasOwn(CLIENT_CODES, error.code)) cache = undefined
             throw error
           }
@@ -677,23 +584,20 @@ export function createStoreSession(privatePaths, {
   }
   /** Timings of the last native write ({ route, commands, indexMs, planMs, commitMs, applyMs, totalMs }), or undefined. */
   let lastTimings
-  /** Write handlers by route: the native ones first (NATIVE_WRITE_ROUTES), the V2 ones for the rest (STORE_WRITE_ROUTES). */
-  const writes = Object.fromEntries([
-    ...Object.keys(STORE_WRITE_ROUTES).map((routeKey) => [routeKey, writeHandler(routeKey)]),
-    ...Object.entries(nativeWrites).map(([routeKey, native]) => [routeKey, nativeWriteHandler(routeKey, native)]),
-  ])
+  /** Write handlers by route: the native planner of each editor endpoint (STORE_WRITE_ROUTES). */
+  const writes = Object.fromEntries(Object.entries(nativeWrites).map(([routeKey, native]) => [routeKey, nativeWriteHandler(routeKey, native)]))
 
   return {
     file,
     open,
     /**
-     * The virtual module's data: `{ model, revision, readOnly, files }` (the read model, the store-wide revision, whether
-     * the store is damaged and read-only, and `files`, its V2 view, generated when asked for: tests compare it).
+     * The virtual module's data: `{ model, revision, identity, readOnly }` (the read model, the store-wide revision, the
+     * library's identity, and whether the store is damaged and read-only).
      */
     async moduleExports() {
       const view = await snapshot()
       const model = view.model
-      return { model, revision: view.revision, identity: view.identity, readOnly: damaged(handle), get files() { return view.files } }
+      return { model, revision: view.revision, identity: view.identity, readOnly: damaged(handle) }
     },
     /**
      * 3C-5 D: the changes from `revision` to the store's current revision for a page whose read model is of `library`
@@ -735,14 +639,8 @@ export function createStoreSession(privatePaths, {
     async isDamaged() {
       try { return damaged(await open()) } catch { return false }
     },
-    /** The cache in use ({ revision, model, live, index, hasLive, files, timings }; timings of the last read, empty after a write), or undefined. */
+    /** The cache in use ({ revision, model, live, index, hasLive, timings }; timings of the last read, empty after a write), or undefined. */
     get lastSnapshot() { return cache },
-    /** GET /editor/state in the new-library mode: `{ status, body }` with the V1 editor state of the read model. */
-    async readEditorState(at = new Date()) {
-      try { return { status: 200, body: { ok: true, state: readEditorStateV1((await snapshot()).files, at) } } } catch (error) {
-        return storeFailureResponse(error)
-      }
-    },
     /** The handler of a write endpoint the store accepts (`{ headers, input, ctx? }` → `{ status, body }`), or undefined. */
     writeRoute(method, pathname) {
       return writes[`${method} ${pathname}`]

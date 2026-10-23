@@ -14,11 +14,10 @@
  *   ... --segment http       want-to-go note updates over real HTTP through the plugin middleware, in each mode: the
  *                            client's end to end, the host commit, and the module load that the page reload triggers
  *   ... --segment pipeline   the App side of the compatibility path (validateV2Files, readV2, derive) and sizes
- *   ... --segment editors    (3C-4a) the eight editor writes over HTTP in each mode, on freshly generated roots: per
- *                            endpoint the client's end to end and, in the store mode, the host's V2 write, diff, commit
- *                            and total
+ *   ... --segment editors    (3C-4a) the eight editor writes over HTTP, on freshly generated roots: per endpoint the
+ *                            client's end to end and the host's plan, commit, index update and total
  *   ... --segment native     (3C-5 C1) the store-native endpoints (view operations, want-to-go) over HTTP, normal edits
- *                            and batches, with the PUT /state path of the same view changes (G4a) beside them
+ *                            and batches
  *   ... --segment records    (3C-5 C2) the four endpoints C2 made store-native (records, countries, country deletion,
  *                            conversion), normal edits and batches, and native and formerly-V2 writes alternately
  *   ... --segment media      (3C-4b) media files for the store root's media items (derivatives, originals with folder
@@ -44,6 +43,7 @@ import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { applyMigration, previewMigration } from './store-migrate.mjs'
 import { projectToV2Files } from './store-projection.mjs'
 import { servedModuleOf, servedV2Files } from './private-read-model.fixture.mjs'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
@@ -272,17 +272,15 @@ const BENCH_COUNTRY_CODES = Object.freeze([
   'SG', 'TH', 'TR', 'UA', 'US', 'VN', 'ZA', 'EG', 'KE', 'MA', 'LT', 'LV',
 ])
 
-/** The host's line of one store write (store-session.mjs): V2 write, diff, commit and total milliseconds. */
-const HOST_LINE = /：V2 写入 ([\d.]+) ms，差异 ([\d.]+) ms（(\d+) 条命令(?:，重新编号 \d+ 个 scope)?），提交 ([\d.]+) ms（修订号 \d+），共 ([\d.]+) ms$/
-/** 3C-5 C1: a store-native write (the view operations and the want-to-go endpoints): plan, commit, index update, total. */
+/** A store-native write's line (store-session.mjs; every editor write since 3C-5 C2): plan, commit, index update, total. */
 const NATIVE_LINE = /（原生）：规划 ([\d.]+) ms（(\d+) 条命令），提交 ([\d.]+) ms（修订号 \d+），更新索引 ([\d.]+) ms，共 ([\d.]+) ms$/
 
 /**
  * `editors` (3C-4a spec §2.5): the eight editor writes over HTTP through the plugin, in each mode, on freshly generated
  * roots (<dir>/editors), `scale.updates` times each in this order: countries, records, wanttogo, wanttogo/update,
- * wanttogo/convert (the items just added, then planned records), state (a country swap), state (hiding the added
- * countries), wanttogo/delete (hidden items), countries/delete (the added countries). Per endpoint: the client's
- * end-to-end milliseconds and, in the store mode, the host's (V2 write, diff, commit, total) from its log line.
+ * wanttogo/convert (the items just added, then planned records), view (a country swap), view (hiding the added
+ * countries; 3C-5 E: before, PUT /state), wanttogo/delete (hidden items), countries/delete (the added countries). Per
+ * endpoint: the client's end-to-end milliseconds and the host's (plan, commit, index update, total) from its log line.
  */
 export async function editorsSegment(dir, scale) {
   // Fresh roots of their own (a copied root would be a moved library: V2 writes refuse it with E_LIBRARY_ROOT_MOVED).
@@ -316,13 +314,8 @@ export async function editorsSegment(dir, scale) {
         const endToEnd = ms(started)
         if (!body.ok) throw new Error(`${mode} ${label} failed: ${body.code}`)
         if (mode === 'store') revision = body.revision
-        const entry = timings[label] ??= { endToEnd: [], v2Write: [], diff: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [] }
+        const entry = timings[label] ??= { endToEnd: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [] }
         entry.endToEnd.push(endToEnd)
-        const host = lines.slice(before).map((line) => HOST_LINE.exec(line)).find(Boolean)
-        if (host) {
-          entry.v2Write.push(Number(host[1])); entry.diff.push(Number(host[2])); entry.commands.push(Number(host[3]))
-          entry.commit.push(Number(host[4])); entry.host.push(Number(host[5]))
-        }
         const native = lines.slice(before).map((line) => NATIVE_LINE.exec(line)).find(Boolean)
         if (native) {
           entry.plan.push(Number(native[1])); entry.commands.push(Number(native[2])); entry.commit.push(Number(native[3]))
@@ -354,14 +347,14 @@ export async function editorsSegment(dir, scale) {
           : { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' }
         await send('wanttogo/convert', 'POST', 'wanttogo/convert', input)
       }
-      const editorState = async () => (await requestJson('GET', `${url}/__travelatlas/editor/state`, {}, undefined)).state
+      const editorState = async () => editorListsOf(url)
       for (let n = 0; n < scale.updates; n++) {
-        const state = await editorState()
-        const order = [...state.countryOrder]
+        const { countryOrder } = await editorState()
+        const order = [...countryOrder]
         ;[order[0], order[1]] = [order[1], order[0]]
-        await send('state', 'PUT', 'state', { ...state, countryOrder: order })
+        await send('view', 'POST', 'view', { operations: [{ op: 'order', scope: 'countries', ids: order, baseline: countryOrder }] })
       }
-      await send('state (hide countries)', 'PUT', 'state', { ...(await editorState()), hiddenCountryIds: countryIds })
+      await send('view (hide countries)', 'POST', 'view', { operations: [{ op: 'hide', scope: 'countries', add: countryIds, remove: [] }] })
       for (const id of hidden) await send('wanttogo/delete', 'POST', 'wanttogo/delete', { ids: [id] })
       for (const id of countryIds) await send('countries/delete', 'POST', 'countries/delete', { ids: [id] })
       result[mode] = Object.fromEntries(Object.entries(timings).map(([label, entry]) => [label, Object.fromEntries(
@@ -467,15 +460,15 @@ export async function restoreSegment(dir) {
 
 /**
  * `native` (3C-5 C1 spec §2.6): the store-native endpoints over HTTP through the plugin, on freshly generated roots
- * (<dir>/native), with the G4a path of the same view changes (PUT /state: V2 write function, diff, commit) beside them:
- * - normal edits: a country order swap as a view operation and as PUT /state (`scale.updates` each), a want-to-go item
+ * (<dir>/native) (3C-5 E: without the PUT /state path of the same view changes, gone with it):
+ * - normal edits: a country order swap as a view operation (`scale.updates`), a want-to-go item
  *   added (a new city), its note, hiding it, and deleting it (its city goes too), `scale.updates` each;
  * - batches (50 rows and more): the 100 countries' order reversed, and 60 cities hidden or shown again, as view
- *   operations and as PUT /state (`batches` each);
- * - mixed paths: a V2-path write (a planned record marked visited) right after a native one (it builds the V2 view
- *   again), and the same write after a V2 write (its view is cached), `batches` times each. Since 3C-5 C2 the conversion
- *   is native too and the session keeps no V2 view; the labels stay as they were so that runs compare across batches.
- * Per label: the client's end to end and the host's plan (or V2 write and diff), commit, index update, commands and total.
+ *   operations (`batches` each);
+ * - consecutive writes: a planned record marked visited right after a want-to-go note, and after another conversion
+ *   (before 3C-5 C2 the conversion ran the V2 function, which built the V2 view again after a native write),
+ *   `batches` times each.
+ * Per label: the client's end to end and the host's plan, commit, index update, commands and total.
  * The module is not loaded between writes (no page reload: the in-host times do not depend on it).
  */
 export async function nativeSegment(dir, scale) {
@@ -501,14 +494,9 @@ export async function nativeSegment(dir, scale) {
       const endToEnd = ms(started)
       if (!body.ok) throw new Error(`${label} failed: ${body.code} ${JSON.stringify(body.params ?? {})}`)
       revision = body.revision
-      const entry = timings[label] ??= { endToEnd: [], v2Write: [], diff: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [], protocol: [] }
+      const entry = timings[label] ??= { endToEnd: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [], protocol: [] }
       entry.endToEnd.push(endToEnd)
       const added = lines.slice(before)
-      const host = added.map((line) => HOST_LINE.exec(line)).find(Boolean)
-      if (host) {
-        entry.v2Write.push(Number(host[1])); entry.diff.push(Number(host[2])); entry.commands.push(Number(host[3]))
-        entry.commit.push(Number(host[4])); entry.host.push(Number(host[5])); entry.protocol.push(Math.round((endToEnd - Number(host[5])) * 10) / 10)
-      }
       const native = added.map((line) => NATIVE_LINE.exec(line)).find(Boolean)
       if (native) {
         entry.plan.push(Number(native[1])); entry.commands.push(Number(native[2])); entry.commit.push(Number(native[3]))
@@ -516,33 +504,24 @@ export async function nativeSegment(dir, scale) {
       }
       return body
     }
-    const state = async () => (await requestJson('GET', `${url}/__travelatlas/editor/state`, {}, undefined)).state
+    const state = async () => editorListsOf(url)
     const swap = (order) => { const next = [...order]; [next[0], next[1]] = [next[1], next[0]]; return next }
-    // Normal edits: a country order swap, as a view operation and as PUT /state.
+    // Normal edits: a country order swap, as a view operation.
     for (let n = 0; n < scale.updates; n++) {
       const { countryOrder } = await state()
       await send('view: order swap', 'POST', 'view', { operations: [{ op: 'order', scope: 'countries', ids: swap(countryOrder), baseline: countryOrder }] })
-    }
-    for (let n = 0; n < scale.updates; n++) {
-      const current = await state()
-      await send('PUT state: order swap', 'PUT', 'state', { ...current, countryOrder: swap(current.countryOrder) })
     }
     // Batches: the countries reversed; 60 cities hidden, then shown again.
     for (let n = 0; n < batches; n++) {
       const { countryOrder } = await state()
       await send('view: reverse countries (batch)', 'POST', 'view', { operations: [{ op: 'order', scope: 'countries', ids: [...countryOrder].reverse(), baseline: countryOrder }] })
-      const current = await state()
-      await send('PUT state: reverse countries (batch)', 'PUT', 'state', { ...current, countryOrder: [...current.countryOrder].reverse() })
     }
     const cities = Array.from({ length: Math.min(60, scale.cities) }, (_, n) => placeId(scale.countries + (n * 7) % scale.cities))
-    // Each write flips them: the view operation hides (or shows) the 60, the PUT /state shows (or hides) them again.
+    // Each write flips them: the view operation hides the 60, or shows them again.
     for (let n = 0; n < batches; n++) {
       const before = (await state()).hiddenCityIds
       const shown = !cities.some((id) => before.includes(id))
       await send('view: 60 hidden cities (batch)', 'POST', 'view', { operations: [{ op: 'hide', scope: 'cities', add: shown ? cities : [], remove: shown ? [] : cities }] })
-      const current = await state()
-      const hidden = shown ? current.hiddenCityIds.filter((id) => !cities.includes(id)) : [...current.hiddenCityIds, ...cities]
-      await send('PUT state: 60 hidden cities (batch)', 'PUT', 'state', { ...current, hiddenCityIds: hidden })
     }
     // Want-to-go: add a new city, note, hide, delete (the city goes with it).
     const codes = BENCH_COUNTRY_CODES.slice(0, scale.updates)
@@ -555,14 +534,13 @@ export async function nativeSegment(dir, scale) {
     for (const [n, id] of wishes.entries()) await send('wanttogo/update: note', 'POST', 'wanttogo/update', { id, note: `Synthetic native note ${n}` })
     for (const id of wishes) await send('wanttogo/update: hide', 'POST', 'wanttogo/update', { id, hidden: true })
     for (const id of wishes) await send('wanttogo/delete', 'POST', 'wanttogo/delete', { ids: [id] })
-    // Mixed paths: a V2-path write right after a native one built the V2 view again (3C-5 C1; native since C2).
+    // Consecutive writes: a conversion right after a want-to-go note, and after another conversion.
     for (let n = 0; n < batches; n++) {
-      await send('wanttogo/update: note (before a V2 write)', 'POST', 'wanttogo/update', { id: `wish-${(n * 97) % scale.wishes}`, note: `Synthetic mixed ${n}` })
-      // Nothing reads the V2 view in between (the page reads the read model): in 3C-5 C1 the V2 write built it again itself.
-      await send('convert planned, right after a native write (V2 path)', 'POST', 'wanttogo/convert', { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' })
+      await send('wanttogo/update: note (before a conversion)', 'POST', 'wanttogo/update', { id: `wish-${(n * 97) % scale.wishes}`, note: `Synthetic mixed ${n}` })
+      await send('convert planned, right after a want-to-go note', 'POST', 'wanttogo/convert', { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' })
     }
     for (let n = batches; n < 2 * batches; n++) {
-      await send('convert planned, after a V2 write (V2 path)', 'POST', 'wanttogo/convert', { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' })
+      await send('convert planned, after a conversion', 'POST', 'wanttogo/convert', { source: 'planned', recordId: `plan-${n}`, startDate: '2026-04-01' })
     }
   } finally {
     await new Promise((resolve) => server.close(resolve))
@@ -574,11 +552,16 @@ export async function nativeSegment(dir, scale) {
   )]))
 }
 
+/** The editor lists of the library now: its read model (the read-only endpoint) through the official view (3C-5 E: before, GET /state). */
+async function editorListsOf(url) {
+  return officialViewOf(await requestJson('GET', `${url}/__travelatlas/editor/read-model`, {}, undefined), 'local').editorState
+}
+
 /**
  * The editor client of the native segments: `send(label, method, route, input)` sends one write over HTTP with the store
- * protocol and records, per label, the client's end to end and the host's line (V2 write, diff or plan, commit, index
- * update, commands, total; protocol = end to end − host total). A write of 50 commands or more is recorded under
- * `<label> [≥50 rows]` (the batch target). `state()` is GET /state.
+ * protocol and records, per label, the client's end to end and the host's line (plan, commit, index update, commands,
+ * total; protocol = end to end − host total). A write of 50 commands or more is recorded under `<label> [≥50 rows]` (the
+ * batch target). `state()` gives the editor lists (editorListsOf).
  */
 function editorClient(url, lines, revision) {
   const timings = {}
@@ -595,23 +578,18 @@ function editorClient(url, lines, revision) {
     if (!body.ok) throw new Error(`${label} failed: ${body.code} ${JSON.stringify(body.params ?? {})}`)
     revision = body.revision
     const added = lines.slice(before)
-    const host = added.map((line) => HOST_LINE.exec(line)).find(Boolean)
     const native = added.map((line) => NATIVE_LINE.exec(line)).find(Boolean)
-    const commands = Number(host?.[3] ?? native?.[2] ?? 0)
+    const commands = Number(native?.[2] ?? 0)
     const key = commands >= 50 ? `${label} [≥50 rows]` : label
-    const entry = timings[key] ??= { endToEnd: [], v2Write: [], diff: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [], protocol: [] }
+    const entry = timings[key] ??= { endToEnd: [], plan: [], commands: [], commit: [], indexUpdate: [], host: [], protocol: [] }
     entry.endToEnd.push(endToEnd)
-    if (host) {
-      entry.v2Write.push(Number(host[1])); entry.diff.push(Number(host[2])); entry.commands.push(Number(host[3]))
-      entry.commit.push(Number(host[4])); entry.host.push(Number(host[5])); entry.protocol.push(Math.round((endToEnd - Number(host[5])) * 10) / 10)
-    }
     if (native) {
       entry.plan.push(Number(native[1])); entry.commands.push(Number(native[2])); entry.commit.push(Number(native[3]))
       entry.indexUpdate.push(Number(native[4])); entry.host.push(Number(native[5])); entry.protocol.push(Math.round((endToEnd - Number(native[5])) * 10) / 10)
     }
     return body
   }
-  const state = async () => (await requestJson('GET', `${url}/__travelatlas/editor/state`, {}, undefined)).state
+  const state = async () => editorListsOf(url)
   const summary = () => Object.fromEntries(Object.entries(timings).map(([label, entry]) => [label, Object.fromEntries(
     Object.entries(entry).filter(([, values]) => values.length).map(([key, values]) => [key, stats(values)]),
   )]))

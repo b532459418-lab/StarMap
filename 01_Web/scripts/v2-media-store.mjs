@@ -1,7 +1,7 @@
 /**
  * 本地编辑器媒体上传的 IO 层（RFC-LOC-1 PR3b-3 规格 §2.4；第 2D 批）与三个媒体端点的路由表。
  *
- * 为什么单独成文件：理由同 v2-editor-store.mjs——插件在模块顶层 import sharp / undici / world-countries 并解析私有资料层路径，
+ * 为什么单独成文件：插件在模块顶层 import sharp / undici / world-countries 并解析私有资料层路径，
  * 无法在 node --test 下加载。插件里的辅助函数（safeSegment、reserveDestination、writeUpload、updateDroneSidecar）经 `deps`
  * 传进来复用，所以文件名规则、上传大小与图片校验、无人机 sidecar 的写法都与旧模式相同。
  *
@@ -23,7 +23,7 @@ import { stat } from 'node:fs/promises'
 import path from 'node:path'
 
 import { atomicJsonWrite, readJson } from './json-file.mjs'
-import { v2ErrorBody } from './v2-editor-store.mjs'
+import { editorErrorBody } from './local-editor-errors.mjs'
 import {
   droneUploadMetadataOf,
   inboxFolderCandidates,
@@ -34,7 +34,7 @@ import {
 import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
 import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 
-/** 三个媒体端点 → 处理方式。与 v2-editor-store.mjs 的 V2_EDITOR_ROUTES 不相交，两者合起来是全部 11 个写入端点。 */
+/** 三个媒体端点 → 处理方式。与 store-session.mjs 的 STORE_WRITE_ROUTES（8 个编辑端点）不相交。 */
 export const V2_MEDIA_ROUTES = Object.freeze({
   'POST /__travelatlas/editor/upload': 'upload',
   'POST /__travelatlas/editor/import': 'import',
@@ -56,7 +56,7 @@ const isV2WriteError = (error) => error instanceof V2WriteError
  * 带 `details` 时一并返回。
  */
 const failureResponse = (error, fallbackCode) => {
-  const body = isV2WriteError(error) ? errorBody(error) : v2ErrorBody(fallbackCode, { reason: reasonOf(error) })
+  const body = isV2WriteError(error) ? errorBody(error) : editorErrorBody(fallbackCode, { reason: reasonOf(error) })
   const details = typeof error?.details === 'string' ? error.details : undefined
   return { status: 400, body: details ? { ...body, details } : body }
 }

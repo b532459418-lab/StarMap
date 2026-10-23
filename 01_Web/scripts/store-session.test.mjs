@@ -9,12 +9,10 @@ import {
 } from './store-session.mjs'
 import { openConnection, rawConnection } from './store-sqlite.mjs'
 import { quietly, sampleV2Files, tempPrivateRoot, writeV2Files } from './store-mode.fixture.mjs'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { readModelOf } from '../src/worldgraph/readModel/build.ts'
-import { readEditorStateV1 } from '../src/data/v2write/index.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
 
@@ -73,7 +71,7 @@ test('a store that fails its open checks is an error with the check code, never 
   assert.equal(garbage?.code, 'E_STORE_CORRUPT')
 })
 
-test('the read model is the store\'s read model, cached per revision with timed steps; its V2 view is generated when asked for, never cached', async (t) => {
+test('the read model is the store\'s read model, cached per revision with timed steps (3C-5 E: the session has no V2 view)', async (t) => {
   const { files, paths, file } = await migratedRoot(t)
   const output = quietly()
   const session = createStoreSession(paths, { log: output.log })
@@ -87,21 +85,12 @@ test('the read model is the store\'s read model, cached per revision with timed 
     for (const step of ['openMs', 'readMs']) assert.equal(typeof snapshot.timings[step], 'number', step)
     assert.equal(output.lines.length, 1)
     assert.match(output.lines[0], /^\[StarMap store\] 读模型（修订号 1）：打开 [\d.]+ ms，readModel [\d.]+ ms$/)
-    // The V2 view, generated from the read model through the official view when asked for (PUT /state and the media rules
-    // use it; 3C-5 C2: never cached).
-    assert.deepEqual(canonicalForInputs({ v2Files: first.files }), readV2(files))
-    assert.match(output.lines[1], /^\[StarMap store\] V2 视图（修订号 1，按需生成，不缓存）：官方视图与 serializeV2 [\d.]+ ms$/)
     assert.equal(snapshot.index.get('entities', files.places.places[0].id)?.id, files.places.places[0].id)
-    // Same revision: the cached model, no new read; the V2 view is generated again (equal, not the same object).
+    // Same revision: the cached model, no new read.
     const again = await session.moduleExports()
     assert.equal(again.model, first.model)
-    const files2 = again.files
-    assert.deepEqual(files2, first.files)
-    assert.notEqual(files2, first.files)
+    assert.equal(Object.hasOwn(again, 'files'), false, 'no V2 view')
     assert.equal(output.lines.filter((line) => line.includes('读模型')).length, 1)
-    // GET /editor/state reads the same model.
-    const state = await session.readEditorState(new Date(NOW))
-    assert.deepEqual(state, { status: 200, body: { ok: true, state: readEditorStateV1(files, new Date(NOW)) } })
     assert.equal(session.isOpen, true)
   } finally { await session.close() }
   // close() ended the writer session cleanly: the next writable open runs no quick_check.
@@ -126,10 +115,8 @@ test('rows the projection cannot express are counted in the log, not an error', 
   try {
     const read = await session.moduleExports()
     assert.equal(read.revision, 2)
-    // The read model keeps every row; only the V2 view cannot express them.
+    // The read model keeps every row (the official view, and an export to V2, leave them out).
     assert.ok(read.model.sources.some((row) => row.id === 'synthetic:source') && read.model.entityTypes.some((row) => row.id === 'synthetic:type'))
-    assert.ok(read.files)
-    assert.match(output.lines[1], /；投影跳过 2 行（sources 1，entityTypes 1）$/)
   } finally { await session.close() }
 })
 
@@ -153,11 +140,11 @@ test('while a session holds the store open for writing, a second connection open
       } finally { db.close() }
     }
     // The session is unaffected: same model, and its own write still commits.
-    const { files } = await session.moduleExports()
+    const { model } = await session.moduleExports()
     const update = session.writeRoute('POST', '/__travelatlas/editor/wanttogo/update')
     const saved = await update({
       headers: { [STORE_REQUEST_ID_HEADER]: '01960000-0000-7000-8000-00000000c4b1', [STORE_BASE_REVISION_HEADER]: '1' },
-      input: { id: files.wantToGo.items[0].id, note: 'Synthetic after a second writer' },
+      input: { id: officialViewOf(model, 'local').wantToGo.items[0].id, note: 'Synthetic after a second writer' },
     })
     assert.equal(saved.status, 200, JSON.stringify(saved.body))
     assert.equal(saved.body.revision, 2)
@@ -182,10 +169,10 @@ test('a read-only session (build:personal) waits out a writer that holds the sto
     log: () => {}, readOnly: true, retry: { sleep: async () => { if (++sleeps === 2) { holder.close(); released = true } } },
   })
   try {
-    const { revision, files: read } = await session.moduleExports()
+    const { revision, model } = await session.moduleExports()
     assert.equal(released, true)
     assert.equal(revision, 1)
-    assert.deepEqual(canonicalForInputs({ v2Files: read }), readV2(files))
+    assert.deepEqual(officialViewOf(model, 'local'), readV2(files))
     assert.equal(session.pruneState.runs, 0)
   } finally {
     if (!released) holder.close()
@@ -201,10 +188,13 @@ test('an open failure is reported again on every use, and the session opens once
   const session = createStoreSession(paths, { log: () => {}, retry: { sleep: async () => {} } })
   try {
     await assert.rejects(session.moduleExports(), { code: 'E_STORE_BUSY' })
-    // A busy store is the busy notice the client knows; other open failures are E_STORE_FAILED with the code.
-    const state = await session.readEditorState()
-    assert.equal(state.status, 409)
-    assert.equal(state.body.code, 'E_STORE_BUSY')
+    // A busy store is the busy notice the client knows; other open failures are E_STORE_FAILED with the code. (3C-5 E: a
+    // write shows it; GET /state, which did before, is gone.)
+    const busy = await session.writeRoute('POST', '/__travelatlas/editor/wanttogo/update')({
+      headers: { [STORE_REQUEST_ID_HEADER]: '01960000-0000-7000-8000-00000000c4b2', [STORE_BASE_REVISION_HEADER]: '1' }, input: { id: 'synthetic', note: '' },
+    })
+    assert.equal(busy.status, 409)
+    assert.equal(busy.body.code, 'E_STORE_BUSY')
     holder.release()
     assert.equal((await session.moduleExports()).revision, 1)
   } finally { await session.close() }

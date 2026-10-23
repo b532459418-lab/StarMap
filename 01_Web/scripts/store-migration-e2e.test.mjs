@@ -75,14 +75,14 @@ test('a V2 library with media: migration required, store:migrate --apply, writes
       assert.equal(module.privateStoreMigrationRequired, true)
       assert.equal(module.privateStoreRevision, undefined)
       assert.deepEqual(servedCanonical(module), canonicalForInputs({ v2Files }), 'the V2 files, migrated in memory (3C-5B)')
-      for (const [method, route] of [['POST', 'countries'], ['PUT', 'state'], ['POST', 'view'], ['POST', 'import'], ['POST', 'media/delete'], ['POST', 'upload'], ['GET', 'media/jobs'], ['POST', `media/jobs/${JOB_ID}/import`]]) {
+      for (const [method, route] of [['POST', 'countries'], ['POST', 'view'], ['POST', 'import'], ['POST', 'media/delete'], ['POST', 'upload'], ['GET', 'media/jobs'], ['POST', `media/jobs/${JOB_ID}/import`]]) {
         const result = await requestTo(server.handler, { url: editorPrefix + route, method, content: Buffer.from('{') })
         assert.equal(result.status, 409, `${method} ${route}`)
         assert.equal(result.body.code, 'E_STORE_MIGRATION_REQUIRED', `${method} ${route}`)
         assert.equal(result.bodyReads, 0, `${method} ${route}`)
       }
-      const state = await requestTo(server.handler, { url: `${editorPrefix}state`, method: 'GET', headers: {} })
-      assert.equal(state.status, 200)
+      const read = await requestTo(server.handler, { url: `${editorPrefix}read-model`, method: 'GET', headers: {} })
+      assert.equal(read.status, 200)
       // `npm run media:import` (the real entry, in its own process) refuses with exit code 2.
       const imported = spawnSync(process.execPath, [fileURLToPath(new URL('./import-media.mjs', import.meta.url)), '--apply'], {
         env: { ...originalEnvironment, STARMAP_PRIVATE_ROOT: root }, encoding: 'utf8', timeout: 60_000, windowsHide: true,
