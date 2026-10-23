@@ -3,9 +3,9 @@
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
- * 两种 V2 数据：`toV2Space`（./v2.fixture.ts）直接从 Legacy Adapter 的输出搬进 V2 id 空间、不做地点合并；
+ * 两种 V2 数据：`toV2Space`（../../canonical/v2.fixture.ts）直接从 Legacy Adapter 的输出搬进 V2 id 空间、不做地点合并；
  * 以及迁移规划（../migration/planMigration.ts）在合并与决定之后产出的 M。PR5b 起两种都是冻结的静态数据
- * （./frozen.fixture.ts 的 `v2SpaceCanonical` 与 `migratedCanonical`；删除旧代码之前用当时的代码生成）。
+ * （../../canonical/frozen.fixture.ts 的 `v2SpaceCanonical` 与 `migratedCanonical`；删除旧代码之前用当时的代码生成）。
  */
 
 /// <reference types="node" />
@@ -13,8 +13,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { migratedCanonical, v2SpaceCanonical } from './frozen.fixture.ts'
-import type { CanonicalData } from './types.ts'
+import { migratedCanonical, v2SpaceCanonical } from '../../canonical/frozen.fixture.ts'
+import type { CanonicalData } from '../../canonical/types.ts'
 import { readV2 } from './v2Reader.ts'
 import { validateV2Files, type V2Files } from './v2Schema.ts'
 import { serializeV2, type V2FileMeta } from './v2Serializer.ts'

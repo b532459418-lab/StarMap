@@ -69,7 +69,7 @@ memory requirement.
 The formal store host (`scripts/store-host.mjs`, SQLite through `node:sqlite`,
 Node 24.15 or newer) backs the new library (root README; since 3C-4d the only way personal data is written): the
 plugin reads it through `scripts/store-session.mjs` and the projection of
-`scripts/store-projection.mjs`, and `store:migrate`, `store:backup`,
+`scripts/compat/store-projection.mjs`, and `store:migrate`, `store:backup`,
 `store:restore` and `store:export-v2` are its tools. It runs the rollback journal in
 TRUNCATE mode with `synchronous=EXTRA` and `auto_vacuum=INCREMENTAL`. Opening
 checks the header, versions, schema and `store_meta` only; `quick_check` runs at
@@ -291,7 +291,7 @@ For each public update, bump the package version, create a matching semantic-ver
 - `scripts/local-editor-plugin.mjs` provides the loopback-only editor in personal development and injects no private data in public mode; `scripts/private-data-module.mjs` holds its virtual-module and file-watch rules. `scripts/local-editor-request-guard.mjs` holds its request checks: in the personal profile Vite's CORS is off, a guard ahead of Vite's own middlewares refuses cross-site and same-site browser requests other than page navigations (so another local page cannot read the private-data module, `/media/user/*`, `/@fs/` or the editor), and the read-only endpoints and `/media/user/*` accept only same-origin reads. `vite preview` (`npm run preview`) may serve a personal build, so in every mode it grants no CORS and runs the same cross-site guard ahead of its own middlewares. See `03_Reference/TravelAtlas_open_source_privacy_boundary.md`.
 - `scripts/v2-editor-store.mjs` and `scripts/v2-media-store.mjs` read and write `data/v2/` behind the editor's write endpoints; the rules themselves, including Mark as visited, are pure functions in `src/data/v2write/` and `src/data/v2media/`.
 - `src/data/store/` is the App side of the formal World Graph store (`src/worldgraph/store/`); nothing reads or writes it yet. `officialDefinitions.ts` holds the official `starmap:*` entity types, layers, relation type and sources, the `v2:*` import sources, and one view scope per V2 semantic. `migrateV2.ts` turns the five V2 files into one dependency-ordered command batch that `planCommands` writes into an empty store; it refuses, generating nothing, when any record would be lost, and keeps every value without a formal field verbatim in the row's `extensions.v2`. `projectCanonical.ts` projects the store back to `CanonicalData`, so the existing derivation and `serializeV2` (export as V2) work unchanged; rows that Canonical cannot express, such as entries of another layer, are listed as skipped.
-- `scripts/import-media.mjs` (`npm run media:check`, `npm run media:import`) runs the media importer in `scripts/v2-media-import.mjs`.
+- `scripts/import-media.mjs` (`npm run media:check`, `npm run media:import`) runs the media importer in `scripts/compat/v2-media-import.mjs`.
 - `scripts/json-file.mjs` holds the JSON read, backup, and atomic-write helpers shared by the editor, the importer, and the migration tool.
 - `scripts/public-release-check.mjs` rebuilds a clean Git archive in the OS temporary directory, so public-release verification cannot see the private layer.
 - Project-level rules, contribution guide, and edition boundaries live one directory above this web workspace (`AGENTS.md`, `CONTRIBUTING.md`, `docs/editions.md`).

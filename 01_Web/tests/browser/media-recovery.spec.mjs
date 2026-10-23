@@ -11,7 +11,7 @@ import { createMediaJobStore } from '../../scripts/media-job-store.mjs'
 import { storeFileOf } from '../../scripts/private-data-source.mjs'
 import { getPrivatePaths } from '../../scripts/private-profile.mjs'
 import { openStore } from '../../scripts/store-host.mjs'
-import { projectToV2Files } from '../../scripts/store-projection.mjs'
+import { projectToV2Files } from '../../scripts/compat/store-projection.mjs'
 import { uuidv7 } from '../../src/data/canonical/uuidv7.ts'
 
 const jobsUrl = '/__travelatlas/editor/media/jobs'

@@ -13,14 +13,14 @@ import { closeSync, openSync, readFileSync, readSync, writeSync } from 'node:fs'
 import { test } from 'node:test'
 import { storeFileOf } from './private-data-source.mjs'
 import { checkStoreFile } from './store-host.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, createStoreSession } from './store-session.mjs'
 import { pragmaValue, rawConnection } from './store-sqlite.mjs'
 import { servedCanonical } from './private-read-model.fixture.mjs'
 import {
   authorizedHeaders, captureMiddleware, editorPrefix, moduleOf, requestTo, sampleV2Files, tempPrivateRoot, writeV2Files,
 } from './store-mode.fixture.mjs'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
+import { readV2 } from '../src/data/compat/v2/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 

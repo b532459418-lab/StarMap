@@ -8,7 +8,7 @@
  * Only tracked neutral fixtures and invented values. Not imported by the App.
  */
 import assert from 'node:assert/strict'
-import type { V2Files } from '../canonical/v2Schema.ts'
+import type { V2Files } from '../compat/v2/v2Schema.ts'
 import { indexPlaces, reconstructEditorState } from '../canonical/reconstruct.ts'
 import { migratedFiles, placeNamed } from './editor.fixture.ts'
 import { edgeCaseFixture } from '../store/v2Store.fixture.ts'

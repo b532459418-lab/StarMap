@@ -14,7 +14,6 @@ import type { CanonicalPlace } from '../canonical/types.ts'
 import { sequentialUuids } from '../canonical/v2.fixture.ts'
 import {
   buildMediaItem,
-  catalogIntegrityProblems,
   contentHashOf,
   createMediaPlaceIndex,
   droneKindOf,
@@ -22,9 +21,7 @@ import {
   generatedDirectoryOfSrc,
   generatedFilesOf,
   markCovers,
-  mediaCatalogFileOf,
   mediaIdOf,
-  mediaSourceIndexFileOf,
   metadataForFile,
   normalizeName,
   placeConfigOf,
@@ -33,12 +30,12 @@ import {
   resolveCountryFolder,
   resolveFileOverride,
   shouldPinFolder,
-  sourcesByIdOf,
   uniqueById,
   type MediaFileFacts,
   type PlaceLookup,
   type V2MediaCatalogItem,
 } from './importPlan.ts'
+import { catalogIntegrityProblems, mediaCatalogFileOf, mediaSourceIndexFileOf, sourcesByIdOf } from '../compat/v2/v2MediaFiles.ts'
 
 const newId = sequentialUuids(Date.UTC(2026, 8, 29))
 const ids = {

@@ -20,15 +20,21 @@
  * V2's next import would. A missing Inbox, or folders the importer cannot resolve, only mean fewer sources.
  *
  * Reads only; the caller writes the returned media block in the transaction that creates or upgrades the store.
+ *
+ * Compat (3C-5 E spec §2.4; moved here from scripts/): the media registry seeded from a V2 library's catalog
+ * (store:migrate; store:upgrade of a format-1 store).
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (../compat-boundary.test.mjs).
  */
 import { lstat, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { sha256File } from './file-hash.mjs'
-import { portablePath } from './library-backup.mjs'
-import { scanCacheEntriesOf, scanInbox } from './media-scan.mjs'
-import { INBOX_PREFIX, pathKeyOf } from './store-media-registry.mjs'
-import { contentHashOf, generatedDirectoryOfSrc, v2MediaIdFor } from '../src/data/v2media/importPlan.ts'
-import { OFFICIAL, V2_SOURCES } from '../src/data/store/officialDefinitions.ts'
+import { sha256File } from '../file-hash.mjs'
+import { portablePath } from '../library-backup.mjs'
+import { scanCacheEntriesOf, scanInbox } from '../media-scan.mjs'
+import { INBOX_PREFIX, pathKeyOf } from '../store-media-registry.mjs'
+import { contentHashOf, generatedDirectoryOfSrc, v2MediaIdFor } from '../../src/data/v2media/importPlan.ts'
+import { OFFICIAL, V2_SOURCES } from '../../src/data/store/officialDefinitions.ts'
 
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 const isPortable = (value) => { try { portablePath(value); return true } catch { return false } }

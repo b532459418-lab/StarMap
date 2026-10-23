@@ -8,7 +8,7 @@ import { isLegacyUnmigrated, LEGACY_UNMIGRATED_IMPORT_MESSAGE, legacyDataStateOf
 import { getPrivatePaths } from './private-profile.mjs'
 import { privateDataState } from './private-data-source.mjs'
 import { NOT_A_STORE_IMPORT_MESSAGES, runStoreMediaCli } from './store-media-cli.mjs'
-import { runV2MediaImport } from './v2-media-import.mjs'
+import { runV2MediaImport } from './compat/v2-media-import.mjs'
 
 const privatePaths = getPrivatePaths()
 const apply = process.argv.includes('--apply')

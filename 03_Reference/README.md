@@ -14,7 +14,7 @@ Current implementation dependencies include Cesium, Resium, React, Vite, Tailwin
 | `travel-map.schema.json` | Machine-readable schema shared by public sample and private travel data |
 | `want-to-go.schema.json` | Machine-readable schema shared by the public Want to Go sample and private Want to Go data |
 
-The three JSON Schemas describe the legacy files only (travel map and Want to Go `schema_version` 1, media catalog `schemaVersion` 2). StarMap reads and writes the five V2 files (`data/v2/` in the private layer, `01_Web/src/data/v2-sample/` for the public sample); the authoritative definition of the V2 format and its checks is [`01_Web/src/data/canonical/v2Schema.ts`](../01_Web/src/data/canonical/v2Schema.ts). There is no separate JSON Schema for V2.
+The three JSON Schemas describe the legacy files only (travel map and Want to Go `schema_version` 1, media catalog `schemaVersion` 2). StarMap reads and writes the five V2 files (`data/v2/` in the private layer, `01_Web/src/data/v2-sample/` for the public sample); the authoritative definition of the V2 format and its checks is [`01_Web/src/data/compat/v2/v2Schema.ts`](../01_Web/src/data/compat/v2/v2Schema.ts). There is no separate JSON Schema for V2.
 
 ## Documentation
 

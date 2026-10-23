@@ -1,7 +1,7 @@
 /**
  * V2 文件格式与校验（RFC-LOC-1 §3，PR3a 规格 §2.2；决定 D：以 Canonical 为准）。
  *
- * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。V2 文件就是 Canonical（`./types.ts`）去掉
+ * `src/data/compat/v2/` 是 App 层，【不是】 StarMap Core。V2 文件就是 Canonical（`../../canonical/types.ts`）去掉
  * 运行时字段（`travel.source`、`wantToGo.source`、`wantToGo.problems`、`media.problems`）后的 JSON，
  * 共五个文件（括号里是私人数据目录 `data/v2/` 下的文件名）：
  *
@@ -23,6 +23,12 @@
  * V2 Reader（`./v2Reader.ts`）假定输入已通过这里的校验。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
+ *
+ * Compat (3C-5 E spec §2.4; moved here from ../canonical/): the V2 file format and its validation, which the migration,
+ * the read-only display of a root that awaits migration and the export check against.
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (scripts/compat-boundary.test.mjs).
  */
 
 import type {
@@ -34,14 +40,13 @@ import type {
   CanonicalWantToGoItem,
   LegacyMediaPlaceField,
   LegacyPlaceField,
-} from './types.ts'
-import { isUuidV7 } from './uuidv7.ts'
+} from '../../canonical/types.ts'
+import { isUuidV7 } from '../../canonical/uuidv7.ts'
 
-export const PLACES_SCHEMA_VERSION = 1
-export const TRAVEL_SCHEMA_VERSION = 2
-export const WANT_TO_GO_SCHEMA_VERSION = 2
-export const EDITOR_STATE_SCHEMA_VERSION = 2
-export const MEDIA_SCHEMA_VERSION = 3
+import { EDITOR_STATE_SCHEMA_VERSION, MEDIA_SCHEMA_VERSION, PLACES_SCHEMA_VERSION, TRAVEL_SCHEMA_VERSION, WANT_TO_GO_SCHEMA_VERSION } from '../../canonical/schemaVersions.ts'
+
+/** The format versions of the five files (../../canonical/schemaVersions.ts: the Canonical values carry them too). */
+export { EDITOR_STATE_SCHEMA_VERSION, MEDIA_SCHEMA_VERSION, PLACES_SCHEMA_VERSION, TRAVEL_SCHEMA_VERSION, WANT_TO_GO_SCHEMA_VERSION }
 
 /** 五个 V2 文件在 `data/v2/` 下的文件名：与旧文件同名，另加地点注册表（PR3 总体方案决定 B）。 */
 export const V2_FILE_NAMES = {
@@ -121,7 +126,7 @@ export interface V2SchemaProblem {
 const ISO_PATTERN = /^[A-Z]{2}$/
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const LEGACY_KEY_PATTERN = /^(country|city):.+$/
-/** 与 `ImportedMediaKind`（../derive/mediaCatalog.ts）相同的四种；当初不 import Legacy Adapter，因为它会在 PR5 删除而 V2 留下。 */
+/** 与 `ImportedMediaKind`（../../derive/mediaCatalog.ts）相同的四种；当初不 import Legacy Adapter，因为它会在 PR5 删除而 V2 留下。 */
 const MEDIA_KINDS: readonly string[] = ['photo', 'panorama360', 'aerialPhoto', 'video']
 
 const PLACE_KEYS = new Set(['id', 'subtype', 'names', 'originalLanguage', 'externalIds', 'partOf', 'location', 'legacyKeys'])

@@ -4,7 +4,7 @@
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
  * 合法样本：公开样例经 Legacy Adapter 后直接搬进 V2 的 id 空间（`toV2Space`，不合并）再写成五个文件；
- * PR5b 起这份 Canonical 是冻结的静态数据（./frozen.fixture.ts 的 `v2SpaceCanonical`）。
+ * PR5b 起这份 Canonical 是冻结的静态数据（../../canonical/frozen.fixture.ts 的 `v2SpaceCanonical`）。
  * 非法样本：在合法样本上逐项改坏，断言问题落在预期的文件与路径上。
  */
 
@@ -20,7 +20,7 @@ import {
   migratedCanonical,
   v2SpaceCanonical,
   type V2SpaceCanonicalName,
-} from './frozen.fixture.ts'
+} from '../../canonical/frozen.fixture.ts'
 import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files, type V2FileKey, type V2SchemaProblem } from './v2Schema.ts'
 import { serializeV2 } from './v2Serializer.ts'
 
@@ -261,14 +261,14 @@ test('id 唯一（审查 D10）：足迹记录、想去条目、媒体条目的 
 test('id 唯一（审查 D10）：公开 V2 样例与全部冻结夹具仍然通过校验', () => {
   const readJson = (relative: string): unknown => JSON.parse(readFileSync(new URL(relative, import.meta.url), 'utf8'))
   const sampleNames = { places: 'places.json', travel: 'travel-map.json', wantToGo: 'want-to-go.json', editorState: 'editor-state.json', media: 'user-media.json' }
-  const sample = Object.fromEntries(Object.entries(sampleNames).map(([key, name]) => [key, readJson(`../v2-sample/${name}`)])) as Record<V2FileKey, unknown>
+  const sample = Object.fromEntries(Object.entries(sampleNames).map(([key, name]) => [key, readJson(`../../v2-sample/${name}`)])) as Record<V2FileKey, unknown>
   assert.deepEqual(validateV2Files(sample), [], 'src/data/v2-sample')
 
   for (const relative of [
-    '../editor/fixtures/migrated-files.json',
-    '../../../scripts/fixtures/bak-files-v2.json',
-    '../../../scripts/fixtures/baseline-v2.json',
-    '../../../scripts/fixtures/editor-store-v2.json',
+    '../../editor/fixtures/migrated-files.json',
+    '../../../../scripts/fixtures/bak-files-v2.json',
+    '../../../../scripts/fixtures/baseline-v2.json',
+    '../../../../scripts/fixtures/editor-store-v2.json',
   ]) {
     assert.deepEqual(validateV2Files(readJson(relative) as Record<V2FileKey, unknown>), [], relative)
   }

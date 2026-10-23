@@ -6,7 +6,7 @@ import {
   syntheticV2Files,
 } from './store-mode-bench.mjs'
 import { tempPrivateRoot } from './store-mode.fixture.mjs'
-import { validateV2Files } from '../src/data/canonical/v2Schema.ts'
+import { validateV2Files } from '../src/data/compat/v2/v2Schema.ts'
 
 test('the synthetic V2 files of both scales are valid, and the real one has the real-scale counts', () => {
   for (const scale of Object.values(MODE_BENCH_SCALES)) assert.deepEqual(validateV2Files(syntheticV2Files(scale)), [])

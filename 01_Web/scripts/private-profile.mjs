@@ -17,7 +17,7 @@ export function resolvePrivateRoot(environment = process.env) {
 }
 
 /**
- * V2 文件在 `data/v2/` 下的文件名（RFC-LOC-1 PR3 总体方案决定 B）。与 `src/data/canonical/v2Schema.ts` 的
+ * V2 文件在 `data/v2/` 下的文件名（RFC-LOC-1 PR3 总体方案决定 B）。与 `src/data/compat/v2/v2Schema.ts` 的
  * `V2_FILE_NAMES` 相同（`private-data-module.test.mjs` 核对）；这里不 import 它，因为 vite.config.ts 也加载本文件。
  */
 export const V2_DATA_FILE_NAMES = Object.freeze({
@@ -28,7 +28,7 @@ export const V2_DATA_FILE_NAMES = Object.freeze({
   media: 'user-media.local.json',
 })
 
-/** 五个 V2 文件的键（与 getPrivatePaths().v2FilePaths、src/data/canonical/v2Schema.ts 的 V2_FILE_KEYS 相同，顺序也相同）。 */
+/** 五个 V2 文件的键（与 getPrivatePaths().v2FilePaths、src/data/compat/v2/v2Schema.ts 的 V2_FILE_KEYS 相同，顺序也相同）。 */
 export const V2_PRIVATE_FILE_KEYS = Object.freeze(Object.keys(V2_DATA_FILE_NAMES))
 
 export function getPrivatePaths(environment = process.env) {
@@ -52,7 +52,7 @@ export function getPrivatePaths(environment = process.env) {
       Object.entries(V2_DATA_FILE_NAMES).map(([key, fileName]) => [key, path.join(v2DataRoot, fileName)]),
     ),
     // RFC-LOC-1 PR3b-3：V2 的媒体源文件索引（媒体 id → 投递箱路径）。与旧模式的索引分开（两种模式的媒体 id 不同）；
-    // 它不属于 V2 的五个文件，不进 validateV2Files。文件名同 src/data/v2media/importPlan.ts 的 V2_MEDIA_SOURCE_INDEX_FILE_NAME。
+    // 它不属于 V2 的五个文件，不进 validateV2Files。文件名同 src/data/compat/v2/v2MediaFiles.ts 的 V2_MEDIA_SOURCE_INDEX_FILE_NAME。
     v2MediaSourceIndexPath: path.join(v2DataRoot, 'media-source-index.local.json'),
   }
 }

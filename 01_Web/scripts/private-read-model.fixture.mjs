@@ -5,7 +5,7 @@
  */
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { formalStateOfReadModel } from '../src/worldgraph/readModel/build.ts'
-import { projectToV2Files } from './store-projection.mjs'
+import { projectToV2Files } from './compat/store-projection.mjs'
 
 /**
  * The served module (`code`: its source, loaded from `plugin` when not given) as a plain object, with `privateReadModel`

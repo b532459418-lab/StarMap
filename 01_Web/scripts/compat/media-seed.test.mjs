@@ -9,20 +9,20 @@ import { copyFile, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import sharp from 'sharp'
-import { sha256File } from './file-hash.mjs'
-import { COLOR, PLACE, inboxFile, makeImage, syntheticPlaces, writeJson, writeSyntheticInbox } from './media-inbox.fixture.mjs'
-import { classifyScan, liveRecordsOf } from './media-registry.mjs'
-import { scanInbox } from './media-scan.mjs'
+import { sha256File } from '../file-hash.mjs'
+import { COLOR, PLACE, inboxFile, makeImage, syntheticPlaces, writeJson, writeSyntheticInbox } from '../media-inbox.fixture.mjs'
+import { classifyScan, liveRecordsOf } from '../media-registry.mjs'
+import { scanInbox } from '../media-scan.mjs'
 import { seedMediaRegistry, mediaRecordsOf } from './media-seed.mjs'
-import { storeFileOf } from './private-data-source.mjs'
-import { openStore } from './store-host.mjs'
+import { storeFileOf } from '../private-data-source.mjs'
+import { openStore } from '../store-host.mjs'
 import { applyMigration, previewMigration } from './store-migrate.mjs'
-import { downgradeStoreToFormat1, tempPrivateRoot } from './store-mode.fixture.mjs'
+import { downgradeStoreToFormat1, tempPrivateRoot } from '../store-mode.fixture.mjs'
 import { projectToV2Files } from './store-projection.mjs'
-import { upgradeStore } from './store-upgrade.mjs'
+import { upgradeStore } from '../store-upgrade.mjs'
 import { scanV2MediaImport } from './v2-media-import.mjs'
 import { writeV2MediaImport } from './v2-media-import.fixture.mjs'
-import { OFFICIAL, OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { OFFICIAL, OFFICIAL_POLICY } from '../../src/data/store/officialDefinitions.ts'
 
 // libvips keeps recently read files open (sharp.cache: 20 files by default); Windows then refuses to rewrite an Inbox
 // file the V2 import just read. The test rewrites one, so no file stays open.
@@ -200,7 +200,7 @@ test('store:upgrade of a format-1 store seeds the same registry as the migration
 test('restoring a backup taken from a format-1 store upgrades the restored store, its registry seeded from the restored media', async (t) => {
   const { paths, directory } = await v2Library(t)
   await applyMigration(paths, { now: NOW })
-  const { backupStore, restoreStore, BACKUP_FILES } = await import('./store-backup.mjs')
+  const { backupStore, restoreStore, BACKUP_FILES } = await import('../store-backup.mjs')
   const out = path.join(directory, 'backup')
   await backupStore(paths, { out, now: NOW, backupId: '019a0000-0000-7000-8000-00000000e010' })
   // The backup as the 3C-4b program wrote it for a format-1 store: its snapshot at format 1, the hashes to match.
@@ -219,7 +219,7 @@ test('restoring a backup taken from a format-1 store upgrades the restored store
   const to = path.join(directory, 'restored')
   const restored = await restoreStore({ from: out, to, now: '2026-10-17T00:00:00.000Z' })
   assert.match(restored.lines.join('\n'), /integrity_check 与全量校验通过/)
-  const { getPrivatePaths } = await import('./private-profile.mjs')
+  const { getPrivatePaths } = await import('../private-profile.mjs')
   const restoredPaths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: to })
   const first = await firstScan(restoredPaths)
   assert.deepEqual(first.problems, [])

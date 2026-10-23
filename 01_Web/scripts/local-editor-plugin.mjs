@@ -528,20 +528,20 @@ export function travelAtlasLocalEditor(options = {}) {
     }
   }
   // 3C-5B: a root that is not a library yet (migration required, needs recovery, or an empty root that got none) gives
-  // the App the read model of its data/v2/ files migrated in memory (./store-migrate.mjs migrationReadModel, nothing is
+  // the App the read model of its data/v2/ files migrated in memory (./compat/store-migrate.mjs migrationReadModel, nothing is
   // written), so the App has one read path. Cached by the files' bytes: a reload does not migrate again; a change of the
   // files (the watcher invalidates the module) does.
   let unmigrated
   /** The V2 files as read (`values`) and the digest of their bytes (`key`), which names the migrated read model. */
   const unmigratedInputs = async () => {
-    const { readV2Inputs } = await import('./store-migrate.mjs')
+    const { readV2Inputs } = await import('./compat/store-migrate.mjs')
     const { values, bytes } = await readV2Inputs(privatePaths)
     const digest = createHash('sha256')
     for (const key of V2_PRIVATE_FILE_KEYS) digest.update(bytes[key] === undefined ? `${key}:missing;` : `${key}:${bytes[key].length}:`).update(bytes[key] ?? '')
     return { values, key: digest.digest('hex') }
   }
   const unmigratedReadModel = async () => {
-    const { migrationReadModel } = await import('./store-migrate.mjs')
+    const { migrationReadModel } = await import('./compat/store-migrate.mjs')
     const { values, key } = await unmigratedInputs()
     if (unmigrated?.key === key) return unmigrated
     const { model, timings } = migrationReadModel(values)

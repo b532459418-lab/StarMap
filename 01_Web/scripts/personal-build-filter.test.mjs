@@ -1,7 +1,7 @@
 /**
  * src/data/store/personalBuildReadModel.ts (batch 7, review S3; 3C-5B spec §2.4: the filter works on the read model):
  * the personal build keeps only what its pages can show. Batch 7's tests, moved over: every V2 input is migrated in
- * memory into a read model (scripts/store-migrate.mjs migrationReadModel, as the plugin does for a root that is not a
+ * memory into a read model (scripts/compat/store-migrate.mjs migrationReadModel, as the plugin does for a root that is not a
  * library yet), filtered, and read through the official view as the App reads it.
  * Synthetic fixtures only (./personal-build-filter.fixture.mjs and the repository's frozen fixtures and samples).
  *
@@ -16,16 +16,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { hiddenContentFixture, ID, KEPT_HIDDEN_PLACES, REMOVED } from './personal-build-filter.fixture.mjs'
-import { migrationReadModel } from './store-migrate.mjs'
-import { projectToV2Files } from './store-projection.mjs'
-import { readV2SampleFiles } from './v2-sample.mjs'
+import { migrationReadModel } from './compat/store-migrate.mjs'
+import { projectToV2Files } from './compat/store-projection.mjs'
+import { readV2SampleFiles } from './compat/v2-sample.mjs'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
-import { validateV2Files } from '../src/data/canonical/v2Schema.ts'
+import { validateV2Files } from '../src/data/compat/v2/v2Schema.ts'
 import { buildBaseline } from '../src/data/derive/baseline.ts'
 import { OFFICIAL_POLICY, VIEW_SCOPES } from '../src/data/store/officialDefinitions.ts'
 import { PERSONAL_BUILD_CLEARED_SCOPES, filterReadModelForPersonalBuild, mediaFileOf } from '../src/data/store/personalBuildReadModel.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
-import { integrityProblems } from '../src/data/canonical/v2Integrity.ts'
+import { integrityProblems } from '../src/data/compat/v2/v2Integrity.ts'
 import { formalStateOfReadModel, readModelOf } from '../src/worldgraph/readModel/build.ts'
 import { validateReadModel } from '../src/worldgraph/readModel/check.ts'
 import { emptyFormalState } from '../src/worldgraph/store/formal.ts'

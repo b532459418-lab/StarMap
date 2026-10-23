@@ -1,7 +1,7 @@
 /**
  * V2 Serializer（RFC-LOC-1 PR3a 规格 §2.2）：Canonical → 五个 V2 文件的 JSON 值。
  *
- * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。与 V2 Reader（`./v2Reader.ts`）互逆：
+ * `src/data/compat/v2/` 是 App 层，【不是】 StarMap Core。与 V2 Reader（`./v2Reader.ts`）互逆：
  * 对迁移产出的 Canonical（地点 id 为 UUIDv7、运行时字段为 V2 模式的值），`readV2(serializeV2(c, meta))`
  * 与 `c` 在 JSON 意义下深度相等。
  *
@@ -16,9 +16,15 @@
  * `validateV2Files`（`./v2Schema.ts`）校验。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
+ *
+ * Compat (3C-5 E spec §2.4; moved here from ../canonical/): writing Canonical as V2 files (store:export-v2).
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (scripts/compat-boundary.test.mjs).
  */
 
-import type { CanonicalData, CanonicalPlace, CanonicalTravelRecord } from './types.ts'
+import type { CanonicalData, CanonicalPlace, CanonicalTravelRecord } from '../../canonical/types.ts'
+import type { V2FileMeta } from '../../store/projectCanonical.ts'
 import {
   EDITOR_STATE_SCHEMA_VERSION,
   MEDIA_SCHEMA_VERSION,
@@ -32,15 +38,8 @@ import {
   type V2WantToGoFile,
 } from './v2Schema.ts'
 
-/** Canonical 里没有、只存在于文件上的元数据。 */
-export interface V2FileMeta {
-  /** 地点注册表的 `generated_at`（迁移时是规划时间）。 */
-  placesGeneratedAt: string
-  /** 旧想去文件的顶层元数据；只取 `generated_at` / `privacy_level` / `intended_use`，有才写。 */
-  wantToGo?: Record<string, unknown>
-  /** 旧媒体文件除 `schemaVersion` 与 `items` 外的顶层字段，原样写入。 */
-  media?: Record<string, unknown>
-}
+/** Canonical 里没有、只存在于文件上的元数据（3C-5 E：定义在官方视图的投影里，../../store/projectCanonical.ts）。 */
+export type { V2FileMeta }
 
 /** 想去文件搬过来的三个顶层字段（PR3a 规格 §2.2）。 */
 export const WANT_TO_GO_META_KEYS = ['generated_at', 'privacy_level', 'intended_use'] as const

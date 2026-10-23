@@ -4,7 +4,7 @@
  * the App shows that error with this command; nothing upgrades a store by itself.
  *
  * - Under the library lease (store-host.mjs upgradeStoreFile): the old format is checked exactly (schema, store_meta,
- *   quick_check), the rows are read, the media registry is seeded from them (./media-seed.mjs, the same seeding as
+ *   quick_check), the rows are read, the media registry is seeded from them (./compat/media-seed.mjs, the same seeding as
  *   store:migrate), and one transaction adds the new tables, writes the seed and raises the version. Any failure leaves
  *   the file at its old format.
  * - Afterwards the full check (checkStoreFile: quick_check, Core's validation, the media registry) runs on the result.
@@ -17,10 +17,10 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getPrivatePaths } from './private-profile.mjs'
 import { privateDataSource, storeFileOf } from './private-data-source.mjs'
-import { mediaRecordsOf, readMediaSourceIndex, seedMediaRegistry, seedReportLines } from './media-seed.mjs'
+import { mediaRecordsOf, readMediaSourceIndex, seedMediaRegistry, seedReportLines } from './compat/media-seed.mjs'
 import { STORE_FORMAT_VERSION, checkStoreFile, upgradeStoreFile } from './store-host.mjs'
-import { StoreToolError } from './store-migrate.mjs'
-import { projectToV2Files } from './store-projection.mjs'
+import { StoreToolError } from './store-tool-error.mjs'
+import { projectToV2Files } from './compat/store-projection.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 

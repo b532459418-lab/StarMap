@@ -26,13 +26,13 @@ import sharp from 'sharp'
 import { hasLegacyData, hasV2Data, isLegacyUnmigrated, legacyDataStateOf, legacyWriteRefusal } from './legacy-data.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { atomicJsonWrite } from './json-file.mjs'
-import { readV2Inputs } from './store-migrate.mjs'
-import { runV2MediaImport } from './v2-media-import.mjs'
-import { writeV2MediaImport } from './v2-media-import.fixture.mjs'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
+import { readV2Inputs } from './compat/store-migrate.mjs'
+import { runV2MediaImport } from './compat/v2-media-import.mjs'
+import { writeV2MediaImport } from './compat/v2-media-import.fixture.mjs'
+import { canonicalForInputs } from '../src/data/compat/v2/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
-import { V2_FILE_KEYS, validateV2Files } from '../src/data/canonical/v2Schema.ts'
+import { V2_FILE_KEYS, validateV2Files } from '../src/data/compat/v2/v2Schema.ts'
 import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -217,7 +217,7 @@ const importInto = async (root, { withBak, images }) => {
   const preflight = runScript('import-media.mjs', [], root)
   // 第 2A 批：这里的投递箱按文件夹名匹配，要明确确认文件夹绑定（本用例测的是 .bak，不是绑定确认）。
   // 3C-4d：media:import 只写新库；3C-5 E 起 V2 导入器只做预检：报告取进程内预检的输出（预检也走 CLI），
-  // 目录、索引与生成文件由测试夹具按导入器的计划写出（./v2-media-import.fixture.mjs）。
+  // 目录、索引与生成文件由测试夹具按导入器的计划写出（./compat/v2-media-import.fixture.mjs）。
   const lines = []
   const log = (line) => lines.push(String(line))
   const status = await runV2MediaImport({ privatePaths: paths, log, logError: log })

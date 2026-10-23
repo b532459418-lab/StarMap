@@ -26,7 +26,7 @@ import { getPrivatePaths, V2_DATA_FILE_NAMES, V2_PRIVATE_FILE_KEYS } from './pri
 import { STORE_WRITE_ROUTES } from './store-session.mjs'
 import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
 import { V2_MEDIA_ROUTES, v2MediaRoute } from './v2-media-store.mjs'
-import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
+import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/compat/v2/v2Schema.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const root = path.join(tmpdir(), 'starmap-virtual-module-test')

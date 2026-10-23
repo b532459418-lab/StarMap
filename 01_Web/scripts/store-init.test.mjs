@@ -18,7 +18,7 @@ import { privateDataState, storeFileOf } from './private-data-source.mjs'
 import { checkStoreFile, openStore } from './store-host.mjs'
 import { EMPTY_LIBRARY_ACTOR, EMPTY_LIBRARY_KIND, createEmptyLibrary, emptyLibraryCommands } from './store-init.mjs'
 import { sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files } from './store-mode.fixture.mjs'
-import { projectToV2Files } from './store-projection.mjs'
+import { projectToV2Files } from './compat/store-projection.mjs'
 import { OFFICIAL_POLICY, V2_SOURCES } from '../src/data/store/officialDefinitions.ts'
 
 const NOW = '2026-10-20T00:00:00.000Z'

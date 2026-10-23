@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { isPrivateTrackedPath } from './privacy-paths.mjs'
 import { auditPublicSampleDirectory } from './public-sample.mjs'
-import { auditV2SampleDirectory, V2_SAMPLE_FILE_NAMES } from './v2-sample.mjs'
+import { auditV2SampleDirectory, V2_SAMPLE_FILE_NAMES } from './compat/v2-sample.mjs'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const projectRoot = path.resolve(webRoot, '..')

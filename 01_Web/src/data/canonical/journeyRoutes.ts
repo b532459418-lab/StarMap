@@ -1,6 +1,6 @@
 /**
  * 行程里记录的先后与路线类型（审查 C3）：派生（./derive.ts）、时间查询的原始路线（../derive/timeQueryContext.ts）
- * 与只读存储桥（./storeBridge.ts、./storeBridgeProjection.ts）共用这一份，不再各写一份。
+ * 与只读存储桥（../compat/v2/storeBridge.ts、../compat/v2/storeBridgeProjection.ts）共用这一份，不再各写一份。
  *
  * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。

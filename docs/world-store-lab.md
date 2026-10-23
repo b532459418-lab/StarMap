@@ -21,7 +21,7 @@ commit `2fd9866` of `main`:
 - branch [`lab/world-store`](https://github.com/b532459418-lab/StarMap/tree/lab/world-store)
 
 `main` keeps RD-08 G1 (`01_Web/src/worldgraph/store/`, the logical store
-contract and reference implementation) and G2 (`01_Web/src/data/canonical/storeBridge*.ts`,
+contract and reference implementation) and G2 (`01_Web/src/data/compat/v2/storeBridge*.ts` since 3C-5 E,
 the read-only V2 bridge), with their tests.
 
 ## Why it was archived

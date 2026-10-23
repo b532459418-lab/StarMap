@@ -11,7 +11,7 @@ import { Readable } from 'node:stream'
 import { sha256File } from './file-hash.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { rawConnection } from './store-sqlite.mjs'
-import { readV2SampleFiles } from './v2-sample.mjs'
+import { readV2SampleFiles } from './compat/v2-sample.mjs'
 import { edgeCaseFixture } from '../src/data/store/v2Store.fixture.ts'
 import { servedModuleOf } from './private-read-model.fixture.mjs'
 

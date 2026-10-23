@@ -1,9 +1,9 @@
 /**
  * V2 Reader（RFC-LOC-1 PR3a 规格 §2.2）：五个 V2 文件 → Canonical。
  *
- * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。与 V2 Serializer（`./v2Serializer.ts`）互逆。
+ * `src/data/compat/v2/` 是 App 层，【不是】 StarMap Core。与 V2 Serializer（`./v2Serializer.ts`）互逆。
  * PR3b 起 App 在 v2 模式下经它读数据（RFC §3.6：「v2 模式：新文件 ──V2 Reader──> Canonical」），PR5a 起只经它读；
- * 之后的派生见 `./derive.ts`。
+ * 之后的派生见 `../../canonical/derive.ts`。
  *
  * - 省略坐标的足迹记录（`lat` / `lng` 两个键都不存在）用所属城市地点的 `location` 填回；城市没有
  *   `location` 时保持省略。只省略了一个键的记录原样读（Serializer 不会这样写）。
@@ -15,9 +15,15 @@
  * 输入须已通过 `validateV2Files`（`./v2Schema.ts`）。输出只含 JSON 值，不与输入共享引用。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
+ *
+ * Compat (3C-5 E spec §2.4; moved here from ../canonical/): reading V2 files into Canonical (the migration, its parity
+ * checks, the read-only display).
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (scripts/compat-boundary.test.mjs).
  */
 
-import type { CanonicalData, CanonicalPlace, CanonicalTravelMeta, CanonicalTravelRecord } from './types.ts'
+import type { CanonicalData, CanonicalPlace, CanonicalTravelMeta, CanonicalTravelRecord } from '../../canonical/types.ts'
 import type { V2Files, V2TravelRecord } from './v2Schema.ts'
 import { jsonClone } from './v2Serializer.ts'
 

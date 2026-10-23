@@ -1,22 +1,28 @@
 /**
  * The new-library mode's compatibility path (3C-3, design 3B §4.7 G4a and §7): formal store rows → CanonicalData
- * (`projectStoreToCanonical`, 3C-1b) → the five V2 files (`serializeV2`). The App keeps reading V2 files through readV2
- * and the derivation it always used; the plugin hands it these files instead of `data/v2/`.
+ * (`projectStoreToCanonical`, 3C-1b) → the five V2 files (`serializeV2`). Since 3C-5B the App reads the read model, not
+ * these files; they remain the V2 form of a store.
  *
  * Also the parity checks of the migration (design 3B §7, two paths): the projection must equal readV2 of the V2 files it
  * came from, and the derived baseline (the same digest as `npm run baseline`) of the App's real input — the serialized
  * projection — must equal the one of the original V2 files.
  *
  * Pure apart from timing; no IO.
+ *
+ * Compat (3C-5 E spec §2.4; moved here from scripts/): the V2 files of a store (the migration's parity checks, the
+ * format-1 upgrade, tests and benchmarks).
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (../compat-boundary.test.mjs).
  */
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
-import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
-import { serializeV2 } from '../src/data/canonical/v2Serializer.ts'
-import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
-import { projectStoreToCanonical } from '../src/data/store/projectCanonical.ts'
+import { canonicalForInputs } from '../../src/data/compat/v2/canonicalForInputs.ts'
+import { deriveAppDataFromCanonical } from '../../src/data/canonical/derive.ts'
+import { readV2 } from '../../src/data/compat/v2/v2Reader.ts'
+import { serializeV2 } from '../../src/data/compat/v2/v2Serializer.ts'
+import { buildBaseline, stableStringify } from '../../src/data/derive/baseline.ts'
+import { projectStoreToCanonical } from '../../src/data/store/projectCanonical.ts'
 
 /** The `now` of scripts/baseline.mjs, so the digests here are the digests of `npm run baseline`. */
 const BASELINE_NOW = '2000-01-01T00:00:00.000Z'

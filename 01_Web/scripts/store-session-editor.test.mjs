@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { storeFileOf } from './private-data-source.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, createStoreSession } from './store-session.mjs'
 import { rawConnection } from './store-sqlite.mjs'
 import { quietly, tempPrivateRoot, writeV2Files } from './store-mode.fixture.mjs'

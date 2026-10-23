@@ -26,7 +26,7 @@
  */
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import type { V2Files } from '../canonical/v2Schema.ts'
+import type { V2Files } from '../compat/v2/v2Schema.ts'
 import {
   normalizedBaseline, random, randomStep, renameIdsForComparison, type DoubleRunStep, type EngineOutcome, type RunReport,
 } from './doubleRun.fixture.ts'

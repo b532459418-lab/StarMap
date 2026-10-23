@@ -21,7 +21,7 @@
 import { readFileSync } from 'node:fs'
 
 import type { CanonicalData } from './types.ts'
-import type { V2FileMeta } from './v2Serializer.ts'
+import type { V2FileMeta } from '../compat/v2/v2Serializer.ts'
 
 const readFixture = <T,>(name: string): T => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')) as T
 

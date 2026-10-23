@@ -1,6 +1,6 @@
 /**
  * The new library's scan of the Inbox (3C-4c, design v2 §3 step 2). It walks the Inbox with the importer's own rules
- * (walkInbox of ./v2-media-import.mjs: the same folders, bindings, sidecars and messages) and returns one fact per media
+ * (walkInbox of ./media-inbox.mjs: the same folders, bindings, sidecars and messages) and returns one fact per media
  * file, without merging files of the same content (D2: each confirmed source is one record) and without covers.
  *
  * - The places come from the caller (3C-5 E: the official reader's places, in the official order; a migration's V2
@@ -22,7 +22,7 @@ import sharp from 'sharp'
 import { sha256File } from './file-hash.mjs'
 import { portablePath } from './library-backup.mjs'
 import { INBOX_PREFIX, pathKeyOf } from './store-media-registry.mjs'
-import { extensionProblemOf, unlabelledDroneWarning, walkInbox } from './v2-media-import.mjs'
+import { extensionProblemOf, unlabelledDroneWarning, walkInbox } from './media-inbox.mjs'
 import {
   buildMediaItem, contentHashOf, createMediaPlaceIndex, generatedFilesOf, isLikelyEquirectangularPanorama, isStillMedia, orientedDimensions,
 } from '../src/data/v2media/importPlan.ts'

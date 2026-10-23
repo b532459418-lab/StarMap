@@ -1,13 +1,19 @@
 /** G2 diagnostic compatibility projection. Rebuilds V2 from structured facts,
  * then runs the existing pure App projectors. This is NOT a new viewer or an
- * enabled App loader, and never writes the reconstructed values to disk. */
-import { freezeCopy, jsonKey, readWorldStore, reject, shape, validateJson } from '../../worldgraph/store/schema.ts'
-import type { JsonObject, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
-import type { OriginalRouteCandidate } from '../../worldgraph/timeQuery.ts'
-import { buildBaseline } from '../derive/baseline.ts'
-import { deriveTimeQueryContext } from '../derive/timeQueryContext.ts'
-import { deriveAppDataFromCanonical } from './derive.ts'
-import { compareJourneyRecords, routeTypeBetween } from './journeyRoutes.ts'
+ * enabled App loader, and never writes the reconstructed values to disk.
+ *
+ * Compat (3C-5 E spec §2.4; moved here from ../canonical/): the bridge's diagnostic projection back to V2.
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (scripts/compat-boundary.test.mjs).
+ */
+import { freezeCopy, jsonKey, readWorldStore, reject, shape, validateJson } from '../../../worldgraph/store/schema.ts'
+import type { JsonObject, LayerEntry, StoreEntity } from '../../../worldgraph/store/types.ts'
+import type { OriginalRouteCandidate } from '../../../worldgraph/timeQuery.ts'
+import { buildBaseline } from '../../derive/baseline.ts'
+import { deriveTimeQueryContext } from '../../derive/timeQueryContext.ts'
+import { deriveAppDataFromCanonical } from '../../canonical/derive.ts'
+import { compareJourneyRecords, routeTypeBetween } from '../../canonical/journeyRoutes.ts'
 import { BRIDGE, bridgeObject, bridgeRowId, type BridgeDocument } from './storeBridge.ts'
 import { identityKey, readBridgeManifest } from './storeBridgeIdentity.ts'
 import { readV2 } from './v2Reader.ts'

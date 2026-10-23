@@ -7,7 +7,7 @@ import type { FormalCommand, FormalState, ViewItem } from '../../worldgraph/stor
 import { applyChangeSet, planCommands } from '../../worldgraph/store/planner.ts'
 import { memoryReader } from '../../worldgraph/store/reader.ts'
 import { sequentialUuids } from '../canonical/v2.fixture.ts'
-import { validateV2Files } from '../canonical/v2Schema.ts'
+import { validateV2Files } from '../compat/v2/v2Schema.ts'
 import type { CanonicalMediaItem } from '../canonical/types.ts'
 import { memoryScopeReader } from './scopeReader.ts'
 import { storeFrom, viewOf } from './v2Store.fixture.ts'

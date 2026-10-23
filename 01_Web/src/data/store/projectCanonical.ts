@@ -33,10 +33,9 @@ import { FORMAL_TABLES, type FormalState, type FormalTable, type ViewItem, type 
 import type { AssetReference, Evidence, JsonValue, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
 import { freezeCopy } from '../../worldgraph/store/schema.ts'
 import type { CanonicalData, CanonicalDisplay, CanonicalEditorState, CanonicalTravelMeta } from '../canonical/types.ts'
-import type { V2FileMeta } from '../canonical/v2Serializer.ts'
 import { formalStateOfReadModel } from '../../worldgraph/readModel/build.ts'
 import type { ReadModel } from '../../worldgraph/readModel/types.ts'
-import { EDITOR_STATE_SCHEMA_VERSION, TRAVEL_SCHEMA_VERSION } from '../canonical/v2Schema.ts'
+import { EDITOR_STATE_SCHEMA_VERSION, TRAVEL_SCHEMA_VERSION } from '../canonical/schemaVersions.ts'
 import {
   DISPLAY_SETTING_KEYS, OFFICIAL, OFFICIAL_DEFINITIONS, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES, mapListScope,
 } from './officialDefinitions.ts'
@@ -59,6 +58,18 @@ export interface Projection {
 }
 
 type Json = Record<string, JsonValue>
+/**
+ * The file-level metadata the projection gives beside Canonical (the `v2:import` source's headers), for an export to V2
+ * files (serializeV2, ../compat/v2/v2Serializer.ts): what Canonical does not hold.
+ */
+export interface V2FileMeta {
+  /** The places file's `generated_at` (at a migration: its planning time). */
+  placesGeneratedAt: string
+  /** The want-to-go file's top-level metadata; only `generated_at` / `privacy_level` / `intended_use`, when present. */
+  wantToGo?: Record<string, unknown>
+  /** The media file's top-level keys other than `schemaVersion` and `items`, as they were. */
+  media?: Record<string, unknown>
+}
 /** The Canonical record an official entry becomes. */
 export type OfficialEntryRole = 'footprint' | 'planned' | 'wish' | 'countryVisit'
 /** Without a v2:import header there is no generation time; serializeV2 still needs one. */

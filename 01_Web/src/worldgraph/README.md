@@ -245,8 +245,9 @@ stabilize:
 
 ## What does *not* belong here
 
-RD-08 G2's experimental V2 bridge lives in the App's pure data layer:
-`src/data/canonical/storeBridge.ts`, `storeBridgeIdentity.ts`, and
+RD-08 G2's experimental V2 bridge lives in the App's pure data layer (since 3C-5 E in its
+compat directory, kept only for the migration, the read-only display and the export):
+`src/data/compat/v2/storeBridge.ts`, `storeBridgeIdentity.ts`, and
 `storeBridgeProjection.ts`. It accepts complete validated V2 objects, builds
 the isolated Store, and keeps a caller-owned allocation ledger and opaque
 compatibility metadata. Its diagnostic projection reconstructs the five JSON

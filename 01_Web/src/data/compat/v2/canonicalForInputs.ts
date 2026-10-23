@@ -1,10 +1,10 @@
 /**
  * App 的 Canonical（RFC-LOC-1 §3.6，PR3b-1 规格 §2.2；PR5a 起只有 V2）：
  *
- *   五个 V2 文件（私人目录 data/v2/，或公开样例 src/data/v2-sample/）──V2 Reader──> Canonical ──> 派生（./derive.ts）
+ *   五个 V2 文件（私人目录 data/v2/，或公开样例 src/data/v2-sample/）──V2 Reader──> Canonical ──> 派生（../../canonical/derive.ts）
  *
- * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。App（`../appStoreCore.ts`）与基线工具
- * （`scripts/baseline.mjs` 的个人模式与 `--sample`）都只调这一个函数，所以两边读同一份文件得到的 Canonical 相同。
+ * `src/data/compat/v2/` 是 App 层，【不是】 StarMap Core。3C-5B 之前 App（../../appStoreCore.ts）与基线工具都只调这一个
+ * 函数；之后 App 读读模型，这里只剩迁移的对比（scripts/compat/store-projection.mjs 的派生基线）、基准与测试。
  * PR5a 删除了 legacy 分支：App 不再经 Legacy Adapter 读旧格式文件，公开构建也就不再包含它。
  *
  * - 【只】读 `v2Files`。缺的文件按空处理（`emptyV2Files()`）；五个都缺时得到空的 Canonical
@@ -16,9 +16,15 @@
  *   在读出之后换上。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
+ *
+ * Compat (3C-5 E spec §2.4; moved here from ../canonical/): the five V2 files completed, validated and read into
+ * Canonical (the migration and its parity checks).
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (scripts/compat-boundary.test.mjs).
  */
 
-import type { CanonicalData } from './types.ts'
+import type { CanonicalData } from '../../canonical/types.ts'
 import { readV2 } from './v2Reader.ts'
 import {
   EDITOR_STATE_SCHEMA_VERSION,

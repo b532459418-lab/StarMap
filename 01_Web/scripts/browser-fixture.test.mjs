@@ -15,10 +15,10 @@ import {
 } from './browser-fixture.mjs'
 import { privateDataSource, privateDataState, storeFileOf } from './private-data-source.mjs'
 import { checkStoreFile, openStore } from './store-host.mjs'
-import { projectToV2Files } from './store-projection.mjs'
+import { projectToV2Files } from './compat/store-projection.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, createStoreSession } from './store-session.mjs'
 import { tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
+import { readV2 } from '../src/data/compat/v2/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 

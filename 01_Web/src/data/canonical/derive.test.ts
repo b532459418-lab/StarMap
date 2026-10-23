@@ -21,7 +21,7 @@ import path from 'node:path'
 
 import { PLANNED_SOURCE } from '../../worldgraph/adapters/plannedRecords.ts'
 import { BASELINE_FORMAT, buildBaseline, stableStringify } from '../derive/baseline.ts'
-import { canonicalForInputs, type V2FileInputs } from './canonicalForInputs.ts'
+import { canonicalForInputs, type V2FileInputs } from '../compat/v2/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
 import {
   LEGACY_ID_CANONICAL_NAMES,

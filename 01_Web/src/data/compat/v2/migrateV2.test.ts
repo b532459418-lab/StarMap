@@ -1,15 +1,15 @@
 /// <reference types="node" />
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { type FormalCommand, readFormalState } from '../../worldgraph/store/formal.ts'
-import { isPosition } from '../../worldgraph/store/position.ts'
-import { StoreError } from '../../worldgraph/store/schema.ts'
-import { sequentialUuids } from '../canonical/v2.fixture.ts'
-import { readV2 } from '../canonical/v2Reader.ts'
-import { validateV2Files, type V2Files } from '../canonical/v2Schema.ts'
-import { OFFICIAL, OFFICIAL_POLICY, V2_SOURCES, VIEW_SCOPES } from './officialDefinitions.ts'
+import { type FormalCommand, readFormalState } from '../../../worldgraph/store/formal.ts'
+import { isPosition } from '../../../worldgraph/store/position.ts'
+import { StoreError } from '../../../worldgraph/store/schema.ts'
+import { sequentialUuids } from '../../canonical/v2.fixture.ts'
+import { readV2 } from './v2Reader.ts'
+import { validateV2Files, type V2Files } from './v2Schema.ts'
+import { OFFICIAL, OFFICIAL_POLICY, V2_SOURCES, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
 import { listPositions, migrateV2, migrationProblems } from './migrateV2.ts'
-import { NOW, edgeCaseFixture, migrateIntoEmptyStore, migrationInputs } from './v2Store.fixture.ts'
+import { NOW, edgeCaseFixture, migrateIntoEmptyStore, migrationInputs } from '../../store/v2Store.fixture.ts'
 
 const counting = () => { let calls = 0; const next = sequentialUuids(); return { allocateId: () => { calls++; return next() }, calls: () => calls } }
 const refused = (files: unknown, options: Partial<Parameters<typeof migrateV2>[1]> = {}) => {

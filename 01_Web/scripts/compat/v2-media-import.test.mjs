@@ -1,5 +1,5 @@
 /**
- * V2 媒体导入（scripts/v2-media-import.mjs，入口 scripts/import-media.mjs）的端到端测试
+ * V2 媒体导入（scripts/compat/v2-media-import.mjs，入口 scripts/import-media.mjs）的端到端测试
  * （RFC-LOC-1 PR3b-3 规格 §2.5、§3「导入器幂等」「改名与搬家」；PR5a 规格 §4.3、§5：旧导入器删除，未迁移时退出码 2）。
  * 3C-4d：media:import 只写新库，CLI 在 V2 私人根上只做只读预检。3C-5 E 删除了 V2 导入器的写入：这里测预检（CLI 与
  * 进程内的 runImportV2）、导入器的计划（内容寻址、归属、封面、源文件索引）与发布函数（D7）；「导入之后」的文件由测试夹具
@@ -24,14 +24,14 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 
-import { getPrivatePaths } from './private-profile.mjs'
+import { getPrivatePaths } from '../private-profile.mjs'
 import { runV2MediaImport } from './v2-media-import.mjs'
 import { writeV2MediaImport } from './v2-media-import.fixture.mjs'
-import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
-import { V2_MEDIA_SOURCE_INDEX_FILE_NAME } from '../src/data/v2media/importPlan.ts'
-import { completeForWrite, integrityProblems } from '../src/data/canonical/v2Integrity.ts'
+import { sequentialUuids } from '../../src/data/canonical/v2.fixture.ts'
+import { V2_MEDIA_SOURCE_INDEX_FILE_NAME } from '../../src/data/compat/v2/v2MediaFiles.ts'
+import { completeForWrite, integrityProblems } from '../../src/data/compat/v2/v2Integrity.ts'
 
-const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const NOW = new Date(Date.UTC(2026, 8, 29, 8))
 
 const newId = sequentialUuids(Date.UTC(2026, 8, 29))
@@ -570,7 +570,7 @@ test('入口只剩几行：import-media.mjs 不再含旧导入器，也不再按
   assert.match(source, /runV2MediaImport\(\{ privatePaths, verify \}\)/)
   assert.doesNotMatch(source, /withLibraryOperation|apply: true|apply, verify/)
   // 3C-5 E：导入器不再有写入（评审 §7-3 保留到 3C-5 的那一段删除了），测试的输入由测试夹具写出。
-  const importer = readFileSync(path.join(webRoot, 'scripts', 'v2-media-import.mjs'), 'utf8')
+  const importer = readFileSync(path.join(webRoot, 'scripts', 'compat', 'v2-media-import.mjs'), 'utf8')
   assert.doesNotMatch(importer, /apply = false|apply: |import \{ atomicJsonWrite \}|applyV2MediaImportScan/)
   assert.ok(importer.includes('3C-5 E 删除了 runV2MediaImport 的写入'))
 })

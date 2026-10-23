@@ -10,12 +10,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { v2SpaceCanonical, type V2SpaceCanonicalName } from './frozen.fixture.ts'
+import { v2SpaceCanonical, type V2SpaceCanonicalName } from '../../canonical/frozen.fixture.ts'
 import { readV2 } from './v2Reader.ts'
 import type { V2Files } from './v2Schema.ts'
 import { serializeV2 } from './v2Serializer.ts'
 
-/** 冻结的 V2 id 空间 Canonical（公开样例或中性个人模式数据，./frozen.fixture.ts）写成的五个文件。 */
+/** 冻结的 V2 id 空间 Canonical（公开样例或中性个人模式数据，../../canonical/frozen.fixture.ts）写成的五个文件。 */
 const sampleFiles = (name: V2SpaceCanonicalName = 'sample'): V2Files => {
   const data = v2SpaceCanonical(name)
   return JSON.parse(JSON.stringify(serializeV2(data, {

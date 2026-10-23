@@ -6,7 +6,7 @@
  *
  * App 只读 Canonical，不知道磁盘上是哪种格式（RFC-LOC-1 PR5a 起磁盘上只有 V2）：
  *
- *   五个 V2 文件 ──V2 Reader（./v2Reader.ts）──> Canonical ──> 派生（./derive.ts）──> Core ──> UI
+ *   五个 V2 文件 ──V2 Reader（../compat/v2/v2Reader.ts）──> Canonical ──> 派生（./derive.ts）──> Core ──> UI
  *
  * 与旧格式的根本区别：地点只在 `places` 里定义一次（名称、国家代码、坐标）；足迹记录、想去条目、
  * 媒体与 editor-state 都只按地点 id 引用它，不再各自带一份名称。
@@ -34,7 +34,7 @@ export interface CanonicalPlace extends LocalizedText {
   subtype: 'country' | 'city'
   /** 只写非空值；从旧格式迁移来的地点最多 `zh-Hans` 与 `en` 两项。 */
   names: Record<LanguageTag, string>
-  /** 国家的 ISO 3166-1 alpha-2，大写。V2 文件里国家必须有（./v2Schema.ts 校验）；类型上可缺，是因为旧 id 空间的数据允许缺（RFC ID-5）。 */
+  /** 国家的 ISO 3166-1 alpha-2，大写。V2 文件里国家必须有（../compat/v2/v2Schema.ts 校验）；类型上可缺，是因为旧 id 空间的数据允许缺（RFC ID-5）。 */
   externalIds?: { iso3166Alpha2?: string }
   /** city → country。 */
   partOf?: PlaceId

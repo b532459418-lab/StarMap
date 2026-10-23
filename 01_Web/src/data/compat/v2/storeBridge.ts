@@ -1,9 +1,16 @@
 /** G2: complete validated V2 input -> isolated, read-only Store. No App switch,
- * IO, randomness, date repair, first-wins conflict handling, or private loader. */
-import { emptyWorldStore, freezeCopy, readWorldStore, reject, shape, utcTimestamp, validateJson } from '../../worldgraph/store/schema.ts'
-import type { JsonObject, JsonValue, LayerEntry, SourceDefinition, SourceRef, WorldStore } from '../../worldgraph/store/types.ts'
-import { deriveTimeQueryContext } from '../derive/timeQueryContext.ts'
-import { compareJourneyRecords } from './journeyRoutes.ts'
+ * IO, randomness, date repair, first-wins conflict handling, or private loader.
+ *
+ * Compat (3C-5 E spec §2.4; moved here from ../canonical/): the read-only bridge from V2 files to a store, behind the
+ * migration's identities.
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (scripts/compat-boundary.test.mjs).
+ */
+import { emptyWorldStore, freezeCopy, readWorldStore, reject, shape, utcTimestamp, validateJson } from '../../../worldgraph/store/schema.ts'
+import type { JsonObject, JsonValue, LayerEntry, SourceDefinition, SourceRef, WorldStore } from '../../../worldgraph/store/types.ts'
+import { deriveTimeQueryContext } from '../../derive/timeQueryContext.ts'
+import { compareJourneyRecords } from '../../canonical/journeyRoutes.ts'
 import { bridgeAllocator, type BridgeManifest } from './storeBridgeIdentity.ts'
 import { readV2 } from './v2Reader.ts'
 import { validateV2Files, type V2Files } from './v2Schema.ts'

@@ -5,9 +5,15 @@
  * V2 files, and tests. The store's rows are checked by Core.
  *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types).
+ *
+ * Compat (3C-5 E spec §2.4; moved here from ../canonical/): the integrity check of V2 files (backups and recovery
+ * checks of roots that hold V2 files).
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (scripts/compat-boundary.test.mjs).
  */
 
-import type { PlaceId } from './types.ts'
+import type { PlaceId } from '../../canonical/types.ts'
 import {
   EDITOR_STATE_SCHEMA_VERSION,
   MEDIA_SCHEMA_VERSION,

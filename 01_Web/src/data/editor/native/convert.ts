@@ -17,11 +17,10 @@
  */
 import type { JsonValue, LayerEntry } from '../../../worldgraph/store/types.ts'
 import type { PlaceId } from '../../canonical/types.ts'
-import type { V2TravelRecord } from '../../canonical/v2Schema.ts'
 import { VIEW_SCOPES } from '../../store/officialDefinitions.ts'
 import type { OfficialReader } from '../../store/officialReader.ts'
 import { recordValueOf } from '../../store/projectCanonical.ts'
-import { travelRecordEntry, viewItemRow } from '../../store/v2RecordRows.ts'
+import { travelRecordEntry, viewItemRow, type TravelRecordValue } from '../../store/v2RecordRows.ts'
 import { fail } from '../errors.ts'
 import { convertRulesOf, type ConvertRuleRecord } from '../rules/convertRules.ts'
 import { convertDates, convertTripTitle, defaultTripTitle, firstVisitRegion, parseConvertRequest, type ConvertRequest } from '../rules/footprint.ts'
@@ -115,7 +114,7 @@ function convertPlanned(reader: OfficialReader, request: Extract<ConvertRequest,
   // The entry the old path writes for the same record (../../store/v2RecordRows.ts), without the V2-only status (design §9
   // change 2); a journey chosen now is a sequence, never a value.
   if (decided && !('prescribed' in decided)) delete next.journeyId
-  const { entry } = travelRecordEntry(next as unknown as V2TravelRecord, entryId, { createdAt: now, updatedAt: now })
+  const { entry } = travelRecordEntry(next as unknown as TravelRecordValue, entryId, { createdAt: now, updatedAt: now })
   const extensions = entry.extensions?.v2 && typeof entry.extensions.v2 === 'object' && !Array.isArray(entry.extensions.v2)
     ? Object.fromEntries(Object.entries(entry.extensions.v2).filter(([key]) => key !== 'status')) : {}
   const { extensions: _dropped, ...rest } = entry

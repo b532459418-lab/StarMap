@@ -1,7 +1,14 @@
 /** G2 experimental, in-memory allocation ledger. The host supplies UUIDs and
- * persists the returned ledger later; this module never reads/writes a file. */
-import { freezeCopy, opaqueId, reject, shape, validateJson } from '../../worldgraph/store/schema.ts'
-import { isUuidV7 } from './uuidv7.ts'
+ * persists the returned ledger later; this module never reads/writes a file.
+ *
+ * Compat (3C-5 E spec §2.4; moved here from ../canonical/): the identity ledger of V2 records, which the migration
+ * reuses.
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (scripts/compat-boundary.test.mjs).
+ */
+import { freezeCopy, opaqueId, reject, shape, validateJson } from '../../../worldgraph/store/schema.ts'
+import { isUuidV7 } from '../../canonical/uuidv7.ts'
 
 export interface BridgeIdentity {
   readonly kind: 'entry' | 'journey' | 'media'

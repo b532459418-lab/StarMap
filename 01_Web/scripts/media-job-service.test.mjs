@@ -25,7 +25,7 @@ import { mediaJobRoute, handleMediaJobPreview, handleMediaJobRead, handleMediaJo
 import { prepareV2Upload } from './v2-media-store.mjs'
 import { createMediaService } from './media-service.mjs'
 import { createStoreSession } from './store-session.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 

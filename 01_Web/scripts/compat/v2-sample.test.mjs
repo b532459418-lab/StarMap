@@ -26,10 +26,10 @@ import {
   V2_SAMPLE_DIRECTORY,
   V2_SAMPLE_FILE_NAMES,
 } from './v2-sample.mjs'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
-import { V2_FILE_KEYS, validateV2Files } from '../src/data/canonical/v2Schema.ts'
+import { canonicalForInputs } from '../../src/data/compat/v2/canonicalForInputs.ts'
+import { V2_FILE_KEYS, validateV2Files } from '../../src/data/compat/v2/v2Schema.ts'
 
-const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 // ---------------------------------------------------------------------------
 // 已提交文件
@@ -77,7 +77,7 @@ test('App 接线（3C-5B）：rawInputs.ts 不再 import V2 样例，公开模�
 })
 
 // ---------------------------------------------------------------------------
-// 隐私审计（scripts/v2-sample.mjs 的 auditV2SampleDirectory，privacy-audit.mjs 调用它）
+// 隐私审计（scripts/compat/v2-sample.mjs 的 auditV2SampleDirectory，privacy-audit.mjs 调用它）
 // ---------------------------------------------------------------------------
 
 /** 已提交目录的临时副本，交给 `mutate` 改坏，返回审计结果。 */

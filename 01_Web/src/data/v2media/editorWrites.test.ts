@@ -13,7 +13,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import type { V2Files } from '../canonical/v2Schema.ts'
+import type { V2Files } from '../compat/v2/v2Schema.ts'
 import { assertIntact, assertV2Error, migratedFiles, placeNamed } from '../editor/editor.fixture.ts'
 import {
   deletableMediaOf,
@@ -28,7 +28,8 @@ import {
   uploadTargetOf,
   type InboxFolderState,
 } from './editorWrites.ts'
-import { buildMediaItem, mediaCatalogFileOf, mediaIdOf } from './importPlan.ts'
+import { buildMediaItem, mediaIdOf } from './importPlan.ts'
+import { mediaCatalogFileOf } from '../compat/v2/v2MediaFiles.ts'
 import { officialReader } from '../store/officialReader.ts'
 import { migrateIntoEmptyStore } from '../store/v2Store.fixture.ts'
 import { readModelOf } from '../../worldgraph/readModel/build.ts'

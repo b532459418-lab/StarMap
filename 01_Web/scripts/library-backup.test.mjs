@@ -10,7 +10,7 @@ import sharp from 'sharp'
 import { createBackup, inspectBackup, restoreBackup, portablePath } from './library-backup.mjs'
 import { createBrowserFixture, fixtureIds } from './browser-fixture.mjs'
 import { getPrivatePaths, V2_DATA_FILE_NAMES } from './private-profile.mjs'
-import { writeV2MediaImport } from './v2-media-import.fixture.mjs'
+import { writeV2MediaImport } from './compat/v2-media-import.fixture.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { createMediaJobStore } from './media-job-store.mjs'
 

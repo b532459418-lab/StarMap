@@ -18,30 +18,58 @@
  * identity ledger (`BridgeManifest`), so a rerun with the previous ledger yields
  * the same commands. Every other id is derived from the V2 ids.
  *
- * The mapping of one V2 record to its rows lives in ./v2RecordRows.ts (3C-4a), shared with the incremental write path
+ * The mapping of one V2 record to its rows lives in ../../store/v2RecordRows.ts (3C-4a), shared with the incremental write path
  * (./diffV2.ts); this module keeps the order of the batch, the identity ledger, the list positions and the report.
  *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative
  * imports with `.ts`, `import type` for types).
+ *
+ * Compat (3C-5 E spec §2.4; moved here from ../store/): the migration of V2 files into the store.
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (scripts/compat-boundary.test.mjs).
  */
-import type { FormalCommand, FormalTable } from '../../worldgraph/store/formal.ts'
-import { FORMAL_TABLES } from '../../worldgraph/store/formal.ts'
-import type { JsonObject, JsonValue } from '../../worldgraph/store/types.ts'
-import { StoreError, freezeCopy, utcTimestamp, validateJson } from '../../worldgraph/store/schema.ts'
-import { bridgeAllocator, readBridgeManifest, type BridgeManifest } from '../canonical/storeBridgeIdentity.ts'
-import type { CanonicalData } from '../canonical/types.ts'
-import { readV2 } from '../canonical/v2Reader.ts'
-import { V2_FILE_KEYS, validateV2Files, type V2FileKey, type V2Files } from '../canonical/v2Schema.ts'
+import type { FormalCommand, FormalTable } from '../../../worldgraph/store/formal.ts'
+import { FORMAL_TABLES } from '../../../worldgraph/store/formal.ts'
+import type { JsonObject, JsonValue } from '../../../worldgraph/store/types.ts'
+import { StoreError, freezeCopy, utcTimestamp, validateJson } from '../../../worldgraph/store/schema.ts'
+import { bridgeAllocator, readBridgeManifest, type BridgeManifest } from './storeBridgeIdentity.ts'
+import type { CanonicalData } from '../../canonical/types.ts'
+import { readV2 } from './v2Reader.ts'
+import { V2_FILE_KEYS, validateV2Files, type V2FileKey, type V2Files } from './v2Schema.ts'
 import {
   DISPLAY_SETTING_KEYS, OFFICIAL, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES, mapListScope, officialDefinitionCommands, v2SourceDefinition,
-} from './officialDefinitions.ts'
+} from '../../store/officialDefinitions.ts'
 import {
   countryEvidence, countryEvidenceId, countryVisitDate, countryVisitEntry, journeyEntity, journeyOf, journeySequence, listPositions, mediaAsset,
   mediaEntity, orderedJourneyMembers, placeAnchor, placeEntity, placeRelation, recordPlacement, resolveListElements, travelRecordEntry,
-  unresolvedSetting, v2Headers, viewItemRow, viewSettingRow, wantToGoEntry, type ViewTarget,
-} from './v2RecordRows.ts'
+  unresolvedSetting, viewItemRow, viewSettingRow, wantToGoEntry, without, type ViewTarget,
+} from '../../store/v2RecordRows.ts'
 
-export { listPositions } from './v2RecordRows.ts'
+/** The file headers (3C-5 E: moved here from ../../store/v2RecordRows.ts; only the migration reads V2 files). */
+/** Per V2 file, the keys that are records or view state; every other top-level key is file metadata (a header). */
+export const V2_HEADER_EXCLUDED: Readonly<Record<V2FileKey, readonly string[]>> = Object.freeze({
+  places: ['places'],
+  travel: ['records', 'display'],
+  wantToGo: ['items'],
+  editorState: [
+    'addedCountries', 'countryOrder', 'hiddenCountryIds', 'cityOrderByCountry', 'hiddenCityIds',
+    'mediaOrderByCity', 'hiddenMediaIds', 'coverMediaByCity', 'droneOrderByCity', 'hiddenDroneMediaIds',
+  ],
+  media: ['items'],
+})
+/** The header of one V2 file. */
+export const v2HeaderOf = (key: V2FileKey, file: object): Record<string, JsonValue> => without(file, V2_HEADER_EXCLUDED[key])
+/** The headers of the five files, as `v2:import` keeps them under `extensions.v2`. */
+export const v2Headers = (files: V2Files): Record<V2FileKey, Record<string, JsonValue>> => ({
+  places: v2HeaderOf('places', files.places),
+  travel: v2HeaderOf('travel', files.travel),
+  wantToGo: v2HeaderOf('wantToGo', files.wantToGo),
+  editorState: v2HeaderOf('editorState', files.editorState),
+  media: v2HeaderOf('media', files.media),
+})
+
+export { listPositions } from '../../store/v2RecordRows.ts'
 
 export interface MigrateV2Options {
   /** UTC timestamp for `createdAt` / `updatedAt` of every migrated entry. */

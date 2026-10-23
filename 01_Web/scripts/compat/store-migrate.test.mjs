@@ -5,16 +5,17 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { withLibraryOperation } from './library-operation-lock.mjs'
-import { createMediaJobStore } from './media-job-store.mjs'
-import { EMPTY_LIBRARY_KIND } from './store-init.mjs'
-import { privateDataSource, storeFileOf } from './private-data-source.mjs'
-import { openStore } from './store-host.mjs'
-import { MIGRATION_KIND, StoreToolError, applyMigration, previewMigration, readV2Inputs, runMigrateCli } from './store-migrate.mjs'
+import { withLibraryOperation } from '../library-operation-lock.mjs'
+import { createMediaJobStore } from '../media-job-store.mjs'
+import { EMPTY_LIBRARY_KIND } from '../store-init.mjs'
+import { privateDataSource, storeFileOf } from '../private-data-source.mjs'
+import { openStore } from '../store-host.mjs'
+import { MIGRATION_KIND, applyMigration, previewMigration, readV2Inputs, runMigrateCli } from './store-migrate.mjs'
+import { StoreToolError } from '../store-tool-error.mjs'
 import { compareWithV2, projectToV2Files } from './store-projection.mjs'
-import { edgeV2Files, quietly, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files } from './store-mode.fixture.mjs'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
-import { OFFICIAL_POLICY, V2_SOURCES } from '../src/data/store/officialDefinitions.ts'
+import { edgeV2Files, quietly, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files } from '../store-mode.fixture.mjs'
+import { readV2 } from '../../src/data/compat/v2/v2Reader.ts'
+import { OFFICIAL_POLICY, V2_SOURCES } from '../../src/data/store/officialDefinitions.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
 // The library lease's generation counter (operations/) moves with every leased call.
@@ -133,7 +134,7 @@ test('--apply refuses an existing store, a held lease and a failed check, and le
 
 test('3C-4d: legacy data never migrated to V2, a leftover under data/store/ and (with --apply) an unfinished media task are refused; nothing is written', async (t) => {
   const { directory } = await tempPrivateRoot(t, 'starmap-store-migrate-refused-')
-  const { getPrivatePaths } = await import('./private-profile.mjs')
+  const { getPrivatePaths } = await import('../private-profile.mjs')
   const rootFor = async (name) => {
     const root = path.join(directory, name)
     await mkdir(root)

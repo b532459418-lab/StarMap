@@ -22,12 +22,19 @@ import { officialReader } from '../store/officialReader.ts'
 import { migrateIntoEmptyStore } from '../store/v2Store.fixture.ts'
 import { readModelOf } from '../../worldgraph/readModel/build.ts'
 import { indexReadModel } from '../../worldgraph/readModel/lookup.ts'
-import { convertRuleDataOfCanonical, convertRuleDataOfV2Files, convertRules } from './convertRules.ts'
+import { convertRuleDataOfCanonical, convertRules, type ConvertRuleData } from './convertRules.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
-import type { V2Files } from './v2Schema.ts'
-import { readV2 } from './v2Reader.ts'
+import type { V2Files } from '../compat/v2/v2Schema.ts'
+import { readV2 } from '../compat/v2/v2Reader.ts'
 
 const NOW = '2000-01-01T00:00:00.000Z'
+
+/** The rules' input read straight off the five V2 files (3C-5 E: moved here from ./convertRules.ts; only this comparison uses it). */
+const convertRuleDataOfV2Files = (files: V2Files): ConvertRuleData => ({
+  places: files.places.places,
+  records: files.travel.records,
+  wantToGoItems: files.wantToGo.items,
+})
 
 /** 端点的结论：拒绝码，或 undefined（接受）。 */
 const serverCode = (files: V2Files, body: Record<string, unknown>): V2WriteErrorCode | undefined => {

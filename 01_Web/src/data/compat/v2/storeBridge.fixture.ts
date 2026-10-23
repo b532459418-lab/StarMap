@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import type { V2Files } from './v2Schema.ts'
 export const BRIDGE_NOW = '2026-10-05T00:00:00.000Z'
 export function publicBridgeFixture(): V2Files {
-  const read = (name: string) => JSON.parse(readFileSync(new URL(`../v2-sample/${name}.json`, import.meta.url), 'utf8'))
+  const read = (name: string) => JSON.parse(readFileSync(new URL(`../../v2-sample/${name}.json`, import.meta.url), 'utf8'))
   return { places: read('places'), travel: read('travel-map'), wantToGo: read('want-to-go'), editorState: read('editor-state'), media: read('user-media') }
 }
 export function syntheticBridgeFixture(): V2Files {

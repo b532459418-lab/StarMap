@@ -15,7 +15,7 @@ import { inspectLibraryOperation, withLibraryOperation } from './library-operati
 import { storeFileOf } from './private-data-source.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { openStore } from './store-host.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 const execute = promisify(execFile)

@@ -6,16 +6,22 @@
  *
  * PR5b 起它们手工维护：不再由迁移工具生成（`sample:v2` 与固定的迁移清单已删除）。改完运行
  * `npm run privacy:check`，由下面的 `auditV2SampleDirectory` 校验格式与中立性。3C-5A 起另有新库格式的原生样例
- * （src/data/sample/，./public-sample.mjs）；公开构建在 3C-5B 之前仍读这里的 V2 文件，两份样例要保持一致。
+ * （src/data/sample/，../public-sample.mjs）；公开构建在 3C-5B 之前仍读这里的 V2 文件，两份样例要保持一致。
  *
  * 本模块给基线工具（`--sample`）、privacy-audit 与测试共用：目录与文件名、读五个文件，以及隐私审计的规则。
+ *
+ * Compat (3C-5 E spec §2.4; moved here from scripts/): the V2 sample, an input of the migration and compatibility tests
+ * (and of the privacy audit).
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (../compat-boundary.test.mjs).
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 
-import { webRoot } from './private-profile.mjs'
-import { V2_FILE_KEYS, validateV2Files } from '../src/data/canonical/v2Schema.ts'
+import { webRoot } from '../private-profile.mjs'
+import { V2_FILE_KEYS, validateV2Files } from '../../src/data/compat/v2/v2Schema.ts'
 
 export const V2_SAMPLE_DIRECTORY = path.join(webRoot, 'src', 'data', 'v2-sample')
 

@@ -1,13 +1,13 @@
 /**
  * `npm run store:migrate` (3C-3, design 3B §7): migrate a private root's five V2 files into the formal store
- * `data/store/world.sqlite`, the only way personal data is written since 3C-4d (./private-data-source.mjs). A dev server
+ * `data/store/world.sqlite`, the only way personal data is written since 3C-4d (../private-data-source.mjs). A dev server
  * that is running switches over by itself (its watcher sees the new file).
  *
  * 3C-4d: the root's state is checked first. Legacy-format data that was never migrated to V2 is refused
  * (E_LEGACY_UNMIGRATED: the migration of commit 4fd32a9 comes first; migrating would make an empty library of it), and
  * so is a leftover under `data/store/` without a store (E_STORE_RESIDUE: `npm run library:recover`). With `--apply`, an
  * unfinished media task refuses too (E_MEDIA_JOB_PENDING), under the lease. A root without any data gets an empty
- * library initialized in the formal model (./store-init.mjs), never through the V2 reader.
+ * library initialized in the formal model (../store-init.mjs), never through the V2 reader.
  *
  * - Without arguments it only previews (a dry run): read the V2 files, `migrateV2` (3C-1b), plan the batch on an empty
  *   store in memory, project it back and compare with `readV2` and the derived baseline. It prints the counts, the V2
@@ -27,42 +27,39 @@
  *   every problem. Problems and reports carry rules, paths, keys and counts, never values from the files.
  *
  * Exit codes: 0 preview or migration done, 1 refused or failed.
+ *
+ * Compat (3C-5 E spec §2.4; moved here from scripts/): `npm run store:migrate` and the in-memory migration of a root
+ * that awaits migration (the plugin's read-only display, the baseline tool).
+ * V2 files are read and written only to migrate a library, to show a root that awaits migration (read-only), and to
+ * export a library to V2 (store:export-v2). Ordinary read and write code does not import this directory
+ * (../compat-boundary.test.mjs).
  */
 import { readFile, rmdir, stat, unlink } from 'node:fs/promises'
-import { LEGACY_MIGRATION_STEPS } from './legacy-data.mjs'
-import { assertMediaJobsClear } from './media-job-store.mjs'
+import { LEGACY_MIGRATION_STEPS } from '../legacy-data.mjs'
+import { assertMediaJobsClear } from '../media-job-store.mjs'
 import { lstatSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { withLibraryOperation } from './library-operation-lock.mjs'
-import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
-import { privateDataSource, privateDataState, storeFileOf } from './private-data-source.mjs'
+import { withLibraryOperation } from '../library-operation-lock.mjs'
+import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from '../private-profile.mjs'
+import { privateDataSource, privateDataState, storeFileOf } from '../private-data-source.mjs'
 import { compareWithV2, projectToV2Files } from './store-projection.mjs'
-import { createStore, openStore } from './store-host.mjs'
+import { StoreToolError } from '../store-tool-error.mjs'
+import { createStore, openStore } from '../store-host.mjs'
 import { createdRowsOf, mediaRecordsOf, readMediaSourceIndex, seedMediaRegistry, seedReportLines } from './media-seed.mjs'
-import { completeV2Files } from '../src/data/canonical/canonicalForInputs.ts'
-import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
-import { V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
-import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
-import { migrateV2 } from '../src/data/store/migrateV2.ts'
-import { FORMAL_TABLES, emptyFormalState } from '../src/worldgraph/store/formal.ts'
-import { readModelOf } from '../src/worldgraph/readModel/build.ts'
-import { memoryReader } from '../src/worldgraph/store/reader.ts'
-import { planCommands } from '../src/worldgraph/store/planner.ts'
+import { completeV2Files } from '../../src/data/compat/v2/canonicalForInputs.ts'
+import { uuidv7 } from '../../src/data/canonical/uuidv7.ts'
+import { V2_FILE_NAMES } from '../../src/data/compat/v2/v2Schema.ts'
+import { OFFICIAL_POLICY } from '../../src/data/store/officialDefinitions.ts'
+import { migrateV2 } from '../../src/data/compat/v2/migrateV2.ts'
+import { FORMAL_TABLES, emptyFormalState } from '../../src/worldgraph/store/formal.ts'
+import { readModelOf } from '../../src/worldgraph/readModel/build.ts'
+import { memoryReader } from '../../src/worldgraph/store/reader.ts'
+import { planCommands } from '../../src/worldgraph/store/planner.ts'
 
 /** `kind` and `actor` of the store's first request. */
 export const MIGRATION_KIND = 'store.migrate-v2'
 export const MIGRATION_ACTOR = 'store:migrate'
-
-/** A refusal or failure of a store tool: `problems` are lines safe to print (no values from the private files). */
-export class StoreToolError extends Error {
-  constructor(code, problems = []) {
-    super([code, ...problems].join('\n'))
-    this.name = 'StoreToolError'
-    this.code = code
-    this.problems = Object.freeze([...problems])
-  }
-}
 
 /**
  * The five V2 files of a private root, as the plugin reads them: `values` (missing files completed as empty, like the
@@ -228,8 +225,8 @@ export async function applyMigration(privatePaths, {
 } = {}) {
   const file = storeFileOf(privatePaths)
   if (migratableState(privatePaths) === 'empty') {
-    // 3C-4d: nothing to migrate: an empty library in the formal model (./store-init.mjs takes the lease and decides again).
-    const { createEmptyLibrary } = await import('./store-init.mjs')
+    // 3C-4d: nothing to migrate: an empty library in the formal model (../store-init.mjs takes the lease and decides again).
+    const { createEmptyLibrary } = await import('../store-init.mjs')
     const created = await createEmptyLibrary(privatePaths, { now, libraryId, requestId, actor: MIGRATION_ACTOR })
     return {
       lines: [`私人根里没有任何数据：已建立空的新库 data/store/world.sqlite：库 id ${created.libraryId}，修订号 ${created.revision}。`],

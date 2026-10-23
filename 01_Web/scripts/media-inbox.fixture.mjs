@@ -77,13 +77,13 @@ export async function writeSyntheticInbox(paths) {
 
 /**
  * A V2 library the V2 importer has imported: the invented registry and the synthetic Inbox (the Hill Town binding
- * confirmed, so its place.json is written; 3C-5 E: written by ./v2-media-import.fixture.mjs from the importer's plan).
+ * confirmed, so its place.json is written; 3C-5 E: written by ./compat/v2-media-import.fixture.mjs from the importer's plan).
  * Returns the Inbox paths of writeSyntheticInbox.
  */
 export async function importedV2Library(paths, { now = '2026-10-16T00:00:00.000Z' } = {}) {
   await writeJson(paths.v2FilePaths.places, syntheticPlaces())
   const files = await writeSyntheticInbox(paths)
-  const { writeV2MediaImport } = await import('./v2-media-import.fixture.mjs')
+  const { writeV2MediaImport } = await import('./compat/v2-media-import.fixture.mjs')
   await writeV2MediaImport({ privatePaths: paths, acceptFolderBindings: true, now: () => new Date(now) })
   return files
 }

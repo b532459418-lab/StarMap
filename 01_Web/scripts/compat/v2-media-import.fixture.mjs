@@ -14,9 +14,11 @@
  * Not imported by the App or by any command (git grep: tests and fixtures only).
  */
 import path from 'node:path'
-import { atomicJsonWrite } from './json-file.mjs'
-import { publishGeneratedFiles, scanV2MediaImport } from './v2-media-import.mjs'
-import { catalogIntegrityProblems, mediaCatalogFileOf, mediaSourceIndexFileOf, placeConfigOf, sourcesByIdOf } from '../src/data/v2media/importPlan.ts'
+import { atomicJsonWrite } from '../json-file.mjs'
+import { publishGeneratedFiles } from '../media-inbox.mjs'
+import { scanV2MediaImport } from './v2-media-import.mjs'
+import { placeConfigOf } from '../../src/data/v2media/importPlan.ts'
+import { catalogIntegrityProblems, mediaCatalogFileOf, mediaSourceIndexFileOf, sourcesByIdOf } from '../../src/data/compat/v2/v2MediaFiles.ts'
 
 const toPosix = (value) => value.split(path.sep).join('/')
 
