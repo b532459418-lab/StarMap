@@ -1,6 +1,6 @@
 /**
  * The three want-to-go endpoints as store-native writes (3C-5 C1, design 3C-5 §3; the decisions are ../rules/, the same
- * as the V2 write functions of ../../v2write/wantToGo.ts):
+ * as the V2 write functions of v2write/wantToGo.ts, retired in 3C-5 E):
  * - `POST /wanttogo`: the place by id, or by name (the country by ISO, found or created from the catalog; a city only
  *   when there is no candidate, or with `createNew`); E_WTG_EXISTS; a new entry (addedAt, note) appended to
  *   wantToGoOrder; new places appended to placeOrder.

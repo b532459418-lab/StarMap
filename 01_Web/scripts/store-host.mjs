@@ -306,7 +306,7 @@ function currentRevision(db) {
  * or `close` is called. Rows come back exactly as written (deep-frozen JSON values).
  *
  * Two reads beyond Core's interface, for the incremental write path of the new-library mode
- * (3C-4a, src/data/store/diffV2.ts): `viewScope(scope)` returns every view item and setting of one
+ * (3C-4a; diffV2ToCommands, retired in 3C-5 E, and the media records): `viewScope(scope)` returns every view item and setting of one
  * scope (by id, from the scope indexes), and `idMapping(kind, sourceId, recordId)` looks up id_map.
  */
 function transactionReader(db) {

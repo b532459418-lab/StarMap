@@ -1,5 +1,5 @@
 /**
- * 想去三个端点的判定（3C-5 C1 从 ../../v2write/wantToGo.ts 迁来，规则、错误码、参数与检查顺序不变；RFC-LOC-1 PR3b-2 规格 §2.3）：
+ * 想去三个端点的判定（3C-5 C1 从 v2write/wantToGo.ts（3C-5 E 删除）迁来，规则、错误码、参数与检查顺序不变；RFC-LOC-1 PR3b-2 规格 §2.3）：
  * 新增（`POST /wanttogo`）、改隐藏与备注（`/wanttogo/update`）、彻底删除已隐藏的条目（`/wanttogo/delete`）。
  *
  * 输入与校验、文案照抄旧的 want-to-go-store.mjs（RFC-LOC-1 PR5a 删除）；条目引用地点（`placeId`），FR-WTG-8 查重是

@@ -1,7 +1,7 @@
 /**
- * 编辑端点的输入校验（3C-5 C1 从 ../../v2write/common.ts 迁来，规则与文案不变；RFC-LOC-1 PR3b-2 规格 §2.2、§2.3、§2.6）。
+ * 编辑端点的输入校验（3C-5 C1 从 v2write/common.ts（3C-5 E 删除）迁来，规则与文案不变；RFC-LOC-1 PR3b-2 规格 §2.2、§2.3、§2.6）。
  *
- * `src/data/editor/rules/` 是判定层：存储原生的写入（../native/）与 V2 写入函数（../../v2write/，到子批 E 删除为止）共用这一份，
+ * `src/data/editor/rules/` 是判定层：存储原生的写入（../native/）与 V2 写入函数（v2write/，子批 E 已删除为止）共用这一份，
  * 错误码与参数因此相同（双跑对照证明）。输入校验的规则与文案照抄旧模式（插件的 requireText / numberInRange，以及旧格式的
  * 写入模块 want-to-go-store.mjs、convert-to-travel.mjs，均已删除），只是抛带码的 V2WriteError。
  *

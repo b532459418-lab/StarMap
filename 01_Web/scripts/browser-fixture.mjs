@@ -12,8 +12,10 @@
  * has found it (waitForServedRevision asks the changes endpoint, which looks first). The V2 files are no longer
  * rewritten: under `data/v2/` a change would reload the pages.
  *
- * Media are store-native (3C-4c): diffV2ToCommands refuses a change to media items, so a reset keeps the store's media
- * items as they are (review §7-1) and resets everything else, the media orders, hidden lists and covers included.
+ * A reset (3C-5 E: store commands, no diffV2ToCommands) migrates the wanted V2 files in memory with store:migrate's own
+ * migration and the store's identity ledger (id_map), so the records keep their rows, and commits the rows that differ.
+ * Media are store-native (3C-4c): a reset keeps the store's media items as they are (review §7-1) and resets everything
+ * else, the media orders, hidden lists and covers included.
  * Cases that need media import real images through the media service (importInboxMedia), as `media:import` does.
  */
 import { existsSync } from 'node:fs'
@@ -31,8 +33,12 @@ import { applyMigration } from './store-migrate.mjs'
 import { projectToV2Files } from './store-projection.mjs'
 import { rawConnection } from './store-sqlite.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
-import { diffV2ToCommands } from '../src/data/store/diffV2.ts'
-import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { commandBatch } from '../src/data/editor/native/batch.ts'
+import { migrateV2 } from '../src/data/store/migrateV2.ts'
+import { OFFICIAL, OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { emptyFormalState } from '../src/worldgraph/store/formal.ts'
+import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts'
+import { memoryReader } from '../src/worldgraph/store/reader.ts'
 import { integrityProblems } from '../src/data/canonical/v2Integrity.ts'
 
 export const fixtureIds = Object.freeze({
@@ -174,11 +180,63 @@ export async function waitForServedRevision(revision, { timeoutMs = 30000 } = {}
 }
 
 
+/** The tables a reset compares, in the order their rows refer to each other (definitions and media rows stay). */
+const RESET_TABLES = Object.freeze(['sources', 'evidence', 'entities', 'relations', 'anchors', 'entries', 'sequences', 'viewItems', 'viewSettings'])
+const isMediaRow = (table, row) => table === 'entities' && row.typeId === OFFICIAL.media
+
+/**
+ * The commands that make the store's rows those of `files` migrated (3C-5 E). `current` is the store's formal state,
+ * `identities` its identity ledger (id_map rows), `isTombstoned(table, id)` its tombstones. The migration reuses the
+ * ledger's ids, so a record keeps its row; a row whose id a tombstone holds (a record the case deleted) gets a fresh id
+ * and every reference to it follows (a place cannot: its id is its V2 id). Rows that differ (their revision and times
+ * aside) are updated, missing ones created, others removed; definitions and media rows stay as they are.
+ */
+export function resetCommandsOf(current, identities, files, { isTombstoned, now = new Date().toISOString(), allocateId = () => uuidv7() } = {}) {
+  const manifest = { format: 'starmap.v2-store-identities', version: 1, identities }
+  const migrated = migrateV2(files, { now, allocateId, manifest })
+  if (!migrated.ok) throw new Error(`The browser fixture's files do not migrate: ${JSON.stringify(migrated.report.problems.slice(0, 3))}`)
+  const empty = emptyFormalState()
+  let target = applyChangeSet(empty, planCommands(memoryReader(empty), migrated.commands, { baseRevision: 0, now, policy: OFFICIAL_POLICY }))
+  // Ids a tombstone holds: fresh ones, and every reference follows (exact string values).
+  const remap = new Map()
+  for (const table of RESET_TABLES) {
+    const live = new Set(current[table].map((row) => row.id))
+    for (const row of target[table]) {
+      if (live.has(row.id) || !isTombstoned(table, row.id)) continue
+      if (table === 'entities' && row.typeId === OFFICIAL.place) throw new Error(`The browser fixture cannot bring back the place ${row.id}: a case deleted it (E_RECREATE_ID)`)
+      remap.set(row.id, table === 'viewItems' || table === 'viewSettings' ? `${row.scope}#${allocateId()}` : allocateId())
+    }
+  }
+  if (remap.size) {
+    const swapIds = (value) => (typeof value === 'string' ? remap.get(value) ?? value : Array.isArray(value) ? value.map(swapIds)
+      : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, swapIds(child)])) : value)
+    target = Object.fromEntries(Object.entries(target).map(([table, rows]) => [table, Array.isArray(rows) ? rows.map(swapIds) : rows]))
+  }
+  const batch = commandBatch()
+  const timesOf = (row) => Object.fromEntries(['createdAt', 'updatedAt'].filter((key) => Object.hasOwn(row, key)).map((key) => [key, row[key]]))
+  for (const table of RESET_TABLES) {
+    const have = new Map(current[table].filter((row) => !isMediaRow(table, row)).map((row) => [row.id, row]))
+    for (const row of target[table]) {
+      if (isMediaRow(table, row)) continue
+      const existing = have.get(row.id)
+      // A row that stays keeps its times: they are not what the files say.
+      if (existing) batch.update(table, existing, { ...row, ...timesOf(existing) })
+      else batch.create(table, row)
+    }
+  }
+  for (const table of [...RESET_TABLES].reverse()) {
+    if (table === 'sources') continue
+    const wanted = new Set(target[table].map((row) => row.id))
+    for (const row of current[table]) if (!isMediaRow(table, row) && !wanted.has(row.id)) batch.remove(table, row)
+  }
+  return batch.commands()
+}
+
 /**
  * Make the store hold `files` (the V2 shape) with one commit through a separate connection, under the library lease,
- * as the editor writes do. Media items are kept as the store has them (diffV2ToCommands refuses a change to them; review
- * §7-1); everything else follows `files`. When a dev server runs, this waits until it has found the commit (3C-5 D: its
- * open pages then apply it without a reload). Resolves the revision.
+ * as the editor writes do (3C-5 E: store commands from resetCommandsOf). Media items are kept as the store has them
+ * (review §7-1); everything else follows `files`. When a dev server runs, this waits until it has found the commit (3C-5
+ * D: its open pages then apply it without a reload). Resolves the revision.
  */
 export async function resetFixture(root, files) {
   const paths = pathsOf(root)
@@ -193,11 +251,15 @@ export async function resetFixture(root, files) {
       const before = projectToV2Files(rows).files
       // A JSON round trip, as when the values were V2 files: undefined fields are left out.
       const after = { ...JSON.parse(JSON.stringify(files)), media: before.media }
-      const now = new Date().toISOString()
-      const diff = handle.read((reader) => diffV2ToCommands(before, after, { reader, identity: reader.idMapping, now, allocateId: () => uuidv7() }))
-      if (diff.commands.length === 0) return rows.revision
+      const ledger = rawConnection(storeFileOf(paths))
+      let identities
+      try { identities = ledger.prepare('SELECT kind, source_id AS sourceId, record_id AS recordId, id FROM id_map ORDER BY kind, source_id, record_id').all().map((row) => ({ ...row })) } finally { ledger.close() }
+      const state = handle.readFormalState()
+      const tombstones = new Set(state.tombstones.map((row) => JSON.stringify([row.table, row.id])))
+      const commands = resetCommandsOf(state, identities, after, { isTombstoned: (table, id) => tombstones.has(JSON.stringify([table, id])) })
+      if (commands.length === 0) return rows.revision
       const result = await handle.commit({
-        requestId: uuidv7(), baseRevision: rows.revision, kind: 'browser-fixture.reset', actor: 'browser-fixture', commands: diff.commands,
+        requestId: uuidv7(), baseRevision: rows.revision, kind: 'browser-fixture.reset', actor: 'browser-fixture', commands,
       }, { leaseToken })
       return result.revision
     } finally { await handle.close() }
@@ -205,7 +267,6 @@ export async function resetFixture(root, files) {
   await waitForServedRevision(revision)
   return revision
 }
-
 /** Change one of the fixture's values as the App reads it (`change` edits it in place) and commit it (resetFixture). */
 export async function patchFixture(root, key, change) {
   const files = await readFixtureFiles(root)

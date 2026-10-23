@@ -3,12 +3,12 @@
  *
  * - `POST /upload`：上传目标（城市地点与所属国家、收件箱文件夹的显示名）、其余参数的校验、
  *   收件箱文件夹的选择（同名地点不共用文件夹）与 `place.json` 的写入；
- * - `POST /media/delete`：能删哪些媒体、内容寻址的生成目录在哪、从 editor-state 里清掉这些 id。
+ * - `POST /media/delete`：能删哪些媒体、内容寻址的生成目录在哪。
  *
  * `src/data/v2media/` 是 App 层，【不是】 StarMap Core。3C-4d 起只有新库写入：上传的 IO 在 scripts/v2-media-store.mjs，
  * 导入与删除在新库的媒体服务（scripts/media-service.mjs）；V2 的导入之后恢复（按 V2 源文件索引）与按索引找源文件已删除。
- * `removeMediaFromEditorState` 只留作新库删除语义的对照（src/data/store/mediaRecords.test.ts），3C-5 再定。
- * 写 editor-state 走 PR3b-2 的事务（`runV2Transaction`：入口与出口的完整性检查、按顺序给出写入）。
+ * 3C-5 E: `removeMediaFromEditorState` (the V2 write of a deletion, kept as the reference of the new library's) is
+ * gone with the V2 write layer; src/data/store/mediaRecords.test.ts states what a deletion does to the editor lists.
  *
  * 3C-5 E: the upload target and the deletion rule read the official reader (../store/officialReader.ts: a place by id,
  * the editor lists, a media item by V2 id), never a V2 shape of the library: the store's rows are checked by Core, so
@@ -21,12 +21,6 @@
 import type { CanonicalMediaItem, CanonicalPlace, PlaceId } from '../canonical/types.ts'
 import type { OfficialReader } from '../store/officialReader.ts'
 import { V2WriteError, fail } from '../editor/errors.ts'
-import {
-  runV2Transaction,
-  type V2FilesOrEmpty,
-  type V2WriteContext,
-  type V2WriteOutcome,
-} from '../v2write/transaction.ts'
 import { generatedDirectoryOfSrc, placeDisplayName, placeIdOfConfig } from './importPlan.ts'
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -237,26 +231,4 @@ export const generatedDirectoriesOf = (items: DeletableMedia['items']): string[]
     if (!directories.includes(directory as string)) directories.push(directory as string)
   }
   return directories
-}
-
-/**
- * 从 editor-state 里清掉这些媒体 id（§2.4）：两个隐藏表、两个排序表的值，以及指向它们的封面。
- * 只写 editor-state，走 PR3b-2 的事务。
- */
-export function removeMediaFromEditorState(
-  files: V2FilesOrEmpty | undefined,
-  ids: readonly string[],
-  ctx: V2WriteContext,
-): V2WriteOutcome<{ deletedIds: string[] }> {
-  const removed = new Set(ids)
-  const keep = (list: readonly string[]) => list.filter((id) => !removed.has(id))
-  return runV2Transaction(files, ctx, (draft) => {
-    const state = draft.files.editorState
-    state.hiddenMediaIds = keep(state.hiddenMediaIds)
-    state.hiddenDroneMediaIds = keep(state.hiddenDroneMediaIds)
-    state.mediaOrderByCity = Object.fromEntries(Object.entries(state.mediaOrderByCity).map(([cityId, list]) => [cityId, keep(list)]))
-    state.droneOrderByCity = Object.fromEntries(Object.entries(state.droneOrderByCity).map(([cityId, list]) => [cityId, keep(list)]))
-    state.coverMediaByCity = Object.fromEntries(Object.entries(state.coverMediaByCity).filter(([, id]) => !removed.has(id)))
-    return { result: { deletedIds: [...ids] }, writes: [{ file: 'editorState' }] }
-  })
 }

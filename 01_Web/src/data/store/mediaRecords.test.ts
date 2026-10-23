@@ -9,7 +9,6 @@ import { memoryReader } from '../../worldgraph/store/reader.ts'
 import { sequentialUuids } from '../canonical/v2.fixture.ts'
 import { validateV2Files } from '../canonical/v2Schema.ts'
 import type { CanonicalMediaItem } from '../canonical/types.ts'
-import { removeMediaFromEditorState } from '../v2media/editorWrites.ts'
 import { memoryScopeReader } from './scopeReader.ts'
 import { storeFrom, viewOf } from './v2Store.fixture.ts'
 import { createMediaRecordCommands, removeMediaRecordCommands, rereadChanges, rereadMediaRecordCommands, type NewMediaRecord } from './mediaRecords.ts'
@@ -68,14 +67,29 @@ test('covers follow markCovers in the cities whose photos change: a photo named 
   assert.equal(viewOf(removed).media.items.find(media => media.id === existing.id)!.isCover, true)
 })
 
-test('removing a record removes it everywhere the editor state names it, as V2’s removeMediaFromEditorState does; its ids are tombstoned', () => {
+/**
+ * What deleting media does to the editor lists, as V2's removeMediaFromEditorState did (retired with the V2 write layer in
+ * 3C-5 E): the ids leave both hidden lists and both order lists, and covers that name them go.
+ */
+function withoutMedia<T extends { hiddenMediaIds: string[]; hiddenDroneMediaIds: string[]; mediaOrderByCity: Record<string, string[]>; droneOrderByCity: Record<string, string[]>; coverMediaByCity: Record<string, string> }>(state: T, ids: readonly string[]): T {
+  const removed = new Set(ids)
+  const keep = (list: readonly string[]) => list.filter((id) => !removed.has(id))
+  const keepEach = (table: Record<string, string[]>) => Object.fromEntries(Object.entries(table).map(([key, list]) => [key, keep(list)]))
+  return {
+    ...state, hiddenMediaIds: keep(state.hiddenMediaIds), hiddenDroneMediaIds: keep(state.hiddenDroneMediaIds),
+    mediaOrderByCity: keepEach(state.mediaOrderByCity), droneOrderByCity: keepEach(state.droneOrderByCity),
+    coverMediaByCity: Object.fromEntries(Object.entries(state.coverMediaByCity).filter(([, id]) => !removed.has(id))),
+  }
+}
+
+test('removing a record removes it everywhere the editor state names it, as V2’s removeMediaFromEditorState did; its ids are tombstoned', () => {
   const { store } = fixtureStore()
   const view = store.view
   const id = view.editorState.hiddenMediaIds.find(mediaId => view.media.items.some(media => media.id === mediaId))!
   const plan = removeMediaRecordCommands([id], { reader: memoryScopeReader(store.state) })
   const state = apply(store.state, plan.commands)
   const after = viewOf(state)
-  const expected = removeMediaFromEditorState(view, [id], { now: new Date(NOW), countryCatalog: new Map(), newId: () => 'unused' }).writes[0].value as typeof view.editorState
+  const expected = withoutMedia(view.editorState, [id])
   for (const key of ['hiddenMediaIds', 'hiddenDroneMediaIds', 'mediaOrderByCity', 'droneOrderByCity', 'coverMediaByCity'] as const) {
     // V2 keeps a list element that names no media (an unresolved one); the store does too, so both agree element for element.
     assert.deepEqual(after.editorState[key], expected[key], key)

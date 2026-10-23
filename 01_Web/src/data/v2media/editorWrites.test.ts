@@ -3,7 +3,7 @@
  * 上传时 place.json 的写入与冲突（第 2D 批：手放的文件夹不认领）、导入后排序表的追加与隐藏状态恢复、删除时生成目录的定位与 editor-state 清理。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
- * 数据是中性个人模式数据迁移后的 V2 文件（../v2write/v2write.fixture.ts），媒体换成按内容寻址的条目。
+ * 数据是中性个人模式数据迁移后的 V2 文件（../editor/editor.fixture.ts），媒体换成按内容寻址的条目。
  * 3C-5 E: the upload target and the deletion rule read the official reader; the tests give them the reader of these files
  * migrated into an empty store (readerOf).
  */
@@ -14,7 +14,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import type { V2Files } from '../canonical/v2Schema.ts'
-import { applyWrites, assertIntact, assertV2Error, migratedFiles, placeNamed, testContext, writeOrder } from '../v2write/v2write.fixture.ts'
+import { assertIntact, assertV2Error, migratedFiles, placeNamed } from '../editor/editor.fixture.ts'
 import {
   deletableMediaOf,
   droneUploadMetadataOf,
@@ -24,7 +24,6 @@ import {
   inboxFolderDecision,
   pickInboxFolder,
   placeFolderSuffix,
-  removeMediaFromEditorState,
   uploadKindOf,
   uploadTargetOf,
   type InboxFolderState,
@@ -271,29 +270,4 @@ test('删除 · 生成目录：由 src 定位到内容寻址的 media/user/<哈�
   const legacyShaped = { ...items[0], src: '/media/user/iceland/reykjavik/photo/1111111111111111/original.jpg' }
   assertV2Error(() => generatedDirectoriesOf([items[1], legacyShaped]), 'E_MEDIA_PATH_INVALID', '影像生成路径格式无效，已停止删除。')
   assertV2Error(() => generatedDirectoriesOf([{ ...items[0], src: '/media/user/../../secret/original.jpg' }]), 'E_MEDIA_PATH_INVALID')
-})
-
-test('删除 · editor-state：清掉这些 id（两个隐藏表、两个排序表、指向它们的封面），其余不动；只写 editor-state', () => {
-  const files = contentFiles()
-  const reykjavik = placeNamed(files, 'Reykjavik', 'city').id
-  const torshavn = placeNamed(files, 'Torshavn', 'city').id
-  const outcome = removeMediaFromEditorState(files, [ID.p2, ID.d1], testContext())
-  assert.deepEqual(outcome.result, { deletedIds: [ID.p2, ID.d1] })
-  assert.deepEqual(writeOrder(outcome.writes), ['editorState'])
-  const after = applyWrites(files, outcome.writes)
-  assert.deepEqual(after.editorState.hiddenMediaIds, [])
-  assert.deepEqual(after.editorState.hiddenDroneMediaIds, [ID.v1])
-  assert.deepEqual(after.editorState.mediaOrderByCity, { [reykjavik]: [ID.p1] })
-  assert.deepEqual(after.editorState.droneOrderByCity, { [torshavn]: [ID.v1] })
-  assert.deepEqual(after.editorState.coverMediaByCity, {}, '封面指向被删的照片时一并清掉')
-  for (const key of ['countryOrder', 'hiddenCountryIds', 'cityOrderByCountry', 'hiddenCityIds', 'addedCountries'] as const) {
-    assert.deepEqual(after.editorState[key], files.editorState[key], key)
-  }
-  assertIntact(after)
-  assert.deepEqual(files.editorState.hiddenMediaIds, [ID.p2], '输入不被修改')
-
-  // 现有文件不合法时不在它上面继续（E_INTEGRITY，不给出写入）。
-  const broken = contentFiles()
-  broken.editorState.mediaOrderByCity = { ghost: [] }
-  assertV2Error(() => removeMediaFromEditorState(broken, [ID.p2], testContext()), 'E_INTEGRITY')
 })

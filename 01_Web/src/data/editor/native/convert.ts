@@ -1,6 +1,6 @@
 /**
  * `POST /wanttogo/convert` as a store-native write (3C-5 C2, design 3C-5 §3). The decisions are ../rules/ (the same as the
- * V2 write function of ../../v2write/convert.ts) in its order: the source, the conversion rules (convertRules), the dates,
+ * V2 write function of v2write/convert.ts, retired in 3C-5 E) in its order: the source, the conversion rules (convertRules), the dates,
  * then the journey.
  *
  * - A want-to-go item → a new visited record on its city (a `starmap:user` travel entry, its journey); the item goes unless

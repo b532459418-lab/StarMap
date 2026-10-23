@@ -2,7 +2,7 @@
 /**
  * The journey rules as the store-native writes use them (3C-5 C2): the candidates from only the records that matter
  * (the titled visited records and every member of their journeys) equal the candidates from every record, in any
- * order; decideJourney asks for candidates only when it needs them. The V2 behaviour is ../../v2write/journeyChoice.test.ts.
+ * order; decideJourney asks for candidates only when it needs them. The V2 behaviour was v2write/journeyChoice.test.ts (retired in 3C-5 E; the golden output pins it).
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'

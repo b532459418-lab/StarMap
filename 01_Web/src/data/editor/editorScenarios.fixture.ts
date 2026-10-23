@@ -9,10 +9,10 @@
  */
 import assert from 'node:assert/strict'
 import type { V2Files } from '../canonical/v2Schema.ts'
-import { readEditorStateV1 } from '../v2write/index.ts'
-import { WRITE_NOW, migratedFiles, placeNamed } from './editor.fixture.ts'
+import { indexPlaces, reconstructEditorState } from '../canonical/reconstruct.ts'
+import { migratedFiles, placeNamed } from './editor.fixture.ts'
 import { edgeCaseFixture } from '../store/v2Store.fixture.ts'
-import { OLD_WRITES, editorRoute, sameRequest, viewStep, type DoubleRunStep, type RunReport } from './doubleRun.fixture.ts'
+import { editorRoute, sameRequest, viewStep, type DoubleRunStep, type RunReport } from './doubleRun.fixture.ts'
 import { hideDelta } from './rules/editorView.ts'
 
 /** A step made from the store's V2 view. */
@@ -35,7 +35,8 @@ function scenario(name: string, files: () => V2Files, steps: readonly Make[], ch
 
 export const idOf = (files: V2Files, en: string, subtype?: 'country' | 'city') => placeNamed(files, en, subtype).id
 export const wishAt = (files: V2Files, en: string) => files.wantToGo.items.find(item => item.placeId === idOf(files, en))!
-export const lists = (files: V2Files) => readEditorStateV1(files, WRITE_NOW)
+/** The editor lists of a V2 view (as the page saw them). */
+export const lists = (files: V2Files) => reconstructEditorState(files.editorState, indexPlaces(files.places.places))
 /** The labels that saved / the codes of the refusals. */
 export const saved = (report: RunReport) => [...report.tally].filter(([, [ok]]) => ok > 0).map(([label]) => label)
 export const refusedCodes = (report: RunReport) => report.outcomes.flatMap(outcome => (outcome.error ? [outcome.error.code] : []))
@@ -74,17 +75,17 @@ const backToFirst: Make = (view) => {
   ])
 }
 const hideCountry = (en: string): Make => (view) => viewStep(`hide ${en}`, [{ op: 'hide', scope: 'countries', add: [idOf(view, en, 'country')], remove: [] }])
-const deleteCountry = (en: string): Make => (view) => sameRequest(`delete ${en}`, editorRoute('countries/delete'), OLD_WRITES.countriesDelete, { ids: [idOf(view, en, 'country')] })
-const tokyo: Make = () => sameRequest('Tokyo', editorRoute('records'), OLD_WRITES.records, {
+const deleteCountry = (en: string): Make => (view) => sameRequest(`delete ${en}`, editorRoute('countries/delete'), { ids: [idOf(view, en, 'country')] })
+const tokyo: Make = () => sameRequest('Tokyo', editorRoute('records'), {
   country: '日本', country_en: 'Japan', city: '东京', city_en: 'Tokyo', start_date: '2026-05-01', lat: 35.68, lng: 139.69, country_code: 'JP',
 })
-const addCountry = (code: string, visitedDate: string): Make => () => sameRequest(`country ${code}`, editorRoute('countries'), OLD_WRITES.countries, { countryCode: code, visitedDate })
-const wish = (label: string, input: unknown): Make => () => sameRequest(label, editorRoute('wanttogo'), OLD_WRITES.wantToGo, input)
-const wishById = (en: string, extra: object = {}): Make => (view) => sameRequest(`wish ${en}`, editorRoute('wanttogo'), OLD_WRITES.wantToGo, { placeId: idOf(view, en), ...extra })
+const addCountry = (code: string, visitedDate: string): Make => () => sameRequest(`country ${code}`, editorRoute('countries'), { countryCode: code, visitedDate })
+const wish = (label: string, input: unknown): Make => () => sameRequest(label, editorRoute('wanttogo'), input)
+const wishById = (en: string, extra: object = {}): Make => (view) => sameRequest(`wish ${en}`, editorRoute('wanttogo'), { placeId: idOf(view, en), ...extra })
 const update = (label: string, en: string, input: object): Make => (view) =>
-  sameRequest(label, editorRoute('wanttogo/update'), OLD_WRITES.wantToGoUpdate, { id: wishAt(view, en).id, ...input })
+  sameRequest(label, editorRoute('wanttogo/update'), { id: wishAt(view, en).id, ...input })
 const remove = (label: string, ids: (view: V2Files) => string[]): Make => (view) =>
-  sameRequest(label, editorRoute('wanttogo/delete'), OLD_WRITES.wantToGoDelete, { ids: ids(view) })
+  sameRequest(label, editorRoute('wanttogo/delete'), { ids: ids(view) })
 
 scenario('PUT /state as view operations: orders, hidden lists, covers and drone order; back to the first state', migratedFiles, [everyList, backToFirst],
   report => assert.deepEqual(saved(report), ['every list', 'back to the first state']))
@@ -126,7 +127,7 @@ scenario('POST /wanttogo/update: note, hide, unhide and drop the note, hide agai
   update('hide', 'Nuuk', { hidden: true }),
   update('unhide and drop the note', 'Nuuk', { hidden: false, note: '' }),
   update('hide again (a new view row)', 'Nuuk', { hidden: true }),
-  () => sameRequest('unknown id', editorRoute('wanttogo/update'), OLD_WRITES.wantToGoUpdate, { id: 'synthetic-missing', hidden: true }),
+  () => sameRequest('unknown id', editorRoute('wanttogo/update'), { id: 'synthetic-missing', hidden: true }),
   update('nothing to change', 'Nuuk', {}),
   update('hidden not a boolean', 'Nuuk', { hidden: 'yes' }),
   update('note too long', 'Nuuk', { note: 'x'.repeat(201) }),
@@ -143,7 +144,7 @@ scenario('POST /wanttogo/delete: a hidden item and the place only it used; refus
 
 scenario('POST /wanttogo/convert between native writes: a new item converted, kept; a planned record', migratedFiles, [
   wish('Osaka', { place: { kind: 'city', nameZh: '大阪', nameEn: 'Osaka', countryCode: 'JP', lat: 34.69, lng: 135.5 } }),
-  (view) => sameRequest('Osaka joins', editorRoute('wanttogo/convert'), OLD_WRITES.convert, {
+  (view) => sameRequest('Osaka joins', editorRoute('wanttogo/convert'), {
     source: 'want-to-go', id: wishAt(view, 'Osaka').id, startDate: '2025-06-25', tripTitle: '2025 North Atlantic Demo', journeyId: '2025-north-atlantic-demo', keepWantToGo: true,
   }),
   update('Osaka note', 'Osaka', { note: 'Synthetic' }),
@@ -161,9 +162,9 @@ scenario('3C-1b edge cases: unresolved and repeated list elements, a planned rec
       { op: 'order', scope: 'countries', ids: [...s.countryOrder].reverse(), baseline: s.countryOrder },
     ])
   },
-  () => sameRequest('the planned record', editorRoute('wanttogo/convert'), OLD_WRITES.convert, { source: 'planned', recordId: 'shared-id', startDate: '2027-03-01' }),
-  () => sameRequest('the want-to-go item with that id', editorRoute('wanttogo/update'), OLD_WRITES.wantToGoUpdate, { id: 'shared-id', note: 'Synthetic', hidden: true }),
-  () => sameRequest('delete it', editorRoute('wanttogo/delete'), OLD_WRITES.wantToGoDelete, { ids: ['shared-id'] }),
+  () => sameRequest('the planned record', editorRoute('wanttogo/convert'), { source: 'planned', recordId: 'shared-id', startDate: '2027-03-01' }),
+  () => sameRequest('the want-to-go item with that id', editorRoute('wanttogo/update'), { id: 'shared-id', note: 'Synthetic', hidden: true }),
+  () => sameRequest('delete it', editorRoute('wanttogo/delete'), { ids: ['shared-id'] }),
 ])
 
 scenario('view operations refused: a hidden city that is no city (the merged lists are checked as a whole, as PUT /state did)', migratedFiles, [
@@ -173,8 +174,8 @@ scenario('view operations refused: a hidden city that is no city (the merged lis
 
 // --- 3C-5 C2: the remaining 3C-4a scenarios (records, countries, conversion), now that every endpoint is native.
 
-const record = (label: string, input: (view: V2Files) => object): Make => (view) => sameRequest(label, editorRoute('records'), OLD_WRITES.records, input(view))
-const convert = (label: string, input: (view: V2Files) => object): Make => (view) => sameRequest(label, editorRoute('wanttogo/convert'), OLD_WRITES.convert, input(view))
+const record = (label: string, input: (view: V2Files) => object): Make => (view) => sameRequest(label, editorRoute('records'), input(view))
+const convert = (label: string, input: (view: V2Files) => object): Make => (view) => sameRequest(label, editorRoute('wanttogo/convert'), input(view))
 
 scenario('POST /records: a new country and city by name, an existing city joining an existing journey, a new journey of the same title', migratedFiles, [
   record('named Tokyo', () => ({

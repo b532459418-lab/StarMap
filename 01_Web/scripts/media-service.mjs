@@ -1,7 +1,7 @@
 /**
  * The new library's media service (3C-4c, design v2 §3 and §4; review §8): import and deletion, one implementation for
  * the dev server's endpoints, media tasks and the command line. Store-native: no V2 write function, no
- * diffV2ToCommands. Every write runs under the library lease its caller holds and commits with that `leaseToken`.
+ * diffV2ToCommands (both retired in 3C-5 E). Every write runs under the library lease its caller holds and commits with that `leaseToken`.
  *
  * Import (importInbox):
  *   pending deletions first (media-file-ops.mjs) → the Inbox scan (media-scan.mjs) against the registry and the live

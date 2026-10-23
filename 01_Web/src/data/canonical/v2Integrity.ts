@@ -28,7 +28,7 @@ export type V2FilesOrEmpty = Partial<Record<V2FileKey, unknown>>
  * 全新 V2 目录里「写时创建」的五个空文件（PR3b-2 规格 §2.1）。足迹：`schema_version: 2`、
  * `privacy_level: 'private-local'`（同旧编辑器新建私人足迹文件时的写法）、显示规则全空；想去：
  * `privacy_level: 'local-only'`（同旧想去 store 新建文件时的写法）；其余按 PR3a 的格式与版本号。
- * 时间字段在写盘时统一盖成这次写入的时间（`runV2Transaction`）。
+ * 时间字段取 `now`（缺的文件按空文件补齐时用）。
  */
 export const emptyV2FilesForWrite = (now: Date): V2Files => {
   const iso = now.toISOString()
