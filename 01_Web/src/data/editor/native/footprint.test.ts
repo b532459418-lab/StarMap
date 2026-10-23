@@ -53,16 +53,19 @@ test('POST /records joining a journey: its sequence lists the members and the ne
   assert.deepEqual(dates, [...dates].sort(), 'route order')
 })
 
-test('POST /countries: an added country is a v2:country-visit evidence (region) and visit entry, with its addedCountryOrder row', () => {
+test('POST /countries: an added country is a starmap:user visit entry on the country citing an evidence row (region), with its addedCountryOrder row (3C-5 E)', () => {
   const store = doubleRunStore(migratedFiles())
   const before = store.state
   const saved = run(store, 'countries', { countryCode: 'DK', visitedDate: '2024-03-02' }, 1)
   assert.ok(saved.state, JSON.stringify(saved.error))
   const { countryId } = saved.result as { countryId: string }
   const [evidence] = fresh(before.evidence, store.state.evidence)
-  assert.deepEqual([evidence.sourceId, evidence.recordId, evidence.attributes], [V2_SOURCES.countryVisit, countryId, { region: 'Europe' }])
   const [visit] = fresh(before.entries, store.state.entries)
-  assert.deepEqual([visit.source.sourceId, visit.source.recordId, visit.source.evidenceIds, visit.fields], [V2_SOURCES.countryVisit, countryId, [evidence.id], { date: { raw: { startDate: '2024-03-02' } } }])
+  assert.deepEqual([evidence.sourceId, evidence.recordId, evidence.attributes], [OFFICIAL.user, visit.id, { region: 'Europe' }])
+  assert.deepEqual([visit.layerId, visit.entityId, visit.source.sourceId, visit.source.recordId, visit.source.evidenceIds, visit.fields],
+    [OFFICIAL.travel, countryId, OFFICIAL.user, visit.id, [evidence.id], { date: { raw: { startDate: '2024-03-02' } } }])
+  // No row of a V2 source (3C-5 E spec §2.6: the country's subtype marks the visit, not v2:country-visit).
+  assert.ok(![evidence.sourceId, visit.source.sourceId].includes(V2_SOURCES.countryVisit))
   assert.ok(fresh(before.viewItems, store.state.viewItems).some((row) => row.scope === VIEW_SCOPES.addedCountryOrder && row.itemId === countryId))
   assert.deepEqual(canonicalOf(store.state).editorState.addedCountries.at(-1), { placeId: countryId, region: 'Europe', visitedDate: '2024-03-02' })
   // Again: E_COUNTRY_EXISTS.

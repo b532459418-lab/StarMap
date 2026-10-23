@@ -18,6 +18,12 @@
  * migration) comes after all positioned ones; entries among themselves by
  * `createdAt`, other rows by id (UUIDv7, so creation order), ties by id.
  *
+ * Added countries (3C-5 E spec §2.6): a `starmap:travel` entry on a place whose
+ * `subtype` is `country` is a country visit, whatever its source; the evidence it
+ * cites holds the other values (the region). Before 3C-5 E the evidence of the V2
+ * source `v2:country-visit` was the added country, and a visit entry existed only
+ * with a date; store format 3 gives every added country its entry (store:upgrade).
+ *
  * Pure: the input is never modified, and nothing but the rows themselves is read;
  * the result does not depend on the order of rows within a table.
  *
@@ -86,12 +92,17 @@ const OFFICIAL_ROWS: readonly (readonly [FormalTable, string])[] = [
   ...OFFICIAL_DEFINITIONS.layers.map(r => ['layers', r.id] as const),
 ]
 
-/** Which Canonical record an official entry becomes, from its layer and source (shared with ./personalBuildReadModel.ts). */
-export function officialEntryRole(entry: LayerEntry): OfficialEntryRole | undefined {
+/**
+ * Which Canonical record an official entry becomes, from its layer, its place and its source (shared with
+ * ./officialReader.ts and ./personalBuildReadModel.ts). `subtypeOf` gives a place entity's `subtype` field (undefined
+ * for anything else). A travel entry on a country is a country visit, whatever its source (3C-5 E spec §2.6: the
+ * place's subtype marks it, no longer the V2 source).
+ */
+export function officialEntryRole(entry: LayerEntry, subtypeOf: (entityId: string) => unknown): OfficialEntryRole | undefined {
   const sourceId = entry.source.sourceId
   if (entry.layerId === OFFICIAL.travel) {
+    if (subtypeOf(entry.entityId) === 'country') return 'countryVisit'
     if (sourceId === V2_SOURCES.travel || sourceId === OFFICIAL.user) return 'footprint'
-    if (sourceId === V2_SOURCES.countryVisit) return 'countryVisit'
   } else if (entry.layerId === OFFICIAL.wantToGo) {
     if (sourceId === V2_SOURCES.planned) return 'planned'
     if (sourceId === V2_SOURCES.wantToGo || sourceId === OFFICIAL.user) return 'wish'
@@ -152,15 +163,25 @@ export function recordValueOf(entry: LayerEntry, hidden: boolean | undefined, jo
   return value
 }
 
-/** An added country's Canonical value: its evidence's attributes and place, and the visit entry's date. */
-export function addedCountryValueOf(evidence: Evidence, visit: LayerEntry | undefined): Json {
-  const value: Json = { ...evidence.attributes, placeId: evidence.recordId }
-  if (visit) {
-    const raw = rawDates(visit.fields.date)
-    if (Object.hasOwn(raw, 'startDate')) value.visitedDate = raw.startDate
-  }
+/**
+ * An added country's Canonical value (3C-5 E): the attributes of the evidence its visit entry cites (the region, and V2
+ * values such as an empty visitedDate), its place, and the entry's date when it has a start date.
+ */
+export function addedCountryValueOf(visit: LayerEntry, evidence: readonly Evidence[]): Json {
+  const value: Json = {}
+  for (const row of evidence) Object.assign(value, row.attributes)
+  value.placeId = visit.entityId
+  const raw = rawDates(visit.fields.date)
+  if (Object.hasOwn(raw, 'startDate')) value.visitedDate = raw.startDate
   return value
 }
+/**
+ * Where an added country without an addedCountryOrder position goes among the others: by the evidence its entry cites
+ * (the order before 3C-5 E, when the evidence was the added country), else by the entry.
+ */
+export const addedCountryTieBreak = (visit: LayerEntry): string => visit.source.evidenceIds[0] ?? visit.id
+/** Of two visit entries of one country, the one the official view reads: the later id (UUIDv7: the later one). */
+export const laterVisit = (kept: LayerEntry | undefined, entry: LayerEntry): LayerEntry => (kept === undefined || compare(kept.id, entry.id) < 0 ? entry : kept)
 
 /**
  * A media item's Canonical value from its media entity and asset: the asset's metadata, its V2 id (the asset's V2 media
@@ -314,8 +335,9 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
 
   // --- Entries.
   const roles = new Map<string, OfficialEntryRole>()
+  const subtypeOf = (id: string) => places.get(id)?.subtype
   for (const entry of state.entries) {
-    const role = officialEntryRole(entry)
+    const role = officialEntryRole(entry, subtypeOf)
     if (role !== undefined && isPlace(entry.entityId)) roles.set(entry.id, role)
   }
   const journeyOf = new Map<string, string>()
@@ -340,7 +362,7 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
   for (const entry of state.entries) {
     const role = roles.get(entry.id)
     if (role === undefined) continue
-    if (role === 'countryVisit') { if (entry.entityId === entry.source.recordId) visits.set(entry.source.recordId, entry); continue }
+    if (role === 'countryVisit') { visits.set(entry.entityId, laterVisit(visits.get(entry.entityId), entry)); continue }
     consume('entries', entry.id)
     if (role === 'wish') {
       wishes.push({ itemId: entry.id, value: wishValueOf(entry, wishHidden(entry.id)), after: [entry.createdAt, entry.id] })
@@ -350,15 +372,14 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
     records.push({ itemId: entry.id, value, after: [entry.createdAt, entry.id] })
   }
 
-  // --- Added countries: the evidence container, with the visit entry's date.
+  // --- Added countries: the visit entry on each country, with the evidence it cites.
+  const evidenceById = byId(state.evidence as readonly Evidence[])
   const containers: { itemId: string; value: Json; after: [string, string] }[] = []
-  for (const evidence of state.evidence as readonly Evidence[]) {
-    if (evidence.sourceId !== V2_SOURCES.countryVisit || !isPlace(evidence.recordId)) continue
-    const visit = visits.get(evidence.recordId)
-    const value = addedCountryValueOf(evidence, visit)
-    if (visit) consume('entries', visit.id)
-    consume('evidence', evidence.id)
-    containers.push({ itemId: evidence.recordId, value, after: ['', evidence.id] })
+  for (const [placeId, visit] of visits) {
+    const evidence = visit.source.evidenceIds.map(id => evidenceById.get(id)).filter((row): row is Evidence => row !== undefined)
+    consume('entries', visit.id)
+    for (const row of evidence) consume('evidence', row.id)
+    containers.push({ itemId: placeId, value: addedCountryValueOf(visit, evidence), after: ['', addedCountryTieBreak(visit)] })
   }
 
   // --- Media: asset metadata, the entity's place and title.

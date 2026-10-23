@@ -22,7 +22,7 @@ import type { CanonicalPlace, CanonicalWantToGoItem } from '../../canonical/type
 import type { WantToGoItem } from '../../derive/wantToGo.ts'
 import { OFFICIAL, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
 import type { OfficialReader } from '../../store/officialReader.ts'
-import { officialEntryRole, wishValueOf } from '../../store/projectCanonical.ts'
+import { wishValueOf } from '../../store/projectCanonical.ts'
 import { placeAnchor, viewItemRow, wantToGoEntry } from '../../store/v2RecordRows.ts'
 import { fail } from '../errors.ts'
 import { chooseCountry, requireNoCityCandidates } from '../rules/places.ts'
@@ -50,7 +50,7 @@ function itemV1(reader: OfficialReader, item: CanonicalWantToGoItem, created: re
 
 /** Every want-to-go item's entry, for its order (without a row: by creation time and id). */
 const wishKeys = (reader: OfficialReader) => () =>
-  reader.index.entriesOfLayer(OFFICIAL.wantToGo).filter((entry) => officialEntryRole(entry) === 'wish')
+  reader.index.entriesOfLayer(OFFICIAL.wantToGo).filter((entry) => reader.roleOf(entry) === 'wish')
     .map((entry) => ({ id: entry.id, after: [entry.createdAt, entry.id] as const }))
 
 // ---------------------------------------------------------------------------

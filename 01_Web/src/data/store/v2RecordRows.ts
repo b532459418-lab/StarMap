@@ -7,8 +7,9 @@
  *   (source `v2:planned`); `hiddenFromHome` and the journey membership are returned beside the entry (view state and
  *   a sequence, never fields).
  * - Want-to-go items: an entry of `starmap:want-to-go` (source `v2:want-to-go`); `hidden` is returned beside it.
- * - Added countries: one evidence row per country, plus a `starmap:travel` entry (source `v2:country-visit`) when it
- *   has a visit date.
+ * - Added countries: one evidence row per country (the region and other values) and a `starmap:travel` entry on the
+ *   country (source `v2:country-visit`, citing the evidence) with its visit date, or none (3C-5 E: every added country
+ *   has its entry; the country's subtype is what marks it).
  * - Media: the asset (id = the V2 media id) and the `starmap:media` entity.
  * - Journeys: the `starmap:journey` entity and its sequence in the original adjacency.
  * - View state: one view item or setting row; list elements resolved to view items, or unresolved.
@@ -143,13 +144,15 @@ export function countryEvidence(country: V2AddedCountry, id: string = countryEvi
   return { id, revision: 0, sourceId: V2_SOURCES.countryVisit, recordId: country.placeId, attributes } satisfies Evidence
 }
 
-/** The visit entry of an added country with a visit date (pointing at its evidence), or undefined. */
-export function countryVisitEntry(country: V2AddedCountry, entryId: string, evidenceId: string, times: EntryTimes): LayerEntry | undefined {
+/**
+ * The visit entry of an added country, citing its evidence: its visit date as the raw start date, or no date (3C-5 E:
+ * every added country has one; before, only a dated one did and the evidence alone was the added country).
+ */
+export function countryVisitEntry(country: V2AddedCountry, entryId: string, evidenceId: string, times: EntryTimes): LayerEntry {
   const date = countryVisitDate(country)
-  if (date === undefined) return undefined
   return {
     id: entryId, revision: 0, layerId: OFFICIAL.travel, entityId: country.placeId,
-    fields: { date: { raw: { startDate: date } } }, source: sourceRef(V2_SOURCES.countryVisit, country.placeId, [evidenceId]), ...times,
+    fields: { date: { raw: date === undefined ? {} : { startDate: date } } }, source: sourceRef(V2_SOURCES.countryVisit, country.placeId, [evidenceId]), ...times,
   } satisfies LayerEntry
 }
 

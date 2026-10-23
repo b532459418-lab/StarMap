@@ -472,17 +472,23 @@ export async function restoreStore({ from, to, now = new Date().toISOString() } 
       revision: manifest.store.revision, sha256: manifest.files[BACKUP_FILES.store].sha256, restoredAt: now,
     }
     // 3C-4c: a backup of a format-1 store (before the media registry) is upgraded in the new root, its registry seeded
-    // from the restored media (store:upgrade), before the checks below.
+    // from the restored media (store:upgrade), before the checks below. 3C-5 E: so is one of format 2; when the upgrade
+    // writes rows (added countries' visit entries) the revision moves on by one from the backup's.
     const probe = openStore(file, { readOnly: true, policy: OFFICIAL_POLICY })
     const upgradeRequired = probe.diagnostic?.code === 'E_STORE_UPGRADE_REQUIRED'
     await probe.close()
-    if (upgradeRequired) await upgradeStore(paths, { now: () => now })
+    let revision = manifest.store.revision
+    if (upgradeRequired) {
+      const { result } = await upgradeStore(paths, { now: () => now })
+      if (result.fromRevision !== revision) throw new StoreToolError('E_BACKUP_MANIFEST', ['库 id 或修订号与清单不一致。'])
+      revision = result.revision
+    }
     const handle = openStore(file, { privatePaths: paths, policy: OFFICIAL_POLICY, now: () => now })
     let problems = []
     let files, registry
     try {
       if (handle.diagnostic) throw new StoreToolError(handle.diagnostic.code, [`恢复出来的库没有通过打开检查（${handle.diagnostic.code}）。`])
-      if (handle.meta().libraryId !== manifest.store.libraryId || handle.meta().revision !== manifest.store.revision) {
+      if (handle.meta().libraryId !== manifest.store.libraryId || handle.meta().revision !== revision) {
         throw new StoreToolError('E_BACKUP_MANIFEST', ['库 id 或修订号与清单不一致。'])
       }
       await handle.setRestoredFrom(restoredFrom)

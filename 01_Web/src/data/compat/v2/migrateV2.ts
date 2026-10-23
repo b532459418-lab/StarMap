@@ -41,7 +41,7 @@ import {
   DISPLAY_SETTING_KEYS, OFFICIAL, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES, mapListScope, officialDefinitionCommands, v2SourceDefinition,
 } from '../../store/officialDefinitions.ts'
 import {
-  countryEvidence, countryEvidenceId, countryVisitDate, countryVisitEntry, journeyEntity, journeyOf, journeySequence, listPositions, mediaAsset,
+  countryEvidence, countryEvidenceId, countryVisitEntry, journeyEntity, journeyOf, journeySequence, listPositions, mediaAsset,
   mediaEntity, orderedJourneyMembers, placeAnchor, placeEntity, placeRelation, recordPlacement, resolveListElements, travelRecordEntry,
   unresolvedSetting, viewItemRow, viewSettingRow, wantToGoEntry, without, type ViewTarget,
 } from '../../store/v2RecordRows.ts'
@@ -150,8 +150,8 @@ export const V2_FIELD_PLACEMENT = Object.freeze([
   ['wantToGo.items[].source', 'entries.extensions.v2.source'],
   ['wantToGo.items[] order', `viewItems ${VIEW_SCOPES.wantToGoOrder}`],
   ['editorState.schemaVersion / updatedAt', `sources[${V2_SOURCES.import}].extensions.v2.editorState`],
-  ['editorState.addedCountries[]', `evidence (source ${V2_SOURCES.countryVisit}, recordId placeId, attributes region / other keys)`],
-  ['editorState.addedCountries[].visitedDate (non-empty string)', `entries[${OFFICIAL.travel}] fields.date.raw.startDate, source ${V2_SOURCES.countryVisit}, evidenceIds -> the evidence`],
+  ['editorState.addedCountries[]', `evidence (source ${V2_SOURCES.countryVisit}, recordId placeId, attributes region / other keys) and entries[${OFFICIAL.travel}] on the country (source ${V2_SOURCES.countryVisit}, evidenceIds -> the evidence)`],
+  ['editorState.addedCountries[].visitedDate (non-empty string)', `that entry's fields.date.raw.startDate (otherwise its date.raw is empty)`],
   ['editorState.addedCountries[].visitedDate (other)', 'evidence.attributes.visitedDate'],
   ['editorState.addedCountries[] order', `viewItems ${VIEW_SCOPES.addedCountryOrder}`],
   ['editorState.countryOrder / hiddenCountryIds / hiddenCityIds', `viewItems ${VIEW_SCOPES.countryOrder} / ${VIEW_SCOPES.hiddenCountries} / ${VIEW_SCOPES.hiddenCities}`],
@@ -295,11 +295,11 @@ function build(files: V2Files, { now, allocateId, manifest }: MigrateV2Options):
     entryOfWish.set(item.id, entryId)
     create('entries', wantToGoEntry(item, entryId, timestamps, leftover).entry)
   }
+  // Every added country has its visit entry (3C-5 E spec §2.6: a travel entry on a country is the added country).
   let countryVisits = 0
   for (const country of files.editorState.addedCountries) {
-    if (countryVisitDate(country) === undefined) continue
     countryVisits++
-    create('entries', countryVisitEntry(country, allocator.get('entry', V2_SOURCES.countryVisit, country.placeId), countryEvidenceId(country.placeId), timestamps)!)
+    create('entries', countryVisitEntry(country, allocator.get('entry', V2_SOURCES.countryVisit, country.placeId), countryEvidenceId(country.placeId), timestamps))
   }
 
   // 8. Journeys: entity plus the original adjacency (the same order routes are derived in).
