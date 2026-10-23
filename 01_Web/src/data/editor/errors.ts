@@ -12,7 +12,7 @@
  *   响应结构保持兼容，诊断详情仍保留原文。
  *
  * 码表集中在这里：每个码配一句中文文案。能沿用旧模式原文的一律沿用（同一个操作，界面说同样的话）；
- * 旧模式没有对应情形的码（地点歧义、未知地点引用、完整性、部分写入等）才写新文案。
+ * 旧模式没有对应情形的码（地点歧义、未知地点引用、部分写入等）才写新文案。
  * 参数只放与语言无关的值（字段名、id、计数）；要显示的字段名由 `FIELD_LABELS` 译成中文。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
@@ -141,7 +141,6 @@ export const V2_WRITE_MESSAGES = {
   E_JOURNEY_CHOICE_REQUIRED: () => '已有同名的行程，请选择加入已有行程，或新建一个行程。本次尚未保存。',
   /** 新（第 2C 批）：要加入的行程不是同标题的已有行程（或选择的写法不对）。 */
   E_UNKNOWN_JOURNEY: () => '要加入的行程不是同名的已有行程，未保存。请重新选择。',
-  E_INTEGRITY: () => 'V2 数据没有通过完整性检查（例如引用了不存在的地点），未写入任何文件。',
   E_WRITE_FAILED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '写入 V2 数据文件失败。'),
   E_PARTIAL_WRITE: (params: V2ErrorParams) => (typeof params.message === 'string' ? params.message : '部分 V2 数据文件已写入，其余没有写入。'),
   /**

@@ -81,7 +81,7 @@ test('only typed, explicitly nonwriting upload validation failures allow new upl
     'E_MEDIA_NAME_INVALID', 'E_MEDIA_NAME_EXHAUSTED', 'E_MEDIA_UPLOAD_EMPTY', 'E_MEDIA_UPLOAD_TOO_LARGE',
     'E_MEDIA_IMAGE_INVALID', 'E_MEDIA_PANORAMA_RATIO', 'E_MEDIA_KIND_INVALID', 'E_MEDIA_LOCATION_NOT_FOUND',
     'E_MEDIA_EXTENSION', 'E_MEDIA_DRONE_DATE', 'E_MEDIA_COORDINATES_RANGE', 'E_MEDIA_FOLDER_CONFLICT',
-    'E_COORDINATES_PAIR', 'E_EDITOR_WRITE_FORBIDDEN', 'E_LEGACY_UNMIGRATED', 'E_INTEGRITY',
+    'E_COORDINATES_PAIR', 'E_EDITOR_WRITE_FORBIDDEN', 'E_LEGACY_UNMIGRATED',
   ]
   for (const code of safeCodes) {
     const session = createMediaImportSession<string>()
@@ -132,7 +132,7 @@ test('known import refusals retain paths for retry; partial or unknown results l
   const safeErrors = [
     editorError('E_MEDIA_IMPORT_FAILED', { stage: 'apply', reason: 'raw failure' }),
     editorError('E_MEDIA_IMPORT_BLOCKED'), editorError('E_MEDIA_IMPORT_PATH_INVALID'), editorError('E_REQUIRED'),
-    editorError('E_LEGACY_UNMIGRATED'), editorError('E_EDITOR_WRITE_FORBIDDEN'), editorError('E_INTEGRITY'),
+    editorError('E_LEGACY_UNMIGRATED'), editorError('E_EDITOR_WRITE_FORBIDDEN'),
     editorError('E_WRITE_FAILED', { written: [] }),
   ]
   const unsafeErrors = [
