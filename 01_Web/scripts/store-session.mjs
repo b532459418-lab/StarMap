@@ -77,12 +77,13 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { storeFileOf } from './private-data-source.mjs'
 import { skippedCounts, projectToV2Files } from './store-projection.mjs'
 import { StoreHostError, openStore } from './store-host.mjs'
+import { changeEntryOf, createChangeLog } from './store-change-log.mjs'
 import { V2_EDITOR_ROUTES, createV2WriteContext, v2FailureResponse } from './v2-editor-store.mjs'
 import { isUuidV7, uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { diffV2ToCommands } from '../src/data/store/diffV2.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { formalStateOfReadModel } from '../src/worldgraph/readModel/build.ts'
-import { applyReadModelDelta } from '../src/worldgraph/readModel/delta.ts'
+import { applyReadModelDelta, readModelChangesBetween } from '../src/worldgraph/readModel/delta.ts'
 import { liveReadModelIndex } from '../src/worldgraph/readModel/liveIndex.ts'
 import { officialReader } from '../src/data/store/officialReader.ts'
 import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
@@ -368,10 +369,10 @@ export function createStoreSession(privatePaths, {
    * the live index it shares has moved on then. `files`: the V2 view of the entry's read model, generated through the
    * official view each time it is asked for (3C-5 C2: never cached).
    */
-  function cacheEntry(key, { model, live, timings = {} }) {
+  function cacheEntry(key, { model, live, timings = {}, identity }) {
     const revision = live ? live.revision : model.revision
     return Object.freeze({
-      key, revision, timings,
+      key, revision, timings, identity,
       get model() { return live ? live.model : model },
       get live() { return (live ??= liveReadModelIndex(model)) },
       /** The live index (3C-5B's `index`). */
@@ -394,8 +395,10 @@ export function createStoreSession(privatePaths, {
 
   async function snapshot() {
     const opened = await open()
-    const key = cacheKeyOf(await reading(() => opened.meta()))
+    const meta = await reading(() => opened.meta())
+    const key = cacheKeyOf(meta)
     if (cache?.key === key) return cache
+    const before = cache
     let read
     try { read = await reading(() => readStore(opened)) } catch (error) {
       if (error?.code !== 'E_STORE_CORRUPT') throw error
@@ -403,7 +406,8 @@ export function createStoreSession(privatePaths, {
       throw new StoreSessionError('E_STORE_CORRUPT', { cause: error })
     }
     const { model, timings } = read
-    cache = cacheEntry(key, { model, timings })
+    cache = cacheEntry(key, { model, timings, identity: identityOf(meta) })
+    if (!readOnly) noteStoreRead(before, cache)
     log(`[StarMap store] 读模型（修订号 ${model.revision}）：${timings.openMs === undefined ? '' : `打开 ${timings.openMs} ms，`}readModel ${timings.readMs} ms`)
     if (!readOnly) warmUp(cache)
     return cache
@@ -424,17 +428,67 @@ export function createStoreSession(privatePaths, {
   }
 
   /**
+   * 3C-5 D (design §3): the changed rows of the last commits (./store-change-log.mjs), for the page's incremental
+   * refresh, and the listeners told about every new revision (the plugin pushes `starmap:revision` to the pages).
+   * Commits of this process are logged as they happen (`recordCommit`). A commit of another process (a command-line
+   * import, another dev server) is found when the store is read again because its key moved (`noteStoreRead`): the
+   * rows that differ from the cache, by id and row revision, are logged as one entry over the revisions it skipped.
+   * Another library, a restore, a revision that went back, or a store read without a cache to compare with, clears
+   * the log instead (the pages then read the whole read model again).
+   */
+  const changeLog = createChangeLog()
+  const revisionListeners = new Set()
+  let announced
+  const identityOf = (meta) => Object.freeze({ libraryId: meta.libraryId, restoreMark: meta.restoredFrom?.restoredAt ?? null })
+  const sameIdentity = (a, b) => a?.libraryId === b?.libraryId && a?.restoreMark === b?.restoreMark
+  function announce(identity, revision) {
+    if (announced && sameIdentity(announced, identity) && announced.revision === revision) return
+    const first = announced === undefined
+    announced = Object.freeze({ ...identity, revision })
+    if (first) return
+    for (const listener of [...revisionListeners]) {
+      try { listener(announced) } catch (error) { log(`[StarMap store] 推送修订号失败：${error?.message ?? error}`) }
+    }
+  }
+  /** A committed request: its changed rows into the log, the new revision announced. Resolves the log entry. */
+  function recordCommit(opened, result) {
+    if (readOnly || result?.status !== 'committed' || !result.changes) return undefined
+    const identity = identityOf(opened.meta())
+    if (announced === undefined) announced = Object.freeze({ ...identity, revision: result.changes.baseRevision })
+    const entry = changeLog.add(changeEntryOf(identity, result.changes))
+    announce(identity, entry.to)
+    return entry
+  }
+  /** The store was read again (its key moved): see above. */
+  function noteStoreRead(before, after) {
+    if (announced === undefined) { announced = Object.freeze({ ...after.identity, revision: after.revision }); return }
+    // The same revision read again (the cache had been dropped, e.g. after a refusal): nothing new.
+    if (sameIdentity(announced, after.identity) && announced.revision === after.revision) return
+    if (before && sameIdentity(before.identity, after.identity) && after.revision > before.revision) {
+      const started = performance.now()
+      const changes = readModelChangesBetween(before.model, after.model)
+      changeLog.add(Object.freeze({ ...after.identity, from: before.revision, to: after.revision, ...changes }))
+      log(`[StarMap store] 库被别的进程改过（修订号 ${before.revision} → ${after.revision}）：${changes.upserts.length + changes.deletes.length} 行改动，求差 ${ms(started)} ms`)
+    } else {
+      changeLog.clear()
+      log(`[StarMap store] 库已不是页面读过的那一份（修订号 ${after.revision}）：变化记录清空，页面将重新读取全部数据`)
+    }
+    announce(after.identity, after.revision)
+  }
+
+  /**
    * After a write: the cache moves to the new revision with the commit's changed rows. A cache of another revision, or a
    * result without changes, drops it.
    */
   function advanceCache(opened, view, result) {
     if (result?.status !== 'committed' || !result.changes || view?.revision !== result.changes.baseRevision) { cache = undefined; return }
-    const key = cacheKeyOf(opened.meta())
+    const meta = opened.meta()
+    const key = cacheKeyOf(meta)
     if (view.hasLive) {
       const { live } = view
       live.apply(result.changes)
-      cache = cacheEntry(key, { live })
-    } else cache = cacheEntry(key, { model: applyReadModelDelta(view.model, result.changes) })
+      cache = cacheEntry(key, { live, identity: identityOf(meta) })
+    } else cache = cacheEntry(key, { model: applyReadModelDelta(view.model, result.changes), identity: identityOf(meta) })
   }
 
   /**
@@ -444,7 +498,7 @@ export function createStoreSession(privatePaths, {
   function verifyCache(opened) {
     const fresh = opened.readModel()
     if (cache !== undefined && isDeepStrictEqual(cache.model, fresh)) return
-    cache = cacheEntry(cacheKeyOf(opened.meta()), { model: fresh })
+    cache = cacheEntry(cacheKeyOf(opened.meta()), { model: fresh, identity: identityOf(opened.meta()) })
     log(`[StarMap store] 校验失败（STARMAP_STORE_VERIFY）：修订号 ${fresh.revision} 的读模型与库不一致，已改用重新读出的读模型。`)
     const error = new Error('E_STORE_VERIFY: the store read again differs from the cached read model')
     error.code = 'E_STORE_VERIFY'
@@ -524,7 +578,8 @@ export function createStoreSession(privatePaths, {
           const commitMs = ms(committing)
           // The incremental refresh: the read model with the changed rows.
           advanceCache(opened, view, result)
-          const response = { status: route.status, body: { ok: true, ...outcome.result, revision: result.revision, duplicate: result.status === 'duplicate', receipt: result.receipt } }
+          const delta = recordCommit(opened, result)
+          const response = { status: route.status, body: { ok: true, ...outcome.result, revision: result.revision, duplicate: result.status === 'duplicate', receipt: result.receipt, ...(delta ? { delta } : {}) } }
           remember(protocol.requestId, response)
           if (result.status === 'committed') countCommit()
           if (verify) verifyCache(opened)
@@ -602,7 +657,9 @@ export function createStoreSession(privatePaths, {
           const applying = performance.now()
           advanceCache(opened, view, result)
           const applyMs = ms(applying)
-          const response = { status: native.status, body: { ok: true, ...plan.result, revision: result.revision, duplicate: result.status === 'duplicate', receipt: result.receipt } }
+          // 3C-5 D: the commit's changed rows go back with the answer (the page applies them without a reload).
+          const delta = recordCommit(opened, result)
+          const response = { status: native.status, body: { ok: true, ...plan.result, revision: result.revision, duplicate: result.status === 'duplicate', receipt: result.receipt, ...(delta ? { delta } : {}) } }
           remember(protocol.requestId, response)
           if (result.status === 'committed') countCommit()
           if (verify) verifyCache(opened)
@@ -635,7 +692,41 @@ export function createStoreSession(privatePaths, {
     async moduleExports() {
       const view = await snapshot()
       const model = view.model
-      return { model, revision: view.revision, readOnly: damaged(handle), get files() { return view.files } }
+      return { model, revision: view.revision, identity: view.identity, readOnly: damaged(handle), get files() { return view.files } }
+    },
+    /**
+     * 3C-5 D: the changes from `revision` to the store's current revision for a page whose read model is of `library`
+     * (`{ libraryId, restoreMark }`). Reads the store first when its key moved (another process committed: its changed
+     * rows are logged then). Resolves `{ status: 200, body: { ok, libraryId, restoreMark, revision, deltas } }`, or 410
+     * `E_CHANGES_GONE` with the reason (./store-change-log.mjs) when the page has to read the whole read model again.
+     */
+    async changesSince(revision, library = {}) {
+      const view = await serialized(() => snapshot())
+      const current = { ...view.identity, revision: view.revision }
+      const answer = changeLog.since(revision, { current, library })
+      if (answer.gone) return { status: 410, body: { ok: false, code: 'E_CHANGES_GONE', reason: answer.gone, ...current } }
+      return { status: 200, body: { ok: true, ...current, deltas: answer.deltas } }
+    },
+    /**
+     * 3C-5 D: look for a commit of another process now (the plugin calls it when the store's files change, and every two
+     * seconds while a page is connected). Resolves the current revision, or undefined when the store cannot be read.
+     */
+    async checkExternal() {
+      if (readOnly) return undefined
+      try { return (await serialized(() => snapshot())).revision } catch { return undefined }
+    },
+    /** The revision of the cached read model (undefined before the first read). */
+    get cachedRevision() { return cache?.revision },
+    /** The single log entry that starts at `revision` and ends at the store's current one, or undefined (a media answer's delta). */
+    deltaSince(revision) {
+      if (cache === undefined) return undefined
+      const answer = changeLog.since(revision, { current: { ...cache.identity, revision: cache.revision } })
+      return answer.deltas?.length === 1 ? answer.deltas[0] : undefined
+    },
+    /** 3C-5 D: `listener({ libraryId, restoreMark, revision })` after every new revision (this process's or another's). */
+    onRevision(listener) {
+      revisionListeners.add(listener)
+      return () => { revisionListeners.delete(listener) }
     },
     /** Timings of the last native write (3C-5 C1; benchmarks), or undefined. */
     get lastNativeTimings() { return lastTimings },
@@ -683,6 +774,7 @@ export function createStoreSession(privatePaths, {
             return result
           } finally {
             advanceCache(opened, view, result)
+            recordCommit(opened, result)
           }
         }),
         settleFileOps: (work, options) => serialized(() => opened.settleFileOps(work, options)),

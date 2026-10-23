@@ -3818,6 +3818,11 @@ button {
 }
 
 .collection-card {
+  /* 3C-5 D: cards outside the view skip style, layout and paint (they stay in the DOM: find in page, focus and the
+     page's scroll position work as before). 180px is the content box of an average card (rows ~214px with padding);
+     a card once shown keeps its real size (auto). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -7400,4 +7405,60 @@ ol.atlas-media-recovery-sources { list-style: decimal; }
   .atlas-media-recovery-center { max-height: calc(100dvh - 16px); padding: 14px; border-radius: 15px; }
   .atlas-media-recovery-job { padding: 12px; }
   .atlas-media-recovery-entry { right: 10px; bottom: 10px; padding: 8px 12px; }
+}
+
+/* 3C-5 D: a draft whose data changed elsewhere (../components/DraftConflictNotice.tsx). Inside the editor, above its
+   fields; the save waits for one of its buttons. */
+.atlas-draft-conflict {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 9px 10px;
+  border: 1px solid rgb(251 191 36 / 0.55);
+  border-radius: 10px;
+  background: rgb(120 53 15 / 0.38);
+  color: rgb(254 243 199);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.atlas-draft-conflict-title {
+  margin: 0;
+  font-weight: 600;
+}
+.atlas-draft-conflict-changes {
+  margin: 0;
+  padding-left: 1.1em;
+  list-style: disc;
+}
+.atlas-draft-conflict-copy {
+  display: grid;
+  gap: 4px;
+}
+.atlas-draft-conflict-copy textarea {
+  width: 100%;
+  resize: vertical;
+  border-radius: 6px;
+  padding: 4px 6px;
+  color: inherit;
+  background: rgb(0 0 0 / 0.25);
+}
+.atlas-draft-conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.atlas-draft-conflict-actions button {
+  border: 1px solid rgb(254 243 199 / 0.5);
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: inherit;
+  background: rgb(0 0 0 / 0.2);
+}
+.atlas-draft-conflict-actions button:focus-visible {
+  outline: 2px solid rgb(254 243 199);
+  outline-offset: 2px;
+}
+.atlas-draft-conflict-actions button:disabled {
+  opacity: 0.55;
 }

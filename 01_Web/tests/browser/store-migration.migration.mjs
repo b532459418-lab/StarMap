@@ -4,7 +4,7 @@
 // dev server sees the new file, reloads the page by itself and serves the store, and writes work: no restart.
 // Only the `--migration` group runs this file (playwright.config.mjs matches *.migration.mjs for it), on a fixture the
 // runner leaves unmigrated (scripts/browser-fixture.mjs mode 'v2').
-import { test, expect, openMap, openCollection, readFixture, saveAndWaitForReload } from './helpers.mjs'
+import { test, expect, openMap, openCollection, readFixture, saveAndWaitForRevision } from './helpers.mjs'
 import { PRIVATE_MODULE_PATH, fixtureIds, storeRevisionOf } from '../../scripts/browser-fixture.mjs'
 import { privateDataState } from '../../scripts/private-data-source.mjs'
 import { getPrivatePaths } from '../../scripts/private-profile.mjs'
@@ -52,12 +52,12 @@ test('a root that needs migrating is read-only with a notice; store:migrate --ap
   await expect(page.getByText(notice, { exact: true })).toHaveCount(0)
   expect((await taskList(page)).status).toBe(200)
 
-  // Writes go to the store now.
+  // Writes go to the store now (3C-5 D: applied on the page without a reload).
   await page.goto('/')
   await openCollection(page)
   await page.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
   await page.locator('.collection-card textarea').fill('Synthetic note after migrating')
-  await saveAndWaitForReload(page, async () => {
+  await saveAndWaitForRevision(page, async () => {
     const saved = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo/update'))
     await page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click()
     expect((await saved).status()).toBe(200)

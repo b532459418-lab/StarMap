@@ -2,11 +2,11 @@ import { privateDataNotice } from '../data/privateDataNotice'
 import { useTranslation } from 'react-i18next'
 import { localEditorAvailable } from '../data/editorState'
 import { legacyUnmigrated, storeMigrationRequired, storeReadOnly, storeRecoveryRequired } from '../data/rawInputs'
-import { plannedRecords, travelAtlasMeta } from '../data/travelAtlas'
-import { wantToGoItems } from '../data/wantToGo'
+import { useTravelAtlas } from '../data/travelAtlas'
+import { useWantToGo } from '../data/wantToGo'
 
-// 数据在模块加载时就固定了，所以只算一次。显示规则见 ../data/privateDataNotice.ts。
-const notice = privateDataNotice({
+// 显示规则见 ../data/privateDataNotice.ts。3C-5 D：数据随保存更新，所以每次渲染按当前数据判定（空状态在第一次保存后消失）。
+const noticeOf = (travelRecordCount: number, wantToGoItemCount: number) => privateDataNotice({
   personal: import.meta.env.MODE === 'personal',
   legacyUnmigrated,
   // 3C-4b：只读提示只在开发服务器的本地编辑器里有意义（构建产物本来就不能编辑），放在第 5B 批的门后。
@@ -14,8 +14,8 @@ const notice = privateDataNotice({
   // 3C-4d：待迁移与需要恢复同样只在本地编辑器里提示（构建产物本来就不能编辑）。
   storeMigrationRequired: import.meta.env.DEV && localEditorAvailable && storeMigrationRequired,
   storeRecoveryRequired: import.meta.env.DEV && localEditorAvailable && storeRecoveryRequired,
-  travelRecordCount: travelAtlasMeta.importedRecords + plannedRecords.length,
-  wantToGoItemCount: wantToGoItems.length,
+  travelRecordCount,
+  wantToGoItemCount,
 })
 
 /**
@@ -26,6 +26,9 @@ const notice = privateDataNotice({
  */
 export function PrivateDataNotice() {
   const { t } = useTranslation('mapMenu')
+  const { plannedRecords, travelAtlasMeta } = useTravelAtlas()
+  const { wantToGoItems } = useWantToGo()
+  const notice = noticeOf(travelAtlasMeta.importedRecords + plannedRecords.length, wantToGoItems.length)
   if (!notice) return null
   const lines = notice.kind === 'store-read-only'
     ? ['storeReadOnly']

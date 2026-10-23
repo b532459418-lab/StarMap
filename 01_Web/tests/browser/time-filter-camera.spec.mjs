@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure, saveAndWaitForReload } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure, saveAndWaitForRevision } from './helpers.mjs'
 import { createBrowserFixture, fixtureIds } from '../../scripts/browser-fixture.mjs'
 import path from 'node:path'
 import os from 'node:os'
@@ -196,7 +196,7 @@ test('both layer toggles retain their conditions and Collection restores a hidde
   recordReloadCheckpoint(page, 'before restoring Tromsø')
   // Restoring reloads the whole page. Wait for that reload, as the other saving cases do, so the card count below
   // does not spend its own 15 seconds on the reload (batch 4B; it failed this way once in #81 and once in #85).
-  await saveAndWaitForReload(page, async () => {
+  await saveAndWaitForRevision(page, async () => {
     const restored = page.waitForResponse(response => response.url().endsWith('/editor/wanttogo/update') && response.request().method() === 'POST')
     await hiddenCard.getByRole('button', { name: 'Restore: Tromsø', exact: true }).click()
     expect((await restored).ok()).toBe(true)

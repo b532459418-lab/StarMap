@@ -198,19 +198,43 @@ export function recordReloadCheckpoint(page, label) {
   state.pending.add(probe)
   void probe.finally(() => state.pending.delete(probe))
 }
-// Register before the save; waiting for the current document's load state alone
-// can finish before the save triggers its same-URL reload. Keep configured
-// navigation/action deadlines and all subsequent assertions unchanged.
-export async function saveAndWaitForReload(page, save, options = {}) {
-  const expectedUrl = page.url()
-  recordReloadCheckpoint(page, 'before save and same-URL reload')
-  const reloaded = page.waitForEvent('framenavigated', {
-    predicate: frame => frame === page.mainFrame() && frame.url() === expectedUrl,
-    ...(options.navigationTimeout === undefined ? {} : { timeout: options.navigationTimeout }),
-  }).then(frame => frame.waitForLoadState('domcontentloaded'))
-  await Promise.all([reloaded, save()])
-  recordReloadCheckpoint(page, 'saved document reached DOM content loaded')
+/** The revision of the data the page has rendered (3C-5 D, development only: <html data-starmap-revision>). */
+export const renderedRevision = (page) => page.evaluate(() => document.documentElement.dataset.starmapRevision)
+
+/** Wait until the page has rendered a revision other than `before` (or at least `revision`, when given). */
+export async function waitForRenderedRevision(page, { before, revision, timeout = 30000 } = {}) {
+  await page.waitForFunction(({ before, revision }) => {
+    const current = document.documentElement.dataset.starmapRevision
+    if (current === undefined) return false
+    return revision === undefined ? current !== before : Number(current) >= revision
+  }, { before, revision }, { timeout })
+  return Number(await renderedRevision(page))
 }
+
+/**
+ * 3C-5 D: a save no longer reloads the page. Run `save`, then wait until the page has rendered the new revision of the
+ * data; the save must not navigate: the main frame does not navigate and a value left on `window` before the save is
+ * still there. Resolves the new revision.
+ */
+export async function saveAndWaitForRevision(page, save, options = {}) {
+  const before = await renderedRevision(page)
+  const mark = await page.evaluate(() => (window.__starmapNoReload = Math.random()))
+  let navigations = 0
+  const onNavigation = frame => { if (frame === page.mainFrame()) navigations++ }
+  page.on('framenavigated', onNavigation)
+  recordReloadCheckpoint(page, 'before save (no reload)')
+  try {
+    await save()
+    const revision = await waitForRenderedRevision(page, { before, ...(options.timeout ? { timeout: options.timeout } : {}) })
+    expect(navigations, 'a save does not reload the page').toBe(0)
+    expect(await page.evaluate(() => window.__starmapNoReload), 'the page was not reloaded').toBe(mark)
+    recordReloadCheckpoint(page, 'saved revision rendered')
+    return revision
+  } finally {
+    page.off('framenavigated', onNavigation)
+  }
+}
+
 export async function retainReloadFailure(page, testInfo) {
   const state = reloadObservations.get(page)
   if (!state || state.retained || testInfo.status === testInfo.expectedStatus) return

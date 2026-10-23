@@ -8,7 +8,9 @@
  * - When the outcome is not known (E_OUTCOME_UNKNOWN, the connection broke before a response, or the response could not
  *   be read), the same request is sent once more with the same request id: the server answers a committed request with
  *   its original receipt and never writes it twice. If that is still unknown, `onUnconfirmed` blocks every further write
- *   on the page until a reload (batch 6's requireLocalEditorReload) and E_OUTCOME_UNKNOWN is thrown.
+ *   on the page until a reload (batch 6's requireLocalEditorReload) and E_OUTCOME_UNKNOWN is thrown. 3C-5 D: with
+ *   `beforeLastTry` (the dev server may be restarting), the write waits until the server answers again and tries the
+ *   same request id once more first; only an outcome still unknown then blocks the page.
  * - Every other failure (E_STALE, E_OPERATION_CONFLICT, E_LIBRARY_BUSY, E_STORE_BUSY, input errors) is confirmed not
  *   committed and is thrown as it is, without a retry.
  *
@@ -29,6 +31,11 @@ export interface StoreWriteOptions {
   readonly onUnconfirmed: () => void
   /** Request id generator (tests). */
   readonly newRequestId?: () => string
+  /**
+   * 3C-5 D: awaited before one more try with the same request id when the retry was unknown too (the dev server may be
+   * restarting: the write path waits until it answers again). Without it, the second unknown outcome is final.
+   */
+  readonly beforeLastTry?: () => Promise<void>
 }
 
 /** Whether a failed attempt may have been committed: the server said so, the connection broke, or the answer was unreadable. */
@@ -49,6 +56,16 @@ export async function sendStoreWrite<T>(send: (headers: StoreWriteHeaders) => Pr
   } catch (error) {
     if (!isUnconfirmedOutcome(error)) throw error
   }
+  try {
+    return await send(headers)
+  } catch (error) {
+    if (!isUnconfirmedOutcome(error)) throw error
+    if (!options.beforeLastTry) {
+      options.onUnconfirmed()
+      throw new LocalEditorError({ code: 'E_OUTCOME_UNKNOWN' })
+    }
+  }
+  await options.beforeLastTry()
   try {
     return await send(headers)
   } catch (error) {

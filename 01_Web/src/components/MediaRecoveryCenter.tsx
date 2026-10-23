@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { cityById, countryById, countryIdOfCity } from '../data/travelAtlas'
-import { allImportedMediaItems } from '../data/mediaCatalog'
-import { worldGraphSnapshot } from '../data/worldGraph'
-import { reloadAfterLocalSave } from '../data/localEditorClient'
+import { useTravelAtlas } from '../data/travelAtlas'
+import { useMediaCatalog } from '../data/mediaCatalog'
+import { useWorldGraph } from '../data/worldGraph'
 import { isFinishedMediaJob, type MediaJob, type MediaJobPreview } from '../data/mediaJobs.ts'
 import { MEDIA_RECOVERY_OPEN_EVENT, requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { formatEditorError, LocalEditorError } from '../i18n/editorErrors.ts'
@@ -13,14 +12,22 @@ import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useMediaJobs } from './useMediaJobs'
 import { useDialogFocus } from './useDialogFocus'
 
-const places = new Map(worldGraphSnapshot.entities.map((place) => [place.id, place]))
-const mediaById = new Map(allImportedMediaItems.map((item) => [item.id, item]))
+/** The places of the graph and the media by id, of the data on the page. */
+function useRecoveryLookups() {
+  const { worldGraphSnapshot } = useWorldGraph()
+  const { allImportedMediaItems } = useMediaCatalog()
+  const places = useMemo(() => new Map(worldGraphSnapshot.entities.map((place) => [place.id, place])), [worldGraphSnapshot])
+  const mediaById = useMemo(() => new Map(allImportedMediaItems.map((item) => [item.id, item])), [allImportedMediaItems])
+  return { places, mediaById }
+}
 
 function ImportScope({ job, preview, disabled, onImport }: {
   job: MediaJob; preview: MediaJobPreview; disabled: boolean; onImport: (options: { acceptFolderBindings?: boolean; acceptSourceMatches?: boolean }) => Promise<unknown>
 }) {
   const { t } = useTranslation('mediaRecovery')
   const { name } = usePlaceNames()
+  const { places, mediaById } = useRecoveryLookups()
+  const { countryIdOfCity } = useTravelAtlas()
   const [confirmed, setConfirmed] = useState(false)
   // Batch 2A: folders matched to a place only by name are confirmed here, in the same import step.
   const [bindingsConfirmed, setBindingsConfirmed] = useState(false)
@@ -161,6 +168,8 @@ function MediaJobCard({ job, state, selected, onOpenTarget, run }: {
 }) {
   const { t } = useTranslation('mediaRecovery')
   const { name } = usePlaceNames()
+  const { places } = useRecoveryLookups()
+  const { cityById, countryById } = useTravelAtlas()
   const [files, setFiles] = useState<File[]>([])
   const [confirmedFiles, setConfirmedFiles] = useState(false)
   const statusText: Record<MediaJob['status'], string> = {
@@ -222,7 +231,7 @@ function MediaJobCard({ job, state, selected, onOpenTarget, run }: {
     <div className="atlas-media-recovery-actions">
       {targetExists && country && city && onOpenTarget ? <button type="button" onClick={() => onOpenTarget(job.countryId, job.cityId)}>{t('openTarget')}</button> : null}
       {completed ? <>
-        <button type="button" disabled={blocked} onClick={() => void run(async () => reloadAfterLocalSave())}>{t('reload')}</button>
+        {/* 3C-5 D: the imported media are on the page without a reload (the dev server pushes the new revision). */}
         <button type="button" disabled={blocked || !job.canClose} onClick={() => void run(() => state.close(job.jobId))}>{t('closeTask')}</button>
       </> : !uncertain && targetExists ? <>
         <button type="button" disabled={blocked || !job.canPreview} onClick={() => void run(() => state.preview(job.jobId))}>{t('preview')}</button>

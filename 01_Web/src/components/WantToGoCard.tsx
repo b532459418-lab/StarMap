@@ -7,18 +7,12 @@ import { useTranslation } from 'react-i18next'
 import { useId, useState } from 'react'
 import { EyeOff, Footprints, Heart, X } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
-import { reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorClient'
-import { travelAtlasDataSource } from '../data/travelAtlas'
+import { updateLocalWantToGo } from '../data/localEditorClient'
+import { useTravelAtlas } from '../data/travelAtlas'
 import { wantToGoCardRecordOf, type WantToGoCardRecord } from '../data/derive/wantToGo'
 import { formatRecordDate } from '../data/derive/recordDateLabel'
-import {
-  plannedConvertBlockReason,
-  plannedRecordById,
-  wantToGoConvertBlockReason,
-  wantToGoDataSource,
-  wantToGoItemById,
-} from '../data/wantToGo'
-import { worldGraphSnapshot } from '../data/worldGraph'
+import { useWantToGo } from '../data/wantToGo'
+import { useWorldGraph } from '../data/worldGraph'
 import type { EntityId } from '../worldgraph/types'
 import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
 
@@ -52,6 +46,9 @@ export function WantToGoCard({ entityId, explicitRecord, outsideTimeFilter = fal
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
+  const { travelAtlasDataSource } = useTravelAtlas()
+  const { plannedConvertBlockReason, plannedRecordById, wantToGoConvertBlockReason, wantToGoDataSource, wantToGoItemById } = useWantToGo()
+  const { worldGraphSnapshot } = useWorldGraph()
   const record = explicitRecord ?? wantToGoCardRecordOf(worldGraphSnapshot.memberships, entityId)
   const item = record?.source === 'want-to-go' ? wantToGoItemById.get(record.recordId) : undefined
   const planned = record?.source === 'planned' ? plannedRecordById.get(record.recordId) : undefined
@@ -88,7 +85,8 @@ export function WantToGoCard({ entityId, explicitRecord, outsideTimeFilter = fal
     setBusy(true)
     setNotice('')
     void updateLocalWantToGo(item.id, { hidden: true })
-      .then(reloadAfterLocalSave)
+      // 3C-5 D: the hidden item leaves the page's data when the write resolves (no reload).
+      .then(() => setBusy(false))
       .catch((error: unknown) => {
         setNotice(editorErrorNotice(error, 'details:hideFailed'))
         setBusy(false)

@@ -2,24 +2,28 @@ import { useRef, useState } from 'react'
 import { Heart } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { localEditorAvailable } from '../data/editorState'
-import { addLocalWantToGo, reloadAfterLocalSave } from '../data/localEditorClient'
+import { addLocalWantToGo } from '../data/localEditorClient'
 import { requireLocalEditorReload } from '../data/localEditorCoordination.ts'
-import { wantToGoDataSource } from '../data/wantToGo'
-import { wantToGoSnapshot } from '../data/worldGraph'
+import { useWantToGo } from '../data/wantToGo'
+import { useWorldGraph } from '../data/worldGraph'
 import { LocalEditorError, editorErrorNotice, requiresEditorReload } from '../i18n/editorErrors.ts'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
 
 /**
- * Save the selected place by identity, including entries hidden from the map. A write whose result is unconfirmed, or a
- * save the page could not reload after, marks the whole page as needing a reload (localEditorCoordination), so the
- * button stays off after remounting and every other write on the page is refused too.
+ * Save the selected place by identity, including entries hidden from the map. A write whose result is unconfirmed marks
+ * the whole page as needing a reload (localEditorCoordination), so the button stays off after remounting and every other
+ * write on the page is refused too. 3C-5 D: a saved item is in the page's data when the write resolves (no reload).
  */
 export function CityWantToGoAction({ cityId, disabled = false }: { cityId: string; disabled?: boolean }) {
   const { t } = useTranslation(['details', 'editor'])
   const coordination = useLocalEditorCoordination()
+  const { wantToGoSnapshot } = useWorldGraph()
+  const { wantToGoDataSource } = useWantToGo()
   const existing = wantToGoSnapshot.memberships.find((membership) => membership.entityId === cityId)
-  const [saved, setSaved] = useState(Boolean(existing))
+  // Saved: in the data, or added here (until the data show it).
+  const [savedHere, setSaved] = useState(false)
+  const saved = savedHere || Boolean(existing)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
   const submitting = useRef(false)
@@ -37,7 +41,6 @@ export function CityWantToGoAction({ cityId, disabled = false }: { cityId: strin
       await addLocalWantToGo({ placeId: cityId })
       written = true
       setSaved(true)
-      reloadAfterLocalSave()
     } catch (error) {
       if (error instanceof LocalEditorError && error.code === 'E_WTG_EXISTS') setSaved(true)
       if (written || requiresEditorReload(error, { afterWrite: true })) requireLocalEditorReload()

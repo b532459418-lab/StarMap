@@ -1,17 +1,9 @@
-import { appData } from './appData'
-import { type DroneMediaItem } from './derive/droneMedia.ts'
+import { useAppSection } from './appStore.ts'
 
-// 无人机媒体的派生在纯派生层 ./derive/droneMedia.ts（RFC-LOC-1 PR1），经 ./appData.ts（PR2）计算；本文件以原名导出。
+// 无人机媒体的派生在纯派生层 ./derive/droneMedia.ts（RFC-LOC-1 PR1），数据经 ./appStore.ts 的快照。
+// 3C-5 D: the data are no module constants any more: components read them through the hook below (./appStore.ts), so a
+// save moves them on without a reload and react-hooks/exhaustive-deps sees every dependency on them. 
 export type { DroneMediaItem, DroneMediaType } from './derive/droneMedia.ts'
 
-const derived = appData.droneMedia
-
-export const droneMediaItems: DroneMediaItem[] = derived.droneMediaItems
-
-export const droneMediaByCity = derived.droneMediaByCity
-
-export const getDroneMediaForCity = derived.getDroneMediaForCity
-
-export const hasDroneMedia = derived.hasDroneMedia
-
-export const droneMediaById = derived.droneMediaById
+/** droneMediaItems、droneMediaByCity、getDroneMediaForCity、hasDroneMedia、droneMediaById。 */
+export const useDroneMedia = () => useAppSection('droneMedia')

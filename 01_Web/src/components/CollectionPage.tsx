@@ -1,23 +1,23 @@
 import { editorErrorNotice, localizedConversionReason } from '../i18n/editorErrors.ts'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
-import { useId, useMemo, useState } from 'react'
+import { memo, useCallback, useId, useMemo, useState } from 'react'
 import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
-import { deleteHiddenLocalWantToGo, reloadAfterLocalSave, updateLocalWantToGo } from '../data/localEditorClient'
-import { travelAtlasDataSource } from '../data/travelAtlas'
-import {
-  plannedConvertBlockReason,
-  plannedRecordById,
-  wantToGoConvertBlockReason,
-  wantToGoDataSource,
-  wantToGoItemById,
-} from '../data/wantToGo'
+import { deleteHiddenLocalWantToGo, updateLocalWantToGo } from '../data/localEditorClient'
+import { once, useDraft } from '../data/drafts'
+import { wishProbe } from '../data/draftProbes'
+import { DraftConflictNotice } from './DraftConflictNotice'
+import { useElementCache } from './useElementCache'
+import { useTravelAtlas } from '../data/travelAtlas'
+import { useWantToGo } from '../data/wantToGo'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
 import { collectionEntryKey, filterCollection } from '../worldgraph/collection'
 import { originalNameSubtitle, resolveName } from '../worldgraph/localizedText'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { useTranslation } from 'react-i18next'
 import { formatRecordDate } from '../data/derive/recordDateLabel'
+import type { WantToGoItem } from '../data/derive/wantToGo'
+import type { TravelMapRecord } from '../types/travel'
 import type { CollectionEntry, CollectionSort, CollectionStatusFilter } from '../worldgraph/collection'
 import { officialLayers, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
@@ -39,19 +39,19 @@ const noteMaxLength = 200
  * 写入是否可用（PR7 规格 §1，沿用 PR6 双重门控）：私人模式的本地编辑器可用，【且】想去数据来自私有文件。
  * 公开构建与强制样例下 localEditorAvailable 恒为 false，写入控件根本不渲染，不靠 CSS 隐藏（AC-10）。
  */
-const writeAvailable = localEditorAvailable && wantToGoDataSource === 'local'
+const writeAvailableFor = (wantToGoDataSource: string) => localEditorAvailable && wantToGoDataSource === 'local'
 
 /**
  * 添加是否可用：与图层面板的添加入口同一规则（只排除样例）。私有想去文件还不存在（'none'）时
  * 也要能添加，否则第一次使用的人在 Collection 里加不进第一条。其余写入仍用上面更严的 writeAvailable。
  */
-const addAvailable = localEditorAvailable && wantToGoDataSource !== 'sample'
+const addAvailableFor = (wantToGoDataSource: string) => localEditorAvailable && wantToGoDataSource !== 'sample'
 
 /**
  * planned 条目「标记为去过」的门控（PR9 规格 §3.6）：写的是旅行记录，所以看足迹的数据来源，
  * 而不是想去的。强制样例模式下 travelAtlasDataSource 恒为 'sample'。
  */
-const plannedConvertAvailable = localEditorAvailable && travelAtlasDataSource === 'local'
+const plannedConvertAvailableFor = (travelAtlasDataSource: string) => localEditorAvailable && travelAtlasDataSource === 'local'
 
 const wantToGoLayer = officialLayers.find((layer) => layer.id === WANT_TO_GO_LAYER_ID)
 
@@ -82,7 +82,8 @@ const isFromTravelLog = (entry: CollectionEntry) => entry.readOnly && entry.sour
  * 页面按"图层分节"设计，V0.4 只渲染想去一节。搜索、筛选、排序只存在组件 state 里，不持久化。
  * 写入只走 localEditorApi（D26）；成功后整页刷新，失败把错误留在卡片里。
  */
-export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertToTravel }: CollectionPageProps) {
+// 3C-5 D: memoized: with the entries held while the page is not shown, a save elsewhere does not render it again.
+export const CollectionPage = memo(function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertToTravel }: CollectionPageProps) {
   const { locale } = useUiLocale()
   const { t } = useTranslation('collection')
   const searchId = useId()
@@ -91,22 +92,62 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
   const [text, setText] = useState('')
   const [status, setStatus] = useState<CollectionStatusFilter>('all')
   const [sort, setSort] = useState<CollectionSort>('recent')
-  const showAdd = addAvailable && onAddWantToGo !== undefined
+  const { travelAtlasDataSource } = useTravelAtlas()
+  const { plannedConvertBlockReason, plannedRecordById, wantToGoConvertBlockReason, wantToGoDataSource, wantToGoItemById } = useWantToGo()
+  const writeAvailable = writeAvailableFor(wantToGoDataSource)
+  const plannedConvertAvailable = plannedConvertAvailableFor(travelAtlasDataSource)
+  // 3C-5 D: a card gets its records and their conversion rules as props (it reads no data itself), so that after a save
+  // only the cards whose values changed render again (CollectionCard is memoized on its values).
+  // 3C-5 D: the cards' elements, kept while their props are the same (only the changed cards are created after a save).
+  const cardElements = useElementCache<CollectionCardProps>(sameCard)
+  const recordsOf = (entry: CollectionEntry) => {
+    // 按这一行背后的记录 id 查（Core 方案 C3）：想去条目只查想去表，planned 条目只查 planned 表。
+    const fromTravelLog = isFromTravelLog(entry)
+    const item = !fromTravelLog && entry.recordId !== undefined ? wantToGoItemById.get(entry.recordId) : undefined
+    const planned = fromTravelLog && entry.recordId !== undefined ? plannedRecordById.get(entry.recordId) : undefined
+    return {
+      item, planned,
+      wantToGoBlockReason: item ? wantToGoConvertBlockReason(item) : undefined,
+      plannedBlockReason: planned ? plannedConvertBlockReason(planned) : undefined,
+    }
+  }
+  const showAdd = addAvailableFor(wantToGoDataSource) && onAddWantToGo !== undefined
 
-  const visibleEntries = useMemo(
-    () => filterCollection(entries, { text, status, sort }, locale),
-    [entries, locale, sort, status, text],
-  )
+  // 3C-5 D: a card whose note draft is open stays on the page even when its item leaves the data (deleted in another
+  // tab): the draft is never dropped without the user's choice (the card shows the conflict and offers its text).
+  const [pinned, setPinned] = useState<ReadonlyMap<string, CollectionEntry>>(() => new Map())
+  const pinWhileDrafting = useCallback((entry: CollectionEntry, drafting: boolean) => setPinned((current) => {
+    const next = new Map(current)
+    if (drafting) next.set(collectionEntryKey(entry), entry)
+    else next.delete(collectionEntryKey(entry))
+    return next
+  }), [])
+  const visibleEntries = useMemo(() => {
+    const filtered = filterCollection(entries, { text, status, sort }, locale)
+    if (pinned.size === 0) return filtered
+    const shown = new Set(filtered.map(collectionEntryKey))
+    return [...filtered, ...[...pinned.values()].filter((entry) => !shown.has(collectionEntryKey(entry)))]
+  }, [entries, locale, sort, status, text, pinned])
 
   // 没有编辑器时（公开构建、个人构建、强制样例）数据里没有隐藏项：个人构建不带隐藏内容（第 7 批，S3），
   // 所以不显示「已隐藏」的计数，也不给按隐藏状态筛选的选项。
-  const stats = useMemo(() => [
-    { value: entries.length, label: t('total') },
-    { value: entries.filter((entry) => entry.location && !entry.hidden).length, label: t('onMap') },
-    ...(localEditorAvailable ? [{ value: entries.filter((entry) => entry.hidden).length, label: t('hidden') }] : []),
-    { value: entries.filter((entry) => !entry.location).length, label: t('noLocation') },
-    { value: entries.filter(isFromTravelLog).length, label: t('fromTravelLog') },
-  ], [entries, t])
+  const stats = useMemo(() => {
+    // One pass over the entries (3C-5 D).
+    let onMap = 0, hidden = 0, noLocation = 0, fromTravelLog = 0
+    for (const entry of entries) {
+      if (entry.location && !entry.hidden) onMap++
+      if (entry.hidden) hidden++
+      if (!entry.location) noLocation++
+      if (isFromTravelLog(entry)) fromTravelLog++
+    }
+    return [
+      { value: entries.length, label: t('total') },
+      { value: onMap, label: t('onMap') },
+      ...(localEditorAvailable ? [{ value: hidden, label: t('hidden') }] : []),
+      { value: noLocation, label: t('noLocation') },
+      { value: fromTravelLog, label: t('fromTravelLog') },
+    ]
+  }, [entries, t])
 
   // 有编辑器但想去数据不在私有文件里时，没有可写的隐藏项：只给「全部 / 显示中」。
   const availableStatusOptions = writeAvailable
@@ -125,6 +166,7 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
     </button>
   ) : null
 
+  cardElements.begin()
   return (
     <div className="atlas-journey-scroll selector-scrollbar h-full overflow-y-auto overscroll-contain">
       <div className="atlas-journey-shell mx-auto w-full max-w-7xl px-5 pb-20 sm:px-8">
@@ -215,42 +257,70 @@ export function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertT
             </div>
           ) : (
             <ul className="collection-grid">
-              {visibleEntries.map((entry) => (
-                <CollectionCard
-                  key={collectionEntryKey(entry)}
-                  entry={entry}
-                  onViewOnMap={onViewOnMap}
-                  onConvertToTravel={onConvertToTravel}
-                />
-              ))}
+              {visibleEntries.map((entry) => {
+                const key = collectionEntryKey(entry)
+                const props: CollectionCardProps = {
+                  entry,
+                  ...recordsOf(entry),
+                  writeAvailable,
+                  plannedConvertAvailable,
+                  onNoteDraft: pinWhileDrafting,
+                  onViewOnMap,
+                  onConvertToTravel,
+                }
+                return cardElements.element(key, props, () => <CollectionCard key={key} {...props} />)
+              })}
             </ul>
           )}
         </section>
       </div>
     </div>
   )
-}
+})
 
 type CollectionCardProps = {
   entry: CollectionEntry
+  /** The want-to-go item, or the planned record, behind this row (from the page; see recordsOf). */
+  item?: WantToGoItem
+  planned?: TravelMapRecord
+  wantToGoBlockReason?: string
+  plannedBlockReason?: string
+  writeAvailable: boolean
+  plannedConvertAvailable: boolean
   onViewOnMap: (entry: CollectionEntry) => void
   onConvertToTravel?: (target: ConvertToTravelTarget) => void
+  /** 3C-5 D: the card's note draft opened or closed (the page keeps the card while it is open). */
+  onNoteDraft?: (entry: CollectionEntry, drafting: boolean) => void
 }
 
-function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCardProps) {
+/** The same card: the same callbacks and flags, and equal values (compared as JSON: the data store makes new objects). */
+const sameCard = (a: CollectionCardProps, b: CollectionCardProps) => a.onViewOnMap === b.onViewOnMap && a.onConvertToTravel === b.onConvertToTravel
+  && a.onNoteDraft === b.onNoteDraft && a.writeAvailable === b.writeAvailable && a.plannedConvertAvailable === b.plannedConvertAvailable
+  && a.wantToGoBlockReason === b.wantToGoBlockReason && a.plannedBlockReason === b.plannedBlockReason
+  && JSON.stringify(a.entry) === JSON.stringify(b.entry) && JSON.stringify(a.item) === JSON.stringify(b.item) && JSON.stringify(a.planned) === JSON.stringify(b.planned)
+
+const CollectionCard = memo(function CollectionCard({
+  entry, item, planned, wantToGoBlockReason, plannedBlockReason, writeAvailable, plannedConvertAvailable, onViewOnMap, onConvertToTravel, onNoteDraft,
+}: CollectionCardProps) {
   const { locale } = useUiLocale()
   const { t } = useTranslation(['collection', 'details', 'journey'])
   const noteId = useId()
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
-  const [editingNote, setEditingNote] = useState(false)
   const [noteDraft, setNoteDraft] = useState('')
-
+  // 3C-5 D: the note draft remembers the revision and the item as they were when editing started; when the item
+  // changes elsewhere (or goes), the card shows the conflict and the save waits for the user's choice.
+  const noteProbe = useMemo(() => wishProbe(isFromTravelLog(entry) ? undefined : entry.recordId), [entry])
+  const noteDraftHandle = useDraft(noteProbe)
+  const editingNote = noteDraftHandle.active
+  const noteConflict = noteDraftHandle.status === 'changed' || noteDraftHandle.status === 'deleted'
+  const noteConflictId = useId()
+  const endNoteDraft = () => {
+    noteDraftHandle.end()
+    onNoteDraft?.(entry, false)
+  }
   const fromTravelLog = isFromTravelLog(entry)
-  // 按这一行背后的记录 id 查（Core 方案 C3）：想去条目只查想去表，planned 条目只查 planned 表。
-  const item = !fromTravelLog && entry.recordId !== undefined ? wantToGoItemById.get(entry.recordId) : undefined
-  const planned = fromTravelLog && entry.recordId !== undefined ? plannedRecordById.get(entry.recordId) : undefined
   const name = resolveName(entry.title, locale)
   const subtitle = originalNameSubtitle(entry.title, locale)
   const isSample = item?.source === 'sample'
@@ -265,9 +335,7 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
     : writableId && item && !entry.hidden
       ? 'want-to-go'
       : planned && plannedConvertAvailable ? 'planned' : undefined
-  const convertBlockReason = convertSource === 'want-to-go' && item
-    ? wantToGoConvertBlockReason(item)
-    : convertSource === 'planned' && planned ? plannedConvertBlockReason(planned) : undefined
+  const convertBlockReason = convertSource === 'want-to-go' ? wantToGoBlockReason : convertSource === 'planned' ? plannedBlockReason : undefined
   // 「标记为去过」传这一行背后那条记录的 id。
   const convertRecordId = convertSource === 'want-to-go' ? item?.id : convertSource === 'planned' ? planned?.id : undefined
   const showConvert = convertSource !== undefined && !editingNote
@@ -288,11 +356,17 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   if (fromTravelLog) tags.push({ id: 'travel-log', label: t('readOnlyTravel') })
   if (isSample) tags.push({ id: 'sample', label: t('sample') })
 
-  const runWrite = (action: () => Promise<unknown>, failureKey: string) => {
+  const runWrite = (action: (options: { onApplied: () => void }) => Promise<unknown>, failureKey: string) => {
     setBusy(true)
     setNotice('')
-    void action()
-      .then(reloadAfterLocalSave)
+    // 3C-5 D: the saved data are on the page when the write resolves (no reload); the note editor closes. The end of the
+    // write renders together with its data (onApplied), once.
+    const finish = once(() => {
+      if (editingNote) endNoteDraft()
+      setBusy(false)
+    })
+    void action({ onApplied: finish })
+      .then(finish)
       .catch((error: unknown) => {
         // 失败留在卡片里说明，不刷新。
         setNotice(editorErrorNotice(error, `collection:${failureKey}`))
@@ -301,31 +375,32 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
   }
 
   const startEditingNote = () => {
+    noteDraftHandle.begin()
     setNoteDraft(entry.note ?? '')
     setNotice('')
-    setEditingNote(true)
+    onNoteDraft?.(entry, true)
   }
 
   const saveNote = () => {
     if (!writableId) return
     // 空串即删除备注（端点负责 trim 与删除）。
-    runWrite(() => updateLocalWantToGo(writableId, { note: noteDraft }), 'saveFailed')
+    runWrite((done) => updateLocalWantToGo(writableId, { note: noteDraft }, { ...noteDraftHandle.writeOptions(), ...done }), 'saveFailed')
   }
 
   const hideEntry = () => {
     if (!writableId) return
-    runWrite(() => updateLocalWantToGo(writableId, { hidden: true }), 'hideFailed')
+    runWrite((done) => updateLocalWantToGo(writableId, { hidden: true }, done), 'hideFailed')
   }
 
   const restoreEntry = () => {
     if (!writableId) return
-    runWrite(() => updateLocalWantToGo(writableId, { hidden: false }), 'restoreFailed')
+    runWrite((done) => updateLocalWantToGo(writableId, { hidden: false }, done), 'restoreFailed')
   }
 
   const deleteEntry = () => {
     if (!writableId) return
     if (!window.confirm(t('deleteConfirm', { name }))) return
-    runWrite(() => deleteHiddenLocalWantToGo([writableId]), 'deleteFailed')
+    runWrite((done) => deleteHiddenLocalWantToGo([writableId], done), 'deleteFailed')
   }
 
   return (
@@ -347,6 +422,17 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
 
       {editingNote ? (
         <div className="collection-note-editor">
+          <DraftConflictNotice
+            id={noteConflictId}
+            status={noteDraftHandle.status}
+            before={noteDraftHandle.baseValue}
+            after={noteDraftHandle.current}
+            busy={busy}
+            onKeepMine={() => { noteDraftHandle.keepMine(); setNotice('') }}
+            onTakeTheirs={() => { noteDraftHandle.begin(); setNoteDraft(item?.note ?? ''); setNotice('') }}
+            onDiscard={endNoteDraft}
+            copyText={noteDraft}
+          />
           <label htmlFor={noteId} className="sr-only">{t('note', { name })}</label>
           <textarea
             id={noteId}
@@ -365,14 +451,15 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
                 className="collection-action"
                 disabled={busy}
                 aria-label={t('cancelNoteFor', { name })}
-                onClick={() => setEditingNote(false)}
+                onClick={endNoteDraft}
               >
                 {t('cancel')}
               </button>
               <button
                 type="button"
                 className="collection-action collection-action-primary"
-                disabled={busy}
+                disabled={busy || noteConflict || !writableId}
+                aria-describedby={noteConflict ? noteConflictId : undefined}
                 aria-label={t('saveNoteFor', { name })}
                 onClick={saveNote}
               >
@@ -475,4 +562,4 @@ function CollectionCard({ entry, onViewOnMap, onConvertToTravel }: CollectionCar
       {notice ? <p className="collection-card-notice" role="status">{notice}</p> : null}
     </li>
   )
-}
+}, sameCard)

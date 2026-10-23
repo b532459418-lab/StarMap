@@ -16,6 +16,7 @@ import { V2_MEDIA_ROUTES } from './v2-media-store.mjs'
 import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
 import { readV2 } from '../src/data/canonical/v2Reader.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
+import { applyReadModelDelta } from '../src/worldgraph/readModel/delta.ts'
 
 const editorPrefix = '/__travelatlas/editor/'
 const authorizedHeaders = {
@@ -53,6 +54,8 @@ function captureMiddleware(plugin, privateModule) {
   const watched = []
   const watcherCallbacks = new Map()
   const reloads = []
+  // 3C-5 D: the revision pushes (custom events), apart from the page reloads.
+  const pushes = []
   const invalidations = []
   plugin.configureServer({
     middlewares: { use: (handler) => handlers.push(handler) },
@@ -67,9 +70,9 @@ function captureMiddleware(plugin, privateModule) {
         module.transformResult = null
       },
     },
-    ws: { send: (message) => reloads.push(message) },
+    ws: { send: (message) => (message?.type === 'custom' ? pushes : reloads).push(message) },
   })
-  return { handlers, watched, watcherCallbacks, reloads, invalidations }
+  return { handlers, watched, watcherCallbacks, reloads, pushes, invalidations }
 }
 
 async function requestTo(handler, {
@@ -473,6 +476,62 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.deepEqual(captured.reloads, [])
     })
 
+    await t.test('The changes endpoint and the revision pushes (3C-5 D): a write answers with its changed rows and is pushed; the endpoint gives the same rows by revision, 410 when the page has to read everything again; reads only', async () => {
+      // Every commit so far was pushed once, in order, with the library and its revision.
+      const served = await requestTo(handler, { url: '/__travelatlas/editor/read-model', method: 'GET', headers: {} })
+      const libraryId = served.headers.get('x-starmap-library-id')
+      assert.match(libraryId, /^[0-9a-f-]{36}$/)
+      assert.equal(served.headers.get('x-starmap-restore-mark'), '')
+      const revision = served.body.revision
+      assert.ok(captured.pushes.length >= 3 && captured.pushes.every((push) => push.type === 'custom' && push.event === 'starmap:revision' && push.data.libraryId === libraryId && push.data.restoreMark === null))
+      assert.deepEqual(captured.pushes.map((push) => push.data.revision), [...captured.pushes.keys()].map((n) => revision - captured.pushes.length + 1 + n))
+      const changes = (query, headers = {}, overrides = {}) => requestTo(handler, { url: `/__travelatlas/editor/read-model/changes?${query}`, method: 'GET', headers, ...overrides })
+      // Current: nothing to apply.
+      const current = await changes(`since=${revision}&libraryId=${libraryId}&restoreMark=`)
+      assert.equal(current.status, 200, JSON.stringify(current.body))
+      assert.equal(current.headers.get('cache-control'), 'no-store')
+      assert.deepEqual(current.body, { ok: true, libraryId, restoreMark: null, revision, deltas: [] })
+      // A write: its answer carries the changed rows, a push follows, and the endpoint gives the same rows.
+      const pushed = captured.pushes.length
+      const written = await requestTo(handler, { url: editorPrefix + 'countries', headers: storeProtocol(revision), content: Buffer.from(JSON.stringify({ countryCode: 'NO', visitedDate: '2026-06-01' })) })
+      assert.equal(written.status, 201, JSON.stringify(written.body))
+      assert.deepEqual([written.body.delta.libraryId, written.body.delta.from, written.body.delta.to], [libraryId, revision, revision + 1])
+      assert.deepEqual(captured.pushes.slice(pushed), [{ type: 'custom', event: 'starmap:revision', data: { libraryId, restoreMark: null, revision: revision + 1 } }])
+      const after = await changes(`since=${revision}&libraryId=${libraryId}&restoreMark=`)
+      assert.equal(after.status, 200)
+      assert.deepEqual(after.body.deltas, [written.body.delta])
+      const now = await requestTo(handler, { url: '/__travelatlas/editor/read-model', method: 'GET', headers: {} })
+      assert.deepEqual(applyReadModelDelta(served.body, { baseRevision: revision, nextRevision: revision + 1, ...written.body.delta }), now.body)
+      // Several commits behind: every entry from there, in order.
+      const behind = await changes(`since=${revision - 1}`)
+      assert.deepEqual(behind.body.deltas.map((delta) => [delta.from, delta.to]), [[revision - 1, revision], [revision, revision + 1]])
+      // 410: older than the first change kept, ahead of the library, another library, a restored library.
+      for (const [query, reason] of [['since=0', 'too-old'], [`since=${revision + 9}`, 'ahead'],
+        [`since=${revision}&libraryId=01900000-0000-7000-8000-000000000999`, 'library'], [`since=${revision}&libraryId=${libraryId}&restoreMark=2026-01-01T00:00:00.000Z`, 'restored']]) {
+        const gone = await changes(query)
+        assert.equal(gone.status, 410, query)
+        assert.deepEqual([gone.body.code, gone.body.reason, gone.body.revision], ['E_CHANGES_GONE', reason, revision + 1], query)
+      }
+      // A request without a revision, or with a revision that is no revision.
+      for (const query of ['', 'since=', 'since=-1', 'since=1.5', 'since=x']) assertError(await changes(query), 400, 'E_REQUEST_INVALID')
+      // A read endpoint: refused to another origin or site, and to another address, before anything else.
+      for (const headers of [
+        { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:9999' },
+        { host: '127.0.0.1:5173', origin: 'http://localhost:5999', 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors' },
+        { host: '127.0.0.1:5173', origin: 'https://example.com', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' },
+        { host: '127.0.0.1:5173', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors' },
+      ]) assertError(await changes(`since=${revision}`, headers), 403, 'E_EDITOR_READ_FORBIDDEN')
+      assertError(await changes(`since=${revision}`, {}, { address: '203.0.113.10' }), 403, 'E_EDITOR_READ_FORBIDDEN')
+      // The guard ahead of every Vite middleware stops a page of another site before the endpoint.
+      for (const headers of [{ host: '127.0.0.1:5173', origin: 'https://example.com', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' }, { host: '127.0.0.1:5173', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'no-cors' }]) {
+        let status = 200, passed = false
+        crossSiteRequestGuard({ url: `/__travelatlas/editor/read-model/changes?since=${revision}`, method: 'GET', headers, socket: { remoteAddress: '127.0.0.1' } },
+          { set statusCode(value) { status = value }, get statusCode() { return status }, setHeader: () => {}, end: () => {} }, () => { passed = true })
+        assert.deepEqual([status, passed], [403, false], JSON.stringify(headers))
+      }
+      assert.deepEqual(captured.reloads, [])
+    })
+
     await t.test('File events: add, change and unlink share one filter; the store file counts when it appears or goes, not when it is written', async () => {
       const fire = (event, target) => captured.watcherCallbacks.get(event)(target)
       assert.deepEqual([...captured.watcherCallbacks.keys()].sort(), ['add', 'change', 'unlink'])
@@ -560,6 +619,9 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.equal(served.status, 200)
       assert.equal(served.headers.get('x-starmap-revision'), undefined)
       assert.deepEqual(officialViewOf(served.body, 'local'), canonicalForInputs({ v2Files: v2Fixture }))
+      // 3C-5 D: a root that is not a library has no changes: the page reads the whole read model (410).
+      const changes = await requestTo(v2Handler, { url: '/__travelatlas/editor/read-model/changes?since=0', method: 'GET', headers: {} })
+      assert.deepEqual([changes.status, changes.body.code, changes.body.reason], [410, 'E_CHANGES_GONE', 'not-a-library'])
       const countries = await requestTo(v2Handler, { url: editorPrefix + 'catalog/countries?q=Iceland', method: 'GET', headers: {} })
       assert.equal(countries.status, 200)
       assert.deepEqual(await treeDigest(privateRoot), before, 'no file written, no library, no lease')

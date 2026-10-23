@@ -4,7 +4,7 @@ import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promi
 import os from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
-import { test, expect, openMap, openCollection, readFixture, recordMediaPhase, closeMediaTestContext, saveAndWaitForReload, retainMediaFailure } from './helpers.mjs'
+import { test, expect, openMap, openCollection, readFixture, recordMediaPhase, closeMediaTestContext, saveAndWaitForRevision, retainMediaFailure } from './helpers.mjs'
 import { fixtureIds } from '../../scripts/browser-fixture.mjs'
 import { withLibraryOperation } from '../../scripts/library-operation-lock.mjs'
 import { createMediaJobStore } from '../../scripts/media-job-store.mjs'
@@ -153,8 +153,8 @@ async function review(page, id) {
 }
 
 async function receivePhotos(page, files, reuseReadyDocument = false) {
-  // Only the second lifecycle batch reuses the document whose photo save has
-  // already completed a real reload. All first/fresh entry points still navigate.
+  // Only the second lifecycle batch reuses the document that was reloaded after the photo save. All first/fresh entry
+  // points still navigate.
   if (reuseReadyDocument) expect(page.url()).toBe('http://127.0.0.1:5173/')
   else await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 45000 })
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
@@ -193,15 +193,15 @@ async function seedHiddenAndRemovedMedia(page, first) {
   const hiddenId = assetOf(await stored(), baseline.name)
   expect(hiddenId).toMatch(UUID_V7)
   await page.locator(`.atlas-info-panel [data-flip-id="${hiddenId}"]`).getByRole('button', { name: 'Hide photo', exact: true }).click()
-  const saved = page.waitForResponse(response => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
-  // Ordinary city-photo saves reload the document; finish that navigation before the next batch.
-  const reloaded = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 45000 })
-  const [, response] = await Promise.all([
-    reloaded, saved,
-    page.getByRole('button', { name: 'Save city photos', exact: true }).click(),
-  ])
-  expect(response.ok()).toBe(true)
-  recordMediaPhase(page, 'baseline hidden-photo save / real reload complete')
+  // 3C-5 D: the city-photo save applies without a reload (saveAndWaitForRevision checks that); the lifecycle then starts
+  // its next batch from a fresh document, as it did when the save reloaded the page.
+  await saveAndWaitForRevision(page, async () => {
+    const saved = page.waitForResponse(response => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
+    await page.getByRole('button', { name: 'Save city photos', exact: true }).click()
+    expect((await saved).ok()).toBe(true)
+  }, { timeout: 45000 })
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 })
+  recordMediaPhase(page, 'baseline hidden-photo save (no reload) / fresh document complete')
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
   await expect(page.locator('.cesium-widget canvas')).toBeVisible()
   await expect.poll(async () => (await readFixture('editorState')).hiddenMediaIds).toContain(hiddenId)
@@ -343,7 +343,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
   await page.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
   await page.locator('.collection-card textarea').fill('Durable media pause permits ordinary edits')
   const saved = page.waitForResponse(response => response.url().includes('/editor/wanttogo/') && response.request().method() === 'POST')
-  await saveAndWaitForReload(page, () => page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click(), { navigationTimeout: 45000 })
+  await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click(), { timeout: 45000 })
   expect((await saved).ok()).toBe(true)
   await expect(page.locator('.collection-card textarea')).toHaveCount(0)
   await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
@@ -761,7 +761,7 @@ test.describe('new-library mode: media', () => {
     const content = state.registry.files.find(file => file.sha256 === source.sha256)
     let editor = await photoEditor(page)
     await editor.locator(`[data-flip-id="${id}"]`).getByRole('button', { name: 'Hide photo', exact: true }).click()
-    await saveAndWaitForReload(page, async () => {
+    await saveAndWaitForRevision(page, async () => {
       const saved = page.waitForResponse(response => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
       await page.getByRole('button', { name: 'Save city photos', exact: true }).click()
       expect((await saved).status()).toBe(200)
@@ -769,7 +769,7 @@ test.describe('new-library mode: media', () => {
     await expect.poll(async () => (await stored()).files.editorState.hiddenMediaIds).toContain(id)
     editor = await photoEditor(page)
     page.once('dialog', dialog => dialog.accept())
-    await saveAndWaitForReload(page, async () => {
+    await saveAndWaitForRevision(page, async () => {
       const deleted = page.waitForResponse(response => response.url().endsWith('/editor/media/delete'))
       await editor.getByRole('button', { name: 'Delete hidden photos permanently', exact: true }).click()
       expect((await deleted).status()).toBe(200)

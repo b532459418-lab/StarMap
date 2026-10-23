@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { UIEvent } from 'react'
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { AtlasHeader } from './components/AtlasHeader'
@@ -22,14 +22,18 @@ import { WantToGoCard } from './components/WantToGoCard'
 import { JourneyViewToggle } from './components/JourneyViewToggle'
 import type { JourneyViewMode } from './components/JourneyViewToggle'
 import { JourneyYearCards } from './components/JourneyYearCards'
+import { useStableCallback } from './components/useStableCallback'
+import { useHeldWhileHidden } from './components/useHeldWhileHidden'
 import type { DroneMediaItem } from './data/droneMedia'
-import { droneMediaById, hasDroneMedia } from './data/droneMedia'
+import { useDroneMedia } from './data/droneMedia'
 import { localEditorAvailable } from './data/editorState'
 import type { LocalConvertToTravelResult } from './data/localEditorApi'
 import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
 import { readLayerTimeFilters, rememberLayerTimeFilters } from './data/layerTimeFilters'
-import { timeQueryContext } from './data/appData'
-import { buildBrowseTimeProjection, includedBrowseRecordKeys, countMappedTravelRecords } from './data/derive/browseTimeProjection'
+import { HoldDataWhileHidden, useBrowseProjection, useCollectionEntries, useVisiblePlaces } from './data/appStore'
+import { PausedWhileHidden } from './components/PausedWhileHidden'
+import { resumeRendering } from './data/renderPause'
+import { includedBrowseRecordKeys, countMappedTravelRecords } from './data/derive/browseTimeProjection'
 import { coordinateForRecord } from './data/derive/travelAtlas'
 import { wantToGoCardRecordOf, type WantToGoCardRecord } from './data/derive/wantToGo'
 import { City3DToggle } from './extensions/City3DToggle'
@@ -40,15 +44,13 @@ import { getInitialMapLabelsEnabled, rememberMapLabelsEnabled } from './extensio
 import { getInitialMapSource, mapSourceHasLabelOverlay, rememberMapSource } from './extensions/mapSources'
 import type { MapSourceId } from './extensions/mapSources'
 import { useReleaseUpdates } from './data/releaseUpdates'
-import { cityById, countryById, getCitiesForCountry, journeyDays, travelAtlasDisplay } from './data/travelAtlas'
-import { worldGraphSnapshot } from './data/worldGraph'
+import { useTravelAtlas } from './data/travelAtlas'
+import { useWorldGraph } from './data/worldGraph'
 import { useUiLocale } from './i18n/useUiLocale'
 import { readAtlasViewState, rememberAtlasViewState } from './data/viewState'
-import { hiddenWantToGoItems } from './data/wantToGo'
-import { queryCollection } from './worldgraph/collection'
+import { useWantToGo } from './data/wantToGo'
 import type { CollectionEntry } from './worldgraph/collection'
 import { officialLayers, TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from './worldgraph/layers'
-import { queryVisiblePlaces } from './worldgraph/query'
 import { isTimeFilterActive } from './worldgraph/timeFilter'
 import type { LayerTimeFilters as TimeFilterState } from './worldgraph/timeQuery'
 import { recordRefKey } from './worldgraph/recordIdentity'
@@ -89,9 +91,6 @@ const sidebarMediaQuery = '(min-width: 1100px)'
 const mobilePanelMediaQuery = '(width < 768px)'
 // 可滚动页面滚离顶部超过这个距离（px），顶部标题才换上玻璃背景。
 const headerBackdropScrollThreshold = 12
-// 概览视角目标点（PR3c）：模块级数据，引用恒定，由这里传给地图，地图不再自己读 travelAtlas。
-const overviewTarget = travelAtlasDisplay.overviewTarget
-
 type CameraScale = 'city' | 'country' | 'world'
 type MobilePanel = 'countries' | 'details'
 type ImageryTuning = {
@@ -111,6 +110,13 @@ const cameraScaleForDistance = (distance: number): CameraScale => {
 
 function App() {
   const { locale, t } = useUiLocale()
+  // 3C-5 D: the data of the page, through hooks (a save moves them on without a reload).
+  const { cityById, countryById, getCitiesForCountry, journeyDays, shouldHideCityFromNavigation, travelAtlasDisplay } = useTravelAtlas()
+  const { droneMediaById, hasDroneMedia } = useDroneMedia()
+  const { worldGraphSnapshot } = useWorldGraph()
+  const { hiddenWantToGoItems } = useWantToGo()
+  // 概览视角目标点（PR3c），由这里传给地图，地图不再自己读 travelAtlas。
+  const overviewTarget = travelAtlasDisplay.overviewTarget
   useEffect(() => {
     if (!localEditorAvailable) return
     const discover = () => { void mediaJobs.refresh().catch(() => undefined) }
@@ -180,6 +186,8 @@ function App() {
   const [globeDistance, setGlobeDistance] = useState(restoredGlobeDistance)
   const [globeResetVersion, setGlobeResetVersion] = useState(0)
   const [activePage, setActivePage] = useState<AtlasPage>(restoredActivePage)
+  // 3C-5 D (A′): another page ends a map pause of a save at once (../data/renderPause.ts).
+  useEffect(() => resumeRendering('page'), [activePage])
   // 打开过的页面（第 5B 批）：按需加载的 Collection 与更新页从第一次打开起才挂载，切走后保持挂载。
   const [visitedPages, setVisitedPages] = useState<ReadonlySet<AtlasPage>>(() => new Set([restoredActivePage]))
   // 当前页面是否已滚离顶部，决定顶部标题的玻璃背景。页面的滚动位置不随刷新恢复，初值为 false。
@@ -195,10 +203,11 @@ function App() {
   const [city3DEnabled, setCity3DEnabled] = useState(() => resolveInitialCity3DEnabled(googleConfigured))
   // The globe hides itself while City 3D is on, so what it receives is gated by the Google key too.
   const city3DActive = googleConfigured && city3DEnabled
-  const disableCity3D = () => {
+  // 3C-5 D: stable (the globe is memoized).
+  const disableCity3D = useCallback(() => {
     setCity3DEnabled(false)
     rememberCity3DEnabled(false)
-  }
+  }, [])
   const [mapLabelsEnabled, setMapLabelsEnabled] = useState(getInitialMapLabelsEnabled)
   const [layerVisibility, setLayerVisibility] = useState(getInitialLayerVisibility)
   const [restoredTimeFilters] = useState(readLayerTimeFilters)
@@ -397,17 +406,22 @@ function App() {
 
   // 地图相机要用的选中项（PR3c）：在 App 侧查表后经 prop 传给地图。字段名与原 City / Country 一致。
   // 必须 useMemo：地图的相机焦点 useMemo 依赖这两个对象，每次渲染传新对象会让焦点被反复重算。
-  const selectedCityFocus = useMemo(() => {
-    const city = selectedCityId ? cityById[selectedCityId] : undefined
-    return city ? { id: city.id, lat: city.lat, lng: city.lng } : undefined
-  }, [selectedCityId])
+  // 3C-5 D: keyed by the values the camera uses, so new data (a save) with the same place keep the same objects.
+  const focusCity = selectedCityId ? cityById[selectedCityId] : undefined
+  const [focusCityId, focusCityLat, focusCityLng] = [focusCity?.id, focusCity?.lat, focusCity?.lng]
+  const selectedCityFocus = useMemo(
+    () => focusCityId !== undefined && focusCityLat !== undefined && focusCityLng !== undefined ? { id: focusCityId, lat: focusCityLat, lng: focusCityLng } : undefined,
+    [focusCityId, focusCityLat, focusCityLng],
+  )
 
-  const selectedCountryFocus = useMemo(() => {
-    const country = selectedCountryId ? countryById[selectedCountryId] : undefined
-    return country
-      ? { id: country.id, centerLat: country.centerLat, centerLng: country.centerLng, accent: country.accent }
-      : undefined
-  }, [selectedCountryId])
+  const focusCountry = selectedCountryId ? countryById[selectedCountryId] : undefined
+  const [focusCountryId, focusCountryLat, focusCountryLng, focusCountryAccent] = [focusCountry?.id, focusCountry?.centerLat, focusCountry?.centerLng, focusCountry?.accent]
+  const selectedCountryFocus = useMemo(
+    () => focusCountryId !== undefined && focusCountryLat !== undefined && focusCountryLng !== undefined && focusCountryAccent !== undefined
+      ? { id: focusCountryId, centerLat: focusCountryLat, centerLng: focusCountryLng, accent: focusCountryAccent }
+      : undefined,
+    [focusCountryId, focusCountryLat, focusCountryLng, focusCountryAccent],
+  )
 
   // 图层可见性 → 可见图层 id → 地图要渲染的地点与路线（PRD FR-MR-1 / FR-LR-3）。
   // 两层 useMemo 都只依赖 layerVisibility：引用稳定，地图侧才不会被无谓重算连累（AC-8）。
@@ -415,9 +429,11 @@ function App() {
     () => officialLayers.filter((layer) => layerVisibility[layer.id] !== false).map((layer) => layer.id),
     [layerVisibility],
   )
-  const layerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds, { context: timeQueryContext, filters: timeFilters }), [visibleLayerIds, timeFilters])
-  const unfilteredLayerData = useMemo(() => queryVisiblePlaces(worldGraphSnapshot, visibleLayerIds), [visibleLayerIds])
-  const browseProjection = useMemo(() => buildBrowseTimeProjection(timeQueryContext, timeFilters), [timeFilters])
+  // 3C-5 D: the page's queries come from the data store (computed once per snapshot and arguments, kept while their inputs
+  // are; without an active time filter the two place queries are one).
+  const layerData = useVisiblePlaces(visibleLayerIds, timeFilters)
+  const unfilteredLayerData = useVisiblePlaces(visibleLayerIds)
+  const browseProjection = useBrowseProjection(timeFilters)
   const includedRecordKeys = useMemo(() => includedBrowseRecordKeys(browseProjection), [browseProjection])
   const dateQualityCounts = useMemo(() => {
     const counts = { partial: 0, missing: 0, invalid: 0 }
@@ -459,10 +475,10 @@ function App() {
   }
 
   // Collection 列表（PR7）：想去图层的全部条目，含已隐藏与无坐标，不受图层可见性影响（FR-LP-6）。
-  // 快照是模块级常量；语言切换时重算名称排序，写入后整页刷新拿到新数据。
-  const collectionEntries = useMemo(() => queryCollection(worldGraphSnapshot, WANT_TO_GO_LAYER_ID, locale), [locale])
+  // 快照随数据更新（3C-5 D）；语言切换时重算名称排序。
+  const collectionEntries = useCollectionEntries(locale)
 
-  const mappedTravelRecordIds = useMemo(() => new Set(Object.values(cityById).flatMap(city => (city.records ?? []).filter(record => coordinateForRecord(record)).map(record => record.id))), [])
+  const mappedTravelRecordIds = useMemo(() => new Set(Object.values(cityById).flatMap(city => (city.records ?? []).filter(record => coordinateForRecord(record)).map(record => record.id))), [cityById])
   const atlasStats = useMemo(
     () => [
       { value: `${browseProjection.travelStats.definite.countries}`, label: t('journey:countries') },
@@ -566,29 +582,34 @@ function App() {
     changePrimaryPage('map')
   }
 
-  // 转换成功、刷新之前（PR9 规格 §2 第 8 条）：把视图状态写成 Map 页并选中新国家与新城市，
-  // 刷新后直接落在这座城市上。刷新时的视图恢复会校验这些 id（cityById / countryById / journeyDays），
-  // 万一某个 id 在新数据里不存在，就回落到总览，不会选中一个不存在的地点。
+  // 转换成功（PR9 规格 §2 第 8 条）：切到 Map 页并选中新国家与新城市，落在这座城市上。3C-5 D：写入完成时新足迹已在页面
+  // 数据里（不再整页刷新），所以直接选中；原来刷新后的视图恢复做的事在这里做。
   // 足迹图层被关掉时一并打开，否则选中的新城市在地图上没有标记（与「在地图上查看」打开想去图层同理）。
-  const rememberConvertedPlace = (result: LocalConvertToTravelResult) => {
-    const savedLayerVisibility = getInitialLayerVisibility()
-    if (savedLayerVisibility[TRAVEL_LAYER_ID] === false) {
-      rememberLayerVisibility({ ...savedLayerVisibility, [TRAVEL_LAYER_ID]: true })
+  const showConvertedPlace = (result: LocalConvertToTravelResult) => {
+    if (layerVisibility[TRAVEL_LAYER_ID] === false) {
+      const next = { ...layerVisibility, [TRAVEL_LAYER_ID]: true }
+      setLayerVisibility(next)
+      rememberLayerVisibility(next)
     }
-    rememberAtlasViewState({
-      selectedCountryId: result.countryId,
-      selectedCityId: result.cityId,
-      selectedDayId: result.travelRecordId,
-      selectionMode: 'city',
-      globeDistance: cityDistance,
-      activePage: 'map',
-      pageBeforeUpdate: 'map',
-      journeyViewMode,
-      activeDroneMediaCityId: undefined,
-      activeDroneMediaItemId: undefined,
-      sidebarsOpen: true,
-    })
+    setConvertTarget(undefined)
+    openMobileDetails()
+    setSelectedWantToGoEntityId(undefined)
+    setSelectedWantToGoRecord(undefined)
+    setMapFocusPlace(undefined)
+    setSelectedCountryId(result.countryId)
+    setSelectedCityId(result.cityId)
+    setSelectedDayId(result.travelRecordId)
+    setActiveDroneMediaCityId(undefined)
+    setActiveDroneMediaItemId(undefined)
+    setSelectionMode('city')
+    setGlobeDistance(cityDistance)
+    changePrimaryPage('map')
+    setSidebarsOpen(true)
   }
+
+  // 3C-5 D: stable handlers for the memoized Collection cards.
+  const stableViewOnMap = useStableCallback(viewOnMap)
+  const openAddWantToGo = useStableCallback(() => setIsAddWantToGoOpen(true))
 
   const selectDroneMedia = (cityId: CityId) => {
     const city = cityById[cityId]
@@ -672,6 +693,8 @@ function App() {
     setGlobeDistance(distance)
   }
 
+  // 3C-5 D: the journey's lists get the travel data as props (memoized: they render only when these change).
+  const journeyTravel = useMemo(() => ({ cityById, countryById, journeyDays, shouldHideCityFromNavigation }), [cityById, countryById, journeyDays, shouldHideCityFromNavigation])
   const selectDay = (day: JourneyDay) => {
     openMobileDetails()
     // 城市焦点的优先级低于 place 焦点：凡是"选中一个城市"的入口都要清掉 Collection 的镜头目标。
@@ -684,6 +707,16 @@ function App() {
     setSelectionMode('city')
     setGlobeDistance(cityDistance)
   }
+  const selectDayStable = useStableCallback(selectDay)
+  // 3C-5 D: the globe is memoized; with these stable, and its places held while another page is up (they are not shown
+  // there), a save on another page does not render it again. Its camera still follows the selection there.
+  const selectCityStable = useStableCallback(selectCity)
+  const selectWantToGoPlaceStable = useStableCallback(selectWantToGoPlace)
+  const selectDroneMediaItemStable = useStableCallback(selectDroneMediaItem)
+  const selectDroneMediaStable = useStableCallback(selectDroneMedia)
+  const mapLayerData = useHeldWhileHidden(layerData, activePage === 'map')
+  const [overviewLat, overviewLng] = [overviewTarget.lat, overviewTarget.lng]
+  const overviewTargetStable = useMemo(() => ({ lat: overviewLat, lng: overviewLng }), [overviewLat, overviewLng])
 
   return (
     <main className="theme-night relative h-[100dvh] overflow-clip bg-[#010409] text-slate-950">
@@ -720,6 +753,7 @@ function App() {
           {activePage === 'map' && (travelTimeActive || wantTimeActive) && visibleLayerIds.length > 0 && layerData.places.length === 0
             ? <p className="atlas-time-map-empty" role="status">{t('timeFilter:noMapResults')}</p> : null}
           <div className="absolute inset-0 z-0">
+            <HoldDataWhileHidden visible={activePage === 'map'}>
             <CesiumAtlasGlobe
               hoveredCountryId={hoveredCountryId}
               imageryBrightness={imageryTuning.brightness}
@@ -731,21 +765,22 @@ function App() {
               showLabelsOverlay={mapLabelsEnabled}
               selectedCountryId={selectedCountryId}
               selectedCityId={selectedCityId}
-              overviewTarget={overviewTarget}
+              overviewTarget={overviewTargetStable}
               selectedCity={selectedCityFocus}
               selectedCountry={selectedCountryFocus}
               selectionMode={selectionMode}
               globeScale={globeDistance}
               resetVersion={globeResetVersion}
               showMapContent={activePage === 'map'}
-              layerData={layerData}
+              layerData={mapLayerData}
               activeDroneMediaCityId={activeDroneMediaCityId}
               activeDroneMediaItemId={activeDroneMediaItemId}
-              onSelectCity={selectCity}
-              onSelectWantToGoPlace={selectWantToGoPlace}
-              onSelectDroneMediaItem={selectDroneMediaItem}
+              onSelectCity={selectCityStable}
+              onSelectWantToGoPlace={selectWantToGoPlaceStable}
+              onSelectDroneMediaItem={selectDroneMediaItemStable}
               focusPlace={mapFocusPlace}
             />
+            </HoldDataWhileHidden>
           </div>
 
           <div className="pointer-events-none absolute inset-0 z-20">
@@ -772,6 +807,7 @@ function App() {
                 </button>
               </div>
               <div id="atlas-country-panel" className="atlas-country-stack" ref={countryPanelRef} aria-hidden={countriesHidden} inert={countriesHidden}>
+                <PausedWhileHidden visible={activePage === 'map'}>
                 <CountrySelector
                 browse={travelBrowse}
                 selectedCountryId={selectedCountryId}
@@ -787,11 +823,12 @@ function App() {
                 onResetImageryTuning={resetImageryTuning}
                 onSaturationChange={(value) => updateImageryTuning('saturation', value)}
                 onSelectCountry={selectCountry}
-                onSelectCity={selectCity}
-                onSelectDroneMedia={selectDroneMedia}
+                onSelectCity={selectCityStable}
+                onSelectDroneMedia={selectDroneMediaStable}
                 onDistanceChange={changeGlobeDistance}
                 onResetView={resetOverview}
               />
+                </PausedWhileHidden>
               </div>
 
               <div
@@ -803,6 +840,7 @@ function App() {
                   shouldShowDronePanel ? 'atlas-right-stack-with-drone' : ''
                 }`}
               >
+                <PausedWhileHidden visible={activePage === 'map'}>
                 {selectedWantToGoEntityId ? (
                   <WantToGoCard
                     key={`want-to-go-${selectedWantToGoEntityId}`}
@@ -839,6 +877,7 @@ function App() {
                 ) : null}
 
                 <MouseControlGuide />
+                </PausedWhileHidden>
               </div>
 
             </div>
@@ -914,6 +953,8 @@ function App() {
             className="atlas-journey-stage absolute inset-0 z-30"
             aria-hidden={activePage !== 'journey'}
           >
+            {/* 3C-5 D: not shown, the page does not render again after every save (PausedWhileHidden); its scroll position stays. */}
+            <PausedWhileHidden visible={activePage === 'journey'}>
             <div className="atlas-journey-scroll selector-scrollbar h-full overflow-y-auto overscroll-contain">
               <div className="atlas-journey-shell mx-auto w-full max-w-7xl px-5 pb-20 sm:px-8">
                 <section className="journey-command-panel">
@@ -952,14 +993,16 @@ function App() {
                 {journeyViewMode === 'timeline' ? (
                   <Timeline
                     projection={browseProjection}
+                    travel={journeyTravel}
                     selectedDayId={selectedDayId}
-                    onSelectDay={selectDay}
+                    onSelectDay={selectDayStable}
                   />
                 ) : (
-                  <JourneyYearCards projection={browseProjection} />
+                  <JourneyYearCards projection={browseProjection} travel={journeyTravel} />
                 )}
               </div>
             </div>
+            </PausedWhileHidden>
           </div>
 
           <div
@@ -968,16 +1011,18 @@ function App() {
             aria-hidden={activePage !== 'collection'}
           >
             {/* 舞台本身常驻（切页的淡入淡出在舞台上）；页面加载期间舞台为空，淡入过程中出现。 */}
+            <PausedWhileHidden visible={activePage === 'collection'}>
             {visitedPages.has('collection') ? (
               <Suspense fallback={null}>
                 <CollectionPage
                   entries={collectionEntries}
-                  onViewOnMap={viewOnMap}
-                  onAddWantToGo={() => setIsAddWantToGoOpen(true)}
+                  onViewOnMap={stableViewOnMap}
+                  onAddWantToGo={openAddWantToGo}
                   onConvertToTravel={setConvertTarget}
                 />
               </Suspense>
             ) : null}
+            </PausedWhileHidden>
           </div>
 
           <div
@@ -1044,7 +1089,7 @@ function App() {
           <ConvertToTravelDialog
             target={convertTarget}
             onClose={() => setConvertTarget(undefined)}
-            onConverted={rememberConvertedPlace}
+            onConverted={showConvertedPlace}
           />
         </Suspense>
       ) : null}

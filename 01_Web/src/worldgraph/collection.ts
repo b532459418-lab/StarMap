@@ -27,8 +27,9 @@ import {
   type LanguageTag,
   type LocalizedText,
 } from './localizedText.ts'
-import type { Anchor, AnchorPrecision, Entity, EntityId, LayerId, WorldGraphSnapshot } from './types.ts'
+import type { AnchorPrecision, EntityId, LayerId, WorldGraphSnapshot } from './types.ts'
 import { membershipIdentityKey, recordSourceKindOf } from './recordIdentity.ts'
+import { entityIndexOf, locationIndexOf } from './graphIndex.ts'
 
 /** Collection 里的一行。字段都能一一对应到 CollectionPage 的用法。 */
 export interface CollectionEntry {
@@ -74,12 +75,7 @@ const asCountryCode = (value: unknown): string | undefined => {
   return code !== undefined && /^[A-Z]{2}$/.test(code) ? code : undefined
 }
 
-/** 坐标必须是有限数字才算数：null / undefined / NaN 都判为"没有坐标"（与 query.ts 同一判据）。 */
-const isFiniteCoordinate = (anchor: Anchor): boolean =>
-  typeof anchor.lat === 'number' &&
-  Number.isFinite(anchor.lat) &&
-  typeof anchor.lng === 'number' &&
-  Number.isFinite(anchor.lng)
+// 坐标必须是有限数字才算数（null / undefined / NaN 都判为"没有坐标"）：判据在 ./graphIndex.ts，与 query.ts 共用。
 
 /** 纯码点比较：不受运行环境 locale 影响，给日期与 id 这类 ASCII 键用。 */
 const compareCodePoints = (left: string, right: string): number =>
@@ -117,8 +113,17 @@ const compareIdentity: CompareEntries = (left, right) =>
   compareCodePoints(left.recordId ?? '', right.recordId ?? '') ||
   compareCodePoints(recordSourceKindOf(left.layerId, left.source) ?? '', recordSourceKindOf(right.layerId, right.source) ?? '')
 
-/** Stable UI identity follows the same source-aware key as snapshot merging. */
-export const collectionEntryKey = (entry: CollectionEntry): string => JSON.stringify([
+/** Stable UI identity follows the same source-aware key as snapshot merging (3C-5 D: once per entry object). */
+const entryKeys = new WeakMap<CollectionEntry, string>()
+export const collectionEntryKey = (entry: CollectionEntry): string => {
+  let key = entryKeys.get(entry)
+  if (key === undefined) {
+    key = entryKeyOf(entry)
+    entryKeys.set(entry, key)
+  }
+  return key
+}
+const entryKeyOf = (entry: CollectionEntry): string => JSON.stringify([
   entry.entityId, entry.layerId, recordSourceKindOf(entry.layerId, entry.source) ?? '', entry.recordId ?? '',
 ])
 
@@ -162,17 +167,9 @@ export const queryCollection = (
   layerId: LayerId,
   uiLocale: LanguageTag,
 ): CollectionEntry[] => {
-  const entityById = new Map<EntityId, Entity>()
-  for (const entity of snapshot.entities) {
-    if (!entityById.has(entity.id)) entityById.set(entity.id, entity)
-  }
-
-  const locationByEntityId = new Map<EntityId, Anchor>()
-  for (const anchor of snapshot.anchors) {
-    if (anchor.kind !== 'location') continue
-    if (!isFiniteCoordinate(anchor)) continue
-    if (!locationByEntityId.has(anchor.entityId)) locationByEntityId.set(anchor.entityId, anchor)
-  }
+  // 3C-5 D: shared with the place query (built once per snapshot array, ./graphIndex.ts).
+  const entityById = entityIndexOf(snapshot.entities)
+  const locationByEntityId = locationIndexOf(snapshot.anchors)
 
   const seenMembershipKeys = new Set<string>()
   const entries: CollectionEntry[] = []

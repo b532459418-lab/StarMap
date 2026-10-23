@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture, saveAndWaitForReload } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, renderedRevision, saveAndWaitForRevision, waitForRenderedRevision } from './helpers.mjs'
 import {
   PRIVATE_MODULE_PATH, createBrowserFixture, enterDamagedStoreMode, fixtureFileNames, fixtureIds, importInboxMedia, readFixtureFiles, setStoreAside,
   storeRevisionOf, waitForServedRevision,
@@ -86,7 +86,7 @@ test('country/city selection and shortcut preserve place identity, refuse duplic
   const beforeTravel = await readFixture('travel')
   let writes = 0
   page.on('request', (request) => { if (request.url().endsWith('/editor/wanttogo') && request.method() === 'POST') writes++ })
-  await saveAndWaitForReload(page, async () => {
+  await saveAndWaitForRevision(page, async () => {
     const saved = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo') && response.request().method() === 'POST')
     await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).evaluate((button) => { button.click(); button.click() })
     expect((await saved).status()).toBe(201)
@@ -97,7 +97,7 @@ test('country/city selection and shortcut preserve place identity, refuse duplic
   expect(await readFixture('places')).toEqual(beforePlaces)
   expect(await readFixture('travel')).toEqual(beforeTravel)
   await openCollection(page)
-  await saveAndWaitForReload(page, () => page.getByRole('button', { name: 'Hide: Reykjavik', exact: true }).click())
+  await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Hide: Reykjavik', exact: true }).click())
   await expect(page.getByRole('button', { name: 'Restore: Reykjavik', exact: true })).toBeVisible()
   await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
@@ -128,9 +128,12 @@ test('media recovery imports a received file once after explicit scope confirmat
   await center.getByRole('checkbox', { name: 'I confirm this whole Inbox scope, including other cities and any removals.', exact: true }).check()
   await center.getByRole('button', { name: 'Import confirmed files', exact: true }).click()
   await expect(center.getByTestId('media-job-card').locator('header strong')).toHaveText('Completed', { timeout: 30000 })
-  await expect(center.getByRole('button', { name: 'Reload to view imported media', exact: true })).toBeVisible()
+  // 3C-5 D: no reload; the dev server pushes the new revision. The photo editor stayed open during the import (its list
+  // changed meanwhile, so it shows the conflict notice): leaving it shows the imported photo.
   await center.getByRole('button', { name: 'Close completed task', exact: true }).click()
-  await page.reload()
+  await center.getByRole('button', { name: 'Close panel', exact: true }).click()
+  await expect(center).toHaveCount(0)
+  await page.getByRole('button', { name: 'Exit editing city photos', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Open photo 1 of Reykjavik', exact: true })).toBeVisible({ timeout: 30000 })
   expect(imports).toBe(1)
   expect(uploads).toBe(1)
@@ -146,7 +149,7 @@ test('Collection conversion writes a footprint and returns to the same city', as
   await dialog.locator('input[type=date]').nth(1).fill('2026-01-13')
   await dialog.locator('input[type=checkbox]').check()
   // A confirmed conversion reloads the whole page; the heading below is checked after that reload (batch 4B).
-  await saveAndWaitForReload(page, async () => {
+  await saveAndWaitForRevision(page, async () => {
     const save = page.waitForResponse((response) => response.url().endsWith('/wanttogo/convert'))
     await dialog.locator('button[type=submit]').click()
     expect((await save).ok()).toBe(true)
@@ -228,10 +231,12 @@ test('an unconfirmed conversion keeps every write on the page blocked until a re
   await page.locator('.collection-card textarea').fill('Blocked until reload')
   await page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click()
   await expect(page.getByText(/Nothing more can be saved until you reload/)).toBeVisible()
-  // The new library (3C-4a) retries a save it cannot confirm once, with the same request id, then blocks the page.
-  expect(writes).toEqual(['/__travelatlas/editor/wanttogo/convert', '/__travelatlas/editor/wanttogo/convert'])
+  // The new library (3C-4a) retries a save it cannot confirm with the same request id, then blocks the page; since
+  // 3C-5 D once at once and once more after the dev server answers again (it does here), so three tries in all.
+  expect(writes).toEqual(['/__travelatlas/editor/wanttogo/convert', '/__travelatlas/editor/wanttogo/convert', '/__travelatlas/editor/wanttogo/convert'])
   expect(requestIds[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   expect(requestIds[1]).toBe(requestIds[0])
+  expect(requestIds[2]).toBe(requestIds[0])
 })
 
 test('keyboard: a drone card opens its viewer from View, the viewer keeps and returns focus, and the globe scale slider keeps focus while stepping', async ({ page }) => {
@@ -285,7 +290,7 @@ test('keyboard hiding the current cover photo clears the draft cover, and hiding
   await cover.getByRole('button', { name: 'Hide photo', exact: true }).focus()
   await page.keyboard.press('Enter')
   await expect(cover).toHaveCount(0)
-  await saveAndWaitForReload(page, async () => {
+  await saveAndWaitForRevision(page, async () => {
     const saved = page.waitForResponse((response) => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
     await info.getByRole('button', { name: 'Save city photos', exact: true }).click()
     expect((await saved).ok()).toBe(true)
@@ -329,7 +334,7 @@ test.describe('the new library: editor writes', () => {
     page.on('request', (request) => { if (request.url().endsWith('/editor/wanttogo/update')) sent.push(request.headers()) })
     await page.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
     await page.locator('.collection-card textarea').fill('Synthetic new-library note')
-    await saveAndWaitForReload(page, async () => {
+    await saveAndWaitForRevision(page, async () => {
       const saved = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo/update'))
       await page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click()
       expect((await saved).status()).toBe(200)
@@ -356,7 +361,7 @@ test.describe('the new library: editor writes', () => {
     await selectReykjavik(page)
     const sent = []
     page.on('request', (request) => { if (request.url().endsWith('/editor/wanttogo') && request.method() === 'POST') sent.push(request.headers()) })
-    await saveAndWaitForReload(page, async () => {
+    await saveAndWaitForRevision(page, async () => {
       const saved = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo') && response.request().method() === 'POST')
       await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
       expect((await saved).status()).toBe(201)
@@ -391,7 +396,7 @@ test.describe('the new library: editor writes', () => {
     expect((await choice.json()).code).toBe('E_JOURNEY_CHOICE_REQUIRED')
     expect(await storeRevision()).toBe(revision)
     await dialog.getByRole('radio', { name: /^Add to existing trip: 2025 North Atlantic Demo/ }).check()
-    await saveAndWaitForReload(page, async () => {
+    await saveAndWaitForRevision(page, async () => {
       const saved = page.waitForResponse((response) => response.url().endsWith('/wanttogo/convert'))
       await dialog.getByRole('button', { name: 'Mark as visited', exact: true }).click()
       expect((await saved).status()).toBe(200)
@@ -427,7 +432,7 @@ test.describe('the new library: editor writes', () => {
     await expect.poll(order).toEqual(expected)
     const sent = []
     page.on('request', (request) => { if (request.url().endsWith('/editor/view') && request.method() === 'POST') sent.push(request.headers()) })
-    await saveAndWaitForReload(page, async () => {
+    await saveAndWaitForRevision(page, async () => {
       const saved = page.waitForResponse((response) => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
       await info.getByRole('button', { name: 'Save cities', exact: true }).click()
       expect((await saved).status()).toBe(200)
@@ -493,5 +498,355 @@ test.describe('the new library: a damaged store', () => {
     await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
     await expect(page.getByText(notice, { exact: true })).toBeVisible()
     expect(Buffer.compare(await storeBytes(), before)).toBe(0)
+  })
+})
+
+// 3C-5 D: saves without reloads. A save keeps what the page was doing; two tabs of one library follow each other; an
+// edit of the same record in another tab is a conflict the user resolves; another writer (a command-line import) shows
+// up without a reload. Each case starts from the fixture's own content.
+test.describe('incremental refresh (3C-5 D)', () => {
+  const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
+  test.beforeEach(async () => { await createBrowserFixture(root()) })
+  const cameraPose = (page) => page.evaluate(() => ({ pose: window.__travelAtlasDebugCamera?.getCameraPose(), command: window.__travelAtlasDebugCamera?.getCameraCommandState() }))
+  /** The camera's pose once its last command has completed and two samples agree. */
+  async function settledPose(page) {
+    let previous
+    let pose
+    await expect.poll(async () => {
+      const { pose: now, command } = await cameraPose(page)
+      const settled = command?.status === 'completed' && previous !== undefined && JSON.stringify(now) === JSON.stringify(previous)
+      previous = now
+      if (settled) pose = now
+      return Boolean(settled)
+    }, { timeout: 20000, intervals: [200, 300, 400] }).toBe(true)
+    return pose
+  }
+  const card = (page, name) => page.locator('.collection-card').filter({ has: page.getByRole('heading', { name, exact: true }) })
+
+  test('a save keeps the camera, the time filters, the selection and a half-filled form', async ({ page }) => {
+    await openMap(page)
+    await selectReykjavik(page)
+    // A time filter of this session (a reload would bring it back marked as restored).
+    await page.locator('.atlas-time-query-toolbar').getByRole('button', { name: 'Time filters', exact: true }).click()
+    const travel = page.locator('#atlas-time-query-panel .layer-time-filter[data-layer="travel"]')
+    if (!await travel.getByLabel('Year shortcut', { exact: true }).isVisible()) await travel.locator('summary').click()
+    await travel.getByLabel('Year shortcut', { exact: true }).fill('2025')
+    await travel.getByRole('button', { name: 'Use this year', exact: true }).click()
+    await page.locator('#atlas-time-query-panel').getByRole('button', { name: 'Close', exact: true }).click()
+    const toolbar = page.locator('.atlas-time-query-toolbar')
+    await expect(toolbar).toContainText('2025-01-01')
+    // A half-filled form: the country editor's add-country form with a date.
+    await page.getByRole('button', { name: 'Edit visited countries', exact: true }).click()
+    await page.getByRole('button', { name: 'Add country', exact: true }).click()
+    const date = page.locator('.atlas-local-editor-form input[type=date]').first()
+    await date.fill('2026-02-03')
+    const pose = await settledPose(page)
+    // The save: Reykjavik on the Want to Go list.
+    await saveAndWaitForRevision(page, async () => {
+      const saved = page.waitForResponse((response) => response.url().endsWith('/editor/wanttogo') && response.request().method() === 'POST')
+      await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+      expect((await saved).status()).toBe(201)
+    })
+    await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
+    await expect(page.locator('.atlas-info-panel h2')).toHaveText('Reykjavik')
+    await expect(toolbar).toContainText('2025-01-01')
+    await expect(toolbar.locator('.atlas-time-query-restored')).toHaveCount(0)
+    await expect(date).toHaveValue('2026-02-03')
+    const after = await cameraPose(page)
+    for (const key of ['lat', 'lng', 'height', 'heading', 'pitch']) expect(Math.abs(after.pose[key] - pose[key]), key).toBeLessThan(1e-6 * Math.max(1, Math.abs(pose[key])))
+  })
+
+  test('pages that are not shown keep their scroll position and their own state across a save, and show the new data when shown again', async ({ page }) => {
+    // Short enough that the journey page scrolls.
+    await page.setViewportSize({ width: 1280, height: 520 })
+    await openMap(page)
+    const nav = (name) => page.getByRole('navigation').getByRole('button', { name, exact: true }).click()
+    await nav('Journey')
+    const journeyScroll = page.locator('.atlas-journey-stage .atlas-journey-scroll')
+    await expect(page.locator('.journey-timeline-card').first()).toBeVisible()
+    await journeyScroll.evaluate((element) => element.scrollTo({ top: 120, behavior: 'instant' }))
+    const journeyTop = await journeyScroll.evaluate((element) => element.scrollTop)
+    expect(journeyTop).toBeGreaterThan(0)
+    // Collection with a search of its own that Reykjavik will match once it is on the list.
+    await openCollection(page)
+    const search = page.locator('.collection-search input[type=search]')
+    await search.fill('Reyk')
+    await expect(card(page, 'Reykjavik')).toHaveCount(0)
+    // The save, on the map, while both pages are not shown.
+    await nav('Map')
+    await selectReykjavik(page)
+    await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click())
+    await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
+    // Shown again: their own state is there, and the data of the save.
+    await openCollection(page)
+    await expect(search).toHaveValue('Reyk')
+    await expect(card(page, 'Reykjavik')).toHaveCount(1)
+    await nav('Journey')
+    await expect(page.locator('.journey-timeline-card').first()).toBeVisible()
+    expect(await journeyScroll.evaluate((element) => element.scrollTop)).toBe(journeyTop)
+  })
+
+  test('two tabs edit the same note: the later save meets the conflict, keeps its changes by keyboard, and both tabs follow', async ({ page }) => {
+    const other = await page.context().newPage()
+    try {
+      for (const tab of [page, other]) {
+        await openMap(tab)
+        await openCollection(tab)
+        await tab.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
+      }
+      await card(page, 'Nuuk').locator('textarea').fill('Synthetic note from the first tab')
+      await card(other, 'Nuuk').locator('textarea').fill('Synthetic note from the second tab')
+      const otherBefore = await renderedRevision(other)
+      await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click())
+      // The second tab follows the push: its draft stays, the conflict is shown and holds the save.
+      await waitForRenderedRevision(other, { before: otherBefore })
+      const alert = card(other, 'Nuuk').getByRole('alert')
+      await expect(alert).toContainText('This record was changed elsewhere')
+      await expect(alert).toContainText('Note: ')
+      await expect(alert).toContainText('Synthetic note from the first tab')
+      await expect(card(other, 'Nuuk').locator('textarea')).toHaveValue('Synthetic note from the second tab')
+      await expect(other.getByRole('button', { name: 'Save note for Nuuk', exact: true })).toBeDisabled()
+      // Keyboard: the choice is a native button.
+      await alert.getByRole('button', { name: 'Keep my changes', exact: true }).focus()
+      await other.keyboard.press('Enter')
+      await expect(alert).toHaveCount(0)
+      await saveAndWaitForRevision(other, () => other.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click())
+      // Both tabs show the second tab's note, without a reload.
+      await expect(card(other, 'Nuuk').locator('.collection-card-note')).toHaveText('“Synthetic note from the second tab”')
+      await expect(card(page, 'Nuuk').locator('.collection-card-note')).toHaveText('“Synthetic note from the second tab”')
+      expect((await readFixture('wantToGo')).items.find((item) => item.placeId === fixtureIds.nuuk).note).toBe('Synthetic note from the second tab')
+    } finally { await other.close() }
+  })
+
+  test('two tabs edit the same note: the later tab can use the new content instead', async ({ page }) => {
+    const other = await page.context().newPage()
+    try {
+      for (const tab of [page, other]) {
+        await openMap(tab)
+        await openCollection(tab)
+        await tab.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
+      }
+      await card(other, 'Nuuk').locator('textarea').fill('Synthetic draft that gives way')
+      await card(page, 'Nuuk').locator('textarea').fill('Synthetic note that stays')
+      await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click())
+      const alert = card(other, 'Nuuk').getByRole('alert')
+      await expect(alert).toBeVisible()
+      await alert.getByRole('button', { name: 'Use the new content', exact: true }).click()
+      await expect(alert).toHaveCount(0)
+      await expect(card(other, 'Nuuk').locator('textarea')).toHaveValue('Synthetic note that stays')
+      await expect(other.getByRole('button', { name: 'Save note for Nuuk', exact: true })).toBeEnabled()
+    } finally { await other.close() }
+  })
+
+  test('two tabs edit different records: both save (the later one retried on the new revision) and each tab shows both', async ({ page }) => {
+    const other = await page.context().newPage()
+    try {
+      for (const tab of [page, other]) {
+        await openMap(tab)
+        await openCollection(tab)
+      }
+      await page.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
+      await other.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
+      await card(page, 'Nuuk').locator('textarea').fill('Synthetic Nuuk note from one tab')
+      await card(other, 'Akureyri').locator('textarea').fill('Synthetic Akureyri note from another tab')
+      const sent = []
+      other.on('response', (response) => { if (response.url().endsWith('/editor/wanttogo/update')) sent.push(response.status()) })
+      await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click())
+      await saveAndWaitForRevision(other, () => other.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click())
+      expect(sent.at(-1)).toBe(200)
+      expect(sent.length === 1 || (sent.length === 2 && sent[0] === 409), JSON.stringify(sent)).toBe(true)
+      for (const tab of [page, other]) {
+        await expect(card(tab, 'Nuuk').locator('.collection-card-note')).toHaveText('“Synthetic Nuuk note from one tab”')
+        await expect(card(tab, 'Akureyri').locator('.collection-card-note')).toHaveText('“Synthetic Akureyri note from another tab”')
+      }
+    } finally { await other.close() }
+  })
+
+  test('a command-line media import shows up on the open page without a reload', async ({ page }) => {
+    await openMap(page)
+    await selectReykjavik(page)
+    const photos = page.locator('.atlas-info-panel').getByRole('button', { name: /^Open photo \d+ of Reykjavik$/ })
+    const before = await photos.count()
+    const revision = await renderedRevision(page)
+    const mark = await page.evaluate(() => (window.__starmapNoReload = Math.random()))
+    // A new photo in the Inbox, imported by another process (the media service on its own connection).
+    const inbox = path.join(root(), 'MediaInbox', 'Iceland', 'Reykjavik')
+    await mkdir(path.join(inbox, 'photos'), { recursive: true })
+    await writeFile(path.join(root(), 'MediaInbox', 'Iceland', 'place.json'), JSON.stringify({ placeId: fixtureIds.iceland }))
+    await writeFile(path.join(inbox, 'place.json'), JSON.stringify({ placeId: fixtureIds.reykjavik }))
+    await sharp({ create: { width: 48, height: 40, channels: 3, background: { r: Math.floor(Math.random() * 255), g: 30, b: 200 } } })
+      .jpeg({ quality: 88 }).toFile(path.join(inbox, 'photos', `live-${Date.now()}.jpg`))
+    await importInboxMedia(root())
+    await waitForRenderedRevision(page, { before: revision })
+    await expect(photos).toHaveCount(before + 1)
+    expect(await page.evaluate(() => window.__starmapNoReload)).toBe(mark)
+  })
+})
+
+test.describe('the map pauses during a save (3C-5 D, A′)', () => {
+  const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
+  test.beforeEach(async () => { await createBrowserFixture(root()) })
+  const loop = (page) => page.evaluate(() => window.__travelAtlasDebugRenderLoop?.state())
+  /** Paused now: the loop is off and no frame is drawn. */
+  async function expectPaused(page) {
+    await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000 }).toBe(true)
+    const before = await loop(page)
+    await page.waitForTimeout(250)
+    const after = await loop(page)
+    expect(after.frames, `no frame while paused: ${JSON.stringify([before, after])}`).toBe(before.frames)
+  }
+  /** Resumed (by `endedBy` when given): the loop is on, and the frames go on after the resume. */
+  async function expectRendering(page, endedBy) {
+    await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000 }).toBe(false)
+    const state = await loop(page)
+    expect(state.useDefaultRenderLoop).toBe(true)
+    if (endedBy) expect(state.episodes.at(-1)?.endedBy).toBe(endedBy)
+    await expect.poll(async () => (await loop(page)).frames - state.framesAtResume, { timeout: 5000 }).toBeGreaterThan(5)
+    return state
+  }
+  /** The want-to-go write of the info card, answered after `ms` (or as `fulfil` says). */
+  const holdWrite = (page, { ms = 0, fulfil } = {}) => page.route('**/__travelatlas/editor/wanttogo', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    if (ms) await new Promise((resolve) => setTimeout(resolve, ms))
+    return fulfil ? route.fulfill(fulfil) : route.continue()
+  })
+  const markReykjavik = (page) => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+  /** After a reload: the page restores the selected city, or it is selected again. */
+  async function reykjavikAgain(page) {
+    await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
+    await page.waitForTimeout(1000)
+    if ((await page.locator('.atlas-info-panel h2').textContent()) !== 'Reykjavik') await selectReykjavik(page)
+    await expect(page.getByRole('button', { name: 'Mark as Want to Go', exact: true })).toBeEnabled()
+  }
+
+  test('a save pauses the map from the click until its changes are applied; then the map renders them', async ({ page }) => {
+    await openMap(page)
+    await selectReykjavik(page)
+    await expectRendering(page)
+    await holdWrite(page, { ms: 600 })
+    await markReykjavik(page)
+    await expectPaused(page)
+    await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
+    const state = await expectRendering(page, 'applied')
+    expect(state.episodes.at(-1).pausedMs).toBeGreaterThan(500)
+    expect(state.episodes.at(-1).pausedMs).toBeLessThan(1500)
+  })
+
+  test('a refused save, an unknown outcome, or applying that throws: the map renders again at once', async ({ page }) => {
+    await openMap(page)
+    await selectReykjavik(page)
+    // Refused by the server.
+    await holdWrite(page, { fulfil: { status: 400, contentType: 'application/json', body: JSON.stringify({ ok: false, code: 'E_INVALID_INPUT', error: 'refused' }) } })
+    await markReykjavik(page)
+    await expectRendering(page, 'failed')
+    await page.unroute('**/__travelatlas/editor/wanttogo')
+    // (A failed add asks for a reload before the next one.)
+    await page.reload()
+    await reykjavikAgain(page)
+    // Applying the answer throws: rows that do not fit, and the changes that would replace them cannot be read.
+    const revision = Number(await renderedRevision(page))
+    await page.route('**/__travelatlas/editor/read-model/changes**', (route) => route.fulfill({ status: 500, body: 'unavailable' }))
+    await holdWrite(page, { fulfil: { status: 201, contentType: 'application/json', body: JSON.stringify({
+      // (A replayed answer: the parser takes it without an item; the rows are what fails.)
+      ok: true, duplicate: true, revision: revision + 1, delta: { from: revision, to: revision + 1, upserts: [{ table: 'entries', row: { id: 7 } }], deletes: [] },
+    }) } })
+    await markReykjavik(page)
+    await expectRendering(page, 'released')
+    await page.unroute('**/__travelatlas/editor/wanttogo')
+    await page.unroute('**/__travelatlas/editor/read-model/changes**')
+    await page.reload()
+    await reykjavikAgain(page)
+    // The outcome stays unknown (an unreadable answer every time): resumed at the first failed try.
+    await holdWrite(page, { fulfil: { status: 502, contentType: 'text/html', body: '<p>Bad gateway</p>' } })
+    await markReykjavik(page)
+    await expectRendering(page, 'failed')
+    await expect(page.getByText(/Nothing more can be saved until you reload|may have saved data/).first()).toBeVisible()
+  })
+
+  test('another page, a hidden page, or the watchdog end a pause while the save is still in flight', async ({ page }) => {
+    await openMap(page)
+    await selectReykjavik(page)
+    await holdWrite(page, { ms: 2500 })
+    // Another page.
+    await markReykjavik(page)
+    await expectPaused(page)
+    await page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).click()
+    await expectRendering(page, 'page')
+    await expect(page.locator('.collection-card').filter({ has: page.getByRole('heading', { name: 'Reykjavik', exact: true }) })).toHaveCount(1, { timeout: 10000 })
+    await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
+    // The page hidden (another tab in front): a save of the city photos layout stays possible; here a note in Collection.
+    await page.unroute('**/__travelatlas/editor/wanttogo')
+    await page.route('**/__travelatlas/editor/wanttogo/update', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 2500))
+      await route.continue()
+    })
+    await openCollection(page)
+    await page.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
+    await page.locator('.collection-card textarea').fill('Synthetic note while the page hides')
+    await page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click()
+    await expectPaused(page)
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    })
+    await expectRendering(page, 'hidden')
+    await expect(page.locator('.collection-card textarea')).toHaveCount(0, { timeout: 10000 })
+    // The watchdog: a save whose answer takes longer than the limit.
+    await page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click()
+    await expectPaused(page)
+    const state = await expectRendering(page, 'limit')
+    expect(state.episodes.at(-1).pausedMs).toBeGreaterThanOrEqual(1500)
+    expect(state.episodes.at(-1).pausedMs).toBeLessThan(1700)
+    await expect(page.getByRole('button', { name: 'Restore: Nuuk', exact: true })).toBeVisible({ timeout: 10000 })
+  })
+
+  test('saves one after another, and a viewer replaced during a pause: the map renders again with the last one', async ({ page }) => {
+    await openMap(page)
+    await openCollection(page)
+    let held = 0
+    await page.route('**/__travelatlas/editor/wanttogo/update', async (route) => {
+      // The first answer comes after the second save started (the two are in flight together); a restore takes 1 s.
+      const restoring = (route.request().postData() ?? '').includes('"hidden":false')
+      await new Promise((resolve) => setTimeout(resolve, restoring || held++ === 0 ? 1000 : 100))
+      await route.continue()
+    })
+    // Two saves in flight together: one pause, ended when the last one is applied.
+    const episodes = (await loop(page)).episodes.length
+    // Both clicked in one task (a click through the test driver can wait until the first save is done).
+    await page.evaluate(() => {
+      for (const label of ['Hide: Akureyri', 'Hide: Nuuk']) document.querySelector(`button[aria-label="${label}"]`).click()
+    })
+    await expectPaused(page)
+    await expect(page.getByRole('button', { name: 'Restore: Akureyri', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Restore: Nuuk', exact: true })).toBeVisible()
+    // One pause for both (the later write may meet E_STALE and be sent again: its first try then ends its part).
+    const after = await expectRendering(page)
+    expect(after.episodes.length).toBe(episodes + 1)
+    // The viewer is replaced (destroyed and made again) during a pause: the new one renders once the save is applied.
+    const viewer = after.viewer
+    // The main thread's long tasks from here on (making the new viewer is one; with software rendering, seconds).
+    const clickedAt = await page.evaluate(() => {
+      if (!PerformanceObserver.supportedEntryTypes.includes('longtask')) throw new Error('No long task timing in this browser')
+      window.__starmapLongTasks = []
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) window.__starmapLongTasks.push([entry.startTime, entry.startTime + entry.duration])
+      }).observe({ type: 'longtask' })
+      return performance.now()
+    })
+    await page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click()
+    await expectPaused(page)
+    await page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer())
+    await expect.poll(async () => (await loop(page))?.viewer, { timeout: 10000 }).not.toBe(viewer)
+    await expect(page.getByRole('button', { name: 'Hide: Akureyri', exact: true })).toBeVisible()
+    // Ended by the applying, or by the watchdog; the watchdog's timer can only fire once the main thread is free, so
+    // the pause may run past the limit by the long tasks during it (the window ends a little late: the click itself).
+    const replaced = await expectRendering(page)
+    const { endedBy, pausedMs } = replaced.episodes.at(-1)
+    expect(['applied', 'limit']).toContain(endedBy)
+    const blockedMs = await page.evaluate(([from, to]) => window.__starmapLongTasks
+      .reduce((sum, [start, end]) => sum + Math.max(0, Math.min(end, to) - Math.max(start, from)), 0), [clickedAt, clickedAt + pausedMs + 250])
+    expect(pausedMs, `long tasks during the pause: ${Math.round(blockedMs)} ms`).toBeLessThan(1500 + blockedMs + 500)
   })
 })

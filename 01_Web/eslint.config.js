@@ -18,6 +18,24 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // 3C-5 D: the App's data are hook values (src/data/appStore.ts), so a missing dependency is a stale view of the data.
+      'react-hooks/exhaustive-deps': 'error',
+    },
+  },
+  // 3C-5 D: components read the data only through hooks; the store itself (getSnapshot outside React's subscription)
+  // stays in src/data/.
+  {
+    files: ['src/components/**/*.{ts,tsx}', 'src/App.tsx', 'src/i18n/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        paths: [{ name: '../data/appStore', importNames: ['appStore'], message: '3C-5 D: read the data through the hooks (useAppSnapshot, useTravelAtlas, …), not the store.' },
+          { name: '../data/appStore.ts', importNames: ['appStore'], message: '3C-5 D: read the data through the hooks (useAppSnapshot, useTravelAtlas, …), not the store.' },
+          { name: './data/appStore', importNames: ['appStore'], message: '3C-5 D: read the data through the hooks (useAppSnapshot, useTravelAtlas, …), not the store.' },
+          { name: './data/appStore.ts', importNames: ['appStore'], message: '3C-5 D: read the data through the hooks (useAppSnapshot, useTravelAtlas, …), not the store.' }],
+        patterns: [{ group: ['**/appStoreCore', '**/appStoreCore.ts'], message: '3C-5 D: read the data through the hooks of src/data/appStore.ts.' }],
+      }],
+    },
   },
   {
     files: ['scripts/**/*.mjs', 'tests/browser/**/*.mjs', 'playwright.config.mjs'],
