@@ -36,7 +36,7 @@ import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { commandBatch } from '../src/data/editor/native/batch.ts'
 import { migrateV2 } from '../src/data/compat/v2/migrateV2.ts'
 import { OFFICIAL, OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
-import { emptyFormalState } from '../src/worldgraph/store/formal.ts'
+import { claimKey, emptyFormalState, uniqueClaims } from '../src/worldgraph/store/formal.ts'
 import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts'
 import { memoryReader } from '../src/worldgraph/store/reader.ts'
 import { integrityProblems } from '../src/data/compat/v2/v2Integrity.ts'
@@ -188,8 +188,11 @@ const isMediaRow = (table, row) => table === 'entities' && row.typeId === OFFICI
  * The commands that make the store's rows those of `files` migrated (3C-5 E). `current` is the store's formal state,
  * `identities` its identity ledger (id_map rows), `isTombstoned(table, id)` its tombstones. The migration reuses the
  * ledger's ids, so a record keeps its row; a row whose id a tombstone holds (a record the case deleted) gets a fresh id
- * and every reference to it follows (a place cannot: its id is its V2 id). Rows that differ (their revision and times
- * aside) are updated, missing ones created, others removed; definitions and media rows stay as they are.
+ * and every reference to it follows (a place cannot: its id is its V2 id). A row that is not in the store under its id
+ * but whose unique key (an entry's source on its entity and layer, a view row's scope and target or key) a row of the
+ * store holds takes that row's id: the row an earlier reset gave a fresh id stays (Core refuses two rows with one key).
+ * Rows that differ (their revision and times aside) are updated, missing ones created, others removed; definitions and
+ * media rows stay as they are.
  */
 export function resetCommandsOf(current, identities, files, { isTombstoned, now = new Date().toISOString(), allocateId = () => uuidv7() } = {}) {
   const manifest = { format: 'starmap.v2-store-identities', version: 1, identities }
@@ -197,21 +200,26 @@ export function resetCommandsOf(current, identities, files, { isTombstoned, now 
   if (!migrated.ok) throw new Error(`The browser fixture's files do not migrate: ${JSON.stringify(migrated.report.problems.slice(0, 3))}`)
   const empty = emptyFormalState()
   let target = applyChangeSet(empty, planCommands(memoryReader(empty), migrated.commands, { baseRevision: 0, now, policy: OFFICIAL_POLICY }))
-  // Ids a tombstone holds: fresh ones, and every reference follows (exact string values).
+  // Ids the store does not hold: the id of the store's row with the same unique key, else a fresh one where a tombstone
+  // holds it; every reference follows (exact string values). Tables in reference order, so a key sees the ids before it.
   const remap = new Map()
+  const swapIds = (value) => (typeof value === 'string' ? remap.get(value) ?? value : Array.isArray(value) ? value.map(swapIds)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, swapIds(child)])) : value)
   for (const table of RESET_TABLES) {
     const live = new Set(current[table].map((row) => row.id))
+    const targetIds = new Set(target[table].map((row) => row.id))
+    const byKey = new Map()
+    for (const row of current[table]) for (const claim of uniqueClaims(table, row)) byKey.set(claimKey(claim), row.id)
     for (const row of target[table]) {
-      if (live.has(row.id) || !isTombstoned(table, row.id)) continue
+      if (live.has(row.id)) continue
+      const held = uniqueClaims(table, swapIds(row)).map((claim) => byKey.get(claimKey(claim))).find((id) => id !== undefined && !targetIds.has(id))
+      if (held !== undefined) { remap.set(row.id, held); continue }
+      if (!isTombstoned(table, row.id)) continue
       if (table === 'entities' && row.typeId === OFFICIAL.place) throw new Error(`The browser fixture cannot bring back the place ${row.id}: a case deleted it (E_RECREATE_ID)`)
       remap.set(row.id, table === 'viewItems' || table === 'viewSettings' ? `${row.scope}#${allocateId()}` : allocateId())
     }
   }
-  if (remap.size) {
-    const swapIds = (value) => (typeof value === 'string' ? remap.get(value) ?? value : Array.isArray(value) ? value.map(swapIds)
-      : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, swapIds(child)])) : value)
-    target = Object.fromEntries(Object.entries(target).map(([table, rows]) => [table, Array.isArray(rows) ? rows.map(swapIds) : rows]))
-  }
+  if (remap.size) target = Object.fromEntries(Object.entries(target).map(([table, rows]) => [table, Array.isArray(rows) ? rows.map(swapIds) : rows]))
   const batch = commandBatch()
   const timesOf = (row) => Object.fromEntries(['createdAt', 'updatedAt'].filter((key) => Object.hasOwn(row, key)).map((key) => [key, row[key]]))
   for (const table of RESET_TABLES) {

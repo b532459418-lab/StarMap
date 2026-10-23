@@ -85,7 +85,11 @@ test('3C-5 E: a reset brings back what a case deleted, under fresh ids where a t
   } finally { await session.close() }
   assert.equal((await readFixtureFiles(root)).wantToGo.items.some((item) => item.id === wish.id), false)
   await createBrowserFixture(root)
-  assert.deepEqual({ ...(await fixtureHashes(root)), revision: 1 }, pristine)
+  const reset = await fixtureHashes(root)
+  assert.deepEqual({ ...reset, revision: 1 }, pristine)
+  // The next reset keeps the rows the first one gave fresh ids (their keys are held): nothing to write.
+  await createBrowserFixture(root)
+  assert.deepEqual(await fixtureHashes(root), reset)
 })
 
 test('media imported through the media service stay through a reset; their hidden list and covers are reset (review §7-1)', async (t) => {
