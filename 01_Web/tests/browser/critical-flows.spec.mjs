@@ -641,10 +641,10 @@ test.describe('incremental refresh (3C-5 D)', () => {
   test('two tabs edit different records: both save (the later one retried on the new revision) and each tab shows both', async ({ page }) => {
     const other = await page.context().newPage()
     try {
-      for (const tab of [page, other]) {
+      await Promise.all([page, other].map(async (tab) => {
         await openMap(tab)
         await openCollection(tab)
-      }
+      }))
       await page.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
       await other.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
       await card(page, 'Nuuk').locator('textarea').fill('Synthetic Nuuk note from one tab')

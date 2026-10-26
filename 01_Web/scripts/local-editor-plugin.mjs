@@ -561,6 +561,9 @@ export function travelAtlasLocalEditor(options = {}) {
     return session
   }))
   let externalCheckTimer
+  let externalCheckPending
+  let stopping = false
+  const externalChecks = new Set()
   const releaseStore = async () => { if (storeSessionLoading) await (await storeSessionLoading).close() }
   const dataState = () => privateDataState(storePaths)
   const storeMode = () => options.forceSample !== true && dataState().state === 'store'
@@ -629,7 +632,7 @@ export function travelAtlasLocalEditor(options = {}) {
       // 模块时会再试一次并显示错误）。
       if (dataState().state === 'empty') void initializeEmptyLibrary()
       else if (storeMode()) {
-        void storeSession().then((session) => session.open()).catch((error) => console.error(error?.message ?? error))
+        void storeSession().then((session) => stopping ? undefined : session.open()).catch((error) => console.error(error?.message ?? error))
       }
       let editorMutationDepth = 0
       let ignoreWatcherUntil = 0
@@ -662,13 +665,14 @@ export function travelAtlasLocalEditor(options = {}) {
         invalidatePrivateDataModuleOnce()
         server.ws.send({ type: 'custom', event: REVISION_EVENT, data: revision })
       }
-      let externalCheckPending
       const checkExternal = () => {
-        if (!storeMode() || !storeSessionLoading) return
-        void storeSession().then((session) => session.checkExternal()).catch(() => {})
+        if (stopping || !storeMode() || !storeSessionLoading) return
+        const check = storeSession().then((session) => stopping ? undefined : session.checkExternal()).catch(() => {})
+          .finally(() => externalChecks.delete(check))
+        externalChecks.add(check)
       }
       const onStoreFileEvent = (event, changedPath) => {
-        if (!isStoreFileChange(event, changedPath, privatePaths)) return
+        if (stopping || !isStoreFileChange(event, changedPath, privatePaths)) return
         clearTimeout(externalCheckPending)
         externalCheckPending = setTimeout(checkExternal, 100)
         externalCheckPending.unref?.()
@@ -846,8 +850,11 @@ export function travelAtlasLocalEditor(options = {}) {
     },
     // 3C-3：开发服务器关闭时正常关闭新库（写入「正常关闭」标记）。构建时没有打开过，什么都不做。
     async buildEnd() {
+      stopping = true
+      if (externalCheckPending) { clearTimeout(externalCheckPending); externalCheckPending = undefined }
       if (externalCheckTimer) { clearInterval(externalCheckTimer); externalCheckTimer = undefined }
       await initialized()
+      await Promise.allSettled([...externalChecks])
       await releaseStore()
     },
     async closeBundle() {

@@ -840,3 +840,55 @@ test('Local editor middleware preserves authorization, error codes and private f
     await rm(resolvedBase, { recursive: true, force: true, maxRetries: 3 })
   }
 })
+
+
+test('closing the plugin cancels a queued store check and refuses late watcher work', async (t) => {
+  const { tempPrivateRoot } = await import('./store-mode.fixture.mjs')
+  const { root, paths, closeAfter } = await tempPrivateRoot(t, 'starmap-editor-shutdown-')
+  const environment = process.env
+  const nativeSetTimeout = globalThis.setTimeout
+  const nativeClearTimeout = globalThis.clearTimeout
+  let plugin, queued, timer, canceled = false, scheduled = 0
+  closeAfter({ close: () => plugin?.buildEnd() })
+  process.env = { STARMAP_PRIVATE_ROOT: root }
+  try {
+    const { createEmptyLibrary } = await import('./store-init.mjs')
+    const { openStore } = await import('./store-host.mjs')
+    const { OFFICIAL_POLICY } = await import('../src/data/store/officialDefinitions.ts')
+    const { travelAtlasLocalEditor } = await import('./local-editor-plugin.mjs')
+    await createEmptyLibrary(paths)
+    plugin = travelAtlasLocalEditor({ profile: 'personal', privateRoot: root })
+    const privateModule = { id: plugin.resolveId('virtual:starmap-private-data'), transformResult: { code: 'cached' } }
+    const captured = captureMiddleware(plugin, privateModule)
+    await moduleOf(plugin)
+    // Keep the real handle for clearTimeout, but control delivery of the already-queued callback.
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      if (delay !== 100) return nativeSetTimeout(callback, delay, ...args)
+      scheduled++
+      queued = () => callback(...args)
+      timer = nativeSetTimeout(callback, 10000, ...args)
+      timer.unref()
+      return timer
+    }
+    globalThis.clearTimeout = (value) => {
+      if (timer && value === timer) canceled = true
+      return nativeClearTimeout(value)
+    }
+    captured.watcherCallbacks.get('change')(storeFileOf(paths))
+    assert.equal(scheduled, 1)
+    await plugin.buildEnd()
+    assert.equal(canceled, true, 'shutdown cancels its pending debounce')
+    queued() // Even a callback whose delivery won the cancellation race must not reopen the store.
+    captured.watcherCallbacks.get('change')(storeFileOf(paths))
+    await new Promise(setImmediate)
+    assert.equal(scheduled, 1, 'a stopped plugin schedules no new checks')
+    const handle = openStore(storeFileOf(paths), { privatePaths: paths, policy: OFFICIAL_POLICY, writerSession: false })
+    try { assert.equal(handle.meta().revision, 1) } finally { await handle.close() }
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout
+    globalThis.clearTimeout = nativeClearTimeout
+    if (timer) nativeClearTimeout(timer)
+    await plugin?.buildEnd()
+    process.env = environment
+  }
+})
