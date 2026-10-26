@@ -497,6 +497,25 @@ type TravelAtlasDebugRenderLoop = {
     frames: number
     framesAtResume: number
     useDefaultRenderLoop: boolean | undefined
+    diagnostics: {
+      format: 'starmap.render-recovery-diagnostics'
+      observedAt: number
+      visibility: DocumentVisibilityState
+      canvas: { width: number; height: number; clientWidth: number; clientHeight: number }
+      resolutionScale: number
+      targetFrameRate: number | undefined
+      requestRenderMode: boolean
+      maximumRenderTimeChange: string
+      sceneUpdates: number
+      updateTimings: { at: number; intervalMs: number | undefined }[]
+      droppedUpdateTimings: number
+      frameTimings: { at: number; intervalMs: number | undefined; renderCpuMs: number | undefined }[]
+      longTasks: { at: number; durationMs: number }[]
+      longTaskSupported: boolean
+      renderErrorCount: number
+      droppedFrameTimings: number
+      droppedLongTasks: number
+    } | undefined
   }
   /** Whether a shown entity of `entityId` is on the map: its place marker, and its want-to-go badge. */
   entityShowing: (entityId: string) => { place: boolean; badge: boolean }
@@ -1146,8 +1165,53 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     if (!import.meta.env.DEV) return unbind
     let frames = 0
     let framesAtResume = 0
-    const countFrame = () => { frames++ }
+    // Read-only, development-only evidence. These observers never request a render or change its quality/timers.
+    const frameTimings: { at: number; intervalMs: number | undefined; renderCpuMs: number | undefined }[] = []
+    const updateTimings: { at: number; intervalMs: number | undefined }[] = []
+    const longTasks: { at: number; durationMs: number }[] = []
+    let sceneUpdates = 0
+    let droppedUpdateTimings = 0
+    let previousUpdateAt: number | undefined
+    let droppedFrameTimings = 0
+    let droppedLongTasks = 0
+    let renderErrorCount = 0
+    let frameStartedAt: number | undefined
+    let previousFrameAt: number | undefined
+    let longTaskSupported = false
+    let longTaskObserver: PerformanceObserver | undefined
+    const countUpdate = () => {
+      const at = performance.now()
+      sceneUpdates++
+      updateTimings.push({ at, intervalMs: previousUpdateAt === undefined ? undefined : at - previousUpdateAt })
+      previousUpdateAt = at
+      if (updateTimings.length > 16) { updateTimings.shift(); droppedUpdateTimings++ }
+    }
+    const beginFrame = () => { frameStartedAt = performance.now() }
+    const countFrame = () => {
+      const at = performance.now()
+      frames++
+      frameTimings.push({ at, intervalMs: previousFrameAt === undefined ? undefined : at - previousFrameAt,
+        renderCpuMs: frameStartedAt === undefined ? undefined : at - frameStartedAt })
+      previousFrameAt = at
+      if (frameTimings.length > 16) { frameTimings.shift(); droppedFrameTimings++ }
+    }
+    const renderError = () => { renderErrorCount++ }
+    try {
+      if (typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes.includes('longtask')) {
+        longTaskObserver = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            longTasks.push({ at: entry.startTime, durationMs: entry.duration })
+            if (longTasks.length > 32) { longTasks.shift(); droppedLongTasks++ }
+          }
+        })
+        longTaskObserver.observe({ type: 'longtask', buffered: true })
+        longTaskSupported = true
+      }
+    } catch { longTaskObserver?.disconnect(); longTaskObserver = undefined }
+    viewer.scene.preUpdate.addEventListener(countUpdate)
+    viewer.scene.preRender.addEventListener(beginFrame)
     viewer.scene.postRender.addEventListener(countFrame)
+    viewer.scene.renderError.addEventListener(renderError)
     const stopListening = subscribeRenderPause((paused) => { if (!paused) framesAtResume = frames })
     const id = viewerReadyVersion
     const shown = (key: string, entityId: string) => viewer.entities.values.some((entity) => entity.isShowing
@@ -1156,6 +1220,16 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
       state: () => ({
         ...renderPauseState(), viewer: id, frames, framesAtResume,
         useDefaultRenderLoop: viewer.isDestroyed() ? undefined : viewer.useDefaultRenderLoop,
+        diagnostics: viewer.isDestroyed() ? undefined : {
+          format: 'starmap.render-recovery-diagnostics', observedAt: performance.now(), visibility: document.visibilityState,
+          canvas: { width: viewer.canvas.width, height: viewer.canvas.height,
+            clientWidth: viewer.canvas.clientWidth, clientHeight: viewer.canvas.clientHeight },
+          resolutionScale: viewer.resolutionScale, targetFrameRate: viewer.targetFrameRate,
+          requestRenderMode: viewer.scene.requestRenderMode, maximumRenderTimeChange: String(viewer.scene.maximumRenderTimeChange),
+          sceneUpdates, updateTimings: updateTimings.map((entry) => ({ ...entry })), droppedUpdateTimings,
+          frameTimings: frameTimings.map((entry) => ({ ...entry })), longTasks: longTasks.map((entry) => ({ ...entry })),
+          longTaskSupported, renderErrorCount, droppedFrameTimings, droppedLongTasks,
+        },
       }),
       entityShowing: (entityId) => ({ place: shown('entityId', entityId), badge: shown('badgeForEntityId', entityId) }),
       replaceViewer: () => setViewerKey((key) => key + 1),
@@ -1163,7 +1237,13 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     window.__travelAtlasDebugRenderLoop = debug
     return () => {
       stopListening()
-      if (!viewer.isDestroyed()) viewer.scene.postRender.removeEventListener(countFrame)
+      longTaskObserver?.disconnect()
+      if (!viewer.isDestroyed()) {
+        viewer.scene.preUpdate.removeEventListener(countUpdate)
+        viewer.scene.preRender.removeEventListener(beginFrame)
+        viewer.scene.postRender.removeEventListener(countFrame)
+        viewer.scene.renderError.removeEventListener(renderError)
+      }
       if (window.__travelAtlasDebugRenderLoop === debug) delete window.__travelAtlasDebugRenderLoop
       unbind()
     }

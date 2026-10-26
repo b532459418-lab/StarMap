@@ -621,11 +621,11 @@ test.describe('incremental refresh (3C-5 D)', () => {
   test('two tabs edit the same note: the later tab can use the new content instead', async ({ page }) => {
     const other = await page.context().newPage()
     try {
-      for (const tab of [page, other]) {
+      await Promise.all([page, other].map(async (tab) => {
         await openMap(tab)
         await openCollection(tab)
         await tab.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
-      }
+      }))
       await card(other, 'Nuuk').locator('textarea').fill('Synthetic draft that gives way')
       await card(page, 'Nuuk').locator('textarea').fill('Synthetic note that stays')
       await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click())
@@ -701,16 +701,91 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     const state = await loop(page)
     expect(state.useDefaultRenderLoop).toBe(true)
     if (endedBy) expect(state.episodes.at(-1)?.endedBy).toBe(endedBy)
-    await expect.poll(async () => (await loop(page)).frames - state.framesAtResume, { timeout: 5000, intervals: [100, 250] }).toBeGreaterThan(5)
+    let lastObserved = state
+    try {
+      await expect.poll(async () => {
+        lastObserved = await loop(page)
+        return lastObserved.frames - state.framesAtResume
+      }, { timeout: 5000, intervals: [100, 250] }).toBeGreaterThan(5)
+    } catch (error) {
+      // No extra page RPC after the deadline; preserve the original failure even if attachment collection fails.
+      await (async () => {
+        const evidence = test.info().outputPath('render-recovery-diagnostics.json')
+        await writeFile(evidence, JSON.stringify({ budgetMs: 5000, minimumExclusiveFrames: 5, expectedCause: endedBy ?? null,
+          baseline: state, lastObserved, collectedAfterFailure: true }) + '\n')
+        await test.info().attach('Render recovery failure diagnostics', { path: evidence, contentType: 'application/json' })
+      })().catch(() => {})
+      throw error
+    }
     return state
   }
+  // Diagnostic-only proposal: browser CPU sampling is armed before the real save action, never inside its frame gate.
+  const renderCpuProfiles = new WeakMap()
+  const diagnosticDeadline = (request) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Render profile diagnostic deadline')), 1500)
+    request.then((value) => { clearTimeout(timer); resolve(value) }, (error) => { clearTimeout(timer); reject(error) })
+  })
+  async function finishRenderCpuProfile(page, info) {
+    const entry = renderCpuProfiles.get(page)
+    if (!entry) return
+    renderCpuProfiles.delete(page)
+    try {
+      if (entry.setupFailure) throw Object.assign(new Error('Render profiler unavailable'), { name: entry.setupFailure })
+      const { profile } = await diagnosticDeadline(entry.session.send('Profiler.stop'))
+      if (!info || info.status === info.expectedStatus) return
+      for (const node of profile.nodes) {
+        try {
+          const url = new URL(node.callFrame.url)
+          node.callFrame.url = url.origin === 'http://127.0.0.1:5173' ? url.pathname : '[other-origin]'
+        } catch { node.callFrame.url = '' }
+      }
+      const bytes = JSON.stringify(profile)
+      if (Buffer.byteLength(bytes) > 16000000) throw new Error('Render profile exceeds16MB')
+      const destination = info.outputPath('render-recovery.cpuprofile')
+      await writeFile(destination, bytes)
+      const context = info.outputPath('render-recovery-profile-context.json')
+      await writeFile(context, JSON.stringify({ format: 'starmap.render-cpu-profile-context', samplingIntervalUs: 2000,
+        armedBefore: entry.armedBefore, armedAfter: entry.armedAfter, nativeStartUs: profile.startTime, nativeEndUs: profile.endTime,
+        alignmentHasProtocolResponseUncertainty: true, diagnosticOnly: true }))
+      await info.attach('Render recovery CPU profile', { path: destination, contentType: 'application/json' })
+      await info.attach('Render recovery CPU profile context', { path: context, contentType: 'application/json' })
+    } catch (error) {
+      if (info && info.status !== info.expectedStatus) {
+        const destination = info.outputPath('render-recovery-profile-unavailable.json')
+        await writeFile(destination, JSON.stringify({ format: 'starmap.render-profile-unavailable',
+          errorName: error.name, diagnosticDeadlineMs: 1500, deadlineDoesNotCancelRpc: true })).catch(() => {})
+      }
+    } finally {
+      // The deadline discards a late response; it does not cancel the RPC. The existing fixture still owns browser closure.
+      if (entry.session) await diagnosticDeadline(entry.session.detach()).catch(() => {})
+    }
+  }
+  test.afterEach(async ({ page }, info) => { await finishRenderCpuProfile(page, info) })
+
   /** The want-to-go write of the info card, answered after `ms` (or as `fulfil` says). */
   const holdWrite = (page, { ms = 0, fulfil } = {}) => page.route('**/__travelatlas/editor/wanttogo', async (route) => {
     if (route.request().method() !== 'POST') return route.continue()
     if (ms) await new Promise((resolve) => setTimeout(resolve, ms))
     return fulfil ? route.fulfill(fulfil) : route.continue()
   })
-  const markReykjavik = (page) => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+  const markReykjavik = async (page) => {
+    await finishRenderCpuProfile(page)
+    let session
+    try {
+      session = await page.context().newCDPSession(page)
+      const entry = { session }
+      renderCpuProfiles.set(page, entry)
+      await session.send('Profiler.enable')
+      await session.send('Profiler.setSamplingInterval', { interval: 2000 })
+      entry.armedBefore = { monotonicMs: performance.now(), wallMs: Date.now() }
+      await session.send('Profiler.start')
+      entry.armedAfter = { monotonicMs: performance.now(), wallMs: Date.now() }
+    } catch (error) {
+      renderCpuProfiles.set(page, { setupFailure: error.name })
+      if (session) await diagnosticDeadline(session.detach()).catch(() => {})
+    }
+    await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+  }
   /** After a reload: the page restores the selected city, or it is selected again. */
   async function reykjavikAgain(page) {
     await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
