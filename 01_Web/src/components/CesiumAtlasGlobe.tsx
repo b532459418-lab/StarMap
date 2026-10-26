@@ -504,6 +504,11 @@ type TravelAtlasDebugRenderLoop = {
       canvas: { width: number; height: number; clientWidth: number; clientHeight: number }
       resolutionScale: number
       targetFrameRate: number | undefined
+      requestRenderMode: boolean
+      maximumRenderTimeChange: string
+      sceneUpdates: number
+      updateTimings: { at: number; intervalMs: number | undefined }[]
+      droppedUpdateTimings: number
       frameTimings: { at: number; intervalMs: number | undefined; renderCpuMs: number | undefined }[]
       longTasks: { at: number; durationMs: number }[]
       longTaskSupported: boolean
@@ -1162,7 +1167,11 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     let framesAtResume = 0
     // Read-only, development-only evidence. These observers never request a render or change its quality/timers.
     const frameTimings: { at: number; intervalMs: number | undefined; renderCpuMs: number | undefined }[] = []
+    const updateTimings: { at: number; intervalMs: number | undefined }[] = []
     const longTasks: { at: number; durationMs: number }[] = []
+    let sceneUpdates = 0
+    let droppedUpdateTimings = 0
+    let previousUpdateAt: number | undefined
     let droppedFrameTimings = 0
     let droppedLongTasks = 0
     let renderErrorCount = 0
@@ -1170,6 +1179,13 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     let previousFrameAt: number | undefined
     let longTaskSupported = false
     let longTaskObserver: PerformanceObserver | undefined
+    const countUpdate = () => {
+      const at = performance.now()
+      sceneUpdates++
+      updateTimings.push({ at, intervalMs: previousUpdateAt === undefined ? undefined : at - previousUpdateAt })
+      previousUpdateAt = at
+      if (updateTimings.length > 16) { updateTimings.shift(); droppedUpdateTimings++ }
+    }
     const beginFrame = () => { frameStartedAt = performance.now() }
     const countFrame = () => {
       const at = performance.now()
@@ -1192,6 +1208,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
         longTaskSupported = true
       }
     } catch { longTaskObserver?.disconnect(); longTaskObserver = undefined }
+    viewer.scene.preUpdate.addEventListener(countUpdate)
     viewer.scene.preRender.addEventListener(beginFrame)
     viewer.scene.postRender.addEventListener(countFrame)
     viewer.scene.renderError.addEventListener(renderError)
@@ -1208,6 +1225,8 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
           canvas: { width: viewer.canvas.width, height: viewer.canvas.height,
             clientWidth: viewer.canvas.clientWidth, clientHeight: viewer.canvas.clientHeight },
           resolutionScale: viewer.resolutionScale, targetFrameRate: viewer.targetFrameRate,
+          requestRenderMode: viewer.scene.requestRenderMode, maximumRenderTimeChange: String(viewer.scene.maximumRenderTimeChange),
+          sceneUpdates, updateTimings: updateTimings.map((entry) => ({ ...entry })), droppedUpdateTimings,
           frameTimings: frameTimings.map((entry) => ({ ...entry })), longTasks: longTasks.map((entry) => ({ ...entry })),
           longTaskSupported, renderErrorCount, droppedFrameTimings, droppedLongTasks,
         },
@@ -1220,6 +1239,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
       stopListening()
       longTaskObserver?.disconnect()
       if (!viewer.isDestroyed()) {
+        viewer.scene.preUpdate.removeEventListener(countUpdate)
         viewer.scene.preRender.removeEventListener(beginFrame)
         viewer.scene.postRender.removeEventListener(countFrame)
         viewer.scene.renderError.removeEventListener(renderError)
