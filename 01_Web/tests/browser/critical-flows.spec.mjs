@@ -689,11 +689,24 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
   const loop = (page) => page.evaluate(() => window.__travelAtlasDebugRenderLoop?.state())
   /** Paused now: the loop is off and no frame is drawn. */
   async function expectPaused(page) {
-    await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000 }).toBe(true)
+    await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000, intervals: [25, 50] }).toBe(true)
     const before = await loop(page)
     await page.waitForTimeout(250)
     const after = await loop(page)
     expect(after.frames, `no frame while paused: ${JSON.stringify([before, after])}`).toBe(before.frames)
+  }
+  /** Observe the actual pending-write phase, not the input driver's later post-action settling. */
+  async function observePauseDuring(page, action, whilePaused) {
+    let actionFailed = false
+    const performed = Promise.resolve().then(action).catch((error) => { actionFailed = true; throw error })
+    const observed = (async () => {
+      await expectPaused(page)
+      if (!actionFailed && whilePaused) await whilePaused()
+    })()
+    // Settle both before cleanup; a failed input keeps its original error and cannot dispatch a later phase action.
+    const [actionResult, observationResult] = await Promise.allSettled([performed, observed])
+    if (actionResult.status === 'rejected') throw actionResult.reason
+    if (observationResult.status === 'rejected') throw observationResult.reason
   }
   /** Resumed (by `endedBy` when given): the loop is on, and the frames go on after the resume. */
   async function expectRendering(page, endedBy) {
@@ -768,7 +781,7 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     if (ms) await new Promise((resolve) => setTimeout(resolve, ms))
     return fulfil ? route.fulfill(fulfil) : route.continue()
   })
-  const markReykjavik = async (page) => {
+  const markReykjavik = async (page, { observePause = false, whilePaused } = {}) => {
     await finishRenderCpuProfile(page)
     let session
     try {
@@ -784,7 +797,9 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       renderCpuProfiles.set(page, { setupFailure: error.name })
       if (session) await diagnosticDeadline(session.detach()).catch(() => {})
     }
-    await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+    const action = () => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+    if (observePause) await observePauseDuring(page, action, whilePaused)
+    else await action()
   }
   /** After a reload: the page restores the selected city, or it is selected again. */
   async function reykjavikAgain(page) {
@@ -799,8 +814,7 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await selectReykjavik(page)
     await expectRendering(page)
     await holdWrite(page, { ms: 600 })
-    await markReykjavik(page)
-    await expectPaused(page)
+    await markReykjavik(page, { observePause: true })
     await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
     const state = await expectRendering(page, 'applied')
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThan(500)
@@ -843,9 +857,8 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await selectReykjavik(page)
     await holdWrite(page, { ms: 2500 })
     // Another page.
-    await markReykjavik(page)
-    await expectPaused(page)
-    await page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).press('Enter')
+    await markReykjavik(page, { observePause: true,
+      whilePaused: () => page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).press('Enter') })
     await expectRendering(page, 'page')
     await expect(page.locator('.collection-card').filter({ has: page.getByRole('heading', { name: 'Reykjavik', exact: true }) })).toHaveCount(1, { timeout: 10000 })
     await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
@@ -859,18 +872,17 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await openCollection(page)
     await page.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
     await page.locator('.collection-card textarea').fill('Synthetic note while the page hides')
-    await page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click()
-    await expectPaused(page)
-    await page.evaluate(() => {
+    await observePauseDuring(page,
+      () => page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click(),
+      () => page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
       document.dispatchEvent(new Event('visibilitychange'))
       Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
-    })
+      }))
     await expectRendering(page, 'hidden')
     await expect(page.locator('.collection-card textarea')).toHaveCount(0, { timeout: 10000 })
     // The watchdog: a save whose answer takes longer than the limit.
-    await page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click()
-    await expectPaused(page)
+    await observePauseDuring(page, () => page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click())
     const state = await expectRendering(page, 'limit')
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThanOrEqual(1500)
     expect(state.episodes.at(-1).pausedMs).toBeLessThan(1700)
@@ -910,9 +922,9 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       }).observe({ type: 'longtask' })
       return performance.now()
     })
-    await page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click()
-    await expectPaused(page)
-    await page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer())
+    await observePauseDuring(page,
+      () => page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click(),
+      () => page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer()))
     await expect.poll(async () => (await loop(page))?.viewer, { timeout: 10000 }).not.toBe(viewer)
     await expect(page.getByRole('button', { name: 'Hide: Akureyri', exact: true })).toBeVisible()
     // Ended by the applying, or by the watchdog; the watchdog's timer can only fire once the main thread is free, so
