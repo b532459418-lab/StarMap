@@ -701,7 +701,22 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     const state = await loop(page)
     expect(state.useDefaultRenderLoop).toBe(true)
     if (endedBy) expect(state.episodes.at(-1)?.endedBy).toBe(endedBy)
-    await expect.poll(async () => (await loop(page)).frames - state.framesAtResume, { timeout: 5000, intervals: [100, 250] }).toBeGreaterThan(5)
+    let lastObserved = state
+    try {
+      await expect.poll(async () => {
+        lastObserved = await loop(page)
+        return lastObserved.frames - state.framesAtResume
+      }, { timeout: 5000, intervals: [100, 250] }).toBeGreaterThan(5)
+    } catch (error) {
+      // No extra page RPC after the deadline; preserve the original failure even if attachment collection fails.
+      await (async () => {
+        const evidence = test.info().outputPath('render-recovery-diagnostics.json')
+        await writeFile(evidence, JSON.stringify({ budgetMs: 5000, minimumExclusiveFrames: 5, expectedCause: endedBy ?? null,
+          baseline: state, lastObserved, collectedAfterFailure: true }) + '\n')
+        await test.info().attach('Render recovery failure diagnostics', { path: evidence, contentType: 'application/json' })
+      })().catch(() => {})
+      throw error
+    }
     return state
   }
   /** The want-to-go write of the info card, answered after `ms` (or as `fulfil` says). */
