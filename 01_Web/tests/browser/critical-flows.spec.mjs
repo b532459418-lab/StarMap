@@ -701,7 +701,7 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     const state = await loop(page)
     expect(state.useDefaultRenderLoop).toBe(true)
     if (endedBy) expect(state.episodes.at(-1)?.endedBy).toBe(endedBy)
-    await expect.poll(async () => (await loop(page)).frames - state.framesAtResume, { timeout: 5000 }).toBeGreaterThan(5)
+    await expect.poll(async () => (await loop(page)).frames - state.framesAtResume, { timeout: 5000, intervals: [100, 250] }).toBeGreaterThan(5)
     return state
   }
   /** The want-to-go write of the info card, answered after `ms` (or as `fulfil` says). */
