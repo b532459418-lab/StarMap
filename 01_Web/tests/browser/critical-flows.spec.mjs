@@ -589,11 +589,11 @@ test.describe('incremental refresh (3C-5 D)', () => {
   test('two tabs edit the same note: the later save meets the conflict, keeps its changes by keyboard, and both tabs follow', async ({ page }) => {
     const other = await page.context().newPage()
     try {
-      for (const tab of [page, other]) {
+      await Promise.all([page, other].map(async (tab) => {
         await openMap(tab)
         await openCollection(tab)
         await tab.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
-      }
+      }))
       await card(page, 'Nuuk').locator('textarea').fill('Synthetic note from the first tab')
       await card(other, 'Nuuk').locator('textarea').fill('Synthetic note from the second tab')
       const otherBefore = await renderedRevision(other)
@@ -770,7 +770,7 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     // Another page.
     await markReykjavik(page)
     await expectPaused(page)
-    await page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).click()
+    await page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).press('Enter')
     await expectRendering(page, 'page')
     await expect(page.locator('.collection-card').filter({ has: page.getByRole('heading', { name: 'Reykjavik', exact: true }) })).toHaveCount(1, { timeout: 10000 })
     await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
