@@ -13,7 +13,7 @@ import { V2_DATA_FILE_NAMES, getPrivatePaths } from './private-profile.mjs'
 import { canonicalPath, isInsideDirectory, isAllowedPrivateOutput, mayBeInsideDirectory } from './private-output.mjs'
 import { sha256File } from './file-hash.mjs'
 import { legacyDataStateOf, isLegacyUnmigrated } from './legacy-data.mjs'
-import { completeForWrite, integrityProblems } from '../src/data/v2write/transaction.ts'
+import { completeForWrite, integrityProblems } from '../src/data/compat/v2/v2Integrity.ts'
 
 const FORMAT = 'starmap-local-backup'
 const INDEX = 'data/v2/media-source-index.local.json'

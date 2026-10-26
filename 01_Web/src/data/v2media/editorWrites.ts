@@ -3,42 +3,30 @@
  *
  * - `POST /upload`：上传目标（城市地点与所属国家、收件箱文件夹的显示名）、其余参数的校验、
  *   收件箱文件夹的选择（同名地点不共用文件夹）与 `place.json` 的写入；
- * - `POST /media/delete`：能删哪些媒体、内容寻址的生成目录在哪、从 editor-state 里清掉这些 id。
+ * - `POST /media/delete`：能删哪些媒体、内容寻址的生成目录在哪。
  *
  * `src/data/v2media/` 是 App 层，【不是】 StarMap Core。3C-4d 起只有新库写入：上传的 IO 在 scripts/v2-media-store.mjs，
  * 导入与删除在新库的媒体服务（scripts/media-service.mjs）；V2 的导入之后恢复（按 V2 源文件索引）与按索引找源文件已删除。
- * `removeMediaFromEditorState` 只留作新库删除语义的对照（src/data/store/mediaRecords.test.ts），3C-5 再定。
- * 写 editor-state 走 PR3b-2 的事务（`runV2Transaction`：入口与出口的完整性检查、按顺序给出写入）。
- * 错误抛 `V2WriteError`，文案沿用旧模式（码表在 ../v2write/errors.ts）。
+ * 3C-5 E: `removeMediaFromEditorState` (the V2 write of a deletion, kept as the reference of the new library's) is
+ * gone with the V2 write layer; src/data/store/mediaRecords.test.ts states what a deletion does to the editor lists.
+ *
+ * 3C-5 E: the upload target and the deletion rule read the official reader (../store/officialReader.ts: a place by id,
+ * the editor lists, a media item by V2 id), never a V2 shape of the library: the store's rows are checked by Core, so
+ * there is no whole-file integrity check of the input any more.
+ * 错误抛 `V2WriteError`，文案沿用旧模式（码表在 ../editor/errors.ts）。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import type { CanonicalPlace, PlaceId } from '../canonical/types.ts'
-import type { V2Files } from '../canonical/v2Schema.ts'
-import { V2WriteError, fail } from '../v2write/errors.ts'
-import {
-  completeForWrite,
-  integrityProblems,
-  runV2Transaction,
-  type V2FilesOrEmpty,
-  type V2WriteContext,
-  type V2WriteOutcome,
-} from '../v2write/transaction.ts'
+import type { CanonicalMediaItem, CanonicalPlace, PlaceId } from '../canonical/types.ts'
+import type { OfficialReader } from '../store/officialReader.ts'
+import { V2WriteError, fail } from '../editor/errors.ts'
 import { generatedDirectoryOfSrc, placeDisplayName, placeIdOfConfig } from './importPlan.ts'
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const isStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === 'string')
-
-/** 现有的五个 V2 文件（缺的补空）；不合法时抛 `E_INTEGRITY`（不在坏数据上继续）。 */
-const checkedFiles = (files: V2FilesOrEmpty | undefined, now: Date): V2Files => {
-  const completed = completeForWrite(files, now)
-  const problems = integrityProblems(completed)
-  if (problems.length > 0) throw new V2WriteError('E_INTEGRITY', { stage: 'input', problems: problems.slice(0, 20), total: problems.length })
-  return completed as unknown as V2Files
-}
 
 // ---------------------------------------------------------------------------
 // 上传
@@ -70,14 +58,15 @@ export interface UploadTarget {
 
 /**
  * 上传的目标（§2.4）：`cityId` 是城市地点 id，`countryId` 必须等于它的 `partOf`；否则 `E_MEDIA_LOCATION_NOT_FOUND`
- * （沿用旧文案）。收件箱路径为 `MediaInbox/<国家显示名>/<城市显示名>/`。
+ * （沿用旧文案）。收件箱路径为 `MediaInbox/<国家显示名>/<城市显示名>/`。3C-5 E: the places come from the official reader.
  */
-export const uploadTargetOf = (files: V2FilesOrEmpty | undefined, input: { countryId: unknown; cityId: unknown }, now: Date): UploadTarget => {
-  const { places } = checkedFiles(files, now).places
+export const uploadTargetOf = (reader: Pick<OfficialReader, 'place'>, input: { countryId: unknown; cityId: unknown }): UploadTarget => {
   const countryId = typeof input.countryId === 'string' ? input.countryId.trim() : ''
   const cityId = typeof input.cityId === 'string' ? input.cityId.trim() : ''
-  const city = places.find((place) => place.id === cityId && place.subtype === 'city')
-  const country = city ? places.find((place) => place.id === city.partOf && place.subtype === 'country') : undefined
+  const found = cityId ? reader.place(cityId) : undefined
+  const city = found?.subtype === 'city' ? found : undefined
+  const parent = city?.partOf !== undefined ? reader.place(city.partOf) : undefined
+  const country = parent?.subtype === 'country' ? parent : undefined
   if (!city || !country || country.id !== countryId) return fail('E_MEDIA_LOCATION_NOT_FOUND', { countryId, cityId })
   return { country, city, countryFolderName: placeDisplayName(country), cityFolderName: placeDisplayName(city) }
 }
@@ -203,29 +192,29 @@ export interface DeletableMedia {
   /** 去重后的媒体 id，保持请求里的先后。 */
   ids: string[]
   /** 对应的目录条目（与 `ids` 一一对应）。 */
-  items: V2Files['media']['items']
+  items: CanonicalMediaItem[]
 }
 
 /**
  * 能删哪些（§2.4，规则与文案同旧模式）：`cityId` 为城市地点 id；每个 id 都必须是这个城市里已隐藏的照片
- * （`hiddenMediaIds`）或已隐藏的全景 / 航拍照片（`hiddenDroneMediaIds`）。
+ * （`hiddenMediaIds`）或已隐藏的全景 / 航拍照片（`hiddenDroneMediaIds`）。3C-5 E: the editor lists and the media items
+ * come from the official reader.
  */
-export const deletableMediaOf = (files: V2FilesOrEmpty | undefined, input: unknown, now: Date): DeletableMedia => {
+export const deletableMediaOf = (reader: Pick<OfficialReader, 'editorLists' | 'mediaItem'>, input: unknown): DeletableMedia => {
   const body = isObject(input) ? input : {}
   const cityId = typeof body.cityId === 'string' ? body.cityId.trim() : ''
   const ids = isStringArray(body.ids) ? [...new Set(body.ids)] : []
   if (!cityId || ids.length === 0) fail('E_MEDIA_DELETE_EMPTY')
 
-  const checked = checkedFiles(files, now)
-  const hiddenPhotoIds = new Set(checked.editorState.hiddenMediaIds)
-  const hiddenDroneIds = new Set(checked.editorState.hiddenDroneMediaIds)
-  const itemsById = new Map(checked.media.items.map((item) => [item.id, item]))
+  const lists = reader.editorLists()
+  const hiddenPhotoIds = new Set(lists.hiddenMediaIds)
+  const hiddenDroneIds = new Set(lists.hiddenDroneMediaIds)
   const items = ids.map((id) => {
-    const item = itemsById.get(id)
+    const item = reader.mediaItem(id)
     const isHiddenPhoto = item?.kind === 'photo' && hiddenPhotoIds.has(id)
     const isHiddenDroneMedia = (item?.kind === 'panorama360' || item?.kind === 'aerialPhoto') && hiddenDroneIds.has(id)
     if (!item || item.placeId !== cityId || (!isHiddenPhoto && !isHiddenDroneMedia)) fail('E_MEDIA_DELETE_NOT_HIDDEN', { id })
-    return item as V2Files['media']['items'][number]
+    return item as CanonicalMediaItem
   })
   return { cityId, ids, items }
 }
@@ -242,26 +231,4 @@ export const generatedDirectoriesOf = (items: DeletableMedia['items']): string[]
     if (!directories.includes(directory as string)) directories.push(directory as string)
   }
   return directories
-}
-
-/**
- * 从 editor-state 里清掉这些媒体 id（§2.4）：两个隐藏表、两个排序表的值，以及指向它们的封面。
- * 只写 editor-state，走 PR3b-2 的事务。
- */
-export function removeMediaFromEditorState(
-  files: V2FilesOrEmpty | undefined,
-  ids: readonly string[],
-  ctx: V2WriteContext,
-): V2WriteOutcome<{ deletedIds: string[] }> {
-  const removed = new Set(ids)
-  const keep = (list: readonly string[]) => list.filter((id) => !removed.has(id))
-  return runV2Transaction(files, ctx, (draft) => {
-    const state = draft.files.editorState
-    state.hiddenMediaIds = keep(state.hiddenMediaIds)
-    state.hiddenDroneMediaIds = keep(state.hiddenDroneMediaIds)
-    state.mediaOrderByCity = Object.fromEntries(Object.entries(state.mediaOrderByCity).map(([cityId, list]) => [cityId, keep(list)]))
-    state.droneOrderByCity = Object.fromEntries(Object.entries(state.droneOrderByCity).map(([cityId, list]) => [cityId, keep(list)]))
-    state.coverMediaByCity = Object.fromEntries(Object.entries(state.coverMediaByCity).filter(([, id]) => !removed.has(id)))
-    return { result: { deletedIds: [...ids] }, writes: [{ file: 'editorState' }] }
-  })
 }

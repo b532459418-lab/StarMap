@@ -3,7 +3,7 @@
  * 内容寻址、目录条目的生成、封面与去重。
  *
  * `src/data/v2media/` 是 App 层，【不是】 StarMap Core。IO（扫描投递箱、算哈希、读图片尺寸、生成网页文件、写盘）
- * 在 scripts/v2-media-import.mjs；这里只有纯函数，所以能单独测试。旧模式的导入器（scripts/import-media.mjs 的旧分支）
+ * 在 scripts/media-inbox.mjs（遍历投递箱、发布生成文件）与 scripts/compat/v2-media-import.mjs（V2 预检）；这里只有纯函数，所以能单独测试。旧模式的导入器（scripts/import-media.mjs 的旧分支）
  * 一行不改，也不 import 这里——下面有几个小函数照抄了它（`normalizeName` 等），PR5 删除旧导入器时只剩这一份。
  *
  * **内容寻址（§2.1）**：媒体 id = `media-<源文件 sha256 的前 16 位十六进制>`，生成文件放在 `media/user/<同一个哈希>/`
@@ -21,13 +21,14 @@
  * 导入器才在整次导入没有错误时写入 place.json 固定下来（RFC ID-6：匹配结果一旦确认就以 id 引用存下，不再每次按名字
  * 重新匹配；见 `shouldPinFolder`）。确认之前既不写 place.json，也不按这个结果导入。
  *
+ * 3C-5 E：V2 媒体目录与源文件索引两个文件（及目录的完整性检查）移到兼容目录 ../compat/v2/v2MediaFiles.ts——普通的
+ * 读写（新库的媒体导入）不写 V2 文件。
+ *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
 import { EN, ZH, isoOf, namesOf } from '../canonical/reconstruct.ts'
 import type { CanonicalMediaItem, CanonicalPlace, PlaceId } from '../canonical/types.ts'
-import { MEDIA_SCHEMA_VERSION, type V2MediaFile } from '../canonical/v2Schema.ts'
-import { completeForWrite, integrityProblems, type V2FilesOrEmpty } from '../v2write/transaction.ts'
 
 export type MediaKind = 'photo' | 'panorama360' | 'aerialPhoto' | 'video'
 
@@ -488,39 +489,3 @@ export const markCovers = <T extends { kind: string; placeId: PlaceId; originalF
  * 内容寻址之后，内容相同的文件不论放在哪个城市、哪个类型都是同一个 id。
  */
 export const uniqueById = <T extends { id: string }>(items: readonly T[]): T[] => [...new Map(items.map((item) => [item.id, item])).values()]
-
-/** 源文件索引：媒体 id → 投递箱里的相对路径（含重复文件，去重、保持先后）。 */
-export const sourcesByIdOf = (entries: readonly { id: string; sourcePath: string }[]): Record<string, string[]> => {
-  const result: Record<string, string[]> = {}
-  for (const entry of entries) result[entry.id] = [...new Set([...(result[entry.id] ?? []), entry.sourcePath])]
-  return result
-}
-
-// ---------------------------------------------------------------------------
-// 两个文件
-// ---------------------------------------------------------------------------
-
-/** V2 源文件索引的文件名（`data/v2/` 下）。它不属于 V2 的五个文件，不进 `validateV2Files`（§2.3）。 */
-export const V2_MEDIA_SOURCE_INDEX_FILE_NAME = 'media-source-index.local.json'
-
-/** V2 媒体目录（`data/v2/user-media.local.json`）。 */
-export const mediaCatalogFileOf = (items: readonly V2MediaCatalogItem[], generatedAt: string): V2MediaFile => ({
-  schemaVersion: MEDIA_SCHEMA_VERSION,
-  generatedAt,
-  privacyLevel: 'local-only',
-  items: [...items],
-})
-
-/** V2 源文件索引（形状同旧模式的索引；id 空间不同，所以分开存）。 */
-export const mediaSourceIndexFileOf = (sourcesById: Record<string, string[]>, generatedAt: string) => ({
-  schemaVersion: 1,
-  generatedAt,
-  sourcesById,
-})
-
-/**
- * 写目录前的完整性检查（§2.3）：新目录放进五个 V2 文件之后，必须通过 PR3a 的 `validateV2Files` 且没有悬空引用——
- * 其中就包括「每个条目的 placeId 都是注册表里的城市」。返回问题的简述，空数组表示可以写。
- */
-export const catalogIntegrityProblems = (files: V2FilesOrEmpty | undefined, catalog: unknown, now: Date): string[] =>
-  integrityProblems(completeForWrite({ ...files, media: catalog }, now))

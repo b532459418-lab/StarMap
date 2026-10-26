@@ -2,7 +2,7 @@
  * 「标记为去过」的前置条件（审查 C2；3C-5 C2 从 ../../canonical/convertRules.ts 迁来，检查的先后与拒绝码不变）：想去条目或
  * planned 记录能不能转为足迹。规则只有这一份：
  *
- * - 写入端点 `POST /wanttogo/convert`：V2 写入函数（../../v2write/convert.ts）在五个 V2 文件的草稿上求值，存储原生的写入
+ * - 写入端点 `POST /wanttogo/convert`：V2 写入函数（v2write/convert.ts，3C-5 E 删除）在五个 V2 文件的草稿上求值，存储原生的写入
  *   （../native/convert.ts）在官方读取器上求值；不通过就按码拒绝；
  * - 派生（../../canonical/derive.ts）在 Canonical 上求值，Collection 与想去卡片据此把按钮显示为禁用，并把码映射成端点的同一句文案。
  *
@@ -14,7 +14,7 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import type { V2WriteErrorCode } from '../../v2write/errors.ts'
+import type { V2WriteErrorCode } from '../errors.ts'
 import type { CanonicalPlace, PlaceId } from '../../canonical/types.ts'
 
 /** 想去条目不能转为足迹的原因（按检查顺序）。 */

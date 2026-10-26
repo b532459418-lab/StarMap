@@ -1,6 +1,6 @@
 /**
  * `POST /records`, `POST /countries` and `POST /countries/delete` as store-native writes (3C-5 C2, design 3C-5 §3). The
- * decisions are ../rules/ (the same as the V2 write functions of ../../v2write/footprint.ts), in the same order; the rows
+ * decisions are ../rules/ (the same as the V2 write functions of v2write/footprint.ts, retired in 3C-5 E), in the same order; the rows
  * are ./records.ts's and ./places.ts's. The responses are the V2 functions'.
  *
  * - `POST /records`: the place first (by id: a chosen city, its missing location filled in; by name: the country by ISO,

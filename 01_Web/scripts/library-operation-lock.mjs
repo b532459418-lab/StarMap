@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstatSync, readFileSync, realpathSync } from 'node:fs'
 import { lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 
 const version = 1
 const ownerPattern = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/

@@ -9,7 +9,7 @@ import { statSync } from 'node:fs'
 import { test } from 'node:test'
 import { storeFileOf } from './private-data-source.mjs'
 import { RETENTION } from './store-host.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import {
   PRUNE_EVERY_COMMITS, PRUNE_STEP, STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, createStoreSession,
 } from './store-session.mjs'

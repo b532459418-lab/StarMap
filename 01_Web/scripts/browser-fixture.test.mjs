@@ -15,11 +15,12 @@ import {
 } from './browser-fixture.mjs'
 import { privateDataSource, privateDataState, storeFileOf } from './private-data-source.mjs'
 import { checkStoreFile, openStore } from './store-host.mjs'
-import { projectToV2Files } from './store-projection.mjs'
-import { createStoreSession } from './store-session.mjs'
+import { projectToV2Files } from './compat/store-projection.mjs'
+import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, createStoreSession } from './store-session.mjs'
 import { tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
+import { readV2 } from '../src/data/compat/v2/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 
 test('the browser fixture is a store by default, V2 files that need migrating on request', async (t) => {
   const { root, paths, directory } = await tempPrivateRoot(t, 'starmap-browser-fixture-')
@@ -59,6 +60,36 @@ test('a case patches the store with one commit and the next case resets it to th
   const reset = await fixtureHashes(root)
   assert.equal(reset.revision, 3)
   assert.deepEqual({ ...reset, revision: 1 }, pristine)
+})
+
+test('3C-5 E: a reset brings back what a case deleted, under fresh ids where a tombstone holds the old ones', async (t) => {
+  const { root, paths } = await tempPrivateRoot(t, 'starmap-browser-fixture-')
+  await createBrowserFixture(root)
+  const pristine = await fixtureHashes(root)
+  // Akureyri's want-to-go item: its city stays (footprint records use it). A deleted place cannot come back: its id is its
+  // V2 id and a tombstone holds it (E_RECREATE_ID), as before 3C-5 E.
+  const files = await readFixtureFiles(root)
+  const akureyri = files.places.places.find((place) => place.names.en === 'Akureyri')
+  const wish = files.wantToGo.items.find((item) => item.placeId === akureyri.id)
+  assert.ok(wish, 'the fixture has a want-to-go item on Akureyri')
+  // The case hides and deletes it through the editor endpoints (its entry and view rows are tombstoned).
+  const session = createStoreSession(paths, { log: () => {} })
+  try {
+    const write = (route, revision, input, id) => session.writeRoute('POST', `/__travelatlas/editor/${route}`)({
+      headers: { [STORE_REQUEST_ID_HEADER]: `01960000-0000-7000-8000-00000000f00${id}`, [STORE_BASE_REVISION_HEADER]: String(revision) }, input,
+    })
+    const hidden = await write('wanttogo/update', 1, { id: wish.id, hidden: true }, 1)
+    assert.equal(hidden.status, 200, JSON.stringify(hidden.body))
+    const deleted = await write('wanttogo/delete', hidden.body.revision, { ids: [wish.id] }, 2)
+    assert.equal(deleted.status, 200, JSON.stringify(deleted.body))
+  } finally { await session.close() }
+  assert.equal((await readFixtureFiles(root)).wantToGo.items.some((item) => item.id === wish.id), false)
+  await createBrowserFixture(root)
+  const reset = await fixtureHashes(root)
+  assert.deepEqual({ ...reset, revision: 1 }, pristine)
+  // The next reset keeps the rows the first one gave fresh ids (their keys are held): nothing to write.
+  await createBrowserFixture(root)
+  assert.deepEqual(await fixtureHashes(root), reset)
 })
 
 test('media imported through the media service stay through a reset; their hidden list and covers are reset (review §7-1)', async (t) => {
@@ -108,7 +139,7 @@ test('the damaged store of the 3C-4b case: the fixture\'s store set aside, a dam
   try {
     const read = await session.moduleExports()
     assert.equal(read.readOnly, true)
-    assert.deepEqual(readV2(read.files), readV2(pristine))
+    assert.deepEqual(officialViewOf(read.model, 'local'), readV2(pristine))
   } finally { await session.close() }
   await leave()
   assert.equal(privateDataSource(paths), 'v2')

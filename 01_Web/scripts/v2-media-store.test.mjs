@@ -2,8 +2,8 @@
  * 媒体上传 IO 层（scripts/v2-media-store.mjs 的 prepareV2Upload / handleV2Upload；RFC-LOC-1 PR3b-3 规格 §2.4，第 2D 批）的测试：
  * 在临时私人根上上传照片与全景，检查收件箱文件夹的选择、place.json、无人机 sidecar 与各种拒绝。
  *
- * 3C-4d：个人数据只写新库。上传由新库的上传端点（./store-media-endpoints.mjs）与媒体任务的接收调用，它们传入新库的视图
- * （`files`）；这里传入同样形状的值（地点注册表），不读 data/v2/。V2 的导入与彻底删除已删除，它们的测试随之删除（新库的
+ * 3C-4d：个人数据只写新库。上传由新库的上传端点（./store-media-endpoints.mjs）与媒体任务的接收调用，它们传入新库的官方读取器
+ * （`reader`，3C-5 E）；这里传入按地点注册表查地点的读取器（readerOf），不读 data/v2/。V2 的导入与彻底删除已删除，它们的测试随之删除（新库的
  * 导入与删除见 store-media-endpoints.test.mjs、media-service 的测试）。导入时文件夹的归属与待确认的绑定用共用的扫描
  * （scanV2MediaImport，新库的扫描也走它的 walkInbox）检查。
  *
@@ -23,7 +23,7 @@ import sharp from 'sharp'
 import { atomicJsonWrite, readJson } from './json-file.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { handleV2Upload, prepareV2Upload } from './v2-media-store.mjs'
-import { scanV2MediaImport } from './v2-media-import.mjs'
+import { scanV2MediaImport } from './compat/v2-media-import.mjs'
 import { safeSegment, reserveDestination, writeUpload } from './local-editor-upload.mjs'
 import { placeFolderSuffix } from '../src/data/v2media/editorWrites.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
@@ -80,10 +80,13 @@ const withV2Root = async (run) => {
   }
 }
 
+/** 3C-5 E: the upload reads places through the official reader; this one answers from the view's places file. */
+const readerOf = (view) => ({ place: (id) => view.places.places.find((place) => place.id === id) })
+
 const upload = async ({ paths, deps, view }, params, body) => {
   const request = Readable.from([body])
   request.headers = { 'content-length': String(body.length) }
-  return handleV2Upload({ privatePaths: paths, query: new URLSearchParams(params), request, deps, files: view })
+  return handleV2Upload({ privatePaths: paths, query: new URLSearchParams(params), request, deps, reader: readerOf(view) })
 }
 
 /** 共用的扫描（只读）：data/v2/ 里放视图的地点注册表，扫描结果之后删掉它，私人根恢复原样。 */

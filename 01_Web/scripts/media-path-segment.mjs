@@ -15,7 +15,7 @@
  * 6. a trailing `.` or space (Windows silently drops them) gets `_` after it: `Washington D.C.` → `Washington D.C._`.
  * A name that already is a safe segment comes back unchanged, so existing folders keep their names.
  */
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 
 const MAX_SEGMENT_LENGTH = 200
 const MAX_ESCAPED_LENGTH = 120

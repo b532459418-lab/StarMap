@@ -2,7 +2,7 @@
  * scripts/private-data-module.mjs 的测试与本地编辑器插件接线的源码断言（RFC-LOC-1 PR3b-1 规格 §2.2、§2.3；PR3b-2 / PR3b-3 的
  * 写入路由表；PR5a 规格 §4.1、§4.2：数据模式删除，App 与编辑器只读写 V2，未迁移时拒绝写入）。
  * 取代 local-editor-data-mode.test.mjs：与数据模式无关的用例搬到这里，与旧模式有关的随代码删除。
- * 端到端（dev server + curl）在规格的浏览器验证里手工做；Node 端到端见 v2-editor-store.test.mjs 与 v2-media-store.test.mjs。
+ * 端到端（dev server + curl）在规格的浏览器验证里手工做；Node 端到端见 store-session-editor.test.mjs 与 v2-media-store.test.mjs。
  *
  * 运行方式：npm test。零依赖：只用 node:test + node:assert/strict + node:fs。不 import 插件本身。
  */
@@ -23,9 +23,10 @@ import {
   shouldHandlePrivateDataChange,
 } from './private-data-module.mjs'
 import { getPrivatePaths, V2_DATA_FILE_NAMES, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
-import { V2_EDITOR_ROUTES, v2EditorRoute } from './v2-editor-store.mjs'
+import { STORE_WRITE_ROUTES } from './store-session.mjs'
+import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
 import { V2_MEDIA_ROUTES, v2MediaRoute } from './v2-media-store.mjs'
-import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
+import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/compat/v2/v2Schema.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const root = path.join(tmpdir(), 'starmap-virtual-module-test')
@@ -211,7 +212,7 @@ test('文件事件：PR4 的数据模式标记、迁移清单、旧格式的 .ba
 // ---------------------------------------------------------------------------
 
 const WRITE_ENDPOINTS = [
-  'PUT /__travelatlas/editor/state',
+  'POST /__travelatlas/editor/view',
   'POST /__travelatlas/editor/records',
   'POST /__travelatlas/editor/countries',
   'POST /__travelatlas/editor/countries/delete',
@@ -230,7 +231,6 @@ const MEDIA_ENDPOINTS = [
 ]
 const NON_MEDIA_WRITE_ENDPOINTS = WRITE_ENDPOINTS.filter((endpoint) => !MEDIA_ENDPOINTS.includes(endpoint))
 const READ_ONLY_ENDPOINTS = [
-  'GET /__travelatlas/editor/state',
   'GET /__travelatlas/editor/catalog/countries',
   'GET /__travelatlas/editor/catalog/cities',
 ]
@@ -245,12 +245,12 @@ const sourceBetween = (source, start, end, includeEnd) => {
   return source.slice(from, includeEnd ? to + end.length : to)
 }
 
-test('插件的编辑接口：只读端点（GET /editor/state、两个目录搜索）是插件里仅有的按方法与路径写死的分支；11 个写入端点全在两张路由表里', () => {
+test('插件的编辑接口：只读端点（两个目录搜索；读模型按常量路径）是插件里仅有的按方法与路径写死的分支；11 个写入端点全在两张路由表里', () => {
   const branches = [...pluginSource().matchAll(/request\.method === '([A-Z]+)' && url\.pathname === '([^']+)'/g)].map(([, method, pathname]) => `${method} ${pathname}`)
   assert.deepEqual([...branches].sort(), [...READ_ONLY_ENDPOINTS].sort())
   assert.equal(WRITE_ENDPOINTS.length, 11)
   assert.deepEqual(
-    [...Object.keys(V2_EDITOR_ROUTES), ...Object.keys(V2_MEDIA_ROUTES)].sort(),
+    [...Object.keys(STORE_WRITE_ROUTES), ...Object.keys(V2_MEDIA_ROUTES)].sort(),
     [...WRITE_ENDPOINTS].sort(),
   )
 })
@@ -267,23 +267,21 @@ test('媒体路由表：三个媒体端点经 V2_MEDIA_ROUTES；别的端点（�
   }
 })
 
-test('非媒体路由表正好是 8 个写入端点；没列进去的接口（包括将来新加的、媒体端点、换了方法的）没有路由；成功状态码不变', () => {
-  assert.deepEqual(Object.keys(V2_EDITOR_ROUTES).sort(), [...NON_MEDIA_WRITE_ENDPOINTS].sort())
-  for (const endpoint of NON_MEDIA_WRITE_ENDPOINTS) {
-    const [method, pathname] = endpoint.split(' ')
-    assert.equal(typeof v2EditorRoute(method, pathname)?.run, 'function', endpoint)
-  }
+test('非媒体路由表正好是 8 个写入端点（3C-5 E：都是存储原生的规划器；PUT /state 已删除）；没列进去的接口（包括将来新加的、媒体端点、换了方法的）没有路由；成功状态码不变', () => {
+  assert.deepEqual(Object.keys(STORE_WRITE_ROUTES).sort(), [...NON_MEDIA_WRITE_ENDPOINTS].sort())
+  assert.deepEqual(Object.keys(NATIVE_WRITES).sort(), [...NON_MEDIA_WRITE_ENDPOINTS].sort())
+  for (const endpoint of NON_MEDIA_WRITE_ENDPOINTS) assert.equal(typeof NATIVE_WRITES[endpoint].plan, 'function', endpoint)
   for (const [method, pathname] of [
     ['POST', '/__travelatlas/editor/something-new'],
-    ['DELETE', '/__travelatlas/editor/state'],
+    ['PUT', '/__travelatlas/editor/state'],
     ['GET', '/__travelatlas/editor/state'],
     ['POST', '/__travelatlas/editor/catalog/cities'],
     ...MEDIA_ENDPOINTS.map((endpoint) => endpoint.split(' ')),
   ]) {
-    assert.equal(v2EditorRoute(method, pathname), undefined, `${method} ${pathname}`)
+    assert.equal(STORE_WRITE_ROUTES[`${method} ${pathname}`], undefined, `${method} ${pathname}`)
   }
-  assert.deepEqual(Object.fromEntries(Object.entries(V2_EDITOR_ROUTES).map(([endpoint, route]) => [endpoint, route.status])), {
-    'PUT /__travelatlas/editor/state': 200,
+  assert.deepEqual(Object.fromEntries(Object.entries(NATIVE_WRITES).map(([endpoint, route]) => [endpoint, route.status])), {
+    'POST /__travelatlas/editor/view': 200,
     'POST /__travelatlas/editor/records': 201,
     'POST /__travelatlas/editor/countries': 201,
     'POST /__travelatlas/editor/countries/delete': 200,

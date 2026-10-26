@@ -21,16 +21,16 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { COLOR, PLACE, imageBytes, importedV2Library } from './media-inbox.fixture.mjs'
 import { privateDataState, storeFileOf } from './private-data-source.mjs'
-import { exportStoreV2 } from './store-backup.mjs'
+import { exportStoreV2 } from './compat/store-export-v2.mjs'
 import { openStore } from './store-host.mjs'
 import { runStoreMediaCli } from './store-media-cli.mjs'
-import { runMigrateCli } from './store-migrate.mjs'
+import { runMigrateCli } from './compat/store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './store-session.mjs'
 import { servedCanonical, servedModuleOf } from './private-read-model.fixture.mjs'
 import { authorizedHeaders, editorPrefix, quietly, requestTo, tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
+import { canonicalForInputs } from '../src/data/compat/v2/canonicalForInputs.ts'
 
-import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
+import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/compat/v2/v2Schema.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 
 const NOW = '2026-10-20T00:00:00.000Z'
@@ -75,14 +75,14 @@ test('a V2 library with media: migration required, store:migrate --apply, writes
       assert.equal(module.privateStoreMigrationRequired, true)
       assert.equal(module.privateStoreRevision, undefined)
       assert.deepEqual(servedCanonical(module), canonicalForInputs({ v2Files }), 'the V2 files, migrated in memory (3C-5B)')
-      for (const [method, route] of [['POST', 'countries'], ['PUT', 'state'], ['POST', 'view'], ['POST', 'import'], ['POST', 'media/delete'], ['POST', 'upload'], ['GET', 'media/jobs'], ['POST', `media/jobs/${JOB_ID}/import`]]) {
+      for (const [method, route] of [['POST', 'countries'], ['POST', 'view'], ['POST', 'import'], ['POST', 'media/delete'], ['POST', 'upload'], ['GET', 'media/jobs'], ['POST', `media/jobs/${JOB_ID}/import`]]) {
         const result = await requestTo(server.handler, { url: editorPrefix + route, method, content: Buffer.from('{') })
         assert.equal(result.status, 409, `${method} ${route}`)
         assert.equal(result.body.code, 'E_STORE_MIGRATION_REQUIRED', `${method} ${route}`)
         assert.equal(result.bodyReads, 0, `${method} ${route}`)
       }
-      const state = await requestTo(server.handler, { url: `${editorPrefix}state`, method: 'GET', headers: {} })
-      assert.equal(state.status, 200)
+      const read = await requestTo(server.handler, { url: `${editorPrefix}read-model`, method: 'GET', headers: {} })
+      assert.equal(read.status, 200)
       // `npm run media:import` (the real entry, in its own process) refuses with exit code 2.
       const imported = spawnSync(process.execPath, [fileURLToPath(new URL('./import-media.mjs', import.meta.url)), '--apply'], {
         env: { ...originalEnvironment, STARMAP_PRIVATE_ROOT: root }, encoding: 'utf8', timeout: 60_000, windowsHide: true,

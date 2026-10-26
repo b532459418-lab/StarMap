@@ -24,7 +24,7 @@ import { backupStore } from './store-backup.mjs'
 import { openStore } from './store-host.mjs'
 import { NOW, UUID_V7, exists, servedLibrary } from './store-media.fixture.mjs'
 import { pathKeyOf } from './store-media-registry.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import { tempPrivateRoot, treeDigest } from './store-mode.fixture.mjs'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 

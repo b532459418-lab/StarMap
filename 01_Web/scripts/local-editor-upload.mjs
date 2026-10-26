@@ -8,7 +8,7 @@ import { Transform } from 'node:stream'
 import { createHash, randomUUID } from 'node:crypto'
 import sharp from 'sharp'
 import { exists } from './json-file.mjs'
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 import { firstUnsafeComponent, relativeInside } from './path-containment.mjs'
 import { toSafePathSegment } from './media-path-segment.mjs'
 

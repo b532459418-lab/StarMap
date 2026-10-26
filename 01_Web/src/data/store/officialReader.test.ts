@@ -1,6 +1,6 @@
 /// <reference types="node" />
 /** The official reader (3C-5 C1) answers as the official view: on every migration input, over the plain index and over
- * the live index, its places, countries, cities, want-to-go items and editor lists equal the projection's. */
+ * the live index, its places, countries, cities, want-to-go items, media items and editor lists equal the projection's. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readModelOf } from '../../worldgraph/readModel/build.ts'
@@ -18,6 +18,10 @@ for (const [name, files] of migrationInputs()) test(`the official reader answers
     const reader = officialReader(index)
     for (const place of view.places) assert.deepEqual(reader.place(place.id), place, `${label}: place ${place.id}`)
     assert.equal(reader.place('synthetic-missing'), undefined)
+    // 3C-5 E: every place in the official order, and the media items by V2 id (the media rules).
+    assert.deepEqual(reader.places(), view.places, `${label}: places`)
+    for (const item of view.media.items) assert.deepEqual(reader.mediaItem(item.id), item, `${label}: media ${item.id}`)
+    assert.equal(reader.mediaItem('synthetic-missing'), undefined)
     assert.deepEqual(reader.countries(), view.places.filter((place) => place.subtype === 'country'), `${label}: countries`)
     for (const country of view.places.filter((place) => place.subtype === 'country')) {
       assert.deepEqual(reader.citiesOf(country.id), view.places.filter((place) => place.subtype === 'city' && place.partOf === country.id), `${label}: cities of ${country.id}`)

@@ -1,12 +1,12 @@
 /**
  * 本地编辑器媒体上传的 IO 层（RFC-LOC-1 PR3b-3 规格 §2.4；第 2D 批）与三个媒体端点的路由表。
  *
- * 为什么单独成文件：理由同 v2-editor-store.mjs——插件在模块顶层 import sharp / undici / world-countries 并解析私有资料层路径，
+ * 为什么单独成文件：插件在模块顶层 import sharp / undici / world-countries 并解析私有资料层路径，
  * 无法在 node --test 下加载。插件里的辅助函数（safeSegment、reserveDestination、writeUpload、updateDroneSidecar）经 `deps`
  * 传进来复用，所以文件名规则、上传大小与图片校验、无人机 sidecar 的写法都与旧模式相同。
  *
  * 3C-4d：个人数据只写新库。三个媒体端点由新库处理（./store-media-endpoints.mjs，3C-4c）；上传与媒体任务的接收仍用这里选
- * 收件箱文件夹、接收文件，调用方传入新库的视图（`files`，地点注册表），这里不读 data/v2/。V2 的导入与彻底删除（运行导入器、
+ * 收件箱文件夹、接收文件，调用方传入新库的官方读取器（`reader`，3C-5 E：只用它查地点），这里不读 data/v2/。V2 的导入与彻底删除（运行导入器、
  * 改写 data/v2/ 的目录、索引与 editor-state）已删除。
  *
  * 判断在纯函数里（src/data/v2media/editorWrites.ts）；这里只做 IO：
@@ -23,7 +23,7 @@ import { stat } from 'node:fs/promises'
 import path from 'node:path'
 
 import { atomicJsonWrite, readJson } from './json-file.mjs'
-import { v2ErrorBody } from './v2-editor-store.mjs'
+import { editorErrorBody } from './local-editor-errors.mjs'
 import {
   droneUploadMetadataOf,
   inboxFolderCandidates,
@@ -32,9 +32,9 @@ import {
   uploadTargetOf,
 } from '../src/data/v2media/editorWrites.ts'
 import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
-import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
+import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 
-/** 三个媒体端点 → 处理方式。与 v2-editor-store.mjs 的 V2_EDITOR_ROUTES 不相交，两者合起来是全部 11 个写入端点。 */
+/** 三个媒体端点 → 处理方式。与 store-session.mjs 的 STORE_WRITE_ROUTES（8 个编辑端点）不相交。 */
 export const V2_MEDIA_ROUTES = Object.freeze({
   'POST /__travelatlas/editor/upload': 'upload',
   'POST /__travelatlas/editor/import': 'import',
@@ -56,7 +56,7 @@ const isV2WriteError = (error) => error instanceof V2WriteError
  * 带 `details` 时一并返回。
  */
 const failureResponse = (error, fallbackCode) => {
-  const body = isV2WriteError(error) ? errorBody(error) : v2ErrorBody(fallbackCode, { reason: reasonOf(error) })
+  const body = isV2WriteError(error) ? errorBody(error) : editorErrorBody(fallbackCode, { reason: reasonOf(error) })
   const details = typeof error?.details === 'string' ? error.details : undefined
   return { status: 400, body: details ? { ...body, details } : body }
 }
@@ -108,13 +108,13 @@ const chooseInboxFolder = async (parentDirectory, parentLabel, displayName, plac
 // ---------------------------------------------------------------------------
 
 /**
- * `query` 是请求的查询参数（URLSearchParams），`files` 是新库的视图（五个 V2 形状的值，地点注册表在其中；3C-4c 起由调用方
- * 传入，3C-4d 起必须传入）。返回 `{ kind, target, cityRoot, claims, destination, droneMetadata }`，什么都不写。
+ * `query` 是请求的查询参数（URLSearchParams），`reader` 是新库的官方读取器（3C-5 E：上传目标的地点从它读，在第一个 await
+ * 之前读完；3C-4d 起必须传入）。返回 `{ kind, target, cityRoot, claims, destination, droneMetadata }`，什么都不写。
  */
-export async function prepareV2Upload({ privatePaths, query, deps, now = new Date(), files }) {
-    if (!files) throw new V2WriteError('E_STORE_MIGRATION_REQUIRED')
+export async function prepareV2Upload({ privatePaths, query, deps, reader }) {
+    if (!reader) throw new V2WriteError('E_STORE_MIGRATION_REQUIRED')
     const kind = uploadKindOf(query)
-    const target = uploadTargetOf(files, { countryId: query.get('countryId') ?? '', cityId: query.get('cityId') ?? '' }, now)
+    const target = uploadTargetOf(reader, { countryId: query.get('countryId') ?? '', cityId: query.get('cityId') ?? '' })
     // 先选国家文件夹，再在它下面选城市文件夹，两级同一套规则：显示名的文件夹被别的地点占用、或是手放的时，
     // 改用带地点 id 后缀的名字（第 2D 批：手放的国家文件夹同样不认领，上传会新建 `<国家名> (<后缀>)`）。
     const country = await chooseInboxFolder(privatePaths.inboxRoot, '', target.countryFolderName, target.country.id, '国家名', deps)
@@ -137,9 +137,9 @@ export async function prepareV2Upload({ privatePaths, query, deps, now = new Dat
  * 上传一个文件（新库的上传端点用，./store-media-endpoints.mjs）：`request` 是文件内容的流，交给 deps.writeUpload。
  * 成功：201 `{ ok, fileName, bytes, sourcePath }`（同旧）。
  */
-export async function handleV2Upload({ privatePaths, query, request, deps, now = new Date(), files }) {
+export async function handleV2Upload({ privatePaths, query, request, deps, reader }) {
   try {
-    const { kind, cityRoot, claims, destination, droneMetadata } = await prepareV2Upload({ privatePaths, query, deps, now, files })
+    const { kind, cityRoot, claims, destination, droneMetadata } = await prepareV2Upload({ privatePaths, query, deps, reader })
     const imageMetadata = await deps.writeUpload(request, destination, kind)
     for (const claim of claims) await atomicJsonWrite(claim.file, claim.value)
     if (droneMetadata) await deps.updateDroneSidecar(cityRoot, destination, droneMetadata, imageMetadata)

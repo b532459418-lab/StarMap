@@ -38,7 +38,8 @@ import { isAllowedPrivateOutput } from './private-output.mjs'
 import { getPrivatePaths, sourceRoot } from './private-profile.mjs'
 import { privateDataState, storeFileOf } from './private-data-source.mjs'
 import { openStore } from './store-host.mjs'
-import { StoreToolError, migrationReadModel, readV2Inputs } from './store-migrate.mjs'
+import { migrationReadModel, readV2Inputs } from './compat/store-migrate.mjs'
+import { StoreToolError } from './store-tool-error.mjs'
 import { baselineDifferences, buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
@@ -92,7 +93,7 @@ const describeReadFailure = (error) => {
 
 /**
  * 个人模式：与 App 相同的读模型。新库：只读打开，读它的读模型；还不是新库：data/v2/ 的五个文件在内存里迁移
- * （scripts/store-migrate.mjs 的 readV2Inputs 与 migrationReadModel，与插件相同）。先报出读的是哪一种。
+ * （scripts/compat/store-migrate.mjs 的 readV2Inputs 与 migrationReadModel，与插件相同）。先报出读的是哪一种。
  */
 const loadPrivateReadModel = async () => {
   const paths = getPrivatePaths()

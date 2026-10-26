@@ -1,61 +1,42 @@
 /**
- * The eight editor writes of the new-library mode through the session (3C-4a spec §2.2, §2.3): each one runs V2's
- * write function on the cached view, commits the diff and makes the files after the write the next read model
- * (no projection after start-up); the result equals V2 mode with the same input; the cache is dropped when the store is
- * not the cached one; STARMAP_STORE_VERIFY compares every commit with a fresh projection; a view that does not match
- * the store drops the cache. 3C-5 C1: the three want-to-go endpoints are store-native (./store-session-native.test.mjs);
- * here they keep V2 mode's results and data up to the changes design §9 makes on purpose (new ids, no V2-only values).
+ * The eight editor writes of the new-library mode through the session (3C-4a spec §2.2, §2.3; 3C-5 C1, C2: every one is
+ * store-native): each commits on its base revision with its changed rows, its answer and data are what the same planner
+ * gives in memory on the same state (scripts and host agree), the cache moves on without a new read; the cache is dropped
+ * when the store is not the cached one; STARMAP_STORE_VERIFY compares every commit with the store read again. 3C-5 E:
+ * the comparison with V2 mode (the V2 write functions) is gone with them; the golden output
+ * (src/data/editor/golden.test.ts) pins the planners' behaviour.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { storeFileOf } from './private-data-source.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, createStoreSession } from './store-session.mjs'
 import { rawConnection } from './store-sqlite.mjs'
 import { quietly, tempPrivateRoot, writeV2Files } from './store-mode.fixture.mjs'
-import { V2_EDITOR_ROUTES } from './v2-editor-store.mjs'
 import { openStore } from './store-host.mjs'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
+import { officialReader } from '../src/data/store/officialReader.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
-import { readEditorStateV1 } from '../src/data/v2write/index.ts'
-import { TEST_CATALOG, WRITE_EPOCH_MS, migratedFiles, placeNamed } from '../src/data/v2write/v2write.fixture.ts'
+import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
+import { TEST_CATALOG, WRITE_EPOCH_MS, migratedFiles, placeNamed } from '../src/data/editor/editor.fixture.ts'
+import { readModelOf } from '../src/worldgraph/readModel/build.ts'
+import { liveReadModelIndex } from '../src/worldgraph/readModel/liveIndex.ts'
+import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts'
+import { memoryReader } from '../src/worldgraph/store/reader.ts'
 
 const MIGRATED_AT = '2026-09-26T00:00:00.000Z'
+/** The ids of new rows: the session's sequence (`newId`), drawn the same way by the in-memory run. */
+const ROW_IDS_FROM = Date.UTC(2032, 0, 1)
 let counter = 0
 const requestId = () => `01960000-0000-7000-8000-${(++counter).toString(16).padStart(12, '0')}`
 const headers = (base, id = requestId()) => ({ [STORE_REQUEST_ID_HEADER]: id, [STORE_BASE_REVISION_HEADER]: String(base) })
-/** The V2 write context of step `n` (both modes get an identical one). */
+/** The write context of step `n` (its time; the planners take their new ids from the session's sequence). */
 const contextOf = (n) => ({ newId: sequentialUuids(WRITE_EPOCH_MS + n * 1000), now: new Date(Date.UTC(2026, 8, 27, 8, n)), countryCatalog: TEST_CATALOG })
 const projections = (lines) => lines.filter((line) => line.includes('读模型')).length
 const without = (body, keys) => Object.fromEntries(Object.entries(body).filter(([key]) => !keys.includes(key)))
-/** 3C-5 C1: the store-native endpoints (their new rows get their own ids and no V2-only values, design §9). */
-const NATIVE = new Set([
-  'POST /__travelatlas/editor/wanttogo', 'POST /__travelatlas/editor/wanttogo/update', 'POST /__travelatlas/editor/wanttogo/delete',
-  'POST /__travelatlas/editor/records', 'POST /__travelatlas/editor/countries', 'POST /__travelatlas/editor/countries/delete',
-  'POST /__travelatlas/editor/wanttogo/convert',
-])
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-/**
- * A value with UUIDs (and 3C-5 C2's `journey-<UUID>` journey ids) renamed in the order they first appear, without the V2-only
- * values of new records (`source: 'local-editor'`, `type: 'visit'`, `status: 'visited'`) and file times (design §9 changes 1–3).
- */
-const JOURNEY = /^journey-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const V2_ONLY = { source: 'local-editor', type: 'visit', status: 'visited' }
-function normalized(value) {
-  const names = new Map()
-  const rename = (text) => (UUID.test(text) || JOURNEY.test(text) ? (names.has(text) ? names.get(text) : (names.set(text, `#${names.size + 1}`), names.get(text))) : text)
-  const walk = (item) => {
-    if (typeof item === 'string') return rename(item)
-    if (Array.isArray(item)) return item.map(walk)
-    if (item === null || typeof item !== 'object') return item
-    return Object.fromEntries(Object.entries(item)
-      .filter(([key, child]) => !['updatedAt', 'generated_at', 'generatedAt'].includes(key) && !(Object.hasOwn(V2_ONLY, key) && child === V2_ONLY[key]))
-      .map(([key, child]) => [rename(key), walk(child)]))
-  }
-  return walk(value)
-}
+/** The official view (the App's Canonical) of a session's read: what the page shows. */
+const viewOf = (read) => officialViewOf(read.model, 'local')
 
 async function migratedSession(t, options = {}) {
   const context = await tempPrivateRoot(t, 'starmap-store-editor-')
@@ -64,17 +45,20 @@ async function migratedSession(t, options = {}) {
   await applyMigration(context.paths, { now: MIGRATED_AT })
   const output = quietly()
   const session = context.closeAfter(createStoreSession(context.paths, {
-    log: output.log, countryCatalog: TEST_CATALOG, newId: sequentialUuids(Date.UTC(2032, 0, 1)), ...options,
+    log: output.log, countryCatalog: TEST_CATALOG, newId: sequentialUuids(ROW_IDS_FROM), ...options,
   }))
   const write = (route, input, base, ctx, id) => session.writeRoute(...route.split(' '))({ headers: headers(base, id), input, ctx })
   return { ...context, files, session, output, write }
 }
 
-test('the eight editor writes: the store equals V2 mode after each, verified, and read without a new projection', async (t) => {
-  const { session, output, write, files, paths } = await migratedSession(t, { verify: true })
-  let v2 = files
-  // Each side's input from its own view (3C-5 C1, C2: the native writes give new rows other ids than V2 mode).
-  const id = (view, en) => placeNamed(view, en).id
+test('the eight editor writes: each commits on its base revision with its changed rows, as its planner does in memory, verified, read without a new projection', async (t) => {
+  const { session, output, write, paths } = await migratedSession(t, { verify: true })
+  // The in-memory run: the store's own rows after the migration, the same planners, ids and times.
+  const handle = openStore(storeFileOf(paths), { privatePaths: paths, readOnly: true, policy: OFFICIAL_POLICY })
+  let state
+  try { state = handle.readFormalState() } finally { await handle.close() }
+  const memoryIds = sequentialUuids(ROW_IDS_FROM)
+  const id = (view, en) => view.places.find((place) => place.names.en === en).id
   const wish = (view, en) => view.wantToGo.items.find((item) => item.placeId === id(view, en)).id
   const steps = [
     ['POST /__travelatlas/editor/countries', () => ({ countryCode: 'DK', visitedDate: '2024-03-02' })],
@@ -84,79 +68,71 @@ test('the eight editor writes: the store equals V2 mode after each, verified, an
     ['POST /__travelatlas/editor/wanttogo', (view) => ({ placeId: id(view, 'Bergen'), note: 'Synthetic fjord' })],
     ['POST /__travelatlas/editor/wanttogo/update', (view) => ({ id: wish(view, 'Nuuk'), note: 'Synthetic note', hidden: true })],
     ['POST /__travelatlas/editor/wanttogo/convert', (view) => ({ source: 'planned', recordId: view.travel.records.find((r) => r.placeId === id(view, 'Bergen')).id, startDate: '2026-08-01' })],
-    ['PUT /__travelatlas/editor/state', (view) => {
-      const state = readEditorStateV1(view, new Date())
-      return { ...state, countryOrder: [...state.countryOrder].reverse(), hiddenCountryIds: [id(view, 'Norway')], hiddenCityIds: [] }
-    }],
+    ['POST /__travelatlas/editor/view', (view) => ({ operations: [
+      { op: 'order', scope: 'countries', ids: [...view.editorState.countryOrder].reverse(), baseline: view.editorState.countryOrder },
+      { op: 'hide', scope: 'countries', add: [id(view, 'Norway')], remove: [] },
+    ] })],
     ['POST /__travelatlas/editor/wanttogo/delete', (view) => ({ ids: [wish(view, 'Tromsø')] })],
     ['POST /__travelatlas/editor/countries/delete', (view) => ({ ids: [id(view, 'Norway')] })],
   ]
-  assert.deepEqual(steps.map(([route]) => route).sort(), Object.keys(V2_EDITOR_ROUTES).sort())
+  assert.deepEqual(steps.map(([route]) => route).sort(), Object.keys(NATIVE_WRITES).sort())
   let revision = (await session.moduleExports()).revision
   assert.equal(revision, 1)
-  let native = false
   for (const [index, [route, inputOf]] of steps.entries()) {
-    const input = inputOf((await session.moduleExports()).files)
-    const expected = V2_EDITOR_ROUTES[route].run(v2, inputOf(v2), contextOf(index))
-    v2 = { ...v2, ...Object.fromEntries(expected.writes.map((step) => [step.file, step.value])) }
-    const result = await write(route, input, revision, contextOf(index))
-    assert.equal(result.status, V2_EDITOR_ROUTES[route].status, `${route}: ${JSON.stringify(result.body)}`)
+    const view = viewOf(await session.moduleExports())
+    const input = inputOf(view)
+    const ctx = contextOf(index)
+    // In memory: the planner on the official reader of the same rows, then Core's planCommands and applyChangeSet.
+    const plan = NATIVE_WRITES[route].plan(officialReader(liveReadModelIndex(readModelOf(state, { origin: 'local' }))), structuredClone(input),
+      { now: ctx.now, newId: memoryIds, countryCatalog: ctx.countryCatalog })
+    state = applyChangeSet(state, planCommands(memoryReader(state), plan.commands, { baseRevision: state.revision, now: ctx.now.toISOString(), policy: OFFICIAL_POLICY }))
+    const result = await write(route, input, revision, ctx)
+    assert.equal(result.status, NATIVE_WRITES[route].status, `${route}: ${JSON.stringify(result.body)}`)
     assert.equal(result.body.revision, revision + 1, route)
     assert.equal(result.body.duplicate, false)
     // 3C-5 D: every committed write answers with its changed rows (`delta`, from the base revision to the new one).
     assert.deepEqual([result.body.delta?.from, result.body.delta?.to], [revision, revision + 1], `${route}: delta`)
-    const body = without(result.body, ['revision', 'duplicate', 'receipt', 'delta'])
-    // After the first native write the store's new ids differ from V2 mode's: compared by first appearance from then on.
-    native ||= NATIVE.has(route)
-    if (native) assert.deepEqual(normalized(body), normalized({ ok: true, ...expected.result }), `${route}: V2's result`)
-    else assert.deepEqual(body, { ok: true, ...expected.result }, `${route}: V2's result`)
+    assert.deepEqual(without(result.body, ['revision', 'duplicate', 'receipt', 'delta']), { ok: true, ...plan.result }, `${route}: the planner's result`)
     revision = result.body.revision
     const read = await session.moduleExports()
     assert.equal(read.revision, revision)
-    if (native) assert.deepEqual(normalized(readV2(read.files)), normalized(readV2(v2)), `${route}: the read model equals V2 mode`)
-    else assert.deepEqual(readV2(read.files), readV2(v2), `${route}: the read model equals V2 mode`)
+    assert.deepEqual(read.model, readModelOf(state, { origin: 'local' }), `${route}: the read model equals the in-memory run`)
   }
   // One projection at start-up; every write refreshed the cache directly (STARMAP_STORE_VERIFY found no difference).
   assert.equal(projections(output.lines), 1)
   assert.equal(output.lines.filter((line) => line.includes('校验失败')).length, 0)
-  assert.equal(output.lines.filter((line) => /V2 写入 [\d.]+ ms，差异 [\d.]+ ms（\d+ 条命令），提交 [\d.]+ ms/.test(line)).length, steps.length - NATIVE.size)
-  assert.equal(output.lines.filter((line) => /（原生）：规划 [\d.]+ ms（\d+ 条命令），提交 [\d.]+ ms/.test(line)).length, NATIVE.size)
-  // A new session projects the store from scratch: the same data.
+  assert.equal(output.lines.filter((line) => /（原生）：规划 [\d.]+ ms（\d+ 条命令），提交 [\d.]+ ms/.test(line)).length, steps.length)
+  // A new session reads the store from scratch: the same data.
   await session.close()
   const reopened = createStoreSession(paths, { log: () => {} })
   try {
     const read = await reopened.moduleExports()
     assert.equal(read.revision, revision)
-    assert.deepEqual(normalized(readV2(read.files)), normalized(readV2(v2)))
+    assert.deepEqual(read.model, readModelOf(state, { origin: 'local' }))
   } finally { await reopened.close() }
 })
 
-test('the cached read model stays the store\'s after a V2 write, a native write and a media commit; the V2 view, generated when asked for, reads as its official view', async (t) => {
+test('the cached read model stays the store\'s after a view operation, another native write and a media commit', async (t) => {
   const { session, output, write, files, paths } = await migratedSession(t)
   await session.moduleExports()
   const storeNow = async () => {
     const handle = openStore(storeFileOf(paths), { privatePaths: paths, readOnly: true, policy: OFFICIAL_POLICY })
     try { return handle.readModel() } finally { await handle.close() }
   }
-  const consistent = async (label) => {
-    const cached = session.lastSnapshot
-    assert.deepEqual(cached.model, await storeNow(), `${label}: the read model`)
-    assert.deepEqual(officialViewOf(cached.model, 'local'), readV2(cached.files), `${label}: the V2 view`)
-  }
-  // A V2 editor write (PUT /state, the last one): the read model moves on with the commit's changed rows.
+  const consistent = async (label) => assert.deepEqual(session.lastSnapshot.model, await storeNow(), `${label}: the read model`)
   const [first, second] = files.wantToGo.items
-  // (3C-5 C2: PUT /state is the one write left on the V2 path.)
-  const state = readEditorStateV1((await session.moduleExports()).files, new Date())
-  const country = await write('PUT /__travelatlas/editor/state', { ...state, countryOrder: [...state.countryOrder].reverse() }, 1, contextOf(1))
-  assert.equal(country.status, 200, JSON.stringify(country.body))
+  // A view operation (3C-5 C1; it replaced PUT /state): the read model moves on with the commit's changed rows.
+  const lists = viewOf(await session.moduleExports()).editorState
+  const reordered = await write('POST /__travelatlas/editor/view', { operations: [{ op: 'order', scope: 'countries', ids: [...lists.countryOrder].reverse(), baseline: lists.countryOrder }] }, 1, contextOf(1))
+  assert.equal(reordered.status, 200, JSON.stringify(reordered.body))
   assert.equal(session.lastSnapshot.revision, 2)
-  await consistent('after a V2 editor write')
-  // A native write (3C-5 C1): the live index moves on; the V2 view is built again from the read model when asked for.
+  await consistent('after a view operation')
+  // Another native write: the live index moves on.
   const saved = await write('POST /__travelatlas/editor/wanttogo/update', { id: first.id, note: 'Synthetic one cache' }, 2, contextOf(2))
   assert.equal(saved.status, 200, JSON.stringify(saved.body))
   assert.equal(session.lastSnapshot.revision, 3)
   await consistent('after a native write')
-  // A media commit: the read model moves on; its V2 view is built again from the read model when asked for.
+  // A media commit: the read model moves on.
   const media = await session.mediaStore()
   const entry = session.lastSnapshot.model.entries.find((row) => row.source.recordId === second.id && row.layerId === 'starmap:want-to-go')
   const committed = await media.commit({
@@ -166,11 +142,11 @@ test('the cached read model stays the store\'s after a V2 write, a native write 
   assert.equal(committed.status, 'committed')
   assert.equal(session.lastSnapshot.revision, 4)
   await consistent('after a media commit')
-  assert.equal((await session.moduleExports()).files.wantToGo.items.find((item) => item.id === second.id).note, 'Synthetic media commit')
+  assert.equal(viewOf(await session.moduleExports()).wantToGo.items.find((item) => item.id === second.id).note, 'Synthetic media commit')
   assert.equal(projections(output.lines), 1, 'the store was read once, at start-up')
 })
 
-test('a replayed request answers with the original V2 result in this process, and with the receipt after a restart', async (t) => {
+test('a replayed request answers with the original result in this process, and with the receipt after a restart', async (t) => {
   const { session, write, files, paths } = await migratedSession(t)
   const id = requestId()
   const route = 'POST /__travelatlas/editor/wanttogo'
@@ -203,7 +179,7 @@ test('when another writer moves the store, the cache is dropped and the store pr
   })
   const read = await session.moduleExports()
   assert.equal(read.revision, 2)
-  assert.equal(read.files.wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic other writer')
+  assert.equal(viewOf(read).wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic other writer')
   assert.equal(projections(output.lines), 2, 'projected again')
   // A page built at revision 1 is stale; one built at 2 writes.
   const stale = await write('POST /__travelatlas/editor/wanttogo/update', { id: wish.id, note: 'Synthetic stale' }, 1, contextOf(1))
@@ -211,7 +187,7 @@ test('when another writer moves the store, the cache is dropped and the store pr
   assert.equal(stale.body.code, 'E_STALE')
   const saved = await write('POST /__travelatlas/editor/wanttogo/update', { id: wish.id, note: 'Synthetic later' }, 2, contextOf(2))
   assert.equal(saved.status, 200, JSON.stringify(saved.body))
-  assert.equal((await session.moduleExports()).files.wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic later')
+  assert.equal(viewOf(await session.moduleExports()).wantToGo.items.find((item) => item.id === wish.id).note, 'Synthetic later')
 })
 
 /** Another connection, through the adapter (the store's journal mode: TRUNCATE, so it can write while the session holds the store open). */
@@ -245,8 +221,8 @@ test('STARMAP_STORE_VERIFY: a commit whose fresh projection differs from the cac
   // The write itself was committed; the read model is now the store's projection.
   const read = await session.moduleExports()
   assert.equal(read.revision, 2)
-  assert.equal(read.files.wantToGo.items.find((item) => item.id === first.id).note, 'Synthetic tampered')
-  assert.equal(read.files.wantToGo.items.find((item) => item.id === second.id).note, 'Synthetic verified')
+  assert.equal(viewOf(read).wantToGo.items.find((item) => item.id === first.id).note, 'Synthetic tampered')
+  assert.equal(viewOf(read).wantToGo.items.find((item) => item.id === second.id).note, 'Synthetic verified')
 })
 
 test('without STARMAP_STORE_VERIFY the same change stays invisible until the store moves under another writer', async (t) => {
@@ -257,11 +233,11 @@ test('without STARMAP_STORE_VERIFY the same change stays invisible until the sto
   const result = await write('POST /__travelatlas/editor/wanttogo/update', { id: second.id, note: 'Synthetic unverified' }, 1, contextOf(1))
   assert.equal(result.status, 200)
   // The cache is the files after the write: the change behind the host's back is not in it (why the check exists).
-  assert.equal((await session.moduleExports()).files.wantToGo.items.find((item) => item.id === first.id).note, first.note)
+  assert.equal(viewOf(await session.moduleExports()).wantToGo.items.find((item) => item.id === first.id).note, first.note)
 })
 
-// 3C-5 C2: every editor write but PUT /state is native, and PUT /state changes only view rows, so no write meets a V2 view
-// that does not match the store (E_VIEW_MISMATCH) any more; a native plan the store refuses drops the cache (below).
+// 3C-5 C2, E: every editor write is native, so no write meets a V2 view that does not match the store (E_VIEW_MISMATCH)
+// any more; a native plan the store refuses drops the cache (below).
 
 test('3C-5 C1: a native write planned on a live index that no longer matches the store is refused by the store; the cache is dropped', async (t) => {
   const { session, write, files, paths, output } = await migratedSession(t)
@@ -277,10 +253,10 @@ test('3C-5 C1: a native write planned on a live index that no longer matches the
   const read = await session.moduleExports()
   assert.equal(projections(output.lines), 2, 'projected again')
   assert.equal(read.revision, 1, 'nothing was written')
-  assert.ok(read.files.wantToGo.items.some((item) => item.id === 'synthetic-renamed'))
+  assert.ok(viewOf(read).wantToGo.items.some((item) => item.id === 'synthetic-renamed'))
 })
 
-test('refusals of the V2 write come back as V2 sends them, and nothing is written', async (t) => {
+test('refusals come back as the decision layer sends them (the codes and parameters V2 sent), and nothing is written', async (t) => {
   const { session, write, files } = await migratedSession(t)
   const choice = await write('POST /__travelatlas/editor/records', {
     placeId: placeNamed(files, 'Nuuk').id, start_date: '2025-06-20', trip_title: '2025 North Atlantic Demo', lat: 64.18, lng: -51.72,
@@ -306,7 +282,7 @@ test('refusals of the V2 write come back as V2 sends them, and nothing is writte
   assert.equal(sequence[0].entryIds.length, 7, 'six records and the new one')
   // viewScope: every row of one scope, in id order.
   const scope = handle.read((reader) => reader.viewScope('starmap:editor/country-order'))
-  assert.deepEqual(scope.items.map((item) => item.itemId), readEditorStateV1((await session.moduleExports()).files, new Date()).countryOrder.slice().sort((a, b) => {
+  assert.deepEqual(scope.items.map((item) => item.itemId), viewOf(await session.moduleExports()).editorState.countryOrder.slice().sort((a, b) => {
     const ids = Object.fromEntries(scope.items.map((item) => [item.itemId, item.id]))
     return ids[a] < ids[b] ? -1 : 1
   }))

@@ -18,7 +18,7 @@ export const canonicalOf = (state: FormalState) => projectStoreToCanonical(state
 
 /** Run the native write of `route` (`records`, `wanttogo/delete`, …) on the store as step `n`; the store moves on. */
 export function runNative(store: DoubleRunStore, route: string, input: unknown, n: number): EngineOutcome {
-  const outcome = nativeEngineOf(NATIVE_WRITES[editorRoute(route)])(store, sameRequest(route, editorRoute(route), () => { throw new Error('native only') }, input), stepContext(n))
+  const outcome = nativeEngineOf(NATIVE_WRITES[editorRoute(route)])(store, sameRequest(route, editorRoute(route), input), stepContext(n))
   if (outcome.state) store.state = outcome.state
   return outcome
 }

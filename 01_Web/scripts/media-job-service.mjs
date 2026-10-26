@@ -31,7 +31,7 @@
  * (`npm run media:check -- --verify`).
  *
  * The new-library mode (3C-4c, design v2 §6): the handlers take `storeMedia` ({ mediaStore }, the plugin's session).
- * Places come from the store's view; `reconcile` asks the media registry whether a received file was imported (a
+ * Places come from the store's official reader (3C-5 E); `reconcile` asks the media registry whether a received file was imported (a
  * present source at its path) instead of the V2 catalog and index; the preview is ./store-media-jobs.mjs's plan; the
  * import is one store commit by the media service with `requestId = operationId` (UUIDv7; another version is
  * E_STALE: the page predates the store) and the task's files explicit. Its stages: `generated` and `pins` before
@@ -55,7 +55,7 @@ import { assertUploadPath, stageUpload, publishUpload } from './local-editor-upl
 import { prepareV2Upload } from './v2-media-store.mjs'
 import { atomicJsonWrite, readJson } from './json-file.mjs'
 import { droneUploadMetadataOf, uploadTargetOf } from '../src/data/v2media/editorWrites.ts'
-import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
+import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 import { isDeepStrictEqual } from 'node:util'
 import { pathKeyOf } from './store-media-registry.mjs'
 import { isUuidV7 } from '../src/data/canonical/uuidv7.ts'
@@ -146,10 +146,9 @@ async function history(paths, job, resourceChecks = new Map()) {
 }
 /** 3C-4d: the media store of the plugin's session; none means the private root is not a store. */
 const mediaStoreOf = (storeMedia) => storeMedia?.mediaStore ?? fail('E_STORE_MIGRATION_REQUIRED')
-async function checkedFiles(storeMedia) {
-  // 3C-4c: the new library's view (places, catalog, editor state), never the V2 files; 3C-5 C2: generated from the read
-  // model through the official view for each call (the session keeps no V2 view).
-  return (await mediaStoreOf(storeMedia).view()).files
+/** 3C-5 E: the official reader of the new library (the places of the upload target), read at once by the caller. */
+async function officialReaderOf(storeMedia) {
+  return (await mediaStoreOf(storeMedia).official()).reader
 }
 const queryOf = (job, file) => new URLSearchParams(Object.entries({
   countryId: job.countryId, cityId: job.cityId, kind: job.kind, fileName: file.fileName, ...file.metadata,
@@ -209,8 +208,7 @@ async function reconcile(paths, job, resourceChecks, storeMedia) {
     return result
   }
   try {
-    const files = await checkedFiles(storeMedia)
-    uploadTargetOf(files, job, new Date())
+    uploadTargetOf(await officialReaderOf(storeMedia), job)
     const registry = mediaStoreOf(storeMedia).mediaRegistry()
     for (let i = 0; i < job.files.length; i++) {
       const file = job.files[i], item = result.files[i]
@@ -439,8 +437,7 @@ export async function handleMediaJobWrite({ privatePaths, route, input, request,
     return await withLibraryOperation(privatePaths, async () => {
       const store = createMediaJobStore(privatePaths)
       if (route.action === 'create') {
-        const files = await checkedFiles(storeMedia)
-        const target = uploadTargetOf(files, input ?? {}, new Date())
+        const target = uploadTargetOf(await officialReaderOf(storeMedia), input ?? {})
         if (!Array.isArray(input?.files)) fail('E_MEDIA_JOB_INVALID')
         // Reject fields instead of silently accepting a new target, path or metadata at reception time.
         const normalized = structuredClone(input)
@@ -507,7 +504,7 @@ export async function handleMediaJobWrite({ privatePaths, route, input, request,
       const before = await reconcile(privatePaths,job,undefined,storeMedia)
       if (before.status === 'needs_review') fail('E_MEDIA_JOB_REVIEW')
       const prepare = deps.prepareV2Upload ?? prepareV2Upload
-      const plan = await prepare({ privatePaths, query:queryOf(job,file), deps, files: await checkedFiles(storeMedia) })
+      const plan = await prepare({ privatePaths, query:queryOf(job,file), deps, reader: await officialReaderOf(storeMedia) })
       await assertUploadPath(privatePaths.root,plan.destination)
       for (const claim of plan.claims) await assertUploadPath(privatePaths.root,claim.file)
       const sourcePath = path.relative(privatePaths.inboxRoot,plan.destination).split(path.sep).join('/')

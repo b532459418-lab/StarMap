@@ -1,7 +1,7 @@
 /** The shared Inbox path-segment rule (review D9). Pure; no file system access. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 import { isSafePathSegment, toSafePathSegment } from './media-path-segment.mjs'
 import { safeSegment } from './local-editor-upload.mjs'
 

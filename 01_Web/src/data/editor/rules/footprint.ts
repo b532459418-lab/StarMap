@@ -1,18 +1,18 @@
 /**
- * 足迹、国家与转换的判定（3C-5 C2 从 ../../v2write/footprint.ts、common.ts、convert.ts 迁来，规则、错误码、参数与检查顺序不变；
+ * 足迹、国家与转换的判定（3C-5 C2 从 v2write/footprint.ts、common.ts、convert.ts（3C-5 E 删除）迁来，规则、错误码、参数与检查顺序不变；
  * RFC-LOC-1 PR3b-2 规格 §2.3、§2.6；第 2A、2C 批）。
  *
  * - 请求的形状：`POST /records`（三种输入只能选一种）、`POST /countries`、`POST /countries/delete`、`POST /wanttogo/convert`；
  * - 国家是否已在足迹中（有已去过的记录，或已有手动添加的国家）、新记录的默认标题、`E_CITY_EXISTS`、`E_COUNTRY_HAS_MEDIA` 的参数；
  * - 国家按最近到访日期重排（`sortCountryIdsByLatestVisit`）。
- * 这里只做判定：V2 写入函数（../../v2write/）与存储原生的写入（../native/）给出各自的数据，自己落盘。
+ * 这里只做判定：存储原生的写入（../native/；3C-5 E 之前还有 V2 写入函数）给出数据，自己落盘。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
 import { EN, ZH } from '../../canonical/reconstruct.ts'
 import type { CanonicalPlace, PlaceId } from '../../canonical/types.ts'
-import { V2WriteError, fail } from '../../v2write/errors.ts'
+import { V2WriteError, fail } from '../errors.ts'
 import {
   COUNTRY_CODE_PATTERN, DATE_PATTERN, bodyOf, createNewOf, optionalText, requireText, requiredNumberInRange, visitDates,
 } from './input.ts'

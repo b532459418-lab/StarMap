@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
-import { V2WriteError, errorBody } from '../src/data/v2write/errors.ts'
+import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 import { maxJsonBodyBytes, normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
 
 test('known errors keep codes, parameters, diagnostics and recovery messages unchanged', () => {

@@ -2,7 +2,6 @@
  * 本地编辑器的全部请求（`/__travelatlas/editor/*`）。浏览器里只由 ./localEditorClient.ts 在 `localEditorAvailable`
  * 为真时动态加载，构建产物里没有本模块（第 5B 批）。组件不直接导入它（`import type` 除外）；单元测试直接导入。
  */
-import type { TravelAtlasEditorState } from './editorState'
 import type { ViewOperation } from './editor/rules/editorView.ts'
 import type { WantToGoItem } from './derive/wantToGo.ts'
 import { parseLocalEditorResponse as parseResponse } from './localEditorResponse.ts'
@@ -185,44 +184,12 @@ export const searchLocalCities = async (
 export const addLocalCountry = (countryCode: string, visitedDate?: string, options?: EditorWriteOptions) =>
   editorWrite('/__travelatlas/editor/countries', 'POST', { countryCode, visitedDate }, parseResponse<{ countryId: string }>, options)
 
-export const readLocalEditorState = async () => {
-  const response = await fetch('/__travelatlas/editor/state', { cache: 'no-store' })
-  return (await parseResponse<{ state: TravelAtlasEditorState }>(response)).state
-}
-
-const parseEditorState = async (response: Response) => (await parseResponse<{ state: TravelAtlasEditorState; revision?: number }>(response))
-
 /**
  * 视图操作（3C-5 C1，`POST /__travelatlas/editor/view`）：排序、隐藏、封面只发这次编辑做了什么（./editorStateDelta.ts 的
  * `*Operations`），服务端在当前的编辑状态上合并、只写变了的行。回答新的修订号（没有改动时是原来的修订号，什么都不提交）。
  */
 export const applyLocalViewOperations = (operations: readonly ViewOperation[], options?: EditorWriteOptions) =>
   editorWrite('/__travelatlas/editor/view', 'POST', { operations }, parseResponse<{ revision?: number; unchanged?: boolean }>, options)
-
-/**
- * 整份取回 → 改 → 整份写回（`PUT /state`）。3C-5 C1 起页面改发视图操作（applyLocalViewOperations），不再调用它；
- * 接口留到子批 E 与 `PUT /state` 一起删除。新库模式下请求体只算一次：结果不明而重试时发送同一份（同一个请求编号对应同一个意图）。
- */
-export const updateLocalEditorState = (
-  update: (current: TravelAtlasEditorState) => TravelAtlasEditorState,
-) => {
-  const baseRevision = currentBaseRevision()
-  if (baseRevision === undefined) {
-    return withLocalEditorWrite(async () => {
-      const current = await readLocalEditorState()
-      const response = await fetch('/__travelatlas/editor/state', {
-        method: 'PUT',
-        headers: editorHeaders,
-        body: JSON.stringify(update(current)),
-      })
-      return (await parseResponse<{ state: TravelAtlasEditorState }>(response)).state
-    })
-  }
-  return withLocalEditorWrite(async () => {
-    const next = update(await readLocalEditorState())
-    return (await editorWrite('/__travelatlas/editor/state', 'PUT', next, parseEditorState)).state
-  })
-}
 
 export type LocalMediaUpload = {
   countryId: string
@@ -271,8 +238,8 @@ export const previewMediaJob = async (jobId: string, input: MediaJobVersion & {s
   if (body.job.jobId !== jobId || body.job.libraryId !== input.libraryId || body.job.revision !== input.revision || body.plan === null || typeof body.plan !== 'object') throw responseInvalid()
   const plan = body.plan as Record<string, unknown>
   const result = {jobId, revision: body.job.revision, plan: {digest: plan.digest, summary: plan.summary}, selectedFileIds: plan.selectedFileIds, blockers: plan.blockers}
-  // 3C-4c: the page's own mode decides which preview it accepts; a V2 page never takes a new-library one.
-  assertMediaJobPreview(result, {mode: currentBaseRevision() === undefined ? 'v2' : 'store'})
+  // The new library's preview only (3C-5 E: no V2 import any more).
+  assertMediaJobPreview(result)
   if (body.job.canImport !== (result.blockers.length === 0)) throw responseInvalid()
   return result
 }

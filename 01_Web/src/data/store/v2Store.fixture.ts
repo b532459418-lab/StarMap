@@ -7,12 +7,14 @@ import { type FormalState, emptyFormalState } from '../../worldgraph/store/forma
 import { memoryReader } from '../../worldgraph/store/reader.ts'
 import { type ChangeSet, applyChangeSet, planCommands } from '../../worldgraph/store/planner.ts'
 import { migratedCanonical, MIGRATED_CANONICAL_NAMES, v2SpaceCanonical, type V2SpaceCanonicalName } from '../canonical/frozen.fixture.ts'
-import { publicBridgeFixture, syntheticBridgeFixture } from '../canonical/storeBridge.fixture.ts'
+import { publicBridgeFixture, syntheticBridgeFixture } from '../compat/v2/storeBridge.fixture.ts'
 import { sequentialUuids } from '../canonical/v2.fixture.ts'
-import { serializeV2 } from '../canonical/v2Serializer.ts'
-import type { V2Files } from '../canonical/v2Schema.ts'
+import { serializeV2 } from '../compat/v2/v2Serializer.ts'
+import type { V2Files } from '../compat/v2/v2Schema.ts'
+import type { BridgeManifest } from '../compat/v2/storeBridgeIdentity.ts'
 import { OFFICIAL_POLICY } from './officialDefinitions.ts'
-import { type MigrateV2Options, migrateV2 } from './migrateV2.ts'
+import { projectStoreToCanonical } from './projectCanonical.ts'
+import { type MigrateV2Options, migrateV2 } from '../compat/v2/migrateV2.ts'
 
 export const NOW = '2026-10-13T00:00:00.000Z'
 const PLACES_GENERATED_AT = '2026-09-01T00:00:00.000Z'
@@ -71,7 +73,7 @@ export function emptyListsFixture(): V2Files {
 }
 
 const migratedFilesFixture = (): V2Files =>
-  JSON.parse(readFileSync(new URL('../v2write/fixtures/migrated-files.json', import.meta.url), 'utf8')) as V2Files
+  JSON.parse(readFileSync(new URL('../editor/fixtures/migrated-files.json', import.meta.url), 'utf8')) as V2Files
 
 /** Every V2 input of the round-trip tests: [name, fresh copy]. */
 export function migrationInputs(): readonly (readonly [string, () => V2Files])[] {
@@ -80,7 +82,7 @@ export function migrationInputs(): readonly (readonly [string, () => V2Files])[]
     ['G2 synthetic (storeBridge.fixture)', syntheticBridgeFixture],
     ['3C-1b edge cases', edgeCaseFixture],
     ['3C-1b empty lists', emptyListsFixture],
-    ['v2write/fixtures/migrated-files.json', migratedFilesFixture],
+    ['editor/fixtures/migrated-files.json', migratedFilesFixture],
     ...MIGRATED_CANONICAL_NAMES.map(name => [`canonical/fixtures/migrated-canonical.json ${name}`, () => {
       const { canonical, fileMeta } = migratedCanonical(name)
       return serializeV2(canonical, { ...fileMeta, placesGeneratedAt: PLACES_GENERATED_AT })
@@ -104,4 +106,27 @@ export function migrateIntoEmptyStore(files: V2Files, options: Partial<MigrateV2
   const empty = emptyFormalState()
   const changeSet = planCommands(memoryReader(empty), result.commands, { baseRevision: 0, now: NOW, policy: OFFICIAL_POLICY })
   return { result, changeSet, state: applyChangeSet(empty, changeSet) }
+}
+
+// --- A migrated store and its V2 view (3C-4a; 3C-5 E: moved here from the retired diffV2 fixture).
+
+export interface StoreUnderTest {
+  state: FormalState
+  /** The V2 view the App reads: serializeV2 of the projection (the cache after the first read). */
+  view: V2Files
+  readonly manifest: BridgeManifest
+  /** Fresh ids of the diff (store rows), apart from the V2 write's ids. */
+  readonly allocateId: () => string
+}
+
+/** The V2 view of a store: what the plugin's virtual module serves. */
+export function viewOf(state: FormalState): V2Files {
+  const { canonical, v2Meta } = projectStoreToCanonical(state, { source: 'local' })
+  return serializeV2(canonical, v2Meta)
+}
+
+/** Migrate `files` into an empty store and read its view. */
+export function storeFrom(files: V2Files, allocatorYear = 2031): StoreUnderTest {
+  const { state, result } = migrateIntoEmptyStore(files)
+  return { state, view: viewOf(state), manifest: result.manifest, allocateId: sequentialUuids(Date.UTC(allocatorYear, 0, 1)) }
 }

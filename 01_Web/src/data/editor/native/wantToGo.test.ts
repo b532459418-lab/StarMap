@@ -2,15 +2,15 @@
 /**
  * The store-native want-to-go writes (3C-5 C1): the rows they write (sources, ids, view rows), and the cleanup of
  * places after a delete, which looks at the references of every layer (spec §2.5, external review D3). The results and
- * refusals against the old engine are the double run's (../doubleRun.test.ts).
+ * refusals are pinned by the golden output (../golden.test.ts).
  */
 import { test } from 'node:test'
 import type { FormalState } from '../../../worldgraph/store/formal.ts'
 import assert from 'node:assert/strict'
-import { viewOf } from '../../store/diffV2.fixture.ts'
+import { viewOf } from '../../store/v2Store.fixture.ts'
 import { OFFICIAL, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
-import { migratedFiles, placeNamed } from '../../v2write/v2write.fixture.ts'
-import { OLD_WRITES, doubleRunStore, editorRoute, oldEngine, sameRequest, stepContext } from '../doubleRun.fixture.ts'
+import { migratedFiles, placeNamed } from '../editor.fixture.ts'
+import { doubleRunStore } from '../doubleRun.fixture.ts'
 import { canonicalOf, commitAsIs, customEntryOn, landmarkNear, runNative } from './native.fixture.ts'
 
 const run = runNative
@@ -42,9 +42,9 @@ test('POST /wanttogo: new rows are starmap:user rows with their own ids; the ent
   const canonical = canonicalOf(store.state)
   assert.equal(canonical.wantToGo.items.at(-1)!.id, result.id)
   assert.deepEqual(canonical.places.slice(-2).map((place) => place.names.en), ['Japan', 'Osaka'])
-  // The old engine reads and changes the native rows (a V2-path endpoint after a native write): the note of the new item.
-  const updated = oldEngine(store, sameRequest('note', editorRoute('wanttogo/update'), OLD_WRITES.wantToGoUpdate, { id: result.id, note: 'Synthetic V2' }), stepContext(2))
-  assert.equal(canonicalOf(updated.state!).wantToGo.items.at(-1)!.note, 'Synthetic V2')
+  // A later write reads and changes the native rows: the note of the new item.
+  const updated = run(store, 'wanttogo/update', { id: result.id, note: 'Synthetic later' }, 2)
+  assert.equal(canonicalOf(updated.state!).wantToGo.items.at(-1)!.note, 'Synthetic later')
 })
 
 test('POST /wanttogo/update: a note is one entry update; hiding adds the hidden row, showing removes it; nothing to change is no command', () => {
@@ -66,7 +66,7 @@ test('POST /wanttogo/update: a note is one entry update; hiding adds the hidden 
   assert.equal(store.state.viewItems.some((row) => row.scope === VIEW_SCOPES.wantToGoHidden && row.itemId === nuuk.id), false)
 })
 
-test('D3: deleting a want-to-go item keeps a city that a custom layer\'s entity or entry still refers to; the old engine could not', () => {
+test('D3: deleting a want-to-go item keeps a city that a custom layer\'s entity or entry still refers to (design §9 change 9)', () => {
   for (const [label, custom] of [['an entity field of a custom layer', landmarkNear], ['an entry of a custom layer', customEntryOn]] as const) {
     const store = doubleRunStore(migratedFiles())
     const files = viewOf(store.state)
@@ -80,11 +80,6 @@ test('D3: deleting a want-to-go item keeps a city that a custom layer\'s entity 
     assert.equal(canonical.wantToGo.items.some((item) => item.id === wish.id), false, label)
     assert.ok(canonical.places.some((place) => place.id === tromso), `${label}: Tromsø stays`)
     assert.ok(store.state.entities.some((row) => row.id === tromso), label)
-    // The V2 path sees only the five files: it removes Tromsø, and the store refuses (E_DEPENDENTS: the custom row refers to it).
-    const before = doubleRunStore(migratedFiles())
-    commit(before, custom(tromso))
-    assert.throws(() => oldEngine(before, sameRequest('delete', editorRoute('wanttogo/delete'), OLD_WRITES.wantToGoDelete, { ids: [wish.id] }), stepContext(1)),
-      (error: { code?: string }) => error.code === 'E_DEPENDENTS', label)
   }
 })
 
@@ -119,12 +114,12 @@ test('D3, the other way: a city only the deleted item referred to goes, and a co
   assert.equal(canonicalOf(store.state).places.some((place) => place.names.en === 'Osaka'), false, 'Osaka goes')
 })
 
-test('a V2-path write that changes a place the native write created keeps the place\'s starmap:user source (diffV2)', () => {
+test('a later write that changes a place the native write created (a record that fills its location) keeps the place\'s starmap:user source', () => {
   const store = doubleRunStore(migratedFiles())
   const added = run(store, 'wanttogo', { place: { kind: 'city', nameEn: 'Synthetic Town', countryCode: 'IS' } }, 1)
   const placeId = (canonicalOf(store.state).wantToGo.items.find((item) => item.id === (added.result as { id: string }).id)!).placeId
-  // POST /records by place id fills the city's missing location: the V2 view changes the place.
-  const record = oldEngine(store, sameRequest('record', editorRoute('records'), OLD_WRITES.records, { placeId, start_date: '2026-05-01', lat: 64.1, lng: -21.9 }), stepContext(2))
+  // POST /records by place id fills the city's missing location.
+  const record = run(store, 'records', { placeId, start_date: '2026-05-01', lat: 64.1, lng: -21.9 }, 2)
   assert.ok(record.state, JSON.stringify(record.error))
   const entity = record.state.entities.find((row) => row.id === placeId)!
   assert.deepEqual([entity.source.sourceId, entity.source.recordId], [OFFICIAL.user, placeId])

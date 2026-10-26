@@ -26,7 +26,9 @@ import * as service from './media-job-service.mjs'
 import { assertMediaJobRecord, largestCompletedMediaJobRecord, mediaJobReceiptSeal } from './media-job-store.mjs'
 import { prepareV2Upload } from './v2-media-store.mjs'
 import { createStoreSession } from './store-session.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
+import { projectToV2Files } from './compat/store-projection.mjs'
+import { formalStateOfReadModel } from '../src/worldgraph/readModel/build.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { placeFolderSuffix } from '../src/data/v2media/editorWrites.ts'
@@ -81,7 +83,8 @@ async function tree(root, { omitCoordination = false } = {}) {
 const route = (action, job) => service.mediaJobRoute('POST', job ? `${base}/${job.jobId}/${action}` : base)
 const write = (env, action, job, input, extra = {}) => withLibraryOperation(env.paths, leaseToken => service.handleMediaJobWrite({ privatePaths: env.paths, deps: env.deps, route: route(action, job), input, ...extra, leaseToken, storeMedia: env.storeMedia }))
 const get = (env, job) => service.handleMediaJobRead({ privatePaths: env.paths, route: service.mediaJobRoute('GET', `${base}/${job.jobId}`), storeMedia: env.storeMedia })
-const catalogOf = async (env) => (await env.storeMedia.mediaStore.view()).files.media
+// 3C-5 E: the media store has no V2 view any more; the catalog is the official view's, from its reader's read model.
+const catalogOf = async (env) => projectToV2Files(formalStateOfReadModel((await env.storeMedia.mediaStore.official()).reader.index.model)).files.media
 const selection = (job) => job.files.filter(file => file.phase === 'received').map(file => file.fileId)
 const identity = (job) => ({ libraryId: job.libraryId, revision: job.revision })
 const preview = (env, job, selectedFileIds = selection(job), override = {}) => service.handleMediaJobPreview({ privatePaths: env.paths, route: route('preview', job), input: { ...identity(job), selectedFileIds, ...override }, storeMedia: env.storeMedia })

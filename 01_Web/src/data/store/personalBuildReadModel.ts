@@ -41,11 +41,11 @@
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types).
  */
 import type { ViewItem, ViewSetting } from '../../worldgraph/store/formal.ts'
-import type { AssetReference, Evidence, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
+import type { AssetReference, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
 import { readReadModel } from '../../worldgraph/readModel/check.ts'
 import { selectReadModel } from '../../worldgraph/readModel/select.ts'
 import type { ReadModel, ReadModelRow, ReadModelTable } from '../../worldgraph/readModel/types.ts'
-import { OFFICIAL, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES, mapListScope } from './officialDefinitions.ts'
+import { OFFICIAL, UNRESOLVED_KEY_PREFIX, VIEW_SCOPES, mapListScope } from './officialDefinitions.ts'
 import { officialEntryRole } from './projectCanonical.ts'
 
 export interface PersonalBuildReadModel {
@@ -134,15 +134,14 @@ export function filterReadModelForPersonalBuild(input: unknown): PersonalBuildRe
   const wishHidden = new Map<string, boolean>()
   for (const item of items.get(VIEW_SCOPES.wantToGoHidden) ?? []) if (!wishHidden.has(item.itemId)) wishHidden.set(item.itemId, item.hidden)
 
+  const subtypeOf = (id: string) => places.get(id)?.fields.subtype
   const removedEntry = (entry: LayerEntry): boolean => {
-    const role = officialEntryRole(entry)
+    const role = officialEntryRole(entry, subtypeOf)
     if (role === 'footprint') return inHiddenPlace(entry.entityId)
     if (role === 'countryVisit') return hiddenCountries.has(entry.entityId)
     if (role === 'wish') return wishHidden.get(entry.id) === true
     return false
   }
-  const addedCountries = (model.evidence as readonly Evidence[]).filter((evidence) => evidence.sourceId === V2_SOURCES.countryVisit)
-  const removedAddedCountry = (evidence: Evidence) => hiddenCountries.has(evidence.recordId)
   const mediaEntities = (model.entities as readonly StoreEntity[]).filter((entity) => entity.typeId === OFFICIAL.media)
   const placeOfMedia = (entity: StoreEntity) => (typeof entity.fields.place === 'string' ? entity.fields.place : undefined)
   const assetOfMedia = (entity: StoreEntity) => (typeof entity.fields.asset === 'string' ? entity.fields.asset : undefined)
@@ -152,7 +151,10 @@ export function filterReadModelForPersonalBuild(input: unknown): PersonalBuildRe
   }
 
   const removedEntries = new Set(model.entries.filter(removedEntry).map((entry) => entry.id))
-  const removedEvidence = new Set(addedCountries.filter(removedAddedCountry).map((evidence) => evidence.id))
+  // An added country that goes (its country is hidden) takes the evidence its visit entry cites (3C-5 E: the entry is the
+  // added country; its place is among the entries' below).
+  const removedEvidence = new Set(model.entries.filter((entry) => removedEntries.has(entry.id) && officialEntryRole(entry, subtypeOf) === 'countryVisit')
+    .flatMap((entry) => entry.source.evidenceIds))
   const removedMedia = mediaEntities.filter(removedMediaEntity)
   const removedMediaEntities = new Set(removedMedia.map((entity) => entity.id))
   const removedAssets = new Set(removedMedia.map(assetOfMedia).filter((id): id is string => id !== undefined))
@@ -168,7 +170,6 @@ export function filterReadModelForPersonalBuild(input: unknown): PersonalBuildRe
   }
   for (const entry of model.entries) addWithCountry(removedEntries.has(entry.id) ? candidates : keptRefs, entry.entityId)
   for (const entity of mediaEntities) addWithCountry(removedMediaEntities.has(entity.id) ? candidates : keptRefs, placeOfMedia(entity))
-  for (const evidence of addedCountries) addWithCountry(removedEvidence.has(evidence.id) ? candidates : keptRefs, evidence.recordId)
   // A kept place keeps its country (a city must point at an existing country).
   for (const id of places.keys()) {
     const parent = parentOf.get(id)

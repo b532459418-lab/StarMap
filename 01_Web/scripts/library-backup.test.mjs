@@ -10,7 +10,7 @@ import sharp from 'sharp'
 import { createBackup, inspectBackup, restoreBackup, portablePath } from './library-backup.mjs'
 import { createBrowserFixture, fixtureIds } from './browser-fixture.mjs'
 import { getPrivatePaths, V2_DATA_FILE_NAMES } from './private-profile.mjs'
-import { runV2MediaImport } from './v2-media-import.mjs'
+import { writeV2MediaImport } from './compat/v2-media-import.fixture.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { createMediaJobStore } from './media-job-store.mjs'
 
@@ -38,7 +38,7 @@ async function fixture(t, { media = false } = {}) {
     await writeJson(path.join(paths.inboxRoot, 'Iceland', 'place.json'), { placeId: fixtureIds.iceland })
     await writeJson(path.join(city, 'place.json'), { placeId: fixtureIds.reykjavik })
     await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 80, g: 140, b: 190 } } }).png().toFile(path.join(city, 'photos', 'neutral.png'))
-    assert.equal(await runV2MediaImport({ privatePaths: paths, apply: true, log: () => {}, logError: () => {} }), 0)
+    await writeV2MediaImport({ privatePaths: paths })
     const catalog = await readJson(paths.v2FilePaths.media)
     const state = await readJson(paths.v2FilePaths.editorState)
     state.coverMediaByCity[fixtureIds.reykjavik] = catalog.items[0].id
@@ -68,10 +68,10 @@ test('full roundtrip preserves V2 bytes, IDs, hidden/cover state, imported origi
   for (const entry of manifest.entries) assert.deepEqual(await readFile(path.join(root, entry.path)), await readFile(path.join(restored, entry.path)))
   for (const name of Object.values(V2_DATA_FILE_NAMES)) assert.deepEqual(await readFile(path.join(root, 'data', 'v2', name)), await readFile(path.join(restored, 'data', 'v2', name)))
   await assert.rejects(readFile(path.join(restored, 'config', '.env.local')), { code: 'ENOENT' })
-  // Real importer can resolve the restored original and retain its existing media identity.
+  // The importer's plan resolves the restored original and keeps its media identity (3C-5 E: written by the test fixture).
   const before = await readJson(paths.v2FilePaths.media)
   const restoredPaths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: restored })
-  assert.equal(await runV2MediaImport({ privatePaths: restoredPaths, apply: true, log: () => {}, logError: () => {} }), 0)
+  await writeV2MediaImport({ privatePaths: restoredPaths })
   assert.deepEqual((await readJson(restoredPaths.v2FilePaths.media)).items.map(item => item.id), before.items.map(item => item.id))
 })
 

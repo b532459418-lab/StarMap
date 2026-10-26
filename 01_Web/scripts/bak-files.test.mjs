@@ -5,7 +5,7 @@
  * 这里锁定它们无害——只测，不改代码：
  *   1. 私人目录 `data/` 与 `data/v2/` 里的 `.bak` 不影响「未迁移」的判定（scripts/legacy-data.mjs：不算旧数据，也不算 V2 文件），
  *      因而也不影响写入拒绝与导入器（PR5b 删除了迁移工具）；
- *   2. `data/v2/` 里的 `.bak` 不影响 V2 读取与校验（虚拟模块、基线工具、编辑状态接口只读五个确切的文件名）；
+ *   2. `data/v2/` 里的 `.bak` 不影响 V2 读取与校验（虚拟模块、基线工具只读五个确切的文件名）；
  *   3. 收件箱里的 `.bak` 不影响导入（导入器跳过它们）。
  * `.bak` 一律写成非法 JSON 或指向别处的内容：它们若被读到，结果一定会变。
  *
@@ -26,13 +26,13 @@ import sharp from 'sharp'
 import { hasLegacyData, hasV2Data, isLegacyUnmigrated, legacyDataStateOf, legacyWriteRefusal } from './legacy-data.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { atomicJsonWrite } from './json-file.mjs'
-import { readV2Inputs } from './store-migrate.mjs'
-import { V2_EDITOR_ROUTES, createV2WriteContext, readV2EditorState } from './v2-editor-store.mjs'
-import { runV2MediaImport } from './v2-media-import.mjs'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
+import { readV2Inputs } from './compat/store-migrate.mjs'
+import { runV2MediaImport } from './compat/v2-media-import.mjs'
+import { writeV2MediaImport } from './compat/v2-media-import.fixture.mjs'
+import { canonicalForInputs } from '../src/data/compat/v2/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../src/data/canonical/derive.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
-import { V2_FILE_KEYS, validateV2Files } from '../src/data/canonical/v2Schema.ts'
+import { V2_FILE_KEYS, validateV2Files } from '../src/data/compat/v2/v2Schema.ts'
 import { buildBaseline, stableStringify } from '../src/data/derive/baseline.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -102,11 +102,6 @@ test('.bak 与「未迁移」：有旧数据、data/v2/ 里只有 .bak → 不�
 // 2. data/v2/ 里的 .bak
 // ---------------------------------------------------------------------------
 
-const CATALOG = new Map([
-  ['IS', { countryCode: 'IS', nameZh: '冰岛', nameEn: 'Iceland', centerLat: 65, centerLng: -18, region: 'Europe' }],
-  ['NO', { countryCode: 'NO', nameZh: '挪威', nameEn: 'Norway', centerLat: 62, centerLng: 10, region: 'Europe' }],
-])
-
 const readFiveV2Files = async (paths) => Object.fromEntries(await Promise.all(V2_FILE_KEYS.map(async (key) => [
   key, JSON.parse(await readFile(paths.v2FilePaths[key], 'utf8')),
 ])))
@@ -116,7 +111,7 @@ const v2BaselineOf = (files) => `${stableStringify(buildBaseline(
   { now: BASELINE_NOW },
 ))}\n`
 
-test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响「未迁移」的判定、虚拟模块读的文件、V2 校验、编辑状态接口与 scripts/baseline.mjs（个人模式）', () => withTemp(async (directory) => {
+test('.bak 在 data/v2/：改写留下的 .bak（甚至改坏）不影响「未迁移」的判定、虚拟模块读的文件、V2 校验与 scripts/baseline.mjs（个人模式）', () => withTemp(async (directory) => {
   const root = path.join(directory, 'private')
   const out = path.join(directory, 'out')
   const paths = getPrivatePaths({ STARMAP_PRIVATE_ROOT: root })
@@ -125,24 +120,15 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
   await writeJson(paths.localTravelMapPath, { schema_version: 1, records: [] })
   await writeJson(paths.wantToGoPath, { schema_version: 1, items: [] })
 
-  // 两次编辑：规则引擎的纯函数算出写入，atomicJsonWrite 写盘，给被改写的文件留下 .bak（上一版）。3C-4d 删除了 V2 的写盘
-  // （runV2Write），V2 文件只由 store:export-v2、恢复等写出，同样经 atomicJsonWrite；这里照它的写法做。
-  const writeV2Edit = async ({ privatePaths, route, input, ctx: context }) => {
-    const outcome = route.run(await readFiveV2Files(privatePaths), input, context)
-    for (const step of outcome.writes) await atomicJsonWrite(privatePaths.v2FilePaths[step.file], step.value)
-    return { status: route.status, body: { ok: true, ...outcome.result } }
-  }
-  const ctx = createV2WriteContext({ countryCatalog: CATALOG, newId: sequentialUuids(Date.UTC(2026, 8, 29)) })
-  const state = (await readV2EditorState({ privatePaths: paths })).body.state
-  const reorder = await writeV2Edit({ privatePaths: paths, route: V2_EDITOR_ROUTES['PUT /__travelatlas/editor/state'], input: { ...state, countryOrder: [...state.countryOrder].reverse() }, ctx })
-  assert.equal(reorder.status, 200, JSON.stringify(reorder.body))
-  const add = await writeV2Edit({
-    privatePaths: paths,
-    route: V2_EDITOR_ROUTES['POST /__travelatlas/editor/wanttogo'],
-    input: { place: { kind: 'city', nameZh: '卑尔根', nameEn: 'Bergen', countryCode: 'NO', lat: 60.3913, lng: 5.3221 } },
-    ctx,
-  })
-  assert.equal(add.status, 201, JSON.stringify(add.body))
+  // 两次改写：atomicJsonWrite 写盘，给被改写的文件留下 .bak（上一版）。3C-4d 删除了 V2 的写盘，3C-5 E 删除了 V2 的写入函数；
+  // V2 文件只由 store:export-v2、恢复等写出，同样经 atomicJsonWrite。这里照它的写法做：国家顺序反过来，再加一个想去的卑尔根。
+  const newId = sequentialUuids(Date.UTC(2026, 8, 29))
+  const original = await readFiveV2Files(paths)
+  await atomicJsonWrite(paths.v2FilePaths.editorState, { ...original.editorState, countryOrder: [...original.editorState.countryOrder].reverse() })
+  const norway = original.places.places.find((place) => place.names.en === 'Norway')
+  const bergen = { id: newId(), subtype: 'city', names: { 'zh-Hans': '卑尔根', en: 'Bergen' }, partOf: norway.id, location: { lat: 60.3913, lng: 5.3221 } }
+  await atomicJsonWrite(paths.v2FilePaths.places, { ...original.places, places: [...original.places.places, bergen] })
+  await atomicJsonWrite(paths.v2FilePaths.wantToGo, { ...original.wantToGo, items: [...original.wantToGo.items, { id: newId(), placeId: bergen.id, addedAt: '2026-09-29', hidden: false }] })
   const baks = (await readdir(paths.v2DataRoot)).filter((name) => name.endsWith('.bak')).sort()
   assert.ok(baks.includes('editor-state.local.bak') && baks.includes('want-to-go.local.bak') && baks.includes('places.local.bak'), baks.join(', '))
 
@@ -150,7 +136,6 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
   assert.deepEqual(validateV2Files(files), [])
   const expected = v2BaselineOf(files)
   assert.ok(expected.includes('Bergen'), '基线反映的是最新一次编辑，不是 .bak 里的上一版')
-  const expectedState = await readV2EditorState({ privatePaths: paths })
 
   const check = async (label) => {
     // 旧文件还在（迁移不动它们）、V2 文件也在：残留，不算未迁移。
@@ -158,7 +143,6 @@ test('.bak 在 data/v2/：真实编辑留下的 .bak（甚至改坏）不影响�
     assert.equal(isLegacyUnmigrated(legacyDataStateOf(paths)), false, label)
     // 虚拟模块（local-editor-plugin.mjs 的 load，3C-5B 起在内存里迁移它们）只读这五个确切的路径（store-migrate.mjs 的 readV2Inputs）。
     assert.deepEqual((await readV2Inputs(paths)).values, files, label)
-    assert.deepEqual(await readV2EditorState({ privatePaths: paths }), expectedState, label)
     const target = path.join(out, `${label}.json`)
     const result = runScript('baseline.mjs', ['--out', target], root)
     assert.equal(result.status, 0, `${label}\n${result.stderr}`)
@@ -232,11 +216,13 @@ const importInto = async (root, { withBak, images }) => {
   if (withBak) await addInboxBaks(paths)
   const preflight = runScript('import-media.mjs', [], root)
   // 第 2A 批：这里的投递箱按文件夹名匹配，要明确确认文件夹绑定（本用例测的是 .bak，不是绑定确认）。
-  // 3C-4d：media:import 只写新库；V2 导入器的写入只用来为测试生成迁移输入，这里在进程内直接调用（预检仍走 CLI）。
+  // 3C-4d：media:import 只写新库；3C-5 E 起 V2 导入器只做预检：报告取进程内预检的输出（预检也走 CLI），
+  // 目录、索引与生成文件由测试夹具按导入器的计划写出（./compat/v2-media-import.fixture.mjs）。
   const lines = []
   const log = (line) => lines.push(String(line))
-  const status = await runV2MediaImport({ privatePaths: paths, apply: true, acceptFolderBindings: true, log, logError: log })
+  const status = await runV2MediaImport({ privatePaths: paths, log, logError: log })
   assert.equal(status, 0, lines.join('\n'))
+  await writeV2MediaImport({ privatePaths: paths, acceptFolderBindings: true })
   return {
     preflight: preflight.stdout + preflight.stderr,
     output: lines.join('\n').replaceAll(root, '<root>'),

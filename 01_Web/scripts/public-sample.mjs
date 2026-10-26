@@ -1,6 +1,6 @@
 /**
  * The native public sample (3C-5A): `src/data/sample/`, its generator's command line (`npm run sample:build`) and the
- * privacy audit's rules for it (`npm run privacy:check`, ./privacy-audit.mjs). The V2 sample's rules (./v2-sample.mjs)
+ * privacy audit's rules for it (`npm run privacy:check`, ./privacy-audit.mjs). The V2 sample's rules (./compat/v2-sample.mjs)
  * stay as they are: the public build still reads the V2 files until 3C-5B.
  *
  * The audit's rules, the V2 sample's carried over to the new format:

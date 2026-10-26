@@ -11,7 +11,7 @@
  *   原来由 `toV2Space(legacyAdapter(原始数据)).data` 得到。`countryOfCityUuidOf()` 是其中 `countryOfCity` 的「旧 id → UUID」。
  * - `migratedCanonical(name)`：迁移规划合并之后的 Canonical（M）与写文件用的文件级元数据。
  * 第 7 批删除了 `canonicalForInputsFixture()`（`canonical-for-inputs.json`）：它的 M 就是 `migratedCanonical('personal').canonical`，
- * 五个文件与 `../v2write/fixtures/migrated-files.json` 只差 `places.generated_at`。
+ * 五个文件与 `../editor/fixtures/migrated-files.json` 只差 `places.generated_at`。
  *
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
@@ -21,7 +21,7 @@
 import { readFileSync } from 'node:fs'
 
 import type { CanonicalData } from './types.ts'
-import type { V2FileMeta } from './v2Serializer.ts'
+import type { V2FileMeta } from '../compat/v2/v2Serializer.ts'
 
 const readFixture = <T,>(name: string): T => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')) as T
 

@@ -21,10 +21,10 @@ import { readFileSync } from 'node:fs'
 import { formalStateOfReadModel, readModelOf } from '../../worldgraph/readModel/build.ts'
 import { readReadModel, validateReadModel } from '../../worldgraph/readModel/check.ts'
 import { MIGRATED_LOCKS, V2_FILES_LOCKS, V2_SAMPLE_BASELINE_SHA256, V2_SPACE_LOCKS, lockedFixtureUrl } from '../canonical/baselineLocks.fixture.ts'
-import { canonicalForInputs } from '../canonical/canonicalForInputs.ts'
+import { canonicalForInputs } from '../compat/v2/canonicalForInputs.ts'
 import { deriveAppDataFromCanonical } from '../canonical/derive.ts'
 import type { CanonicalData } from '../canonical/types.ts'
-import type { V2Files } from '../canonical/v2Schema.ts'
+import type { V2Files } from '../compat/v2/v2Schema.ts'
 import { buildBaseline, stableStringify } from '../derive/baseline.ts'
 import { deriveTimeQueryContext } from '../derive/timeQueryContext.ts'
 import { OFFICIAL_POLICY } from './officialDefinitions.ts'
@@ -38,7 +38,7 @@ const lockOf = (text: string) => createHash('sha256').update(`${text}\n`).digest
 /** Locks by migrationInputs name; the inputs without one are compared with the readV2 path only. */
 const LOCKS: Record<string, string> = {
   'public sample (src/data/v2-sample)': V2_SAMPLE_BASELINE_SHA256,
-  'v2write/fixtures/migrated-files.json': V2_FILES_LOCKS.find(([relative]) => relative.endsWith('/migrated-files.json'))![1],
+  'editor/fixtures/migrated-files.json': V2_FILES_LOCKS.find(([relative]) => relative.endsWith('/migrated-files.json'))![1],
   ...Object.fromEntries(Object.entries(MIGRATED_LOCKS).map(([name, lock]) => [`canonical/fixtures/migrated-canonical.json ${name}`, lock])),
   ...Object.fromEntries(Object.entries(V2_SPACE_LOCKS).map(([name, lock]) => [`canonical/fixtures/v2-space-canonical.json ${name}`, lock])),
 }

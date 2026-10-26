@@ -7,8 +7,10 @@
  * - Journeys: joining one updates the first sequence of its entity (its members in route order, compareJourneyRecords);
  *   a new one is a `starmap:journey` entity and a sequence, both `starmap:user` rows whose journey id is the entity id
  *   (design §9 change 1: no `journey-` prefix).
- * - Added countries: the evidence (`v2:country-visit`, the country as record id, the region) and the visit entry (same
- *   source, the date) — the identity the official view reads added countries by — and the addedCountryOrder row.
+ * - Added countries: the visit entry (a `starmap:travel` entry on the country, the date: the country's subtype is what
+ *   makes it an added country, 3C-5 E spec §2.6) citing an evidence row with the region, both `starmap:user` rows, and the
+ *   addedCountryOrder row. Before 3C-5 E they were rows of the V2 source `v2:country-visit`, which the official view read
+ *   them by.
  * - The country order by latest visit (../rules/footprint.ts), written with the list algorithm (only rows that move).
  *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative imports with `.ts`, `import type` for types).
@@ -16,9 +18,10 @@
 import type { Evidence, EntrySequence, JsonValue, LayerEntry, StoreEntity } from '../../../worldgraph/store/types.ts'
 import { compareJourneyRecords } from '../../canonical/journeyRoutes.ts'
 import type { CanonicalPlace, PlaceId } from '../../canonical/types.ts'
-import { OFFICIAL, V2_SOURCES, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
+import { OFFICIAL, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
 import type { OfficialReader, OfficialRecord } from '../../store/officialReader.ts'
-import { countryEvidence, countryVisitEntry, journeyEntity, journeySequence, type ViewTarget } from '../../store/v2RecordRows.ts'
+import { addedCountryTieBreak } from '../../store/projectCanonical.ts'
+import { journeyEntity, journeySequence, sourceRef, type ViewTarget } from '../../store/v2RecordRows.ts'
 import { viewListWriter } from '../../store/viewListRows.ts'
 import { sameOrder, sortCountryIdsByLatestVisit, type CountryVisit } from '../rules/footprint.ts'
 import { findJourneyCandidates, type JourneyCandidate, type JourneyRecord } from '../rules/journeys.ts'
@@ -125,30 +128,40 @@ export function writeJourney(reader: OfficialReader, batch: CommandBatch, decide
 // Added countries
 // ---------------------------------------------------------------------------
 
-/** An added country's rows: its evidence (region), the visit entry (date) and its addedCountryOrder row at the end. */
+/** An added country's rows (see the file header): its evidence (the region), the visit entry (the date) and its addedCountryOrder row at the end. */
 export function addCountryVisit(reader: OfficialReader, batch: CommandBatch, country: { placeId: PlaceId; region?: string; visitedDate: string }, now: string, newId: () => string): void {
-  const value = { placeId: country.placeId, ...(country.region ? { region: country.region } : {}), visitedDate: country.visitedDate }
-  const evidence = countryEvidence(value, newId())
-  batch.create('evidence', evidence satisfies Evidence)
-  batch.create('entries', countryVisitEntry(value, newId(), evidence.id, { createdAt: now, updatedAt: now })!)
+  const evidenceId = newId(), entryId = newId()
+  batch.create('evidence', {
+    id: evidenceId, revision: 0, sourceId: OFFICIAL.user, recordId: entryId, attributes: country.region ? { region: country.region } : {},
+  } satisfies Evidence)
+  batch.create('entries', {
+    id: entryId, revision: 0, layerId: OFFICIAL.travel, entityId: country.placeId, fields: { date: { raw: { startDate: country.visitedDate } } },
+    source: sourceRef(OFFICIAL.user, entryId, [evidenceId]), createdAt: now, updatedAt: now,
+  } satisfies LayerEntry)
   appendToOriginalOrder(reader, batch, newId, {
     scope: S.addedCountryOrder, table: 'entities', added: [country.placeId],
-    keys: () => reader.addedCountries().map((added) => ({ id: added.placeId, after: ['', added.evidence.id] as const })),
+    keys: () => reader.addedCountries().map((added) => ({ id: added.placeId, after: ['', addedCountryTieBreak(added.visit)] as const })),
   })
 }
 
-/** The rows of an added country that goes: the visit entry and the evidence (the addedCountryOrder row follows them). */
+/**
+ * The rows of an added country that goes: its addedCountryOrder row, every visit entry on the country (the official view
+ * reads the later one) and the evidence they cite.
+ */
 export function removeCountryVisit(reader: OfficialReader, batch: CommandBatch, placeId: PlaceId): void {
-  for (const added of reader.addedCountries()) {
-    if (added.placeId !== placeId) continue
-    for (const item of reader.index.viewItemsOf(S.addedCountryOrder)) if (item.itemTable === 'entities' && item.itemId === placeId) batch.remove('viewItems', item)
-    if (added.visit) batch.remove('entries', added.visit)
-    batch.remove('evidence', added.evidence)
+  if (!reader.addedCountries().some((added) => added.placeId === placeId)) return
+  for (const item of reader.index.viewItemsOf(S.addedCountryOrder)) if (item.itemTable === 'entities' && item.itemId === placeId) batch.remove('viewItems', item)
+  const cited = new Set<string>()
+  for (const entry of reader.index.entriesOfEntity(placeId)) {
+    if (reader.roleOf(entry) !== 'countryVisit') continue
+    batch.remove('entries', entry)
+    for (const id of entry.source.evidenceIds) cited.add(id)
+  }
+  for (const id of cited) {
+    const evidence = reader.index.get('evidence', id) as Evidence | undefined
+    if (evidence) batch.remove('evidence', evidence)
   }
 }
-
-/** True when an evidence row is an added country's (the source the official view reads them by). */
-export const isCountryVisitEvidence = (evidence: Evidence) => evidence.sourceId === V2_SOURCES.countryVisit
 
 // ---------------------------------------------------------------------------
 // The country order

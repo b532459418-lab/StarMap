@@ -2,7 +2,7 @@
  * 地点解析（RFC-LOC-1 ID-6；PR3 总体方案 §3.1 第 3 条，PR3b-2 规格 §2.2；第 2A 批）：V2 写入用的
  * 「可能是同一个地点吗」的判断。
  *
- * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。调用方是 `../v2write/`（V2 写入）：
+ * `src/data/canonical/` 是 App 层，【不是】 StarMap Core。调用方原是 `v2write/`（V2 写入，3C-5 E 删除），现在是 ../editor/rules/places.ts：
  * - 国家按 ISO 3166-1 alpha-2「先找后建」（`resolveCountry`）：恰好一个就引用，多于一个交给调用方报错；
  * - 城市按名字只找候选（`findCityCandidates`）：名字和坐标是匹配提示，不是身份（RFC ID-6）。写入端有候选就请用户选择，
  *   用户选定后按地点 id 引用，或明确新建；从不按名字静默复用。

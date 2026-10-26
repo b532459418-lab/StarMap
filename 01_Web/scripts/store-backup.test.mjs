@@ -13,21 +13,23 @@ import { createMediaJobStore } from './media-job-store.mjs'
 import { getPrivatePaths, webRoot } from './private-profile.mjs'
 import { privateDataSource, storeFileOf } from './private-data-source.mjs'
 import {
-  BACKUP_FILES, backupStore, exportStoreV2, exportedV2Of, mediaCopyInProgress, restoreStore, runStoreBackupCli, verifyBackup,
+  BACKUP_FILES, backupStore, mediaCopyInProgress, restoreStore, runStoreBackupCli, verifyBackup,
 } from './store-backup.mjs'
-import { runV2MediaImport } from './v2-media-import.mjs'
+import { exportStoreV2, exportedV2Of, runExportV2Cli } from './compat/store-export-v2.mjs'
+import { writeV2MediaImport } from './compat/v2-media-import.fixture.mjs'
 import { openStore } from './store-host.mjs'
-import { applyMigration } from './store-migrate.mjs'
-import { projectToV2Files } from './store-projection.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
+import { projectToV2Files } from './compat/store-projection.mjs'
 import { edgeV2Files, quietly, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files } from './store-mode.fixture.mjs'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
-import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/canonical/v2Schema.ts'
+import { readV2 } from '../src/data/compat/v2/v2Reader.ts'
+import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/compat/v2/v2Schema.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { migrateIntoEmptyStore, migrationInputs } from '../src/data/store/v2Store.fixture.ts'
 import { readModelOf } from '../src/worldgraph/readModel/build.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
 const backupScript = fileURLToPath(new URL('./store-backup.mjs', import.meta.url))
+const exportScript = fileURLToPath(new URL('./compat/store-export-v2.mjs', import.meta.url))
 
 async function migrated(t, files = sampleV2Files()) {
   const context = await tempPrivateRoot(t, 'starmap-store-backup-')
@@ -180,9 +182,10 @@ test('the three command lines: usage errors, and a real backup, restore and expo
   const output = quietly()
   assert.equal(await runStoreBackupCli('backup', [], { privatePaths: paths, ...output }), 1)
   assert.equal(await runStoreBackupCli('restore', ['--from', at('x')], { privatePaths: paths, ...output }), 1)
-  assert.equal(await runStoreBackupCli('export-v2', ['--out', at('x'), '--force'], { privatePaths: paths, ...output }), 1)
+  assert.equal(await runExportV2Cli(['--out', at('x'), '--force'], { privatePaths: paths, ...output }), 1)
+  assert.equal(await runStoreBackupCli('export-v2', ['--out', at('x')], { privatePaths: paths, ...output }), 1, '3C-5 E: store:export-v2 is its own command (scripts/compat/)')
   assert.equal(await runStoreBackupCli('unknown', [], { privatePaths: paths, ...output }), 1)
-  const cli = (args) => spawnSync(process.execPath, [backupScript, ...args], {
+  const cli = (args, script = backupScript) => spawnSync(process.execPath, [script, ...args], {
     env: { ...process.env, STARMAP_PRIVATE_ROOT: paths.root }, encoding: 'utf8', timeout: 120_000, windowsHide: true,
   })
   const backup = cli(['backup', '--out', at('cli-backup')])
@@ -194,7 +197,7 @@ test('the three command lines: usage errors, and a real backup, restore and expo
   const again = cli(['restore', '--from', at('cli-backup'), '--to', at('cli-restored')])
   assert.equal(again.status, 1)
   assert.match(again.stderr, /E_TARGET_EXISTS/)
-  const exported = cli(['export-v2', '--out', at('cli-export')])
+  const exported = cli(['--out', at('cli-export')], exportScript)
   assert.equal(exported.status, 0, exported.stderr)
   assert.match(exported.stdout, /没有 V2 表达不了的内容/)
 })
@@ -223,7 +226,7 @@ async function migratedWithMedia(t) {
   await writeJson(path.join(city, 'place.json'), { placeId: fixtureIds.reykjavik })
   await mkdir(path.join(city, 'photos'), { recursive: true })
   await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 80, g: 140, b: 190 } } }).png().toFile(path.join(city, 'photos', 'neutral.png'))
-  assert.equal(await runV2MediaImport({ privatePaths: paths, apply: true, log: () => {}, logError: () => {} }), 0)
+  await writeV2MediaImport({ privatePaths: paths })
   await applyMigration(paths, { now: NOW })
   assert.equal(privateDataSource(paths), 'store')
   return { ...context, at: (name) => path.join(context.directory, name) }

@@ -3,10 +3,11 @@
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
  *
- * 核心断言是「界面与服务端一致」：同一份五个 V2 文件，一边交给写入端点 `convertToTravel`（../v2write/convert.ts），
+ * 核心断言是「界面与服务端一致」：同一份五个 V2 文件，一边迁移进新库、交给写入端点的规划器（3C-5 E 起是存储原生的
+ * ../editor/native/convert.ts；之前是 V2 写入函数 convertToTravel），
  * 一边经 V2 Reader 与派生得到界面用的 `wantToGoConvertBlockReason` / `plannedConvertBlockReason`，
  * 端点拒绝的码对应的文案必须就是界面给出的禁用原因；端点接受时界面没有禁用原因。
- * 数据是 V2 写入测试的中性个人模式文件（../v2write/fixtures/migrated-files.json）。
+ * 数据是 V2 写入测试的中性个人模式文件（../editor/fixtures/migrated-files.json）。
  */
 
 /// <reference types="node" />
@@ -14,20 +15,32 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { convertToTravel } from '../v2write/convert.ts'
-import { V2WriteError, messageFor, type V2WriteErrorCode } from '../v2write/errors.ts'
-import { migratedFiles, placeNamed, testContext } from '../v2write/v2write.fixture.ts'
-import { convertRuleDataOfCanonical, convertRuleDataOfV2Files, convertRules } from './convertRules.ts'
+import { V2WriteError, messageFor, type V2WriteErrorCode } from '../editor/errors.ts'
+import { migratedFiles, placeNamed, testContext } from '../editor/editor.fixture.ts'
+import { NATIVE_WRITES } from '../editor/native/routes.ts'
+import { officialReader } from '../store/officialReader.ts'
+import { migrateIntoEmptyStore } from '../store/v2Store.fixture.ts'
+import { readModelOf } from '../../worldgraph/readModel/build.ts'
+import { indexReadModel } from '../../worldgraph/readModel/lookup.ts'
+import { convertRuleDataOfCanonical, convertRules, type ConvertRuleData } from './convertRules.ts'
 import { deriveAppDataFromCanonical } from './derive.ts'
-import type { V2Files } from './v2Schema.ts'
-import { readV2 } from './v2Reader.ts'
+import type { V2Files } from '../compat/v2/v2Schema.ts'
+import { readV2 } from '../compat/v2/v2Reader.ts'
 
 const NOW = '2000-01-01T00:00:00.000Z'
+
+/** The rules' input read straight off the five V2 files (3C-5 E: moved here from ./convertRules.ts; only this comparison uses it). */
+const convertRuleDataOfV2Files = (files: V2Files): ConvertRuleData => ({
+  places: files.places.places,
+  records: files.travel.records,
+  wantToGoItems: files.wantToGo.items,
+})
 
 /** 端点的结论：拒绝码，或 undefined（接受）。 */
 const serverCode = (files: V2Files, body: Record<string, unknown>): V2WriteErrorCode | undefined => {
   try {
-    convertToTravel(files, { startDate: '2026-09-01', ...body }, testContext())
+    const reader = officialReader(indexReadModel(readModelOf(migrateIntoEmptyStore(files).state, { origin: 'local' })))
+    NATIVE_WRITES['POST /__travelatlas/editor/wanttogo/convert'].plan(reader, { startDate: '2026-09-01', ...body }, testContext())
     return undefined
   } catch (error) {
     assert.ok(error instanceof V2WriteError, String(error))

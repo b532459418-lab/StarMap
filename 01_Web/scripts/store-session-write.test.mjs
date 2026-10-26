@@ -1,19 +1,19 @@
 /**
  * The want-to-go update of the new-library mode through the session's handler (what the plugin calls for
  * POST /__travelatlas/editor/wanttogo/update): the request protocol, the outcomes and the replay of a committed request.
- * Since 3C-4a it runs V2's updateWantToGo on the cached view and commits the diff; the other seven endpoints are in
+ * Since 3C-5 C1 its planner is store-native (src/data/editor/native/wantToGo.ts); the other seven endpoints are in
  * store-session-editor.test.mjs.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { storeFileOf } from './private-data-source.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER, STORE_WRITE_ROUTES, createStoreSession, storeProtocolOf } from './store-session.mjs'
 import { rawConnection } from './store-sqlite.mjs'
 import { sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files } from './store-mode.fixture.mjs'
-import { V2_EDITOR_ROUTES } from './v2-editor-store.mjs'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
+import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 
 const NOW = '2026-10-14T00:00:00.000Z'
 const ROUTE = 'POST /__travelatlas/editor/wanttogo/update'
@@ -28,16 +28,16 @@ async function storeSession(t) {
   await applyMigration(context.paths, { now: NOW })
   const session = context.closeAfter(createStoreSession(context.paths, { log: () => {}, now: () => '2026-10-15T00:00:00.000Z' }))
   const update = session.writeRoute(...ROUTE.split(' '))
-  const items = async () => canonicalForInputs({ v2Files: (await session.moduleExports()).files }).wantToGo.items
+  const items = async () => officialViewOf((await session.moduleExports()).model, 'local').wantToGo.items
   return { ...context, files, session, update, items, wish: files.wantToGo.items[0] }
 }
 
 test('the eight editor endpoints are the store write routes (media is not)', () => {
-  assert.deepEqual(Object.keys(STORE_WRITE_ROUTES).sort(), Object.keys(V2_EDITOR_ROUTES).sort())
+  assert.deepEqual(Object.keys(STORE_WRITE_ROUTES).sort(), Object.keys(NATIVE_WRITES).sort())
   assert.ok(Object.keys(STORE_WRITE_ROUTES).includes(ROUTE))
 })
 
-test('a note and the hidden state are saved, the response is V2\'s item plus the receipt, and the revision moves by one each', async (t) => {
+test('a note and the hidden state are saved, the response is the planner\'s item plus the receipt, and the revision moves by one each', async (t) => {
   const { update, items, wish, session } = await storeSession(t)
   const id = requestId()
   const saved = await update({ headers: headers(id, 1), input: { id: wish.id, note: '  Synthetic note  ' } })

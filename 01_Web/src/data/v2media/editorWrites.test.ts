@@ -3,7 +3,9 @@
  * 上传时 place.json 的写入与冲突（第 2D 批：手放的文件夹不认领）、导入后排序表的追加与隐藏状态恢复、删除时生成目录的定位与 editor-state 清理。
  *
  * 运行方式：npm test。零依赖：Node 24 自带类型剥离，只用 node:test + node:assert/strict。
- * 数据是中性个人模式数据迁移后的 V2 文件（../v2write/v2write.fixture.ts），媒体换成按内容寻址的条目。
+ * 数据是中性个人模式数据迁移后的 V2 文件（../editor/editor.fixture.ts），媒体换成按内容寻址的条目。
+ * 3C-5 E: the upload target and the deletion rule read the official reader; the tests give them the reader of these files
+ * migrated into an empty store (readerOf).
  */
 
 /// <reference types="node" />
@@ -11,8 +13,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import type { V2Files } from '../canonical/v2Schema.ts'
-import { WRITE_NOW, applyWrites, assertIntact, assertV2Error, migratedFiles, placeNamed, testContext, writeOrder } from '../v2write/v2write.fixture.ts'
+import type { V2Files } from '../compat/v2/v2Schema.ts'
+import { assertIntact, assertV2Error, migratedFiles, placeNamed } from '../editor/editor.fixture.ts'
 import {
   deletableMediaOf,
   droneUploadMetadataOf,
@@ -22,17 +24,25 @@ import {
   inboxFolderDecision,
   pickInboxFolder,
   placeFolderSuffix,
-  removeMediaFromEditorState,
   uploadKindOf,
   uploadTargetOf,
   type InboxFolderState,
 } from './editorWrites.ts'
-import { buildMediaItem, mediaCatalogFileOf, mediaIdOf } from './importPlan.ts'
+import { buildMediaItem, mediaIdOf } from './importPlan.ts'
+import { mediaCatalogFileOf } from '../compat/v2/v2MediaFiles.ts'
+import { officialReader } from '../store/officialReader.ts'
+import { migrateIntoEmptyStore } from '../store/v2Store.fixture.ts'
+import { readModelOf } from '../../worldgraph/readModel/build.ts'
+import { indexReadModel } from '../../worldgraph/readModel/lookup.ts'
+import { emptyFormalState } from '../../worldgraph/store/formal.ts'
 
 const H = { p1: '1111111111111111', p2: '2222222222222222', d1: '3333333333333333', v1: '4444444444444444', x: '5555555555555555' }
 const ID = Object.fromEntries(Object.entries(H).map(([key, hash]) => [key, mediaIdOf(hash)])) as Record<keyof typeof H, string>
 
 const query = (values: Record<string, string>) => new URLSearchParams(values)
+
+/** The official reader of `files` migrated into an empty store (the media rules' input since 3C-5 E). */
+const readerOf = (files: V2Files) => officialReader(indexReadModel(readModelOf(migrateIntoEmptyStore(files).state, { origin: 'local' })))
 
 /**
  * 迁移后的 V2 文件，媒体换成按内容寻址的四项：雷克雅未克两张照片（p1、p2，p2 已隐藏且是封面），
@@ -75,7 +85,8 @@ test('上传 · 目标：cityId 是城市地点，countryId 必须是它的 part
   const files = contentFiles()
   const iceland = placeNamed(files, 'Iceland', 'country')
   const reykjavik = placeNamed(files, 'Reykjavik', 'city')
-  const target = uploadTargetOf(files, { countryId: iceland.id, cityId: reykjavik.id }, WRITE_NOW)
+  const reader = readerOf(files)
+  const target = uploadTargetOf(reader, { countryId: iceland.id, cityId: reykjavik.id })
   assert.equal(target.country.id, iceland.id)
   assert.equal(target.city.id, reykjavik.id)
   assert.equal(target.countryFolderName, 'Iceland')
@@ -84,17 +95,16 @@ test('上传 · 目标：cityId 是城市地点，countryId 必须是它的 part
   const zhOnly = contentFiles()
   const vik = placeNamed(zhOnly, 'Vik', 'city')
   vik.names = { 'zh-Hans': '维克' }
-  assert.equal(uploadTargetOf(zhOnly, { countryId: iceland.id, cityId: vik.id }, WRITE_NOW).cityFolderName, '维克')
+  assert.equal(uploadTargetOf(readerOf(zhOnly), { countryId: iceland.id, cityId: vik.id }).cityFolderName, '维克')
 
   const faroe = placeNamed(files, 'Faroe Islands', 'country')
   const message = '找不到对应的国家和城市，请先把城市加入旅行数据。'
-  assertV2Error(() => uploadTargetOf(files, { countryId: faroe.id, cityId: reykjavik.id }, WRITE_NOW), 'E_MEDIA_LOCATION_NOT_FOUND', message)
-  assertV2Error(() => uploadTargetOf(files, { countryId: iceland.id, cityId: iceland.id }, WRITE_NOW), 'E_MEDIA_LOCATION_NOT_FOUND', message)
-  assertV2Error(() => uploadTargetOf(files, { countryId: iceland.id, cityId: 'iceland__reykjavik' }, WRITE_NOW), 'E_MEDIA_LOCATION_NOT_FOUND', message, undefined)
-  assertV2Error(() => uploadTargetOf(undefined, { countryId: iceland.id, cityId: reykjavik.id }, WRITE_NOW), 'E_MEDIA_LOCATION_NOT_FOUND', message)
-  const broken = contentFiles()
-  ;(broken.media.items[0] as { placeId: string }).placeId = 'ghost'
-  assertV2Error(() => uploadTargetOf(broken, { countryId: iceland.id, cityId: reykjavik.id }, WRITE_NOW), 'E_INTEGRITY')
+  assertV2Error(() => uploadTargetOf(reader, { countryId: faroe.id, cityId: reykjavik.id }), 'E_MEDIA_LOCATION_NOT_FOUND', message)
+  assertV2Error(() => uploadTargetOf(reader, { countryId: iceland.id, cityId: iceland.id }), 'E_MEDIA_LOCATION_NOT_FOUND', message)
+  assertV2Error(() => uploadTargetOf(reader, { countryId: iceland.id, cityId: 'iceland__reykjavik' }), 'E_MEDIA_LOCATION_NOT_FOUND', message, undefined)
+  // An empty library (before 3C-5 E: no V2 files) has no place.
+  const empty = officialReader(indexReadModel(readModelOf(emptyFormalState(), { origin: 'local' })))
+  assertV2Error(() => uploadTargetOf(empty, { countryId: iceland.id, cityId: reykjavik.id }), 'E_MEDIA_LOCATION_NOT_FOUND', message)
 })
 
 test('上传 · 无人机参数：日期必填、经纬度成对且在范围内、默认标题（规则与文案同旧）', () => {
@@ -236,20 +246,21 @@ test('删除 · 能删哪些：该城市里已隐藏的照片或全景 / 航拍�
   const files = contentFiles()
   const reykjavik = placeNamed(files, 'Reykjavik', 'city').id
   const torshavn = placeNamed(files, 'Torshavn', 'city').id
-  const photos = deletableMediaOf(files, { cityId: reykjavik, ids: [ID.p2, ID.p2] }, WRITE_NOW)
+  const reader = readerOf(files)
+  const photos = deletableMediaOf(reader, { cityId: reykjavik, ids: [ID.p2, ID.p2] })
   assert.equal(photos.cityId, reykjavik)
   assert.deepEqual(photos.ids, [ID.p2])
   assert.deepEqual(photos.items.map((item) => item.id), [ID.p2])
-  assert.deepEqual(deletableMediaOf(files, { cityId: ` ${torshavn} `, ids: [ID.d1] }, WRITE_NOW).ids, [ID.d1])
+  assert.deepEqual(deletableMediaOf(reader, { cityId: ` ${torshavn} `, ids: [ID.d1] }).ids, [ID.d1])
 
   for (const input of [undefined, {}, { cityId: reykjavik, ids: [] }, { cityId: '', ids: [ID.p2] }, { cityId: reykjavik, ids: 'x' }]) {
-    assertV2Error(() => deletableMediaOf(files, input, WRITE_NOW), 'E_MEDIA_DELETE_EMPTY', '没有可删除的隐藏媒体。')
+    assertV2Error(() => deletableMediaOf(reader, input), 'E_MEDIA_DELETE_EMPTY', '没有可删除的隐藏媒体。')
   }
   const notHidden = '只能彻底删除当前城市中已经隐藏的照片或无人机影像。'
-  assertV2Error(() => deletableMediaOf(files, { cityId: reykjavik, ids: [ID.p1] }, WRITE_NOW), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden, (error) => assert.equal(error.params?.id, ID.p1))
-  assertV2Error(() => deletableMediaOf(files, { cityId: torshavn, ids: [ID.p2] }, WRITE_NOW), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden)
-  assertV2Error(() => deletableMediaOf(files, { cityId: torshavn, ids: [ID.v1] }, WRITE_NOW), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden, (error) => assert.equal(error.params?.id, ID.v1))
-  assertV2Error(() => deletableMediaOf(files, { cityId: reykjavik, ids: [ID.p2, 'ghost'] }, WRITE_NOW), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden)
+  assertV2Error(() => deletableMediaOf(reader, { cityId: reykjavik, ids: [ID.p1] }), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden, (error) => assert.equal(error.params?.id, ID.p1))
+  assertV2Error(() => deletableMediaOf(reader, { cityId: torshavn, ids: [ID.p2] }), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden)
+  assertV2Error(() => deletableMediaOf(reader, { cityId: torshavn, ids: [ID.v1] }), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden, (error) => assert.equal(error.params?.id, ID.v1))
+  assertV2Error(() => deletableMediaOf(reader, { cityId: reykjavik, ids: [ID.p2, 'ghost'] }), 'E_MEDIA_DELETE_NOT_HIDDEN', notHidden)
 })
 
 test('删除 · 生成目录：由 src 定位到内容寻址的 media/user/<哈希>/（去重）；不是这种形状 → 一个都不删', () => {
@@ -260,29 +271,4 @@ test('删除 · 生成目录：由 src 定位到内容寻址的 media/user/<哈�
   const legacyShaped = { ...items[0], src: '/media/user/iceland/reykjavik/photo/1111111111111111/original.jpg' }
   assertV2Error(() => generatedDirectoriesOf([items[1], legacyShaped]), 'E_MEDIA_PATH_INVALID', '影像生成路径格式无效，已停止删除。')
   assertV2Error(() => generatedDirectoriesOf([{ ...items[0], src: '/media/user/../../secret/original.jpg' }]), 'E_MEDIA_PATH_INVALID')
-})
-
-test('删除 · editor-state：清掉这些 id（两个隐藏表、两个排序表、指向它们的封面），其余不动；只写 editor-state', () => {
-  const files = contentFiles()
-  const reykjavik = placeNamed(files, 'Reykjavik', 'city').id
-  const torshavn = placeNamed(files, 'Torshavn', 'city').id
-  const outcome = removeMediaFromEditorState(files, [ID.p2, ID.d1], testContext())
-  assert.deepEqual(outcome.result, { deletedIds: [ID.p2, ID.d1] })
-  assert.deepEqual(writeOrder(outcome.writes), ['editorState'])
-  const after = applyWrites(files, outcome.writes)
-  assert.deepEqual(after.editorState.hiddenMediaIds, [])
-  assert.deepEqual(after.editorState.hiddenDroneMediaIds, [ID.v1])
-  assert.deepEqual(after.editorState.mediaOrderByCity, { [reykjavik]: [ID.p1] })
-  assert.deepEqual(after.editorState.droneOrderByCity, { [torshavn]: [ID.v1] })
-  assert.deepEqual(after.editorState.coverMediaByCity, {}, '封面指向被删的照片时一并清掉')
-  for (const key of ['countryOrder', 'hiddenCountryIds', 'cityOrderByCountry', 'hiddenCityIds', 'addedCountries'] as const) {
-    assert.deepEqual(after.editorState[key], files.editorState[key], key)
-  }
-  assertIntact(after)
-  assert.deepEqual(files.editorState.hiddenMediaIds, [ID.p2], '输入不被修改')
-
-  // 现有文件不合法时不在它上面继续（E_INTEGRITY，不给出写入）。
-  const broken = contentFiles()
-  broken.editorState.mediaOrderByCity = { ghost: [] }
-  assertV2Error(() => removeMediaFromEditorState(broken, [ID.p2], testContext()), 'E_INTEGRITY')
 })

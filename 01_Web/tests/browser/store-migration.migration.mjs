@@ -8,7 +8,7 @@ import { test, expect, openMap, openCollection, readFixture, saveAndWaitForRevis
 import { PRIVATE_MODULE_PATH, fixtureIds, storeRevisionOf } from '../../scripts/browser-fixture.mjs'
 import { privateDataState } from '../../scripts/private-data-source.mjs'
 import { getPrivatePaths } from '../../scripts/private-profile.mjs'
-import { applyMigration } from '../../scripts/store-migrate.mjs'
+import { applyMigration } from '../../scripts/compat/store-migrate.mjs'
 
 const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
 const notice = 'Your personal data has not been migrated to the new library yet. It is read-only and edits are not saved.'

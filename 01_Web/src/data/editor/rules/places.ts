@@ -1,5 +1,5 @@
 /**
- * 地点的判定（3C-5 C1 从 ../../v2write/common.ts 迁来，规则、错误码与参数不变；第 2A 批，RFC ID-6「匹配提示 ≠ 身份」）：
+ * 地点的判定（3C-5 C1 从 v2write/common.ts（3C-5 E 删除）迁来，规则、错误码与参数不变；第 2A 批，RFC ID-6「匹配提示 ≠ 身份」）：
  * 国家按 ISO 先找后建，城市按名字只找候选、由用户选择。
  *
  * 这里只做判定，不改任何数据：调用方给出已有的地点（官方视图的形状与顺序），拿到「用哪个」或「新建什么」，自己落盘——
@@ -10,8 +10,17 @@
 
 import { findCityCandidates, resolveCountry } from '../../canonical/placeResolver.ts'
 import type { CanonicalPlace, PlaceId } from '../../canonical/types.ts'
-import type { CatalogCountry } from '../../v2write/transaction.ts'
-import { V2WriteError, fail } from '../../v2write/errors.ts'
+import { V2WriteError, fail } from '../errors.ts'
+
+/** One country of the country catalog (the plugin's world-countries catalog, keyed by upper-case ISO code). */
+export interface CatalogCountry {
+  nameZh: string
+  nameEn: string
+  countryCode: string
+  centerLat: number
+  centerLng: number
+  region?: string
+}
 
 /** 国家的判定：已有的国家地点，或按目录新建（目录项与大写代码）。 */
 export type CountryChoice =
@@ -75,7 +84,7 @@ export const requireNoCityCandidates = (
 }
 
 /**
- * 删除之后清理没人引用的地点（3C-5 C1 从 ../../v2write/transaction.ts 的 removeUnreferencedPlaces 迁来）：只考虑候选，
+ * 删除之后清理没人引用的地点（3C-5 C1 从 v2write/transaction.ts（3C-5 E 删除）的 removeUnreferencedPlaces 迁来）：只考虑候选，
  * 一轮删掉此刻没人引用的全部候选（`removableNow` 按注册表顺序给出），删掉的城市不再引用它的国家，所以再来一轮，直到没有可删的。
  * 返回被删的 id（按删除的先后；同一轮内按注册表顺序）。「引用」由调用方定义：V2 看五个文件里的地点引用，存储原生看所有图层的行。
  */

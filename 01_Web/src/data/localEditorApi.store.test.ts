@@ -1,7 +1,8 @@
 /// <reference types="node" />
 /**
- * The client wrappers of the eight editor writes (3C-4a spec §2.4), of the deletion of hidden media (3C-4c) and of the view
- * operations (3C-5 C1): in V2 mode the requests are exactly as before; in
+ * The client wrappers of the editor writes (3C-4a spec §2.4; 3C-5 E: without PUT /state, which the view operations of
+ * 3C-5 C1 replaced), of the deletion of hidden media (3C-4c) and of the view operations: in V2 mode the requests are
+ * exactly as before; in
  * the new-library mode each one carries the request id and base revision, retries an unknown outcome once with the same
  * request id, and a committed answer moves the page's base revision (two writes of one action are not stale).
  */
@@ -9,14 +10,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   addLocalCountry, addLocalTravelRecord, applyLocalViewOperations, addLocalWantToGo, convertLocalWantToGoToTravel, deleteHiddenLocalCountries, deleteHiddenLocalMedia,
-  deleteHiddenLocalWantToGo, setStoreBaseRevision, updateLocalEditorState, updateLocalWantToGo,
+  deleteHiddenLocalWantToGo, setStoreBaseRevision, updateLocalWantToGo,
 } from './localEditorApi.ts'
 import { STORE_BASE_REVISION_HEADER, STORE_REQUEST_ID_HEADER } from './storeWriteProtocol.ts'
 import { isUuidV7 } from './canonical/uuidv7.ts'
-import type { TravelAtlasEditorState } from './editorState.ts'
 
 type Sent = { url: string; method: string; headers: Record<string, string>; body: unknown }
-const state = { countryOrder: [], hiddenCountryIds: [] } as unknown as TravelAtlasEditorState
 const item = { id: 'wish-1', place: { nameEn: 'Synthetic' } }
 
 /** Answers by path; `revision` is what a store write answers (undefined in V2 mode). */
@@ -25,12 +24,13 @@ function fakeServer(revision?: () => number, failFirst?: string) {
   let failed = false
   const fetch = async (input: unknown, init?: RequestInit) => {
     const url = String(input)
-    if (!init?.method) return new Response(JSON.stringify({ ok: true, state }), { status: 200 })
+    // Writes only (3C-5 E: GET /state, the one read these wrappers made, is gone).
+    if (!init?.method) throw new Error(`unexpected read of ${url}`)
     const headers = Object.fromEntries(Object.entries((init.headers ?? {}) as Record<string, string>))
     sent.push({ url, method: init.method, headers, body: JSON.parse(String(init.body)) })
     if (failFirst && !failed) { failed = true; return new Response(JSON.stringify({ ok: false, code: failFirst, error: failFirst }), { status: 500 }) }
     const store = revision ? { revision: revision(), duplicate: false, receipt: { requestId: headers[STORE_REQUEST_ID_HEADER] } } : {}
-    const result = url.endsWith('/wanttogo') ? { id: 'wish-1', item } : url.endsWith('/state') ? { state } : {}
+    const result = url.endsWith('/wanttogo') ? { id: 'wish-1', item } : {}
     return new Response(JSON.stringify({ ok: true, ...result, ...store }), { status: 200 })
   }
   return { sent, fetch }
@@ -44,9 +44,8 @@ const writes = [
   ['wanttogo/update', () => updateLocalWantToGo('wish-1', { note: 'Synthetic' })],
   ['wanttogo/delete', () => deleteHiddenLocalWantToGo(['wish-1'])],
   ['wanttogo/convert', () => convertLocalWantToGoToTravel({ source: 'want-to-go', id: 'wish-1', startDate: '2026-04-01' })],
-  ['state', () => updateLocalEditorState((current) => ({ ...current, hiddenCountryIds: ['country-1'] }))],
   ['media/delete', () => deleteHiddenLocalMedia('city-1', ['media-1'])],
-  // 3C-5 C1: the view operations (the page no longer sends PUT /state).
+  // 3C-5 C1: the view operations (they replaced PUT /state, which 3C-5 E removed).
   ['view', () => applyLocalViewOperations([{ op: 'hide', scope: 'countries', add: ['country-1'], remove: [] }])],
 ] as const
 
@@ -56,7 +55,7 @@ async function withFetch(fetch: typeof globalThis.fetch, run: () => Promise<void
   try { await run() } finally { globalThis.fetch = original; setStoreBaseRevision(undefined) }
 }
 
-test('V2 mode: the eight writes and the media deletion send the editor headers only', async () => {
+test('V2 mode: the editor writes and the media deletion send the editor headers only', async () => {
   const server = fakeServer()
   await withFetch(server.fetch as typeof globalThis.fetch, async () => {
     setStoreBaseRevision(undefined)
@@ -64,7 +63,6 @@ test('V2 mode: the eight writes and the media deletion send the editor headers o
   })
   assert.deepEqual(server.sent.map((request) => request.url.replace('/__travelatlas/editor/', '')), writes.map(([path]) => path))
   for (const request of server.sent) assert.deepEqual(request.headers, { 'content-type': 'application/json', 'x-travelatlas-local-editor': '1' })
-  assert.equal(server.sent.find((request) => request.url.endsWith('/state'))!.method, 'PUT')
   const view = server.sent.find((request) => request.url.endsWith('/view'))!
   assert.equal(view.method, 'POST')
   assert.deepEqual(view.body, { operations: [{ op: 'hide', scope: 'countries', add: ['country-1'], remove: [] }] })

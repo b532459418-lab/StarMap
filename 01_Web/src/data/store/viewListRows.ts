@@ -1,5 +1,5 @@
 /** The view rows of the editor and display lists, written by difference (3C-4a's algorithms, moved here from
- * ./diffV2.ts by 3C-5 C1 without change): diffV2ToCommands writes the lists a V2 write changed, and the store-native view
+ * diffV2.ts by 3C-5 C1 without change; diffV2ToCommands is retired since 3C-5 E): the store-native view
  * operations (../editor/native/editorView.ts) write the lists they changed, with the same rows and positions.
  *
  * - A list (`listScope`): its elements are view items (a target that resolves) and unresolved settings (the raw value at

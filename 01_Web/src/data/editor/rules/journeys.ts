@@ -1,5 +1,5 @@
 /**
- * 同名行程的选择（3C-5 C2 从 ../../v2write/journeyChoice.ts 迁来，规则、错误码、参数与候选顺序不变；第 2C 批，审查 C4 与 §10：
+ * 同名行程的选择（3C-5 C2 从 v2write/journeyChoice.ts（3C-5 E 删除）迁来，规则、错误码、参数与候选顺序不变；第 2C 批，审查 C4 与 §10：
  * 标题相同时由用户选择，不按日期自动判断）。
  *
  * 行程的身份是记录的 `journeyId`。行程标题只用来找候选，不决定新的已去过记录并入哪个行程：
@@ -19,7 +19,7 @@
 import { compareCodePoints, compareJourneyRecords } from '../../canonical/journeyRoutes.ts'
 import { EN, ZH } from '../../canonical/reconstruct.ts'
 import type { PlaceId } from '../../canonical/types.ts'
-import { V2WriteError, fail } from '../../v2write/errors.ts'
+import { V2WriteError, fail } from '../errors.ts'
 
 /** 候选里最多列出的城市数（另附总数）。 */
 export const JOURNEY_CANDIDATE_CITY_LIMIT = 5

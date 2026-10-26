@@ -1,6 +1,6 @@
 /**
  * The local editor plugin in the new-library mode (3C-3, 3C-4a): the virtual module reads the store's projection and
- * its revision, GET /editor/state reads the same model, the editor writes are written to the store (and invalidate the
+ * its revision (3C-5 E: GET /editor/state is gone), the editor writes are written to the store (and invalidate the
  * module), media tasks reach the store-mode task service (3C-4c; the media endpoints and task imports are tested in
  * store-media-endpoints.test.mjs and store-media-jobs.test.mjs), and an unopenable store is an error, never a fallback to V2.
  * The harness (store-mode.fixture.mjs) is the one of local-editor-plugin.test.mjs (no real server).
@@ -14,13 +14,13 @@ import path from 'node:path'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { openStore } from './store-host.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import { servedCanonical } from './private-read-model.fixture.mjs'
 import { rawConnection } from './store-sqlite.mjs'
 import {
   authorizedHeaders, captureMiddleware, editorPrefix, moduleOf, requestTo, sampleV2Files, tempPrivateRoot, treeDigest, writeV2Files,
 } from './store-mode.fixture.mjs'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
+import { readV2 } from '../src/data/compat/v2/v2Reader.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { filterReadModelForPersonalBuild } from '../src/data/store/personalBuildReadModel.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
@@ -69,11 +69,11 @@ test('Local editor plugin in the new-library mode', async (t) => {
       assert.deepEqual(servedCanonical(module), readV2(files))
     })
 
-    await t.test('GET /editor/state reads the store model', async () => {
-      const result = await requestTo(handler, { url: `${editorPrefix}state`, method: 'GET', headers: {} })
+    await t.test('the read-model endpoint reads the store model (3C-5 E: GET /editor/state is gone)', async () => {
+      const result = await requestTo(handler, { url: `${editorPrefix}read-model`, method: 'GET', headers: {} })
       assert.equal(result.status, 200)
-      assert.equal(result.body.ok, true)
-      assert.deepEqual(result.body.state.hiddenCountryIds, [])
+      assert.equal(result.body.format, 'starmap.read-model')
+      assert.deepEqual(servedCanonical({ privateReadModel: result.body }).editorState.hiddenCountryIds, [])
     })
 
     await t.test('the want-to-go update is written to the store with the request protocol and invalidates the module', async () => {
@@ -198,9 +198,13 @@ test('Local editor plugin in the new-library mode', async (t) => {
         assert.match(error.message, /新库模式不会回落到 data\/v2\/ 的文件/)
         return true
       })
-      const state = await requestTo(captureMiddleware(broken).handlers[1], { url: `${editorPrefix}state`, method: 'GET', headers: {} })
-      assert.equal(state.status, 500)
-      assert.deepEqual(state.body.params, { code: 'E_STORE_CORRUPT' })
+      // An editor write answers with the store's code (3C-5 E: before, GET /state showed it).
+      const write = await requestTo(captureMiddleware(broken).handlers[1], {
+        url: `${editorPrefix}wanttogo/update`, headers: { ...authorizedHeaders, 'x-starmap-request-id': '01960000-0000-7000-8000-00000000e0ff', 'x-starmap-base-revision': '1' },
+        content: Buffer.from(JSON.stringify({ id: 'synthetic', note: '' })),
+      })
+      assert.equal(write.status, 500)
+      assert.deepEqual(write.body.params, { code: 'E_STORE_CORRUPT' })
       await broken.buildEnd()
     })
   } finally {

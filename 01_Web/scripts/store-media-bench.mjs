@@ -26,7 +26,7 @@ import { pathToFileURL } from 'node:url'
 import sharp from 'sharp'
 import { PLACE, importedV2Library } from './media-inbox.fixture.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
 import { ms, pluginFor, requestJson, serve, stats } from './store-mode-bench.mjs'
 import { servedModuleOf, servedV2Files } from './private-read-model.fixture.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
@@ -80,7 +80,6 @@ async function served(paths, mode) {
   return {
     view, write,
     tasks: () => requestJson('GET', `${url}/__travelatlas/editor/media/jobs`, EDITOR),
-    state: () => requestJson('GET', `${url}/__travelatlas/editor/state`, EDITOR),
     async close() {
       await new Promise((resolve) => server.close(resolve))
       await plugin.buildEnd()
@@ -108,8 +107,8 @@ export async function opsSegment(dir, mode, { files = 200, imported = 50 } = {})
     const importMs = (await timed(() => page.write('import', {}))).ms
     const { files: v2 } = await page.view()
     const victim = v2.media.items.find((item) => item.originalFileName === 'new-0.jpg')
-    const { state } = await page.state()
-    await page.write('state', { ...state, hiddenMediaIds: [...state.hiddenMediaIds, victim.id] }, 'PUT')
+    // Hidden first, as the page does it (3C-5 C1's view operation; PUT /state is gone since 3C-5 E).
+    await page.write('view', { operations: [{ op: 'hide', scope: 'media', add: [victim.id], remove: [] }] })
     const deleteMs = (await timed(() => page.write('media/delete', { cityId: PLACE.harbor, ids: [victim.id] }))).ms
     await rename(river, path.join(paths.inboxRoot, 'Second Land', 'River Town Moved'))
     const renameMs = (await timed(() => page.write('import', {}))).ms

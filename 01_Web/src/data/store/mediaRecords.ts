@@ -27,7 +27,7 @@ import { StoreError, jsonKey, reject } from '../../worldgraph/store/primitives.t
 import type { AssetReference, JsonObject, JsonValue, StoreEntity } from '../../worldgraph/store/types.ts'
 import type { CanonicalMediaItem } from '../canonical/types.ts'
 import { markCovers } from '../v2media/importPlan.ts'
-import type { DiffReader } from './diffV2.ts'
+import type { ScopeReader } from './scopeReader.ts'
 import { OFFICIAL, UNRESOLVED_KEY_PREFIX, VIEW_SCOPES, mapListScope } from './officialDefinitions.ts'
 import { fitsStoreTitle, listPositions, sourceRef, unresolvedSetting, viewItemRow, viewSettingRow, without } from './v2RecordRows.ts'
 
@@ -46,7 +46,7 @@ export interface MediaRecordsPlan {
   readonly renumbered: readonly string[]
 }
 export interface MediaRecordsContext {
-  readonly reader: DiffReader
+  readonly reader: ScopeReader
   /** Fresh lowercase UUIDv7 for new view rows and settings. */
   readonly allocateId: () => string
 }
@@ -78,7 +78,7 @@ export function mediaEntityRow(record: NewMediaRecord): StoreEntity {
 const cityOrderScopeOf = (kind: string) => (kind === 'photo' ? VIEW_SCOPES.mediaOrderByCity : VIEW_SCOPES.droneOrderByCity)
 
 /** The elements of a list scope by position: view items and unresolved settings. */
-function listElements(reader: DiffReader, scope: string): { row: ViewItem | ViewSetting; position: string; item: boolean }[] {
+function listElements(reader: ScopeReader, scope: string): { row: ViewItem | ViewSetting; position: string; item: boolean }[] {
   const rows = reader.viewScope(scope)
   const elements: { row: ViewItem | ViewSetting; position: string; item: boolean }[] = rows.items.map(row => ({ row, position: row.position, item: true }))
   for (const row of rows.settings) {
@@ -93,7 +93,7 @@ function listElements(reader: DiffReader, scope: string): { row: ViewItem | View
  * renumbered: every view item whose position changes is updated, and an unresolved element (whose key is its position)
  * is replaced by a new setting.
  */
-function appendRows(reader: DiffReader, scope: string, assetIds: readonly string[], allocateId: () => string, renumbered: string[]): FormalCommand[] {
+function appendRows(reader: ScopeReader, scope: string, assetIds: readonly string[], allocateId: () => string, renumbered: string[]): FormalCommand[] {
   const elements = listElements(reader, scope)
   const created = (assetId: string, position: string) => ({ op: 'create', table: 'viewItems', value: viewItemRow(scope, `${scope}#${allocateId()}`, { table: 'assets', id: assetId }, position, false) }) as FormalCommand
   try {
@@ -121,7 +121,7 @@ function appendRows(reader: DiffReader, scope: string, assetIds: readonly string
 }
 
 /** The media entities of a city (through the refs of their `place` field). */
-function mediaOfCity(reader: DiffReader, placeId: string): StoreEntity[] {
+function mediaOfCity(reader: ScopeReader, placeId: string): StoreEntity[] {
   return reader.dependents('entities', placeId)
     .filter(ref => ref.fromTable === 'entities' && ref.field === 'fields.place')
     .map(ref => reader.get('entities', ref.fromId) as StoreEntity | undefined)
@@ -133,7 +133,7 @@ function mediaOfCity(reader: DiffReader, placeId: string): StoreEntity[] {
  * `cover` first, then by file name; ties by the original media order, new records last in batch order). Returns the
  * flags of the created records and the asset updates of existing ones whose flag changes.
  */
-function covers(reader: DiffReader, placeIds: ReadonlySet<string>, created: readonly NewMediaRecord[], removed: ReadonlySet<string>): { flags: Map<string, boolean>; updates: FormalCommand[] } {
+function covers(reader: ScopeReader, placeIds: ReadonlySet<string>, created: readonly NewMediaRecord[], removed: ReadonlySet<string>): { flags: Map<string, boolean>; updates: FormalCommand[] } {
   const flags = new Map<string, boolean>()
   const updates: FormalCommand[] = []
   for (const placeId of [...placeIds].sort(compare)) {
@@ -203,14 +203,14 @@ export interface RereadMediaRecord {
 }
 
 /** The media entity of an asset (the one whose `fields.asset` names it), or undefined. */
-function mediaEntityOf(reader: DiffReader, assetId: string): StoreEntity | undefined {
+function mediaEntityOf(reader: ScopeReader, assetId: string): StoreEntity | undefined {
   const ref = reader.dependents('assets', assetId).find(item => item.fromTable === 'entities' && item.field === 'fields.asset')
   const entity = ref ? reader.get('entities', ref.fromId) as StoreEntity | undefined : undefined
   return entity?.typeId === OFFICIAL.media ? entity : undefined
 }
 
 /** The rows a re-read gives and what it changes (`place`, `title`, described keys). */
-function rereadRows(reader: DiffReader, update: RereadMediaRecord): { asset: AssetReference; entity: StoreEntity; nextAsset: AssetReference; nextEntity: StoreEntity; changed: string[] } {
+function rereadRows(reader: ScopeReader, update: RereadMediaRecord): { asset: AssetReference; entity: StoreEntity; nextAsset: AssetReference; nextEntity: StoreEntity; changed: string[] } {
   const asset = reader.get('assets', update.assetId) as AssetReference | undefined
   if (!asset) reject('E_MEDIA_NOT_FOUND', 'assets')
   const entity = mediaEntityOf(reader, update.assetId)
@@ -275,7 +275,7 @@ const v2IdOf = (asset: AssetReference) => (asset.source.sourceId === 'v2:media' 
  * hidden lists and city orders (a repeated id, kept as V2 wrote it) and covers stored as a value. V2's removal drops
  * every occurrence of a deleted id, so the store's does too.
  */
-function unresolvedMentions(reader: DiffReader, v2Ids: ReadonlySet<string>): ViewSetting[] {
+function unresolvedMentions(reader: ScopeReader, v2Ids: ReadonlySet<string>): ViewSetting[] {
   const found: ViewSetting[] = []
   const scan = (scope: string) => {
     for (const setting of reader.viewScope(scope).settings) {

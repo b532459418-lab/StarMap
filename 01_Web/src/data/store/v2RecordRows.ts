@@ -1,17 +1,18 @@
-/** One V2 record -> its formal store rows (3C-4a): the mapping of the V2 migration (./migrateV2.ts), one record at a
- * time, so that the migration and the incremental write path (./diffV2.ts) write the same rows for the same record.
+/** One V2 record -> its formal store rows (3C-4a): the mapping of the V2 migration (../compat/v2/migrateV2.ts), one record at a
+ * time, so that the migration (../compat/v2/migrateV2.ts) and the store-native writes (../editor/native/) write the same
+ * rows for the same record (3C-5 E: diffV2ToCommands, which shared them too, is retired). The values are Canonical's.
  *
  * - Places: the `starmap:place` entity (id unchanged), its location anchor and its `starmap:part-of` relation.
  * - Footprint and planned records: an entry of `starmap:travel` (source `v2:travel`) or `starmap:want-to-go`
  *   (source `v2:planned`); `hiddenFromHome` and the journey membership are returned beside the entry (view state and
  *   a sequence, never fields).
  * - Want-to-go items: an entry of `starmap:want-to-go` (source `v2:want-to-go`); `hidden` is returned beside it.
- * - Added countries: one evidence row per country, plus a `starmap:travel` entry (source `v2:country-visit`) when it
- *   has a visit date.
+ * - Added countries: one evidence row per country (the region and other values) and a `starmap:travel` entry on the
+ *   country (source `v2:country-visit`, citing the evidence) with its visit date, or none (3C-5 E: every added country
+ *   has its entry; the country's subtype is what marks it).
  * - Media: the asset (id = the V2 media id) and the `starmap:media` entity.
  * - Journeys: the `starmap:journey` entity and its sequence in the original adjacency.
  * - View state: one view item or setting row; list elements resolved to view items, or unresolved.
- * - File headers: the file-level metadata of the five files, kept in `v2:import`'s extensions.
  *
  * The caller chooses every id that is not derived from a V2 id (entries, media and journey entities from the identity
  * ledger or a fresh UUIDv7; view rows; the ids of rows that replace a tombstoned id) and the entry timestamps.
@@ -29,8 +30,7 @@ import { validateRow } from '../../worldgraph/store/rows.ts'
 import { positionBetween } from '../../worldgraph/store/position.ts'
 import { isCalendarDate } from '../../worldgraph/timeFilter.ts'
 import { compareJourneyRecords } from '../canonical/journeyRoutes.ts'
-import type { CanonicalPlace } from '../canonical/types.ts'
-import type { V2FileKey, V2Files, V2TravelRecord } from '../canonical/v2Schema.ts'
+import type { CanonicalEditorState, CanonicalMediaItem, CanonicalPlace, CanonicalTravelRecord, CanonicalWantToGoItem } from '../canonical/types.ts'
 import { OFFICIAL, UNRESOLVED_KEY_PREFIX, V2_SOURCES } from './officialDefinitions.ts'
 
 /** `extensions: { v2 }` for the verbatim V2 values left on a row (the migration also counts their keys per kind). */
@@ -41,6 +41,8 @@ export const plainLeftover: Leftover = (_kind, rest) => (Object.keys(rest).lengt
 export interface EntryTimes { readonly createdAt: string; readonly updatedAt: string }
 /** A view row target. */
 export interface ViewTarget { readonly table: ViewItemTable; readonly id: string }
+/** A footprint or planned record's value (the V2 file's record: coordinates may be left out when they are the city's). */
+export type TravelRecordValue = Omit<CanonicalTravelRecord, 'lat' | 'lng'> & { lat?: number | null; lng?: number | null }
 
 export const without = (value: object, keys: readonly string[]): Record<string, JsonValue> =>
   Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key))) as Record<string, JsonValue>
@@ -52,32 +54,6 @@ export function fitsStoreTitle(title: unknown): title is ReadonlyTitle {
 /** Non-blank string journeyId of a non-planned record: the record belongs to that journey. */
 export const journeyOf = (record: Record<string, unknown>): string | undefined =>
   record.status !== 'planned' && typeof record.journeyId === 'string' && record.journeyId.trim() ? record.journeyId : undefined
-
-// ---------------------------------------------------------------------------
-// File headers
-// ---------------------------------------------------------------------------
-
-/** Per V2 file, the keys that are records or view state; every other top-level key is file metadata (a header). */
-export const V2_HEADER_EXCLUDED: Readonly<Record<V2FileKey, readonly string[]>> = Object.freeze({
-  places: ['places'],
-  travel: ['records', 'display'],
-  wantToGo: ['items'],
-  editorState: [
-    'addedCountries', 'countryOrder', 'hiddenCountryIds', 'cityOrderByCountry', 'hiddenCityIds',
-    'mediaOrderByCity', 'hiddenMediaIds', 'coverMediaByCity', 'droneOrderByCity', 'hiddenDroneMediaIds',
-  ],
-  media: ['items'],
-})
-/** The header of one V2 file. */
-export const v2HeaderOf = (key: V2FileKey, file: object): Record<string, JsonValue> => without(file, V2_HEADER_EXCLUDED[key])
-/** The headers of the five files, as `v2:import` keeps them under `extensions.v2`. */
-export const v2Headers = (files: V2Files): Record<V2FileKey, Record<string, JsonValue>> => ({
-  places: v2HeaderOf('places', files.places),
-  travel: v2HeaderOf('travel', files.travel),
-  wantToGo: v2HeaderOf('wantToGo', files.wantToGo),
-  editorState: v2HeaderOf('editorState', files.editorState),
-  media: v2HeaderOf('media', files.media),
-})
 
 // ---------------------------------------------------------------------------
 // Places
@@ -132,7 +108,7 @@ export function placeRelation(place: CanonicalPlace, id: string = placeRelationI
 // Media
 // ---------------------------------------------------------------------------
 
-type V2MediaItem = V2Files['media']['items'][number]
+type V2MediaItem = CanonicalMediaItem
 
 /** The asset of a media item: the V2 media id and every key but placeId and title as attributes. */
 export function mediaAsset(item: V2MediaItem): AssetReference {
@@ -155,7 +131,7 @@ export function mediaEntity(item: V2MediaItem, entityId: string, leftover: Lefto
 // Added countries
 // ---------------------------------------------------------------------------
 
-type V2AddedCountry = V2Files['editorState']['addedCountries'][number]
+type V2AddedCountry = CanonicalEditorState['addedCountries'][number]
 
 /** A non-empty string visit date of an added country. */
 export const countryVisitDate = (country: { visitedDate?: unknown }): string | undefined =>
@@ -168,13 +144,15 @@ export function countryEvidence(country: V2AddedCountry, id: string = countryEvi
   return { id, revision: 0, sourceId: V2_SOURCES.countryVisit, recordId: country.placeId, attributes } satisfies Evidence
 }
 
-/** The visit entry of an added country with a visit date (pointing at its evidence), or undefined. */
-export function countryVisitEntry(country: V2AddedCountry, entryId: string, evidenceId: string, times: EntryTimes): LayerEntry | undefined {
+/**
+ * The visit entry of an added country, citing its evidence: its visit date as the raw start date, or no date (3C-5 E:
+ * every added country has one; before, only a dated one did and the evidence alone was the added country).
+ */
+export function countryVisitEntry(country: V2AddedCountry, entryId: string, evidenceId: string, times: EntryTimes): LayerEntry {
   const date = countryVisitDate(country)
-  if (date === undefined) return undefined
   return {
     id: entryId, revision: 0, layerId: OFFICIAL.travel, entityId: country.placeId,
-    fields: { date: { raw: { startDate: date } } }, source: sourceRef(V2_SOURCES.countryVisit, country.placeId, [evidenceId]), ...times,
+    fields: { date: { raw: date === undefined ? {} : { startDate: date } } }, source: sourceRef(V2_SOURCES.countryVisit, country.placeId, [evidenceId]), ...times,
   } satisfies LayerEntry
 }
 
@@ -189,7 +167,7 @@ export function recordPlacement(record: { readonly status?: unknown }): { readon
 }
 
 /** A footprint or planned record's entry. `hiddenFromHome` (a boolean value only) is view state, returned beside it. */
-export function travelRecordEntry(record: V2TravelRecord, entryId: string, times: EntryTimes, leftover: Leftover = plainLeftover): {
+export function travelRecordEntry(record: TravelRecordValue, entryId: string, times: EntryTimes, leftover: Leftover = plainLeftover): {
   readonly entry: LayerEntry; readonly planned: boolean; readonly hiddenFromHome?: boolean
 } {
   const { planned, layerId, sourceId } = recordPlacement(record)
@@ -211,7 +189,7 @@ export function travelRecordEntry(record: V2TravelRecord, entryId: string, times
   return { entry, planned, ...(hiddenFromHome !== undefined ? { hiddenFromHome } : {}) }
 }
 
-type V2WantToGoItem = V2Files['wantToGo']['items'][number]
+type V2WantToGoItem = CanonicalWantToGoItem
 
 /** A want-to-go item's entry. `hidden` is view state (the wantToGoHidden scope), returned beside it. */
 export function wantToGoEntry(item: V2WantToGoItem, entryId: string, times: EntryTimes, leftover: Leftover = plainLeftover): {

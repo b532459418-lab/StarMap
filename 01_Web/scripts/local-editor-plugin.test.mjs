@@ -9,12 +9,12 @@ import { withLibraryOperation } from './library-operation-lock.mjs'
 import { crossSiteRequestGuard } from './local-editor-request-guard.mjs'
 import { privateDataState, storeFileOf } from './private-data-source.mjs'
 import { servedCanonical, servedModuleOf, servedV2Files } from './private-read-model.fixture.mjs'
-import { applyMigration } from './store-migrate.mjs'
+import { applyMigration } from './compat/store-migrate.mjs'
+import { STORE_WRITE_ROUTES } from './store-session.mjs'
 import { sampleV2Files, treeDigest } from './store-mode.fixture.mjs'
-import { V2_EDITOR_ROUTES } from './v2-editor-store.mjs'
 import { V2_MEDIA_ROUTES } from './v2-media-store.mjs'
-import { canonicalForInputs } from '../src/data/canonical/canonicalForInputs.ts'
-import { readV2 } from '../src/data/canonical/v2Reader.ts'
+import { canonicalForInputs } from '../src/data/compat/v2/canonicalForInputs.ts'
+import { readV2 } from '../src/data/compat/v2/v2Reader.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { applyReadModelDelta } from '../src/worldgraph/readModel/delta.ts'
 
@@ -36,7 +36,7 @@ const JOB_ID = '018bd504-c600-7000-8000-000000000001'
 const FILE_ID = '018bd504-c600-7000-8000-000000000002'
 /** Every write route of the local editor (8 editor endpoints, 3 media endpoints, the media tasks) and the task reads. */
 const WRITE_ROUTES = [
-  ...Object.keys(V2_EDITOR_ROUTES), ...Object.keys(V2_MEDIA_ROUTES),
+  ...Object.keys(STORE_WRITE_ROUTES), ...Object.keys(V2_MEDIA_ROUTES),
   'POST /__travelatlas/editor/media/jobs',
   ...['pause', 'preview', 'import', 'close', 'abandon'].map((action) => `POST /__travelatlas/editor/media/jobs/${JOB_ID}/${action}`),
   `POST /__travelatlas/editor/media/jobs/${JOB_ID}/files/${FILE_ID}`,
@@ -205,7 +205,7 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.deepEqual(captured.invalidations, [])
     })
     // Taken once the session is open (opening marks the store as in use).
-    await requestTo(handler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
+    await requestTo(handler, { url: editorPrefix + 'read-model', method: 'GET', headers: {} })
     const unchanged = async () => assert.deepEqual(outsideOperations(await treeDigest(root)), snapshot)
     const snapshot = outsideOperations(await treeDigest(root))
 
@@ -251,8 +251,8 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.deepEqual(captured.reloads,[])
     })
 
-    await t.test('Three catalog/state GET endpoints reject remote reads before handling input', async () => {
-      for (const route of ['state', 'catalog/countries', 'catalog/cities']) {
+    await t.test('Three read endpoints (the read model, the two catalogs) reject remote reads before handling input', async () => {
+      for (const route of ['read-model', 'catalog/countries', 'catalog/cities']) {
         const result = await requestTo(handler, {
           url: editorPrefix + route,
           method: 'GET',
@@ -265,7 +265,7 @@ test('Local editor middleware preserves authorization, error codes and private f
     })
 
     await t.test('Read endpoints also refuse another origin and cross-site or same-site browser reads', async () => {
-      for (const route of ['state', 'catalog/countries', 'catalog/cities']) {
+      for (const route of ['read-model', 'catalog/countries', 'catalog/cities']) {
         for (const headers of [
           { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:9999' },
           { host: '127.0.0.1:5173', origin: 'http://localhost:5999', 'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'cors' },
@@ -282,9 +282,9 @@ test('Local editor middleware preserves authorization, error codes and private f
         { host: '127.0.0.1:5173', origin: 'http://127.0.0.1:5173', 'sec-fetch-site': 'same-origin' },
         { host: '127.0.0.1:5173', 'sec-fetch-site': 'none', 'sec-fetch-mode': 'navigate' },
       ]) {
-        const result = await requestTo(handler, { url: editorPrefix + 'state', method: 'GET', headers })
+        const result = await requestTo(handler, { url: editorPrefix + 'read-model', method: 'GET', headers })
         assert.equal(result.status, 200, JSON.stringify(headers))
-        assert.equal(result.body.ok, true)
+        assert.equal(result.body.format, 'starmap.read-model')
       }
     })
 
@@ -340,11 +340,14 @@ test('Local editor middleware preserves authorization, error codes and private f
       }
     })
 
-    await t.test('State GET of the empty library succeeds without writing', async () => {
-      const result = await requestTo(handler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
+    await t.test('The read model of the empty library is read without writing; GET and PUT /state are gone (3C-5 E)', async () => {
+      const result = await requestTo(handler, { url: editorPrefix + 'read-model', method: 'GET', headers: {} })
       assert.equal(result.status, 200)
-      assert.equal(result.body.ok, true)
-      assert.equal(typeof result.body.state, 'object')
+      assert.equal(result.body.format, 'starmap.read-model')
+      for (const method of ['GET', 'PUT']) {
+        const gone = await requestTo(handler, { url: editorPrefix + 'state', method, headers: storeProtocol(1), content: Buffer.from('{}') })
+        assertError(gone, 404, 'E_UNKNOWN_ENDPOINT')
+      }
       assert.equal(result.bodyReads, 0)
       await unchanged()
     })
@@ -399,7 +402,7 @@ test('Local editor middleware preserves authorization, error codes and private f
       privateModule.transformResult = null
       assert.deepEqual((await cachedFiles()).places.places, [])
       const before = privateModule.transformResult
-      await requestTo(handler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
+      await requestTo(handler, { url: editorPrefix + 'read-model', method: 'GET', headers: {} })
       await requestTo(handler, { url: editorPrefix + 'countries', headers: {} })
       assert.equal(privateModule.transformResult, before, 'Read/forbidden requests preserve the cached module')
       assert.deepEqual(captured.invalidations, [])
@@ -459,14 +462,12 @@ test('Local editor middleware preserves authorization, error codes and private f
       })
       assert.equal(converted.status, 200, JSON.stringify(converted.body))
       assert.equal(converted.body.wantToGoRemoved, true)
-      const state = await requestTo(handler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
-      assert.equal(state.status, 200, JSON.stringify(state.body))
-      assert.deepEqual(state.body.state.addedCountries
-        .filter(({ countryCode }) => countryCode === 'is')
-        .map(({ id, region, visitedDate, countryCode }) => ({ id, region, visitedDate, countryCode })), [{
-        id: converted.body.countryId, region: 'Europe', visitedDate: '2026-10-03', countryCode: 'is',
-      }])
       const canonical = servedCanonical((await moduleOf(plugin)).exports)
+      assert.deepEqual(canonical.editorState.addedCountries
+        .filter(({ placeId }) => placeId === converted.body.countryId)
+        .map(({ placeId, region, visitedDate }) => ({ placeId, region, visitedDate })), [{
+        placeId: converted.body.countryId, region: 'Europe', visitedDate: '2026-10-03',
+      }])
       assert.deepEqual(canonical.wantToGo.items, [])
       assert.deepEqual(canonical.travel.records
         .filter(({ start_date }) => start_date === '2026-10-03')
@@ -610,9 +611,6 @@ test('Local editor middleware preserves authorization, error codes and private f
         assert.match(result.body.error, /store:migrate/, `${method} ${url}`)
         assert.equal(result.bodyReads, 0, `${method} ${url}`)
       }
-      const state = await requestTo(v2Handler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
-      assert.equal(state.status, 200, JSON.stringify(state.body))
-      assert.deepEqual(state.body.state.countryOrder, v2Fixture.editorState.countryOrder)
       // 3C-5B: the read-model endpoint answers with the V2 files migrated in memory; the address names their digest.
       assert.match(exports.privateReadModelUrl, /^__travelatlas\/editor\/read-model\?v2=[0-9a-f]{16}$/)
       const served = await requestTo(v2Handler, { url: `/${exports.privateReadModelUrl}`, method: 'GET', headers: {} })
@@ -814,12 +812,12 @@ test('Local editor middleware preserves authorization, error codes and private f
       assert.ok(!publicModule.code.includes(v2Fixture.places.places[0].id), 'no private file is read for the public profile')
     })
 
-    await t.test('Read endpoints answer while legacy data is unmigrated; GET /editor/state comes from the V2 files', async () => {
+    await t.test('Read endpoints answer while legacy data is unmigrated; the read model comes from the V2 files', async () => {
       const legacyOnly = await privateRootWith('reads-legacy-only', { legacy: true })
       const unmigratedHandler = captureMiddleware(personal(legacyOnly.privateRoot)).handlers[1]
-      const state = await requestTo(unmigratedHandler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
+      const state = await requestTo(unmigratedHandler, { url: editorPrefix + 'read-model', method: 'GET', headers: {} })
       assert.equal(state.status, 200, JSON.stringify(state.body))
-      assert.deepEqual(state.body.state.countryOrder, [])
+      assert.deepEqual(officialViewOf(state.body, 'local').editorState.countryOrder, [])
       const countries = await requestTo(unmigratedHandler, { url: editorPrefix + 'catalog/countries?q=Iceland', method: 'GET', headers: {} })
       assert.equal(countries.status, 200, JSON.stringify(countries.body))
       assert.ok(countries.body.results.length > 0)
@@ -829,9 +827,9 @@ test('Local editor middleware preserves authorization, error codes and private f
 
       const migrated = await privateRootWith('reads-v2', { v2: true, legacy: true })
       const migratedHandler = captureMiddleware(personal(migrated.privateRoot)).handlers[1]
-      const v2State = await requestTo(migratedHandler, { url: editorPrefix + 'state', method: 'GET', headers: {} })
+      const v2State = await requestTo(migratedHandler, { url: editorPrefix + 'read-model', method: 'GET', headers: {} })
       assert.equal(v2State.status, 200, JSON.stringify(v2State.body))
-      assert.deepEqual(v2State.body.state.countryOrder, v2Fixture.editorState.countryOrder)
+      assert.deepEqual(officialViewOf(v2State.body, 'local').editorState.countryOrder, v2Fixture.editorState.countryOrder)
     })
   } finally {
     process.env = originalEnvironment

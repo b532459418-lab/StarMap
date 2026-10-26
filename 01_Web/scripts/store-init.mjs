@@ -19,7 +19,7 @@ import path from 'node:path'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { privateDataState, storeFileOf } from './private-data-source.mjs'
 import { checkStoreFile, createStore } from './store-host.mjs'
-import { StoreToolError } from './store-migrate.mjs'
+import { StoreToolError } from './store-tool-error.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { OFFICIAL_POLICY, V2_SOURCES, officialDefinitionCommands, v2SourceDefinition } from '../src/data/store/officialDefinitions.ts'
 

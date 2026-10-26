@@ -2,17 +2,17 @@
 /**
  * The store-native footprint and country writes (3C-5 C2): the rows they write — `starmap:user` records whose V2 id is the
  * entry id, journeys whose id is the journey entity's (no `journey-` prefix), sequences in route order, added countries
- * as the official view reads them, and only the countryOrder rows that move. Results and refusals against the old engine
- * are the double run's (../doubleRun.test.ts).
+ * as the official view reads them, and only the countryOrder rows that move. Results and refusals are pinned by the
+ * golden output (../golden.test.ts).
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { FormalCommand, FormalState } from '../../../worldgraph/store/formal.ts'
-import { viewOf } from '../../store/diffV2.fixture.ts'
+import { viewOf } from '../../store/v2Store.fixture.ts'
 import { OFFICIAL, V2_SOURCES, VIEW_SCOPES } from '../../store/officialDefinitions.ts'
 import { projectStoreToCanonical } from '../../store/projectCanonical.ts'
-import { migratedFiles, placeNamed } from '../../v2write/v2write.fixture.ts'
-import { OLD_WRITES, doubleRunStore, editorRoute, oldEngine, sameRequest, stepContext } from '../doubleRun.fixture.ts'
+import { migratedFiles, placeNamed } from '../editor.fixture.ts'
+import { doubleRunStore } from '../doubleRun.fixture.ts'
 import { commitAsIs, customEntryOn, landmarkNear, runNative } from './native.fixture.ts'
 
 const canonicalOf = (state: FormalState) => projectStoreToCanonical(state, { source: 'local', track: false, freeze: false }).canonical
@@ -53,16 +53,19 @@ test('POST /records joining a journey: its sequence lists the members and the ne
   assert.deepEqual(dates, [...dates].sort(), 'route order')
 })
 
-test('POST /countries: an added country is a v2:country-visit evidence (region) and visit entry, with its addedCountryOrder row', () => {
+test('POST /countries: an added country is a starmap:user visit entry on the country citing an evidence row (region), with its addedCountryOrder row (3C-5 E)', () => {
   const store = doubleRunStore(migratedFiles())
   const before = store.state
   const saved = run(store, 'countries', { countryCode: 'DK', visitedDate: '2024-03-02' }, 1)
   assert.ok(saved.state, JSON.stringify(saved.error))
   const { countryId } = saved.result as { countryId: string }
   const [evidence] = fresh(before.evidence, store.state.evidence)
-  assert.deepEqual([evidence.sourceId, evidence.recordId, evidence.attributes], [V2_SOURCES.countryVisit, countryId, { region: 'Europe' }])
   const [visit] = fresh(before.entries, store.state.entries)
-  assert.deepEqual([visit.source.sourceId, visit.source.recordId, visit.source.evidenceIds, visit.fields], [V2_SOURCES.countryVisit, countryId, [evidence.id], { date: { raw: { startDate: '2024-03-02' } } }])
+  assert.deepEqual([evidence.sourceId, evidence.recordId, evidence.attributes], [OFFICIAL.user, visit.id, { region: 'Europe' }])
+  assert.deepEqual([visit.layerId, visit.entityId, visit.source.sourceId, visit.source.recordId, visit.source.evidenceIds, visit.fields],
+    [OFFICIAL.travel, countryId, OFFICIAL.user, visit.id, [evidence.id], { date: { raw: { startDate: '2024-03-02' } } }])
+  // No row of a V2 source (3C-5 E spec §2.6: the country's subtype marks the visit, not v2:country-visit).
+  assert.ok(![evidence.sourceId, visit.source.sourceId].includes(V2_SOURCES.countryVisit))
   assert.ok(fresh(before.viewItems, store.state.viewItems).some((row) => row.scope === VIEW_SCOPES.addedCountryOrder && row.itemId === countryId))
   assert.deepEqual(canonicalOf(store.state).editorState.addedCountries.at(-1), { placeId: countryId, region: 'Europe', visitedDate: '2024-03-02' })
   // Again: E_COUNTRY_EXISTS.
@@ -82,10 +85,9 @@ function japanToDelete(custom?: (placeId: string) => FormalCommand[]) {
 }
 const has = (state: FormalState, id: string) => state.entities.some((row) => row.id === id)
 
-test('D3: deleting a country keeps a city that a custom layer\'s entity or entry still refers to (and its country); the old engine could not', () => {
+test('D3: deleting a country keeps a city that a custom layer\'s entity or entry still refers to (and its country; design §9 change 9)', () => {
   for (const [label, custom] of [['an entity field of a custom layer', landmarkNear], ['an entry of a custom layer', customEntryOn]] as const) {
     const { store, japan, tokyoId, kyotoId } = japanToDelete(custom)
-    const before = store.state
     const deleted = runNative(store, 'countries/delete', { ids: [japan] }, 4)
     assert.deepEqual(deleted.result, { deletedCountryIds: [japan], deletedRecordCount: 2 }, label)
     assert.equal(has(store.state, tokyoId), false, `${label}: Tokyo goes`)
@@ -94,10 +96,6 @@ test('D3: deleting a country keeps a city that a custom layer\'s entity or entry
     const view = canonicalOf(store.state)
     assert.equal(view.travel.records.some((record) => record.placeId === tokyoId || record.placeId === kyotoId), false, label)
     assert.equal(view.editorState.countryOrder.includes(japan) || view.editorState.hiddenCountryIds.includes(japan), false, label)
-    // The V2 path sees only the five files: it removes Kyoto, and the store refuses (E_DEPENDENTS).
-    const old = { ...store, state: before }
-    assert.throws(() => oldEngine(old, sameRequest('delete', editorRoute('countries/delete'), OLD_WRITES.countriesDelete, { ids: [japan] }), stepContext(4)),
-      (error: { code?: string }) => error.code === 'E_DEPENDENTS', label)
   }
 })
 

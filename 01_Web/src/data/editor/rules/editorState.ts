@@ -1,5 +1,5 @@
 /**
- * 编辑状态的判定（3C-5 C1 从 ../../v2write/editorState.ts 迁来，规则、错误码与参数不变；RFC-LOC-1 PR3b-2 规格 §2.3）：
+ * 编辑状态的判定（3C-5 C1 从 v2write/editorState.ts（3C-5 E 删除）迁来，规则、错误码与参数不变；RFC-LOC-1 PR3b-2 规格 §2.3）：
  * 写入之后的排序、隐藏与封面里，地点 id 的类型必须对。
  *
  * `countryOrder`、`hiddenCountryIds`、`cityOrderByCountry` 的键必须是国家地点；`cityOrderByCountry` 的值、`hiddenCityIds`、
@@ -11,7 +11,7 @@
  */
 
 import type { PlaceId } from '../../canonical/types.ts'
-import { V2WriteError } from '../../v2write/errors.ts'
+import { V2WriteError } from '../errors.ts'
 
 /** 编辑状态里带地点 id 的列表与表。 */
 export interface EditorStatePlaceLists {

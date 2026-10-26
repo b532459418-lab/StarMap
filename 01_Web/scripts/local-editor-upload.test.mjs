@@ -6,7 +6,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import sharp from 'sharp'
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 import {
   MAX_UPLOAD_BYTES,
   isLikelyEquirectangularPanorama,

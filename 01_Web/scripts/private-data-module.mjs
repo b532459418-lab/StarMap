@@ -5,7 +5,7 @@
  *    - `privateReadModelUrl`（3C-5B）：个人模式下读模型 `starmap.read-model`（src/worldgraph/readModel/types.ts）的地址，
  *      相对于站点根（BASE_URL）；App 启动时取回它（src/data/rawInputs.ts），读模型从不内联在模块里。公开模式为 undefined。
  *      - 开发服务器：只读端点 `__travelatlas/editor/read-model?revision=N`（新库，./store-session.mjs 的读模型），或
- *        `…?v2=<V2 文件的摘要>`（不是新库：`data/v2/` 的五个文件在内存里迁移一次，./store-migrate.mjs 的
+ *        `…?v2=<V2 文件的摘要>`（不是新库：`data/v2/` 的五个文件在内存里迁移一次，./compat/store-migrate.mjs 的
  *        migrationReadModel，什么都不写；没有文件时是空文件迁移出的读模型）。地址随修订号变，保存后的整页刷新不会读到旧数据。
  *      - 个人构建（`vite build --mode personal`）：过滤后的数据文件 `data/read-model.<sha256 前缀>.json`。
  *      App 只有一条读取路径：读模型 → 官方视图 → 派生；从不读旧格式的文件。

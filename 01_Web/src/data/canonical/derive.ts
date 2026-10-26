@@ -37,7 +37,7 @@ import {
 } from '../derive/travelAtlas.ts'
 import type { WantToGoDataSource, WantToGoItem, WantToGoTravelInput } from '../derive/wantToGo.ts'
 import { deriveWorldGraph, type WorldGraphDerived } from '../derive/worldGraph.ts'
-import { messageFor } from '../v2write/errors.ts'
+import { messageFor } from '../editor/errors.ts'
 import type { City, CityId, Country, CountryId, JourneyDay, Route, TravelMapRecord } from '../../types/travel.ts'
 import { classifyByPlace, displaySets, hiddenFromHomeFor } from './classify.ts'
 import { convertRuleDataOfCanonical, convertRules, type ConvertRules } from './convertRules.ts'

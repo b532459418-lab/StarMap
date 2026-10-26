@@ -8,6 +8,8 @@
  *   resolution); the cities of a country (`citiesOf`, for the city candidates).
  * - Want-to-go items: by their V2 id (`wish`), on a place (`wishesOn`); each with its entry and hidden view row.
  * - The editor state's lists (`editorLists`) and the rows of a view scope (`scope`).
+ * - 3C-5 E: every place in the official order (`places`, the media rules' place index) and a media item by its V2 id
+ *   (`mediaItem`, the media deletion rule).
  * - 3C-5 C2: footprint and planned records (`record`, `recordsOn`, `recordById`, `recordsInOrder`, `visitedTitled`), each
  *   with its entry and the official view's value (recordValueOf); the journey the projection assigns a footprint entry to
  *   (`journeyOfEntry`) and a journey's members (`journeyMembers`); the added countries (`addedCountries`).
@@ -16,13 +18,14 @@
  */
 import type { ViewItem, ViewSetting } from '../../worldgraph/store/formal.ts'
 import type { Ref } from '../../worldgraph/store/reader.ts'
-import type { EntrySequence, Evidence, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
+import type { AssetReference, EntrySequence, Evidence, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
 import type { ReadModelIndex } from '../../worldgraph/readModel/lookup.ts'
 import type { ReadModelTable } from '../../worldgraph/readModel/types.ts'
-import type { CanonicalEditorState, CanonicalPlace, CanonicalWantToGoItem } from '../canonical/types.ts'
+import type { CanonicalEditorState, CanonicalMediaItem, CanonicalPlace, CanonicalWantToGoItem } from '../canonical/types.ts'
 import { OFFICIAL, V2_SOURCES, VIEW_SCOPES } from './officialDefinitions.ts'
 import {
-  addedCountryValueOf, editorListsOf, officialEntryRole, placeValueOf, recordIdOf, recordValueOf, wishValueOf, type ViewScopeAccess,
+  addedCountryTieBreak, addedCountryValueOf, editorListsOf, laterVisit, mediaValueOf, officialEntryRole, placeValueOf, recordIdOf, recordValueOf, wishValueOf,
+  type OfficialEntryRole, type ViewScopeAccess,
 } from './projectCanonical.ts'
 
 /** The index the reader needs: lookups, and reverse references (the host's live index has them). */
@@ -63,10 +66,11 @@ export interface OfficialJourney {
   readonly sequences: readonly EntrySequence[]
 }
 /** An added country: its evidence, the visit entry, and the Canonical value. */
+/** An added country (3C-5 E): its visit entry (a travel entry on the country) and the evidence the entry cites. */
 export interface OfficialAddedCountry {
   readonly placeId: string
-  readonly evidence: Evidence
-  readonly visit?: LayerEntry
+  readonly visit: LayerEntry
+  readonly evidence: readonly Evidence[]
   readonly value: Readonly<Record<string, unknown>>
 }
 
@@ -76,6 +80,8 @@ export interface OfficialReader {
   /** True when `id` is a place (an entity of the place type): place(id) is defined. */
   isPlace(id: string): boolean
   subtypeOf(id: string): 'country' | 'city' | undefined
+  /** Every place, in the official order (the official view's places). */
+  places(): readonly CanonicalPlace[]
   /** Every country, in the official order. */
   countries(): readonly CanonicalPlace[]
   /** The cities whose country (first part-of relation to a place) is `countryId`, in the official order. */
@@ -86,12 +92,19 @@ export interface OfficialReader {
   wishesOn(placeId: string): readonly OfficialWish[]
   /** The editor state's lists (the official view's editorState without the added countries and headers). */
   editorLists(): EditorLists
+  /**
+   * The media item with this V2 id, as the official view gives it (the asset's metadata, V2 id, place and title), if
+   * any. Two assets with one V2 id (no valid library has them): the first by media entity id answers.
+   */
+  mediaItem(id: string): CanonicalMediaItem | undefined
   /** The items and settings of one view scope. */
   scope(scope: string): { readonly items: readonly ViewItem[]; readonly settings: readonly ViewSetting[] }
   /** The view item of `scope` that targets `table`/`id`, if any. */
   viewItem(scope: string, table: 'entities' | 'entries' | 'assets', id: string): ViewItem | undefined
   /** The setting of `scope` with `key`, if any. */
   viewSetting(scope: string, key: string): ViewSetting | undefined
+  /** The Canonical record an official entry becomes (./projectCanonical.ts officialEntryRole, with the place subtypes). */
+  roleOf(entry: LayerEntry): OfficialEntryRole | undefined
   /** True when `entry` is a footprint or planned record of the official view (its role, on a place). */
   isRecord(entry: LayerEntry): boolean
   /** The record of a footprint or planned entry. */
@@ -117,7 +130,7 @@ export interface OfficialReader {
   journey(journeyId: string): OfficialJourney | undefined
   /** The footprint entries the projection assigns to a journey. */
   journeyMembers(journeyId: string): readonly OfficialRecord[]
-  /** The added countries, in the official order (addedCountryOrder positions, then evidence id). */
+  /** The added countries, in the official order (addedCountryOrder positions, then addedCountryTieBreak). */
   addedCountries(): readonly OfficialAddedCountry[]
 }
 
@@ -128,6 +141,11 @@ const byPositionThenId = (a: { position: string; id: string }, b: { position: st
 export function officialReader(index: OfficialReaderIndex): OfficialReader {
   const places = new Map<string, CanonicalPlace | undefined>()
   const isPlaceEntity = (id: string) => (index.get('entities', id) as StoreEntity | undefined)?.typeId === OFFICIAL.place
+  const subtypeOf = (id: string) => {
+    const entity = index.get('entities', id) as StoreEntity | undefined
+    return entity?.typeId === OFFICIAL.place ? entity.fields.subtype : undefined
+  }
+  const roleOf = (entry: LayerEntry) => officialEntryRole(entry, subtypeOf)
   const place = (id: string): CanonicalPlace | undefined => {
     if (places.has(id)) return places.get(id)
     const entity = index.get('entities', id) as StoreEntity | undefined
@@ -156,6 +174,23 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     }).map((id) => place(id)!)
   }
   let countryList: readonly CanonicalPlace[] | undefined
+  let placeList: readonly CanonicalPlace[] | undefined
+  /** The media items by V2 id: the projection's rule (media entities by id, each asset once, on a place). */
+  let mediaItems: Map<string, CanonicalMediaItem> | undefined
+  const mediaIndex = () => {
+    if (mediaItems) return mediaItems
+    mediaItems = new Map()
+    const used = new Set<string>()
+    for (const entity of index.entitiesOfType(OFFICIAL.media)) {
+      const asset = typeof entity.fields.asset === 'string' ? index.get('assets', entity.fields.asset) as AssetReference | undefined : undefined
+      const placeId = entity.fields.place
+      if (!asset || typeof placeId !== 'string' || !isPlaceEntity(placeId) || used.has(asset.id)) continue
+      used.add(asset.id)
+      const item = mediaValueOf(entity, asset) as unknown as CanonicalMediaItem
+      if (!mediaItems.has(item.id)) mediaItems.set(item.id, item)
+    }
+    return mediaItems
+  }
   const scopeAccess: ViewScopeAccess = { items: (scope) => index.viewItemsOf(scope), settings: (scope) => index.viewSettingsOf(scope) }
   let lists: EditorLists | undefined
   let wishes: { byId: Map<string, OfficialWish>; byPlace: Map<string, OfficialWish[]> } | undefined
@@ -167,7 +202,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     }
     const byId = new Map<string, OfficialWish>(), byPlace = new Map<string, OfficialWish[]>()
     for (const entry of index.entriesOfLayer(OFFICIAL.wantToGo)) {
-      if (officialEntryRole(entry) !== 'wish' || !isPlaceEntity(entry.entityId)) continue
+      if (roleOf(entry) !== 'wish' || !isPlaceEntity(entry.entityId)) continue
       const hiddenRow = hidden.get(entry.id)
       const wish: OfficialWish = { entry, item: wishValueOf(entry, hiddenRow?.hidden) as unknown as CanonicalWantToGoItem, ...(hiddenRow ? { hiddenRow } : {}) }
       // The projection keeps every entry; two with one V2 id would both show. The first by entry id answers here.
@@ -181,7 +216,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
 
   // --- Records (3C-5 C2): the projection's roles, flags, journeys and orders.
   const isRecord = (entry: LayerEntry): boolean => {
-    const role = officialEntryRole(entry)
+    const role = roleOf(entry)
     return (role === 'footprint' || role === 'planned') && isPlaceEntity(entry.entityId)
   }
   let homeHidden: Map<string, ViewItem> | undefined
@@ -206,7 +241,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
       const journeyId = entity.source.sourceId === V2_SOURCES.journey ? entity.source.recordId : entity.id
       for (const entryId of sequence.entryIds) {
         const entry = index.get('entries', entryId) as LayerEntry | undefined
-        if (!entry || !isRecord(entry) || officialEntryRole(entry) !== 'footprint' || byEntry.has(entryId)) continue
+        if (!entry || !isRecord(entry) || roleOf(entry) !== 'footprint' || byEntry.has(entryId)) continue
         let journey = byId.get(journeyId)
         if (!journey) byId.set(journeyId, journey = { journeyId, entity, sequences: index.sequencesOfEntity(entity.id) })
         byEntry.set(entryId, journey)
@@ -222,7 +257,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     let found = records.get(entry.id)
     if (!found) {
       const value = recordValueOf(entry, hiddenFromHome(entry.id), journeyIndex().byEntry.get(entry.id)?.journeyId, place(entry.entityId)?.location)
-      found = { entry, planned: officialEntryRole(entry) === 'planned', record: value as OfficialRecord['record'] }
+      found = { entry, planned: roleOf(entry) === 'planned', record: value as OfficialRecord['record'] }
       records.set(entry.id, found)
     }
     return found
@@ -250,7 +285,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     const raw = plain(date) && plain(date.raw) ? date.raw : {}
     const v2 = plain(entry.extensions?.v2) ? entry.extensions.v2 : {}
     const value = (from: string, to: string) => (Object.hasOwn(raw, from) ? raw[from] : v2[to])
-    return { entry, placeId: entry.entityId, planned: officialEntryRole(entry) === 'planned', start_date: value('startDate', 'start_date'), end_date: value('endDate', 'end_date') }
+    return { entry, placeId: entry.entityId, planned: roleOf(entry) === 'planned', start_date: value('startDate', 'start_date'), end_date: value('endDate', 'end_date') }
   }
   let visits: readonly OfficialVisit[] | undefined
   /** The first part-of relation (by id) to a place: the projection's partOf. */
@@ -262,12 +297,12 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
   }
   let added: readonly OfficialAddedCountry[] | undefined
   const addedCountriesOf = (): OfficialAddedCountry[] => {
+    const visits = new Map<string, LayerEntry>()
+    for (const entry of index.entriesOfLayer(OFFICIAL.travel)) if (roleOf(entry) === 'countryVisit') visits.set(entry.entityId, laterVisit(visits.get(entry.entityId), entry))
     const containers: OfficialAddedCountry[] = []
-    for (const evidence of index.evidenceOfSource(V2_SOURCES.countryVisit)) {
-      if (!isPlaceEntity(evidence.recordId)) continue
-      const visits = index.entriesOfEntity(evidence.recordId).filter((entry) => officialEntryRole(entry) === 'countryVisit' && entry.source.recordId === evidence.recordId)
-      const visit = visits.at(-1)
-      containers.push({ placeId: evidence.recordId, evidence, ...(visit ? { visit } : {}), value: addedCountryValueOf(evidence, visit) })
+    for (const [placeId, visit] of visits) {
+      const evidence = visit.source.evidenceIds.map((id) => index.get('evidence', id) as Evidence | undefined).filter((row): row is Evidence => row !== undefined)
+      containers.push({ placeId, visit, evidence, value: addedCountryValueOf(visit, evidence) })
     }
     const at = new Map<string, ViewItem>()
     for (const item of index.viewItemsOf(VIEW_SCOPES.addedCountryOrder)) if (item.itemTable === 'entities' && !at.has(item.itemId)) at.set(item.itemId, item)
@@ -275,7 +310,8 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
       const x = at.get(a.placeId), y = at.get(b.placeId)
       if (x && y) return byPositionThenId(x, y)
       if (x || y) return x ? -1 : 1
-      return a.evidence.id < b.evidence.id ? -1 : a.evidence.id > b.evidence.id ? 1 : 0
+      const p = addedCountryTieBreak(a.visit), q = addedCountryTieBreak(b.visit)
+      return p < q ? -1 : p > q ? 1 : 0
     })
   }
 
@@ -283,11 +319,16 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     index,
     place,
     isPlace: isPlaceEntity,
+    roleOf,
     // The place's subtype field (what place(id).subtype is), without building the place.
     subtypeOf: (id) => {
       const entity = index.get('entities', id) as StoreEntity | undefined
       const subtype = entity?.typeId === OFFICIAL.place ? entity.fields.subtype : undefined
       return subtype === 'country' || subtype === 'city' ? subtype : undefined
+    },
+    places() {
+      placeList ??= Object.freeze(inOfficialOrder(index.entitiesOfType(OFFICIAL.place).map((entity) => entity.id)))
+      return placeList
     },
     countries() {
       countryList ??= Object.freeze(inOfficialOrder(index.entitiesOfType(OFFICIAL.place)
@@ -305,6 +346,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
       lists ??= editorListsOf(scopeAccess, isPlaceEntity, (id) => index.get('assets', id) !== undefined) as unknown as EditorLists
       return lists
     },
+    mediaItem: (id) => mediaIndex().get(id),
     scope: (scope) => ({ items: index.viewItemsOf(scope), settings: index.viewSettingsOf(scope) }),
     viewItem: (scope, table, id) => index.viewItemsOf(scope).filter((item) => item.itemTable === table && item.itemId === id)
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0],
@@ -321,7 +363,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     },
     recordsInOrder,
     visitedTitled: (title) => index.entriesOfLayer(OFFICIAL.travel)
-      .filter((entry) => entry.fields.tripTitle === title && isRecord(entry) && officialEntryRole(entry) === 'footprint').map(recordOf),
+      .filter((entry) => entry.fields.tripTitle === title && isRecord(entry) && roleOf(entry) === 'footprint').map(recordOf),
     visitsInOrder() {
       visits ??= Object.freeze(entriesInOrder().map(visitOf))
       return visits

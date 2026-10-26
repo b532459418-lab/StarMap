@@ -180,10 +180,12 @@ test('failed open checks open read-only with a diagnostic and never change the f
   // [case, damage, expected code, still readable, SQL that undoes the damage]
   const cases = [
     ['foreign SQLite file', 'PRAGMA application_id = 7', 'E_STORE_APPLICATION_ID', false, `PRAGMA application_id = ${STORE_APPLICATION_ID}`],
-    ['newer format', 'PRAGMA user_version = 3', 'E_STORE_TOO_NEW', false, 'PRAGMA user_version = 2'],
+    ['newer format', `PRAGMA user_version = ${STORE_FORMAT_VERSION + 1}`, 'E_STORE_TOO_NEW', false, `PRAGMA user_version = ${STORE_FORMAT_VERSION}`],
     // 3C-4c: an older format that store:upgrade knows is not opened, upgraded or read; the App points to store:upgrade.
-    ['older format with an upgrade (1)', 'PRAGMA user_version = 1', 'E_STORE_UPGRADE_REQUIRED', false, 'PRAGMA user_version = 2'],
-    ['unknown older format', 'PRAGMA user_version = 0', 'E_STORE_VERSION', false, 'PRAGMA user_version = 2'],
+    ['older format with an upgrade (1)', 'PRAGMA user_version = 1', 'E_STORE_UPGRADE_REQUIRED', false, `PRAGMA user_version = ${STORE_FORMAT_VERSION}`],
+    // 3C-5 E: format 2 (before every added country had its visit entry).
+    ['older format with an upgrade (2)', 'PRAGMA user_version = 2', 'E_STORE_UPGRADE_REQUIRED', false, `PRAGMA user_version = ${STORE_FORMAT_VERSION}`],
+    ['unknown older format', 'PRAGMA user_version = 0', 'E_STORE_VERSION', false, `PRAGMA user_version = ${STORE_FORMAT_VERSION}`],
     ['unexpected schema', 'CREATE TABLE extra (x TEXT) STRICT', 'E_STORE_SCHEMA', false, 'DROP TABLE extra'],
     ['auto_vacuum other than INCREMENTAL', 'PRAGMA auto_vacuum = FULL', 'E_STORE_SCHEMA', false, 'PRAGMA auto_vacuum = INCREMENTAL'],
     ['missing store_meta row', 'DELETE FROM store_meta', 'E_STORE_SCHEMA', false,

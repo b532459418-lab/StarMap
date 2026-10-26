@@ -18,7 +18,7 @@
  * 约束：Node 24 能直接加载——erasable-only TypeScript，相对 import 带 `.ts`，类型用 `import type`。
  */
 
-import { V2WriteError } from '../../v2write/errors.ts'
+import { V2WriteError } from '../errors.ts'
 import { mergeOrder } from '../../editorStateDelta.ts'
 import { isObject } from './input.ts'
 

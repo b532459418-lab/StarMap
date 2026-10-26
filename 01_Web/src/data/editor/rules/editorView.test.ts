@@ -2,7 +2,7 @@
 /** The view operations of 3C-5 C1 (rules/editorView.ts): shape checks, and the merge semantics of the old updaters. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { V2WriteError } from '../../v2write/errors.ts'
+import { V2WriteError } from '../errors.ts'
 import { mergeOrder } from '../../editorStateDelta.ts'
 import { applyHide, applyViewOperations, hideDelta, mergeKeyedOrder, parseViewOperations, type ViewLists } from './editorView.ts'
 

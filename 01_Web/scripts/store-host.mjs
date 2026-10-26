@@ -34,9 +34,10 @@ export { StoreHostError } from './store-sqlite.mjs'
 export const STORE_FORMAT = 'starmap.formal-store'
 /**
  * Also the SQLite `user_version`. Raise it only together with an entry in MIGRATIONS. 2 since 3C-4c: the media registry
- * (./store-media-registry.mjs, design v2 §2).
+ * (./store-media-registry.mjs, design v2 §2). 3 since 3C-5 E: the same schema; every added country has its visit entry
+ * (../src/data/store/storeFormatUpgrades.ts), so the official view reads added countries by the entry.
  */
-export const STORE_FORMAT_VERSION = 2
+export const STORE_FORMAT_VERSION = 3
 /** `PRAGMA application_id` of a formal store file ('SMF1'). */
 export const STORE_APPLICATION_ID = 0x534d4631
 /**
@@ -52,9 +53,10 @@ export const storePathFor = (privateRoot) => path.join(privateRoot, ...STORE_REL
 /**
  * Upgrades from an older user_version, keyed by that version: the statements that turn its schema into the next one. A
  * store of such a version opens with E_STORE_UPGRADE_REQUIRED and is upgraded only by upgradeStoreFile (`npm run
- * store:upgrade`), never by an open. Version 1 is the first; 1 → 2 adds the media registry.
+ * store:upgrade`), never by an open. Version 1 is the first; 1 → 2 adds the media registry; 2 → 3 changes no table
+ * (the rows it needs come with the upgrade's request: upgradeStoreFile `commands`).
  */
-const MIGRATIONS = Object.freeze({ 1: Object.freeze({ to: 2, statements: MEDIA_SCHEMA }) })
+const MIGRATIONS = Object.freeze({ 1: Object.freeze({ to: 2, statements: MEDIA_SCHEMA }), 2: Object.freeze({ to: 3, statements: Object.freeze([]) }) })
 
 const fail = (code, details) => { throw new StoreHostError(code, details) }
 const missing = (error) => error?.code === 'ENOENT'
@@ -190,8 +192,8 @@ export const SCHEMA_V1 = Object.freeze([
 
 /** Every CREATE statement of user_version 2 (3C-4c): version 1 and the media registry (./store-media-registry.mjs). */
 export const SCHEMA_V2 = Object.freeze([...SCHEMA_V1, ...MEDIA_SCHEMA])
-/** The schema of each format version this host knows (the current one, and the ones it upgrades from). */
-const SCHEMAS = Object.freeze({ 1: SCHEMA_V1, 2: SCHEMA_V2 })
+/** The schema of each format version this host knows (the current one, and the ones it upgrades from). 3 is 2's. */
+const SCHEMAS = Object.freeze({ 1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V2 })
 
 /** The host's own tables besides store_meta (tableCounts). */
 const HOST_TABLES = Object.freeze(['refs', 'tombstones', 'receipts', 'op_log', 'id_map', 'pending_file_ops', ...MEDIA_TABLES])
@@ -306,7 +308,7 @@ function currentRevision(db) {
  * or `close` is called. Rows come back exactly as written (deep-frozen JSON values).
  *
  * Two reads beyond Core's interface, for the incremental write path of the new-library mode
- * (3C-4a, src/data/store/diffV2.ts): `viewScope(scope)` returns every view item and setting of one
+ * (3C-4a; diffV2ToCommands, retired in 3C-5 E, and the media records): `viewScope(scope)` returns every view item and setting of one
  * scope (by id, from the scope indexes), and `idMapping(kind, sourceId, recordId)` looks up id_map.
  */
 function transactionReader(db) {
@@ -1409,19 +1411,24 @@ export const STORE_UPGRADE_KIND = 'store.upgrade'
 export const STORE_UPGRADE_ACTOR = 'store:upgrade'
 
 /**
- * Upgrade a store of an older format version in place (3C-4c: 1 → 2, `npm run store:upgrade`), under the library lease:
+ * Upgrade a store of an older format version in place to the current one (3C-4c: 1 → 2; 3C-5 E: 2 → 3; `npm run
+ * store:upgrade`), under the library lease:
  * 1. a writable connection (it rolls back a hot journal), application_id and the version: a version with an entry in
- *    MIGRATIONS is upgraded; the current one is left alone ({ upgraded: false }); a newer one is E_STORE_TOO_NEW, any
- *    other E_STORE_VERSION. Then the old version's exact schema and store_meta, and quick_check (E_STORE_CORRUPT);
- * 2. every row, read in one transaction (as readRowsUnchecked), goes to `prepare({ state, revision })`. It may do IO (the
- *    media registry is seeded from the Inbox and the media files) and returns the media block to write, or undefined;
- * 3. one write transaction: the revision must not have moved (E_STALE); MIGRATIONS[version].statements; a request
- *    without commands (`kind` store.upgrade, the media block, its receipt and op_log entry; the revision stays); then
- *    user_version and store_meta.format_version; the new version's open checks must pass inside it;
+ *    MIGRATIONS is upgraded through every later one; the current one is left alone ({ upgraded: false }); a newer one is
+ *    E_STORE_TOO_NEW, any other E_STORE_VERSION. Then the old version's exact schema and store_meta, and quick_check
+ *    (E_STORE_CORRUPT);
+ * 2. every row, read in one transaction (as readRowsUnchecked), goes to `prepare({ state, revision, fromVersion })`. It
+ *    may do IO (the media registry is seeded from the Inbox and the media files) and returns the media block to write,
+ *    or undefined; and to `commands({ state, fromVersion })`, which returns the formal commands the upgrade writes (none
+ *    by default);
+ * 3. one write transaction: the revision must not have moved (E_STALE); the statements of every step; one request
+ *    (`kind` store.upgrade, the commands and the media block, its receipt and op_log entry; the revision stays when there
+ *    are no commands, and moves on by one with them); then user_version and store_meta.format_version; the new
+ *    version's open checks must pass inside it;
  * 4. COMMIT, settled into the three outcomes like a commit.
  * Any failure before COMMIT rolls back: the file keeps its old version, nothing else changed. No writer session is
  * started (clean_shutdown is left as it was). `requestId` (UUIDv7) is injected; options as openStore (`privatePaths` or
- * `lock`, `now`, `policy`). Resolves { upgraded, fromVersion, toVersion, revision, receipt? }.
+ * `lock`, `now`, `policy`). Resolves { upgraded, fromVersion, toVersion, fromRevision, revision, receipt? }.
  */
 export async function upgradeStoreFile(file, options = {}) {
   const target = absoluteFile(file)
@@ -1443,17 +1450,22 @@ export async function upgradeStoreFile(file, options = {}) {
         return Object.freeze({ upgraded: false, fromVersion: version, toVersion: version, revision: currentRevision(db) })
       }
       if (version > STORE_FORMAT_VERSION) fail('E_STORE_TOO_NEW', { outcome: 'not_committed' })
-      const migration = MIGRATIONS[version]
-      if (!migration) fail('E_STORE_VERSION', { outcome: 'not_committed' })
+      const steps = []
+      for (let from = version; from < STORE_FORMAT_VERSION; from = MIGRATIONS[from].to) {
+        if (!MIGRATIONS[from]) fail('E_STORE_VERSION', { outcome: 'not_committed' })
+        steps.push(MIGRATIONS[from])
+      }
+      const target = steps.at(-1).to
       const old = formatDiagnostic(db, version)
       if (old) fail(old.code, { outcome: 'not_committed' })
       if (quickCheck(db, settings).length) fail('E_STORE_CORRUPT', { outcome: 'not_committed' })
       let state
       db.exec('BEGIN')
       try { state = formalStateValue(db) } finally { if (transactionState(db) === true) db.exec('ROLLBACK') }
-      const media = await options.prepare?.({ state, revision: state.revision })
+      const media = await options.prepare?.({ state, revision: state.revision, fromVersion: version })
+      const commands = options.commands?.({ state, fromVersion: version }) ?? []
       const request = validRequest({
-        requestId: options.requestId, baseRevision: state.revision, kind: STORE_UPGRADE_KIND, actor: options.actor ?? STORE_UPGRADE_ACTOR, commands: [],
+        requestId: options.requestId, baseRevision: state.revision, kind: STORE_UPGRADE_KIND, actor: options.actor ?? STORE_UPGRADE_ACTOR, commands,
         media: media ?? {},
       })
       const at = hostTime(settings)
@@ -1461,15 +1473,15 @@ export async function upgradeStoreFile(file, options = {}) {
       try {
         db.exec('BEGIN IMMEDIATE')
         if (currentRevision(db) !== state.revision) fail('E_STALE', { path: 'revision' })
-        for (const statement of migration.statements) db.exec(statement)
+        for (const step of steps) for (const statement of step.statements) db.exec(statement)
         const { receipt } = applyRequest(db, request, requestDigest(request), at, settings, () => {})
-        db.exec(`PRAGMA user_version = ${migration.to}`)
-        if (db.prepare('UPDATE store_meta SET format_version = ? WHERE singleton = 1').run(migration.to).changes !== 1) inconsistent('store_meta')
-        const upgraded = formatDiagnostic(db, migration.to)
+        db.exec(`PRAGMA user_version = ${target}`)
+        if (db.prepare('UPDATE store_meta SET format_version = ? WHERE singleton = 1').run(target).changes !== 1) inconsistent('store_meta')
+        const upgraded = formatDiagnostic(db, target)
         if (upgraded) fail(upgraded.code, { path: 'schema' })
         commitIssued = true
         db.exec('COMMIT')
-        return Object.freeze({ upgraded: true, fromVersion: version, toVersion: migration.to, revision: receipt.revision, receipt })
+        return Object.freeze({ upgraded: true, fromVersion: version, toVersion: target, fromRevision: state.revision, revision: receipt.revision, receipt })
       } catch (error) {
         throw settleFailure(db, error, commitIssued)
       }

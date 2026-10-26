@@ -17,7 +17,7 @@
 import { createHash } from 'node:crypto'
 import { resolveClassification } from './media-registry.mjs'
 import { INBOX_PREFIX, pathKeyOf } from './store-media-registry.mjs'
-import { V2WriteError } from '../src/data/v2write/errors.ts'
+import { V2WriteError } from '../src/data/editor/errors.ts'
 
 const hash = (value) => createHash('sha256').update(value).digest('hex')
 const normalized = (value) => {
@@ -85,7 +85,7 @@ export function storeTaskPlanOf({ plan, meta, job, selectedFileIds }) {
   // A task's files are appended to their city's order (as the V2 import did; that code is removed in 3C-4d).
   const explicit = taskPathsOf(job, selectedFileIds).map((value) => pathKeyOf(value))
   const restoredMediaIds = explicit.map((key) => provisional.get(key)).filter(Boolean)
-  const tables = { photos: structuredClone(plan.files.editorState?.mediaOrderByCity ?? {}), drone: structuredClone(plan.files.editorState?.droneOrderByCity ?? {}) }
+  const tables = { photos: structuredClone(plan.editorLists.mediaOrderByCity), drone: structuredClone(plan.editorLists.droneOrderByCity) }
   const touched = { photos: new Set(), drone: new Set() }
   for (const key of explicit) {
     const item = newByKey.get(key)?.described.item
