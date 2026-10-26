@@ -689,11 +689,42 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
   const loop = (page) => page.evaluate(() => window.__travelAtlasDebugRenderLoop?.state())
   /** Paused now: the loop is off and no frame is drawn. */
   async function expectPaused(page) {
-    await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000 }).toBe(true)
+    await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000, intervals: [25, 50] }).toBe(true)
     const before = await loop(page)
     await page.waitForTimeout(250)
     const after = await loop(page)
     expect(after.frames, `no frame while paused: ${JSON.stringify([before, after])}`).toBe(before.frames)
+  }
+  /** Observe the actual pending-write phase, not the input driver's later post-action settling. */
+  async function observePauseDuring(page, action, whilePaused) {
+    let actionFailed = false
+    let requested = false
+    let resolveWrite, rejectWrite
+    const writeStarted = new Promise((resolve, reject) => { resolveWrite = resolve; rejectWrite = reject })
+    const request = (sent) => {
+      const url = new URL(sent.url())
+      if (sent.method() !== 'POST' || url.origin !== 'http://127.0.0.1:5173'
+        || !['/__travelatlas/editor/wanttogo', '/__travelatlas/editor/wanttogo/update'].includes(url.pathname)) return
+      requested = true
+      resolveWrite()
+    }
+    page.on('request', request)
+    const performed = Promise.resolve().then(action).then((value) => {
+      if (!requested) throw new Error('The real save action finished without its editor write request')
+      return value
+    }).catch((error) => { actionFailed = true; rejectWrite(error); throw error })
+    const observed = (async () => {
+      // The original input action keeps its own actionability budget; the pause gate begins at the actual write.
+      await writeStarted
+      await expectPaused(page)
+      if (!actionFailed && whilePaused) await whilePaused()
+    })()
+    // Settle both before cleanup; a failed input keeps its original error and cannot dispatch a later phase action.
+    try {
+      const [actionResult, observationResult] = await Promise.allSettled([performed, observed])
+      if (actionResult.status === 'rejected') throw actionResult.reason
+      if (observationResult.status === 'rejected') throw observationResult.reason
+    } finally { page.off('request', request) }
   }
   /** Resumed (by `endedBy` when given): the loop is on, and the frames go on after the resume. */
   async function expectRendering(page, endedBy) {
@@ -760,7 +791,120 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       if (entry.session) await diagnosticDeadline(entry.session.detach()).catch(() => {})
     }
   }
-  test.afterEach(async ({ page }, info) => { await finishRenderCpuProfile(page, info) })
+  const renderSchedulerTraces = new WeakMap()
+  const schedulerCategories = ['gpu', 'cc', 'viz', 'renderer.scheduler', 'devtools.timeline', 'disabled-by-default-devtools.timeline.frame']
+  async function armRenderSchedulerTrace(page) {
+    let session
+    try {
+      session = await page.context().browser().newBrowserCDPSession()
+      const entry = { session, active: true }
+      entry.complete = new Promise((resolve) => { entry.completed = resolve })
+      session.once('Tracing.tracingComplete', entry.completed)
+      renderSchedulerTraces.set(page, entry)
+      entry.armedBefore = { monotonicMs: performance.now(), wallMs: Date.now() }
+      await session.send('Tracing.start', { transferMode: 'ReturnAsStream', streamFormat: 'json',
+        traceConfig: { recordMode: 'recordContinuously', traceBufferSizeInKb: 1024, enableSampling: false,
+          enableSystrace: false, enableArgumentFilter: true, includedCategories: schedulerCategories } })
+      entry.armedAfter = { monotonicMs: performance.now(), wallMs: Date.now() }
+    } catch (error) {
+      const entry = renderSchedulerTraces.get(page)
+      if (entry?.completed) session?.off('Tracing.tracingComplete', entry.completed)
+      if (entry) entry.active = false
+      renderSchedulerTraces.set(page, { session, setupFailure: error.name })
+    }
+  }
+  async function finishRenderSchedulerTrace(page, info) {
+    const entry = renderSchedulerTraces.get(page)
+    if (!entry) return
+    renderSchedulerTraces.delete(page)
+    const retain = info && info.status !== info.expectedStatus
+    try {
+      entry.stage = 'setup'
+      if (entry.setupFailure) throw Object.assign(new Error('Render scheduler trace unavailable'), { name: entry.setupFailure })
+      const collect = async () => {
+        const stoppingAt = { monotonicMs: performance.now(), wallMs: Date.now() }
+        entry.collectionStartedMs = stoppingAt.monotonicMs
+        entry.stage = 'stop'
+        await entry.session.send('Tracing.end')
+        entry.stage = 'completion'
+        const { stream, dataLossOccurred } = await entry.complete
+        const completedAt = { monotonicMs: performance.now(), wallMs: Date.now() }
+        try {
+          if (!retain || !entry.active) return undefined
+          let bytes = 0
+          const chunks = []
+          entry.stage = 'read'
+          for (;;) {
+            const part = await entry.session.send('IO.read', { handle: stream, size: 262144 })
+            if (!entry.active) return undefined
+            const buffer = Buffer.from(part.data, part.base64Encoded ? 'base64' : 'utf8')
+            bytes += buffer.length
+            entry.receivedBytes = bytes
+            if (bytes > 16000000) throw new Error('Render scheduler trace exceeds16MB')
+            chunks.push(buffer)
+            if (part.eof) break
+          }
+          entry.stage = 'parse'
+          const { traceEvents } = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+          if (!Array.isArray(traceEvents) || traceEvents.length > 60000) throw new Error('Render scheduler event cap exceeded')
+          entry.stage = 'sanitize'
+          const clean = traceEvents.map((event) => {
+            // Keep event timing/flow identities, never arbitrary trace arguments, source, URLs or machine metadata.
+            const result = {}
+            for (const key of ['pid', 'tid', 'ts', 'dur', 'tts', 'tdur']) if (Number.isFinite(event[key])) result[key] = event[key]
+            for (const key of ['ph', 'name', 'cat', 's', 'bp']) if (typeof event[key] === 'string') {
+              result[key] = event[key].replace(/https?:\/\/[^\s]+|[A-Za-z]:[\\/][^\s]+|\/(?:Users|home|tmp|private|var)\/[^\s]+/g, '[path]').slice(0, 240)
+            }
+            for (const key of ['id', 'bind_id']) if (typeof event[key] === 'number'
+              || (typeof event[key] === 'string' && /^[a-z0-9x]{1,80}$/i.test(event[key]))) result[key] = event[key]
+            if (event.id2 && typeof event.id2 === 'object') {
+              result.id2 = Object.fromEntries(Object.entries(event.id2).filter(([key, value]) => ['local', 'global'].includes(key)
+                && (typeof value === 'number' || (typeof value === 'string' && /^[a-z0-9x]{1,80}$/i.test(value)))))
+            }
+            if (event.ph === 'M' && ['process_name', 'thread_name'].includes(event.name) && typeof event.args?.name === 'string') {
+              result.args = { name: event.args.name.replace(/[^a-zA-Z0-9_ :.-]/g, '_').slice(0, 120) }
+            }
+            return result
+          })
+          let firstEventUs, lastEventUs
+          for (const event of clean) if (event.ph !== 'M' && Number.isFinite(event.ts) && event.ts > 0) {
+            firstEventUs = firstEventUs === undefined ? event.ts : Math.min(firstEventUs, event.ts)
+            lastEventUs = lastEventUs === undefined ? event.ts : Math.max(lastEventUs, event.ts)
+          }
+          return { format: 'starmap.render-scheduler-trace', traceEvents: clean, armedBefore: entry.armedBefore,
+            armedAfter: entry.armedAfter, categories: schedulerCategories, nativeBufferKb: 1024, rawBytes: bytes,
+            stoppingAt, completedAt, firstEventUs, lastEventUs, dataLossOccurred,
+            timingAlignmentHasProtocolUncertainty: true, diagnosticOnly: true }
+        } finally { await entry.session.send('IO.close', { handle: stream }).catch(() => {}) }
+      }
+      const trace = await diagnosticDeadline(collect())
+      if (!trace || !retain) return
+      const text = JSON.stringify(trace)
+      if (Buffer.byteLength(text) > 16000000) throw new Error('Sanitized render scheduler trace exceeds16MB')
+      const destination = info.outputPath('render-recovery-scheduler.json')
+      entry.stage = 'retain'
+      await writeFile(destination, text)
+      await info.attach('Render recovery scheduler trace', { path: destination, contentType: 'application/json' })
+    } catch (error) {
+      if (retain) await writeFile(info.outputPath('render-recovery-scheduler-unavailable.json'), JSON.stringify({
+        format: 'starmap.render-scheduler-unavailable', errorName: error.name,
+        stage: entry.stage, receivedBytes: entry.receivedBytes,
+        elapsedCollectionMs: entry.collectionStartedMs === undefined ? undefined : performance.now() - entry.collectionStartedMs,
+        reason: error.message === 'Render profile diagnostic deadline' ? 'diagnostic-response-deadline'
+          : ['Render scheduler trace exceeds16MB', 'Render scheduler event cap exceeded', 'Sanitized render scheduler trace exceeds16MB'].includes(error.message)
+            ? 'bounded-cap' : 'protocol-or-parse-unavailable',
+        diagnosticDeadlineMs: 1500, deadlineDoesNotCancelRpc: true })).catch(() => {})
+    } finally {
+      entry.active = false
+      if (entry.completed) entry.session?.off('Tracing.tracingComplete', entry.completed)
+      if (entry.session) await diagnosticDeadline(entry.session.detach()).catch(() => {})
+    }
+  }
+  test.afterEach(async ({ page }, info) => {
+    // These share Chromium instrumentation: finish the trace while the CPU sampler is still attached.
+    await finishRenderSchedulerTrace(page, info)
+    await finishRenderCpuProfile(page, info)
+  })
 
   /** The want-to-go write of the info card, answered after `ms` (or as `fulfil` says). */
   const holdWrite = (page, { ms = 0, fulfil } = {}) => page.route('**/__travelatlas/editor/wanttogo', async (route) => {
@@ -768,8 +912,10 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     if (ms) await new Promise((resolve) => setTimeout(resolve, ms))
     return fulfil ? route.fulfill(fulfil) : route.continue()
   })
-  const markReykjavik = async (page) => {
+  const markReykjavik = async (page, { observePause = false, whilePaused } = {}) => {
+    await finishRenderSchedulerTrace(page)
     await finishRenderCpuProfile(page)
+    if (observePause) await armRenderSchedulerTrace(page)
     let session
     try {
       session = await page.context().newCDPSession(page)
@@ -784,7 +930,9 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       renderCpuProfiles.set(page, { setupFailure: error.name })
       if (session) await diagnosticDeadline(session.detach()).catch(() => {})
     }
-    await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+    const action = () => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
+    if (observePause) await observePauseDuring(page, action, whilePaused)
+    else await action()
   }
   /** After a reload: the page restores the selected city, or it is selected again. */
   async function reykjavikAgain(page) {
@@ -799,8 +947,7 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await selectReykjavik(page)
     await expectRendering(page)
     await holdWrite(page, { ms: 600 })
-    await markReykjavik(page)
-    await expectPaused(page)
+    await markReykjavik(page, { observePause: true })
     await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
     const state = await expectRendering(page, 'applied')
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThan(500)
@@ -843,9 +990,8 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await selectReykjavik(page)
     await holdWrite(page, { ms: 2500 })
     // Another page.
-    await markReykjavik(page)
-    await expectPaused(page)
-    await page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).press('Enter')
+    await markReykjavik(page, { observePause: true,
+      whilePaused: () => page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).press('Enter') })
     await expectRendering(page, 'page')
     await expect(page.locator('.collection-card').filter({ has: page.getByRole('heading', { name: 'Reykjavik', exact: true }) })).toHaveCount(1, { timeout: 10000 })
     await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
@@ -859,18 +1005,17 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await openCollection(page)
     await page.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
     await page.locator('.collection-card textarea').fill('Synthetic note while the page hides')
-    await page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click()
-    await expectPaused(page)
-    await page.evaluate(() => {
+    await observePauseDuring(page,
+      () => page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click(),
+      () => page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
       document.dispatchEvent(new Event('visibilitychange'))
       Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
-    })
+      }))
     await expectRendering(page, 'hidden')
     await expect(page.locator('.collection-card textarea')).toHaveCount(0, { timeout: 10000 })
     // The watchdog: a save whose answer takes longer than the limit.
-    await page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click()
-    await expectPaused(page)
+    await observePauseDuring(page, () => page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click())
     const state = await expectRendering(page, 'limit')
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThanOrEqual(1500)
     expect(state.episodes.at(-1).pausedMs).toBeLessThan(1700)
@@ -910,9 +1055,9 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       }).observe({ type: 'longtask' })
       return performance.now()
     })
-    await page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click()
-    await expectPaused(page)
-    await page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer())
+    await observePauseDuring(page,
+      () => page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click(),
+      () => page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer()))
     await expect.poll(async () => (await loop(page))?.viewer, { timeout: 10000 }).not.toBe(viewer)
     await expect(page.getByRole('button', { name: 'Hide: Akureyri', exact: true })).toBeVisible()
     // Ended by the applying, or by the watchdog; the watchdog's timer can only fire once the main thread is free, so
