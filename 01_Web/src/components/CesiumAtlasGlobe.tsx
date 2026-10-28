@@ -513,6 +513,10 @@ type TravelAtlasDebugRenderLoop = {
       longTasks: { at: number; durationMs: number }[]
       longTaskSupported: boolean
       renderErrorCount: number
+      /** The last error Cesium stopped rendering with (`scene.renderError`), shortened. */
+      lastRenderError: string | undefined
+      /** The browser lost this viewer's WebGL context (`webglcontextlost`); Cesium cannot render after that. */
+      contextLostCount: number
       droppedFrameTimings: number
       droppedLongTasks: number
     } | undefined
@@ -1175,6 +1179,8 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     let droppedFrameTimings = 0
     let droppedLongTasks = 0
     let renderErrorCount = 0
+    let lastRenderError: string | undefined
+    let contextLostCount = 0
     let frameStartedAt: number | undefined
     let previousFrameAt: number | undefined
     let longTaskSupported = false
@@ -1195,7 +1201,9 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
       previousFrameAt = at
       if (frameTimings.length > 16) { frameTimings.shift(); droppedFrameTimings++ }
     }
-    const renderError = () => { renderErrorCount++ }
+    const renderError = (_scene: unknown, error: unknown) => { renderErrorCount++; lastRenderError = String(error).slice(0, 300) }
+    const canvas = viewer.canvas
+    const contextLost = () => { contextLostCount++ }
     try {
       if (typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes.includes('longtask')) {
         longTaskObserver = new PerformanceObserver((list) => {
@@ -1212,6 +1220,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     viewer.scene.preRender.addEventListener(beginFrame)
     viewer.scene.postRender.addEventListener(countFrame)
     viewer.scene.renderError.addEventListener(renderError)
+    canvas.addEventListener('webglcontextlost', contextLost)
     const stopListening = subscribeRenderPause((paused) => { if (!paused) framesAtResume = frames })
     const id = viewerReadyVersion
     const shown = (key: string, entityId: string) => viewer.entities.values.some((entity) => entity.isShowing
@@ -1228,7 +1237,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
           requestRenderMode: viewer.scene.requestRenderMode, maximumRenderTimeChange: String(viewer.scene.maximumRenderTimeChange),
           sceneUpdates, updateTimings: updateTimings.map((entry) => ({ ...entry })), droppedUpdateTimings,
           frameTimings: frameTimings.map((entry) => ({ ...entry })), longTasks: longTasks.map((entry) => ({ ...entry })),
-          longTaskSupported, renderErrorCount, droppedFrameTimings, droppedLongTasks,
+          longTaskSupported, renderErrorCount, lastRenderError, contextLostCount, droppedFrameTimings, droppedLongTasks,
         },
       }),
       entityShowing: (entityId) => ({ place: shown('entityId', entityId), badge: shown('badgeForEntityId', entityId) }),
@@ -1238,6 +1247,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     return () => {
       stopListening()
       longTaskObserver?.disconnect()
+      canvas.removeEventListener('webglcontextlost', contextLost)
       if (!viewer.isDestroyed()) {
         viewer.scene.preUpdate.removeEventListener(countUpdate)
         viewer.scene.preRender.removeEventListener(beginFrame)

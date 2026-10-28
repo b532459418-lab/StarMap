@@ -687,6 +687,11 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
   test.beforeEach(async () => { await createBrowserFixture(root()) })
   const loop = (page) => page.evaluate(() => window.__travelAtlasDebugRenderLoop?.state())
+  /** The invariant of these cases: Cesium never stopped rendering with an error (its scene.renderError). */
+  const expectNoRenderError = (state, when) => {
+    const { renderErrorCount, lastRenderError, contextLostCount } = state?.diagnostics ?? {}
+    expect(renderErrorCount, `Cesium render errors ${when} (viewer ${state?.viewer}; WebGL context lost ${contextLostCount} times): ${lastRenderError}`).toBe(0)
+  }
   /** Paused now: the loop is off and no frame is drawn. */
   async function expectPaused(page) {
     await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000, intervals: [25, 50] }).toBe(true)
@@ -748,6 +753,7 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       })().catch(() => {})
       throw error
     }
+    expectNoRenderError(lastObserved, `after the resume (${endedBy ?? 'any'})`)
     return state
   }
   // Diagnostic-only proposal: browser CPU sampling is armed before the real save action, never inside its frame gate.
@@ -904,6 +910,9 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     // These share Chromium instrumentation: finish the trace while the CPU sampler is still attached.
     await finishRenderSchedulerTrace(page, info)
     await finishRenderCpuProfile(page, info)
+    // Checked last, so a failure here never skips the evidence above. A closed page has no state to check.
+    const final = await loop(page).catch(() => undefined)
+    if (final?.diagnostics) expectNoRenderError(final, 'at the end of the case')
   })
 
   /** The want-to-go write of the info card, answered after `ms` (or as `fulfil` says). */
