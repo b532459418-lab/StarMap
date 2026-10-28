@@ -246,7 +246,11 @@ export const previewMediaJob = async (jobId: string, input: MediaJobVersion & {s
   assertMediaJob(body.job)
   if (body.job.jobId !== jobId || body.job.libraryId !== input.libraryId || body.job.revision !== input.revision || body.plan === null || typeof body.plan !== 'object') throw responseInvalid()
   const plan = body.plan as Record<string, unknown>
-  const result = {jobId, revision: body.job.revision, plan: {digest: plan.digest, summary: plan.summary}, selectedFileIds: plan.selectedFileIds, blockers: plan.blockers}
+  const result = {
+    jobId, revision: body.job.revision, plan: {digest: plan.digest, summary: plan.summary}, selectedFileIds: plan.selectedFileIds, blockers: plan.blockers,
+    // 3C-5 F: the files deleted for good this import skips (a hint; absent from older answers).
+    ...(Number.isSafeInteger(plan.deletedSkipped) && Number(plan.deletedSkipped) > 0 ? {deletedSkipped: Number(plan.deletedSkipped)} : {}),
+  }
   // The new library's preview only (3C-5 E: no V2 import any more).
   assertMediaJobPreview(result)
   if (body.job.canImport !== (result.blockers.length === 0)) throw responseInvalid()

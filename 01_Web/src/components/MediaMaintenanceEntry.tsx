@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isFinishedMediaJob } from '../data/mediaJobs'
-import { mediaMaintenanceBlockOf, requestMediaReread, type MediaMaintenanceBlock } from '../data/mediaMaintenanceUi.ts'
+import { mediaMaintenanceBlockOf, requestMediaReimport, requestMediaReread, type MediaMaintenanceBlock } from '../data/mediaMaintenanceUi.ts'
 import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { legacyUnmigrated, storeMigrationRequired, storeReadOnly, storeRecoveryRequired } from '../data/rawInputs'
 import { useLocalEditorCoordination } from './useLocalEditorCoordination'
@@ -37,6 +37,8 @@ export function MediaMaintenanceEntry({ cityId, cityName }: { cityId: string; ci
     <div className="atlas-media-maintenance-entry" data-testid="media-maintenance-entry">
       <button type="button" className="atlas-local-editor-restore" disabled={block !== undefined} aria-describedby={described}
         onClick={() => requestMediaReread({ scope: { cityId }, name: cityName })}>{t('rereadOpen')}</button>
+      <button type="button" className="atlas-local-editor-restore" disabled={block !== undefined} aria-describedby={described}
+        onClick={() => requestMediaReimport({ cityId, name: cityName })}>{t('reimportOpen')}</button>
       {block ? (
         <p id={reasonId} className="atlas-local-editor-notice atlas-local-editor-notice-dark">
           {reason(block)}

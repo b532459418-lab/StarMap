@@ -20,6 +20,8 @@ export type MediaJob = {
 }
 export type MediaJobPreview = {
   jobId: string; revision: number; selectedFileIds: string[]; blockers: {code: string; sourcePath?: string}[]
+  /** 3C-5 F: how many files deleted for good the import skips (they can be re-imported); absent when none. */
+  deletedSkipped?: number
   plan: {digest: string; summary: {
     addedIds: string[]; updatedIds: string[]; removedIds: string[]
     sources: {id: string; sourcePath: string; sha256: string; bytes: number; kind: string; placeId: string}[]

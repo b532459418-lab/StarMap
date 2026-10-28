@@ -81,6 +81,9 @@ const MediaRecoveryCenter = import.meta.env.DEV && localEditorAvailable
 const MediaRereadDialog = import.meta.env.DEV && localEditorAvailable
   ? lazy(() => import('./components/MediaRereadDialog').then((module) => ({ default: module.MediaRereadDialog })))
   : undefined
+const MediaReimportDialog = import.meta.env.DEV && localEditorAvailable
+  ? lazy(() => import('./components/MediaReimportDialog').then((module) => ({ default: module.MediaReimportDialog })))
+  : undefined
 const WantToGoAddDialog = import.meta.env.DEV && localEditorAvailable
   ? lazy(() => import('./components/WantToGoAddDialog').then((module) => ({ default: module.WantToGoAddDialog })))
   : undefined
@@ -1083,6 +1086,11 @@ function App() {
       {MediaRereadDialog ? (
         <Suspense fallback={null}>
           <MediaRereadDialog />
+        </Suspense>
+      ) : null}
+      {MediaReimportDialog ? (
+        <Suspense fallback={null}>
+          <MediaReimportDialog />
         </Suspense>
       ) : null}
       {WantToGoAddDialog && isAddWantToGoOpen ? (

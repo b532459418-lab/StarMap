@@ -245,7 +245,8 @@ async function storeTaskPlan(paths, job, selectedFileIds, storeMedia) {
   const { mediaStore } = storeMedia
   const service = createMediaService({ privatePaths: paths, store: mediaStore })
   const servicePlan = await service.planImport({ explicitPaths: taskPathsOf(job, selectedFileIds), blockOnWarnings: true })
-  return { ...storeTaskPlanOf({ plan: servicePlan, meta: mediaStore.meta(), job, selectedFileIds }), service }
+  // 3C-5 F: the files deleted for good the import skips (rule 3), for the preview's hint; not part of the digest.
+  return { ...storeTaskPlanOf({ plan: servicePlan, meta: mediaStore.meta(), job, selectedFileIds }), service, deletedSkipped: servicePlan.classification.deletedSkips.length }
 }
 
 async function taskPlan(paths, job, input, storeMedia) {
@@ -272,7 +273,7 @@ export async function handleMediaJobPreview({privatePaths,route,input,storeMedia
     const {plan,selectedFileIds,known} = await taskPlan(privatePaths,job,input,storeMedia)
     const after = await inspectLibraryOperation(privatePaths)
     if (after.state !== 'idle' || after.generation !== before.generation) fail('E_MEDIA_JOB_CONFLICT')
-    return {status:200,body:{ok:true,job:{...known,canImport:plan.blockers.length === 0},plan:{digest:plan.digest,summary:plan.summary,blockers:plan.blockers,selectedFileIds}}}
+    return {status:200,body:{ok:true,job:{...known,canImport:plan.blockers.length === 0},plan:{digest:plan.digest,summary:plan.summary,blockers:plan.blockers,selectedFileIds,deletedSkipped:plan.deletedSkipped}}}
   } catch(error) { return responseError(error) }
 }
 

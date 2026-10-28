@@ -132,6 +132,8 @@ test('RD-07 batch2 preview is byte-and-timestamp readonly and its digest is stab
   const first = await preview(env, job), second = await preview(env, job)
   assert.equal(first.status, 200, JSON.stringify(first)); assert.deepEqual(first.body.plan.blockers, [])
   assert.equal(first.body.plan.digest, second.body.plan.digest)
+  // 3C-5 F: the preview counts the files deleted for good the import skips (a hint outside the digest).
+  assert.equal(first.body.plan.deletedSkipped, 0)
   assert.deepEqual(await tree(env.paths.root), before)
 }))
 
