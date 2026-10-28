@@ -739,9 +739,10 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
   async function expectRendering(page, endedBy) {
     await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000 }).toBe(false)
     const state = await loop(page)
-    expect(state.useDefaultRenderLoop).toBe(true)
-    if (endedBy) expect(state.episodes.at(-1)?.endedBy).toBe(endedBy)
+    // A lost context or a render error first: they explain a loop that stays off.
     expectNoRenderError(state, `at the resume (${endedBy ?? 'any'})`)
+    expect(state.useDefaultRenderLoop, 'the loop is on at the resume').toBe(true)
+    if (endedBy) expect(state.episodes.at(-1)?.endedBy).toBe(endedBy)
     let lastObserved = state
     try {
       await expect.poll(async () => {
