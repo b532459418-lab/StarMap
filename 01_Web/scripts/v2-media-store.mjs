@@ -34,14 +34,25 @@ import {
 import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
 import { V2WriteError, errorBody } from '../src/data/editor/errors.ts'
 
-/** 三个媒体端点 → 处理方式。与 store-session.mjs 的 STORE_WRITE_ROUTES（8 个编辑端点）不相交。 */
+/**
+ * 媒体端点 → 处理方式。与 store-session.mjs 的 STORE_WRITE_ROUTES（8 个编辑端点）不相交。3C-5 F：重新读取说明与重新导入
+ * 各有预览和执行两步，另有列出可重新导入的文件（./store-media-endpoints.mjs）。
+ */
 export const V2_MEDIA_ROUTES = Object.freeze({
   'POST /__travelatlas/editor/upload': 'upload',
   'POST /__travelatlas/editor/import': 'import',
   'POST /__travelatlas/editor/media/delete': 'delete',
+  'POST /__travelatlas/editor/media/reread/preview': 'reread-preview',
+  'POST /__travelatlas/editor/media/reread': 'reread',
+  'POST /__travelatlas/editor/media/reimport/candidates': 'reimport-candidates',
+  'POST /__travelatlas/editor/media/reimport/preview': 'reimport-preview',
+  'POST /__travelatlas/editor/media/reimport': 'reimport',
 })
 
-/** 这个请求是不是媒体端点；是则返回 'upload' | 'import' | 'delete'。 */
+/** 3C-5 F：只读的媒体端点（预览与列出）。不带协议头、不取库租约（同媒体任务的预览），其余检查与写入相同。 */
+export const MEDIA_PREVIEW_ROUTES = Object.freeze(new Set(['reread-preview', 'reimport-candidates', 'reimport-preview']))
+
+/** 这个请求是不是媒体端点；是则返回它的处理方式（V2_MEDIA_ROUTES 的值）。 */
 export const v2MediaRoute = (method, pathname) => V2_MEDIA_ROUTES[`${method} ${pathname}`]
 
 const UPLOAD_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.avif'])
