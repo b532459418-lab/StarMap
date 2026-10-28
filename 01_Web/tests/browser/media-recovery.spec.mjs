@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
 import { test, expect, openMap, openCollection, readFixture, recordMediaPhase, closeMediaTestContext, saveAndWaitForRevision, retainMediaFailure } from './helpers.mjs'
-import { fixtureIds } from '../../scripts/browser-fixture.mjs'
+import { fixtureIds, importInboxMedia } from '../../scripts/browser-fixture.mjs'
 import { withLibraryOperation } from '../../scripts/library-operation-lock.mjs'
 import { createMediaJobStore } from '../../scripts/media-job-store.mjs'
 import { storeFileOf } from '../../scripts/private-data-source.mjs'
@@ -798,5 +798,175 @@ test.describe('new-library mode: media', () => {
     expect(state.files.media.items.some(item => item.id === old)).toBe(true)
     expect(state.registry.sources.find(item => item.seq === source.seq).state).toBe('missing')
     expect(assetOf(state, 'store-after.png')).toMatch(UUID_V7)
+  })
+})
+
+// 3C-5 F: re-reading descriptions and re-importing a photo deleted for good, from the city panel. Self-contained: the
+// files are written into Reykjavik's Inbox folder (found by its place.json, created when no case made it yet) and
+// imported as a command line would, before the page opens.
+test.describe('3C-5 F: re-reading descriptions and re-importing deleted photos', () => {
+  const dialog = page => page.getByRole('dialog', { name: /^Re-read descriptions · / })
+  const reimportDialog = page => page.getByRole('dialog', { name: /^Re-import · / })
+  const panel = page => page.locator('.atlas-info-panel')
+  async function reykjavikFolder() {
+    const inbox = path.join(syntheticRoot(), 'MediaInbox')
+    for (const country of await readdir(inbox, { withFileTypes: true }).catch(() => [])) {
+      if (!country.isDirectory()) continue
+      for (const city of await readdir(path.join(inbox, country.name), { withFileTypes: true })) {
+        if (!city.isDirectory()) continue
+        try {
+          if (JSON.parse(await readFile(path.join(inbox, country.name, city.name, 'place.json'), 'utf8')).placeId === fixtureIds.reykjavik) return path.join(inbox, country.name, city.name)
+        } catch { /* Not a bound city folder. */ }
+      }
+    }
+    const city = path.join(inbox, 'Iceland', 'Reykjavik')
+    await mkdir(city, { recursive: true })
+    await writeFile(path.join(inbox, 'Iceland', 'place.json'), JSON.stringify({ placeId: fixtureIds.iceland }))
+    await writeFile(path.join(city, 'place.json'), JSON.stringify({ placeId: fixtureIds.reykjavik }))
+    return city
+  }
+  const flight = (values) => ({ 'drone/f-flight.jpg': { kind: 'aerialPhoto', titleEn: 'F synthetic flight', date: '2026-07-03', resolution: '64 × 40', ...values } })
+  async function openReykjavik(page) {
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 45000 })
+    await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
+    await selectReykjavik(page)
+  }
+  const STALE = 'The Inbox or the items changed after the preview, so nothing was written. Preview again.'
+
+  test('re-read: a city preview lists the field changes, a stale preview is refused and previewed again, the write updates the page without a reload', async ({ page }) => {
+    test.setTimeout(240000)
+    const city = await reykjavikFolder()
+    await mkdir(path.join(city, 'drone'), { recursive: true })
+    await writeFile(path.join(city, 'drone', 'f-flight.jpg'), await sharp({ create: { width: 64, height: 40, channels: 3, background: { r: 12, g: 90, b: 140 } } }).jpeg().toBuffer())
+    await writeFile(path.join(city, 'media.json'), JSON.stringify(flight({})))
+    await importInboxMedia(syntheticRoot())
+    const id = assetOf(await stored(), 'f-flight.jpg')
+    expect(id).toMatch(UUID_V7)
+    await openReykjavik(page)
+    await writeFile(path.join(city, 'media.json'), JSON.stringify(flight({ date: '2026-08-01', titleEn: 'F synthetic flight, renamed' })))
+    const entry = panel(page).getByRole('button', { name: 'Re-read descriptions…', exact: true })
+    await entry.click()
+    await expect(dialog(page)).toBeVisible()
+    const changes = dialog(page).getByTestId('media-reread-changes').locator(`[data-media-id="${id}"]`)
+    await expect(changes).toContainText('Date: 2026-07-03 → 2026-08-01')
+    await expect(changes).toContainText('Title: F synthetic flight → F synthetic flight, renamed')
+    await expect(dialog(page).getByText(/replace edits made in the app/)).toBeVisible()
+    // The sidecar changes again after the preview: the write is refused, nothing is written, focus goes to "Preview again".
+    await writeFile(path.join(city, 'media.json'), JSON.stringify(flight({ date: '2026-08-02', titleEn: 'F synthetic flight, renamed' })))
+    const refused = page.waitForResponse(response => response.url().endsWith('/editor/media/reread'))
+    await dialog(page).getByTestId('media-reread-confirm').click()
+    expect((await refused).status()).toBe(409)
+    await expect(dialog(page).getByRole('status')).toHaveText(STALE)
+    await expect(dialog(page).getByRole('button', { name: 'Preview again', exact: true })).toBeFocused()
+    expect((await stored()).files.media.items.find(item => item.id === id)?.date).toBe('2026-07-03')
+    await dialog(page).getByRole('button', { name: 'Preview again', exact: true }).click()
+    await expect(changes).toContainText('Date: 2026-07-03 → 2026-08-02')
+    await saveAndWaitForRevision(page, async () => {
+      const written = page.waitForResponse(response => response.url().endsWith('/editor/media/reread'))
+      await dialog(page).getByTestId('media-reread-confirm').click()
+      expect((await written).status()).toBe(200)
+    })
+    await expect(dialog(page).getByRole('status')).toHaveText(/^Updated the descriptions? of \d+ items?\.$/)
+    const media = (await stored()).files.media.items.find(item => item.id === id)
+    expect([media.date, media.title]).toEqual(['2026-08-02', { names: { en: 'F synthetic flight, renamed' } }])
+    await expect(dialog(page).getByRole('button', { name: 'Close', exact: true })).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(dialog(page)).toHaveCount(0)
+    await expect(entry).toBeFocused()
+  })
+
+  test('re-read one photo from the viewer: the viewer closes, the preview is of that photo, focus returns to it', async ({ page }) => {
+    test.setTimeout(180000)
+    const city = await reykjavikFolder()
+    await mkdir(path.join(city, 'photos'), { recursive: true })
+    await writeFile(path.join(city, 'photos', 'f-viewer.png'), (await image('f-viewer.png', { r: 140, g: 20, b: 90 })).buffer)
+    await importInboxMedia(syntheticRoot())
+    const id = assetOf(await stored(), 'f-viewer.png')
+    await openReykjavik(page)
+    const tile = panel(page).locator(`[data-flip-id="${id}"]`)
+    await tile.click()
+    await page.getByTestId('media-reread-one').click()
+    await expect(dialog(page)).toHaveAccessibleName('Re-read descriptions · f-viewer.png')
+    await expect(dialog(page).getByText('No description needs updating.', { exact: true })).toBeVisible()
+    await expect(dialog(page).getByTestId('media-reread-confirm')).toBeDisabled()
+    await dialog(page).getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect(tile).toBeFocused()
+  })
+
+  test('re-import: a photo deleted for good and put back is listed, previewed alone, refused when stale, and imported as a new record without a reload', async ({ page }) => {
+    test.setTimeout(300000)
+    const city = await reykjavikFolder()
+    await mkdir(path.join(city, 'photos'), { recursive: true })
+    const photo = await image('f-reimport.png', { r: 30, g: 200, b: 170 })
+    await writeFile(path.join(city, 'photos', 'f-reimport.png'), photo.buffer)
+    await importInboxMedia(syntheticRoot())
+    let state = await stored()
+    const old = assetOf(state, 'f-reimport.png')
+    expect(old).toMatch(UUID_V7)
+    // Hidden, then deleted for good from the city photo editor.
+    await openReykjavik(page)
+    await page.getByRole('button', { name: 'Edit city photos', exact: true }).click()
+    await panel(page).locator(`[data-flip-id="${old}"]`).getByRole('button', { name: 'Hide photo', exact: true }).click()
+    await saveAndWaitForRevision(page, async () => {
+      const saved = page.waitForResponse(response => response.url().endsWith('/editor/view') && response.request().method() === 'POST')
+      await page.getByRole('button', { name: 'Save city photos', exact: true }).click()
+      expect((await saved).status()).toBe(200)
+    })
+    await page.getByRole('button', { name: 'Edit city photos', exact: true }).click()
+    page.once('dialog', confirm => {
+      expect(confirm.message()).toContain('Re-import deleted photos')
+      void confirm.accept()
+    })
+    await saveAndWaitForRevision(page, async () => {
+      const deleted = page.waitForResponse(response => response.url().endsWith('/editor/media/delete'))
+      await panel(page).getByRole('button', { name: 'Delete hidden photos permanently', exact: true }).click()
+      expect((await deleted).status()).toBe(200)
+    })
+    expect(existsSync(path.join(city, 'photos', 'f-reimport.png'))).toBe(false)
+    // Put back.
+    await writeFile(path.join(city, 'photos', 'f-reimport.png'), photo.buffer)
+    await openReykjavik(page)
+    const entry = panel(page).getByRole('button', { name: 'Re-import deleted photos…', exact: true })
+    await entry.click()
+    await expect(reimportDialog(page)).toBeVisible()
+    await expect(reimportDialog(page).getByRole('status')).toHaveText(/^Checked \d+ files?\.$/)
+    const relative = path.relative(path.join(syntheticRoot(), 'MediaInbox'), path.join(city, 'photos', 'f-reimport.png')).split(path.sep).join('/')
+    await reimportDialog(page).getByRole('button', { name: `Re-import ${relative}`, exact: true }).click()
+    const preview = reimportDialog(page).getByTestId('media-reimport-preview')
+    await expect(preview).toContainText('It becomes a new item (with a new id), added at the end of the order of Reykjavik.')
+    // Another import commits after the preview (a file imported by the command line): refused, nothing written.
+    await writeFile(path.join(city, 'photos', 'f-other.png'), (await image('f-other.png', { r: 5, g: 60, b: 30 })).buffer)
+    await importInboxMedia(syntheticRoot())
+    const before = await stored()
+    const refused = page.waitForResponse(response => response.url().endsWith('/editor/media/reimport'))
+    await reimportDialog(page).getByTestId('media-reimport-confirm').click()
+    expect((await refused).status()).toBe(409)
+    await expect(reimportDialog(page).getByRole('status')).toHaveText(STALE)
+    await expect(reimportDialog(page).getByRole('button', { name: 'Preview again', exact: true })).toBeFocused()
+    expect(assetOf(await stored(), 'f-reimport.png')).toBe(assetOf(before, 'f-reimport.png'))
+    // An unrelated new file appears: the preview only counts it, and the re-import leaves it alone.
+    await writeFile(path.join(city, 'photos', 'f-unrelated.png'), (await image('f-unrelated.png', { r: 250, g: 250, b: 10 })).buffer)
+    await reimportDialog(page).getByRole('button', { name: 'Preview again', exact: true }).click()
+    await expect(preview).toContainText('It becomes a new item')
+    await expect(preview).toContainText(/other new files? in the Inbox (is|are) not imported/)
+    await saveAndWaitForRevision(page, async () => {
+      const written = page.waitForResponse(response => response.url().endsWith('/editor/media/reimport'))
+      await reimportDialog(page).getByTestId('media-reimport-confirm').click()
+      expect((await written).status()).toBe(200)
+    })
+    await expect(reimportDialog(page).getByRole('status')).toHaveText('Re-imported; the new item is at the end of the order.')
+    state = await stored()
+    const restored = assetOf(state, 'f-reimport.png')
+    expect(restored).toMatch(UUID_V7)
+    expect(restored).not.toBe(old)
+    expect(state.files.editorState.mediaOrderByCity[fixtureIds.reykjavik].at(-1)).toBe(restored)
+    expect(sourceOf(state, 'f-unrelated.png')).toBeUndefined()
+    expect(existsSync(path.join(city, 'photos', 'f-reimport.png'))).toBe(true)
+    await page.keyboard.press('Escape')
+    await expect(reimportDialog(page)).toHaveCount(0)
+    await expect(entry).toBeFocused()
+    // The page shows the new record without a reload.
+    await expect(panel(page).locator(`[data-flip-id="${restored}"]`)).toBeVisible()
   })
 })
