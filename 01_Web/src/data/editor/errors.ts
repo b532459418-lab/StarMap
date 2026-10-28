@@ -182,6 +182,8 @@ export const V2_WRITE_MESSAGES = {
   E_MEDIA_PREVIEW_STALE: () => '预览之后，投递箱或资料有了变化，这次没有写入。请重新预览。',
   /** 3C-5 F：媒体不在了（可能已在别处删除）；mediaRecords.ts 的行找不到时也是它。 */
   E_MEDIA_NOT_FOUND: () => '这条媒体已经不在了，可能已在别处删除。请刷新后再试。',
+  /** 3C-5 F：要重新导入的文件现在不是「彻底删除过、又出现在投递箱里」的文件（params.reason：missing、live、not-deleted）。 */
+  E_MEDIA_REIMPORT_NOT_DELETED: () => '这个文件现在不能重新导入：它不在投递箱里，已经是一条资料的来源，或者它的内容没有被彻底删除过。请重新检查投递箱。',
   E_UNKNOWN_ENDPOINT: () => '未知的本地编辑接口。',
   E_EDITOR_READ_FORBIDDEN: () => '仅允许本机编辑会话读取。',
   E_EDITOR_WRITE_FORBIDDEN: () => '仅允许本机编辑会话写入。',

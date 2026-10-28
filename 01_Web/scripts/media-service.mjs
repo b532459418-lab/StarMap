@@ -20,6 +20,10 @@
  * rereadMediaRecordCommands), and their sources the new description digest. A record whose present sources describe it
  * differently is refused and listed; a source whose file is gone or changed is listed. A preview gives a digest; the
  * write computes the plan again under the lease and writes only when the digest is the same (E_MEDIA_PREVIEW_STALE).
+ * Re-importing (listReimportable / planReimport / reimportFiles, 3C-5 F; the command line's --reimport): an
+ * explicit-only importInbox. The given files become new records and nothing else changes: no other Inbox file is
+ * imported, no other source marked, the scan cache untouched, and no queued deletion run (a queued delete-source of a
+ * restored file is cancelled after the commit). The page restores only files deleted for good and back in the Inbox.
  *
  * `store` is the media store adapter: { readOnly, meta(), official() → { revision, reader } (3C-5 E: the official reader at the
  * store's current revision, ../src/data/store/officialReader.ts; the media rules read their places, editor lists and media
@@ -105,6 +109,28 @@ export function handleMediaStore(handle) {
   }
 }
 
+/**
+ * 3C-5 F: the files a re-import may restore, from a classification made without explicit paths (what an import would
+ * do now): files deleted for good and back in the Inbox. `same-path`: skipped by rule 3 (a deleted source at that path
+ * with that content); `new-path`: a candidate whose content a deleted source had, waiting for confirmation
+ * (`deleted-content`). Each { path, pathKey, relativePath, cityId (the folder's place), kind, bytes, sha256, reason,
+ * deletedSeqs, pendingDeletion (a queued delete-source of that path and content) }, sorted by path key. Pure.
+ */
+export function reimportCandidatesOf(classification, { sources, pendingFileOps = [] }) {
+  const queued = new Set(pendingFileOps.filter((operation) => operation.kind === 'delete-source' && typeof operation.detail?.sha256 === 'string')
+    .map((operation) => `${pathKeyOf(operation.target)}|${operation.detail.sha256}`))
+  const deletedOf = (sha256) => sources.filter((source) => source.state === 'deleted' && source.sha256 === sha256).map((source) => source.seq).sort((a, b) => a - b)
+  const candidate = (fact, reason, deletedSeqs) => ({
+    path: fact.path, pathKey: fact.pathKey, relativePath: fact.path.slice('MediaInbox/'.length), cityId: fact.placeId ?? null, kind: fact.kind,
+    bytes: fact.size, sha256: fact.sha256, reason, deletedSeqs, pendingDeletion: queued.has(`${fact.pathKey}|${fact.sha256}`),
+  })
+  return [
+    ...classification.deletedSkips.map(({ fact, source }) => candidate(fact, 'same-path', [source.seq])),
+    ...classification.confirmations.filter((group) => group.kinds.includes('deleted-content'))
+      .flatMap((group) => group.entries.map((entry) => candidate(entry.fact, 'new-path', deletedOf(entry.fact.sha256)))),
+  ].sort((a, b) => (a.pathKey < b.pathKey ? -1 : a.pathKey > b.pathKey ? 1 : 0))
+}
+
 /** fsync a directory after a publication where the system allows it (Windows does not open directories: ignored). */
 async function syncDirectory(directory) {
   let handle
@@ -135,8 +161,12 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
    * purpose (§8-3); confirmations apply only with `acceptSourceMatches` and `acceptFolderBindings`; `blockOnWarnings`
    * applies the editor importer's rule for uncertain information (the endpoint and tasks; the command line imports with it).
    * `editorLists` are the official editor lists at the plan's revision (a task's preview appends to its city's order).
+   * 3C-5 F `explicitOnly` (a re-import): only the explicit files that are not sources already become records; every other
+   * file of the Inbox, every other source of the registry and the scan cache stay as they are (no import, no move or
+   * missing mark, no confirmation to make). Its decisions mark missing only a present source the file replaces at its
+   * own path (a path has at most one present source); its blockers are that file's problems and its folder bindings.
    */
-  async function planImport({ explicitPaths = [], acceptSourceMatches = false, acceptFolderBindings = false, blockOnWarnings = true } = {}) {
+  async function planImport({ explicitPaths = [], acceptSourceMatches = false, acceptFolderBindings = false, blockOnWarnings = true, explicitOnly = false } = {}) {
     const { revision, reader } = await store.official()
     // Read at once (see the file header): the places of the scan and the editor lists.
     const places = reader.places()
@@ -146,6 +176,31 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     const scan = await scanInbox({ privatePaths, places, cache: registry.scanCache, hashFile })
     const explicit = new Set(explicitPaths.map((value) => pathKeyOf(value)))
     const classification = classifyScan({ sources: registry.sources, records, facts: scan.facts, explicit })
+    if (explicitOnly) {
+      const own = classification.newRecords.filter((item) => item.explicit).map(({ fact }) => ({ fact, explicit: true }))
+      const concerns = (line) => own.some(({ fact }) => line.includes(fact.relativePath))
+      const newRecords = []
+      const errors = scan.errors.filter(concerns)
+      const warnings = scan.warnings.filter(concerns)
+      const advisory = new Set()
+      for (const item of own) {
+        const described = await describeMediaFile(item.fact)
+        errors.push(...described.errors)
+        warnings.push(...described.warnings)
+        for (const warning of described.advisoryWarnings) advisory.add(warning)
+        newRecords.push({ ...item, described })
+      }
+      const pins = pinsFor(scan.pins, own.map((item) => item.fact))
+      const decisions = { blocked: false, newRecords: own, moves: [], reappeared: [], gone: classification.gone.filter((item) => item.replacedBy && explicit.has(item.replacedBy.pathKey)) }
+      const blockers = {
+        errors,
+        uncertain: blockOnWarnings ? warnings.filter((warning) => !advisory.has(warning) && IMPORT_BLOCKING_PATTERN.test(warning)) : [],
+        bindings: acceptFolderBindings ? [] : pins,
+        matches: [],
+      }
+      const blocked = Object.values(blockers).some((list) => list.length > 0)
+      return { revision, editorLists, scan, classification, decisions, newRecords, pins, warnings, blockers, blocked, nothingToWrite: own.length === 0, registry, records, explicitOnly }
+    }
     // Describe what would be created once every match is confirmed, so the preview shows its problems too.
     const proposed = resolveClassification(classification, { accept: true })
     const newRecords = []
@@ -180,6 +235,11 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     const lines = [
       `StarMap 媒体导入（新库）：投递箱 ${plan.scan.facts.length} 个文件；新资料 ${plan.newRecords.length}，移动 ${c.moves.length}，不在投递箱中 ${plan.decisions.gone.length}，已删除不再导入 ${c.deletedSkips.length}。`,
     ]
+    if (c.deletedSkips.length) {
+      // 3C-5 F: the files skipped by rule 3 are listed, so they can be restored on purpose.
+      lines.push(`\n之前彻底删除过、又出现在投递箱里的文件（${c.deletedSkips.length}）：没有导入。要恢复，用 npm run media:check -- --reimport <路径> 预览，或者在应用的城市面板里「重新导入删除过的照片」。`,
+        ...c.deletedSkips.slice(0, 20).map(({ fact }) => `- ${fact.path.slice('MediaInbox/'.length)}`), ...(c.deletedSkips.length > 20 ? [`- 另外 ${c.deletedSkips.length - 20} 个`] : []))
+    }
     if (plan.warnings.length) lines.push(`\n提醒（${plan.warnings.length}）：`, ...plan.warnings.map((warning) => `- ${warning}`))
     if (plan.blockers.errors.length) lines.push(`\n需要处理（${plan.blockers.errors.length}）：`, ...plan.blockers.errors.map((error) => `- ${error}`))
     if (plan.blockers.bindings.length) {
@@ -236,13 +296,17 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
    * - { committed: false, plan } when nothing changed;
    * - { committed: true, revision, receipt, plan, created } after the commit (`created`: path key → { assetId, entityId }).
    * Before the commit, `onStage('generated' | 'pins')` is awaited after each step (tasks record their stages).
+   * 3C-5 F `explicitOnly` (see planImport): the import writes the explicit files' records and nothing else. It runs no
+   * queued deletion first (one of them could remove the very file it restores); a queued delete-source of a restored
+   * path and content is cancelled after the commit instead (were that step lost, the next run cancels it anyway: a live
+   * source keeps its file). When the commit fails, nothing is written and the Inbox file stays.
    */
-  async function importInbox({ requestId, kind = MEDIA_KINDS.import, actor = 'local-editor', baseRevision, leaseToken, explicitPaths = [], acceptSourceMatches = false, acceptFolderBindings = false, blockOnWarnings = true, onStage = async () => {}, expect } = {}) {
+  async function importInbox({ requestId, kind = MEDIA_KINDS.import, actor = 'local-editor', baseRevision, leaseToken, explicitPaths = [], acceptSourceMatches = false, acceptFolderBindings = false, blockOnWarnings = true, explicitOnly = false, onStage = async () => {}, expect } = {}) {
     if (store.readOnly) fail('E_STORE_READ_ONLY')
     const replay = replayOf(requestId, kind, baseRevision)
     if (replay) return replay
-    const drained = await runPendingFileOps({ privatePaths, store, leaseToken, hashFile })
-    const plan = await planImport({ explicitPaths, acceptSourceMatches, acceptFolderBindings, blockOnWarnings })
+    const drained = explicitOnly ? undefined : await runPendingFileOps({ privatePaths, store, leaseToken, hashFile })
+    const plan = await planImport({ explicitPaths, acceptSourceMatches, acceptFolderBindings, blockOnWarnings, explicitOnly })
     if (baseRevision !== undefined && plan.revision !== baseRevision) fail('E_STALE')
     if (expect) await expect(plan)
     if (plan.blocked) return { blocked: true, plan, drained }
@@ -256,8 +320,15 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     const created = new Map(toCreate.map((item) => [item.fact.pathKey, { assetId: allocateId(), entityId: allocateId() }]))
     const records = toCreate.map((item) => ({ ...created.get(item.fact.pathKey), item: item.described.item, appendToCityOrder: item.explicit === true }))
     const commands = records.length ? store.read((reader) => createMediaRecordCommands(records, { reader, allocateId })).commands : []
-    const media = nonEmpty(registryDeltaOf(plan.decisions, { created, files, registeredFiles: registered, facts: plan.scan.facts, cache: plan.registry.scanCache }))
+    const media = nonEmpty(registryDeltaOf(plan.decisions, {
+      created, files, registeredFiles: registered, facts: explicitOnly ? [] : plan.scan.facts, cache: explicitOnly ? [] : plan.registry.scanCache,
+    }))
     const result = await store.commit({ requestId, baseRevision: plan.revision, kind, actor, commands: [...commands], media }, { leaseToken })
+    if (explicitOnly) {
+      const restored = new Set(toCreate.map(({ fact }) => `${fact.pathKey}|${fact.sha256}`))
+      const seqs = plan.registry.pendingFileOps.filter((operation) => operation.kind === 'delete-source' && restored.has(`${pathKeyOf(operation.target)}|${operation.detail?.sha256}`)).map((operation) => operation.seq)
+      if (seqs.length) await store.settleFileOps({ seqs, files: [] }, { leaseToken })
+    }
     return { committed: true, revision: result.revision, receipt: result.receipt, plan, created, drained }
   }
 
@@ -456,8 +527,110 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     return { committed: true, revision: result.revision, receipt: result.receipt, plan, updatedIds: changing.map((record) => record.assetId) }
   }
 
+  /**
+   * 3C-5 F: the files a re-import may restore now (reimportCandidatesOf), for one city (the folder's place) or all.
+   * Scans the Inbox (called only when the user asks). Resolves { libraryId, revision, scannedFiles, hashedFiles,
+   * candidates, otherCities (candidates outside `cityId`) }.
+   */
+  async function listReimportable({ cityId } = {}) {
+    const { revision, reader } = await store.official()
+    const places = reader.places()
+    const { libraryId } = store.meta()
+    const registry = store.mediaRegistry()
+    const records = liveRecordsOf({ entities: store.mediaEntities() }, registry.assetFiles)
+    const scan = await scanInbox({ privatePaths, places, cache: registry.scanCache, hashFile })
+    const all = reimportCandidatesOf(classifyScan({ sources: registry.sources, records, facts: scan.facts }), registry)
+    const candidates = cityId === undefined ? all : all.filter((candidate) => candidate.cityId === cityId)
+    return { libraryId, revision, scannedFiles: scan.facts.length, hashedFiles: scan.hashed, candidates, otherCities: all.length - candidates.length }
+  }
+
+  /**
+   * What re-importing `paths` means for an explicit-only plan (planImport with `explicitOnly`): which rule makes each
+   * path eligible, and the digest of what the import writes. `onlyDeleted` (the page): each path must be a file deleted
+   * for good and back (reimportCandidatesOf), else E_MEDIA_REIMPORT_NOT_DELETED (`reason` missing | live | not-deleted);
+   * otherwise (the command line) any Inbox file, a missing one refused alike. The digest covers the library id and
+   * revision, each file (path, size, content, place, kind, description, the record it becomes), its eligibility, the
+   * registry state it depends on (the sources at its path and of its content, the links and the generated-file row of
+   * its content, the queued file operations of its path or content), the sources it replaces, and its folder bindings.
+   * Other files of the Inbox are not in it: an explicit-only import leaves them alone. Their count is returned
+   * (`otherNewFiles`: what an ordinary import would add or ask about) for the preview only.
+   */
+  function reimportPreviewOf(plan, paths, { onlyDeleted }) {
+    const facts = new Map(plan.scan.facts.map((fact) => [fact.pathKey, fact]))
+    const ordinary = classifyScan({ sources: plan.registry.sources, records: plan.records, facts: plan.scan.facts })
+    const candidates = new Map(reimportCandidatesOf(ordinary, plan.registry).map((candidate) => [candidate.pathKey, candidate]))
+    const live = new Set([...ordinary.unchanged, ...ordinary.reappeared].map((item) => item.fact.pathKey))
+    const keys = [...new Set(paths.map((value) => pathKeyOf(value)))].sort()
+    const eligibility = keys.map((pathKey) => {
+      const fact = facts.get(pathKey)
+      if (!fact) fail('E_MEDIA_REIMPORT_NOT_DELETED', { reason: 'missing' })
+      const candidate = candidates.get(pathKey)
+      if (candidate) return { pathKey, reason: candidate.reason, deletedSeqs: candidate.deletedSeqs, pendingDeletion: candidate.pendingDeletion, fact }
+      if (onlyDeleted) fail('E_MEDIA_REIMPORT_NOT_DELETED', { reason: live.has(pathKey) ? 'live' : 'not-deleted' })
+      return { pathKey, reason: live.has(pathKey) ? 'live' : 'any', deletedSeqs: [], pendingDeletion: false, fact }
+    })
+    const { registry } = plan
+    const registered = new Set(registry.files.map((file) => file.sha256))
+    const own = plan.newRecords.filter((item) => item.explicit)
+    const dependsOn = ({ pathKey, sha256 }) => ({
+      atPath: registry.sources.filter((source) => source.pathKey === pathKey).map((source) => [source.seq, source.sha256, source.recordId, source.state, source.descriptionDigest ?? null]),
+      ofContent: registry.sources.filter((source) => source.sha256 === sha256).map((source) => [source.seq, source.pathKey, source.recordId, source.state]),
+      links: registry.assetFiles.filter((link) => link.sha256 === sha256).map((link) => link.assetId).sort(),
+      generated: registered.has(sha256),
+      queued: registry.pendingFileOps.filter((operation) => (operation.kind === 'delete-source' && pathKeyOf(operation.target) === pathKey) || operation.detail?.sha256 === sha256)
+        .map((operation) => [operation.seq, operation.kind]),
+    })
+    const digest = hash(stable({
+      kind: 'starmap.media-reimport', version: 1, library: [store.meta().libraryId, plan.revision],
+      files: eligibility.map(({ pathKey, reason, deletedSeqs, fact }) => {
+        const item = own.find((entry) => entry.fact.pathKey === pathKey)?.described.item ?? null
+        return [pathKey, fact.size, fact.sha256, fact.placeId, fact.kind, fact.descriptionDigest, reason, deletedSeqs, item, dependsOn(fact)]
+      }),
+      replaced: plan.decisions.gone.map((item) => item.source.seq),
+      pins: plan.pins.map((pin) => [pin.folder, pin.placeId, pin.subtype, pin.source]),
+    }))
+    const explicit = new Set(keys)
+    const otherNewFiles = ordinary.newRecords.filter((item) => !explicit.has(item.fact.pathKey)).length
+      + ordinary.confirmations.flatMap((group) => group.entries).filter((entry) => !explicit.has(entry.fact.pathKey)).length
+    return {
+      digest, otherNewFiles,
+      files: eligibility.map(({ pathKey, reason, pendingDeletion, fact }) => ({ path: fact.path.slice('MediaInbox/'.length), pathKey, sha256: fact.sha256, bytes: fact.size, reason, pendingDeletion })),
+      records: own.map(({ fact, described }) => ({
+        path: fact.path.slice('MediaInbox/'.length), pathKey: fact.pathKey, cityId: described.item?.placeId ?? fact.placeId ?? null, kind: described.item?.kind ?? fact.kind,
+        title: described.item?.title ?? null, date: described.item?.date ?? null, reusesFiles: registered.has(fact.sha256),
+      })),
+    }
+  }
+
+  /**
+   * The preview of re-importing `paths` (3C-5 F; see reimportPreviewOf): { libraryId, revision, digest, files, records,
+   * otherNewFiles, blockers, pins, plan }. Nothing is written; the Inbox is scanned.
+   */
+  async function planReimport({ paths, onlyDeleted = true, acceptFolderBindings = false, blockOnWarnings = true }) {
+    const plan = await planImport({ explicitPaths: paths, acceptFolderBindings, blockOnWarnings, explicitOnly: true })
+    const preview = reimportPreviewOf(plan, paths, { onlyDeleted })
+    return { libraryId: store.meta().libraryId, revision: plan.revision, ...preview, blockers: plan.blockers, pins: plan.pins, plan }
+  }
+
+  /**
+   * Re-import `paths` (3C-5 F): each becomes a new record (a new id), appended to its city's order, with the place and
+   * description its folder and sidecar give, reusing the generated files of content registered already; nothing else
+   * changes (an explicit-only importInbox). Under the lease the caller holds, the plan is computed again and must be
+   * eligible and have `planDigest` (checked in importInbox's `expect`, before generated files and the commit:
+   * E_MEDIA_REIMPORT_NOT_DELETED, E_MEDIA_PREVIEW_STALE). Resolves what importInbox resolves.
+   */
+  async function reimportFiles({ paths, planDigest, onlyDeleted = true, requestId, kind = MEDIA_KINDS.reimport, actor = 'local-editor', baseRevision, leaseToken, acceptFolderBindings = false, blockOnWarnings = true }) {
+    if (!isPlanDigest(planDigest)) fail('E_REQUEST_INVALID', { reason: '预览摘要必须是 64 位小写十六进制。' })
+    return importInbox({
+      requestId, kind, actor, baseRevision, leaseToken, explicitPaths: paths, acceptFolderBindings, blockOnWarnings, explicitOnly: true,
+      expect: (current) => {
+        if (reimportPreviewOf(current, paths, { onlyDeleted }).digest !== planDigest) fail('E_MEDIA_PREVIEW_STALE')
+      },
+    })
+  }
+
   return {
-    planImport, importInbox, deleteMedia, reportLines, planReread, rereadDescriptions,
+    planImport, importInbox, deleteMedia, reportLines, planReread, rereadDescriptions, listReimportable, planReimport, reimportFiles,
     drain: (leaseToken) => runPendingFileOps({ privatePaths, store, leaseToken, hashFile }),
   }
 }

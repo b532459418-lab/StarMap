@@ -9,8 +9,12 @@
  * - media:import (--apply) takes the library lease (or the one STARMAP_LIBRARY_LEASE names), refuses while a media task
  *   is unfinished, opens the store for writing without a writer session and imports with the media service (one commit;
  *   kind starmap.media.cli-import). Uncertain information does not block (as V2's command line). The plan's folder
- *   bindings need --accept-folder-bindings and its source matches --accept-source-matches; --reimport <path> marks Inbox
- *   paths explicit: each becomes a new record (even content deleted before), appended to its city order.
+ *   bindings need --accept-folder-bindings and its source matches --accept-source-matches.
+ * - --reimport <path> (3C-5 F, the page's contract): only the given Inbox files are imported, each a new record (even
+ *   content deleted before), appended to its city order; the rest of the Inbox, the registry and the scan cache stay as
+ *   they are. media:check prints the preview and its digest; media:import --reimport <path> --digest <digest> writes it
+ *   only when the plan computed again under the lease has that digest (any Inbox file; a path not in the Inbox is
+ *   refused).
  * - --reread <path> (an Inbox file or folder; repeatable) re-reads the descriptions of the records of the present
  *   sources there instead of importing: media:check lists the differences (each field's value now and the Inbox's) and
  *   prints the preview digest; media:import --reread <path> --digest <digest> writes them only when the plan computed
@@ -25,7 +29,7 @@ import { assertMediaJobsClear } from './media-job-store.mjs'
 import { MEDIA_KINDS, createMediaService, handleMediaStore } from './media-service.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { openStore } from './store-host.mjs'
-import { INBOX_PREFIX, pathKeyOf } from './store-media-registry.mjs'
+import { INBOX_PREFIX } from './store-media-registry.mjs'
 import { isPlanDigest } from './media-digest.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
@@ -70,7 +74,7 @@ export function parseStoreMediaArgs(argv) {
     values[arg].push(portable)
   }
   if (values['--reread'].length && values['--reimport'].length) return { usage: '--reread 与 --reimport 不能同时使用。' }
-  if (digest !== undefined && !values['--reread'].length) return { usage: '--digest 只能和 --reread 一起用。' }
+  if (digest !== undefined && !values['--reread'].length && !values['--reimport'].length) return { usage: '--digest 只能和 --reread 或 --reimport 一起用。' }
   if (digest !== undefined && !flags.has('--apply')) return { usage: '--digest 只在写入（npm run media:import）时使用；media:check 会打印它。' }
   return { flags, reread: values['--reread'], reimport: values['--reimport'], digest }
 }
@@ -129,6 +133,41 @@ const rereadLines = (plan, apply) => {
   return lines
 }
 
+const REIMPORT_REASONS = Object.freeze({
+  'same-path': '之前彻底删除过，在原来的位置又出现了',
+  'new-path': '新位置，内容与彻底删除过的一张相同',
+  live: '已经是一条资料的来源，不会重复导入',
+  any: '投递箱里的文件',
+})
+
+/** The lines of a re-import preview (3C-5 F: only the given files; the rest of the Inbox is left alone). */
+const reimportLines = (preview, apply) => {
+  const lines = [`重新导入：只导入给出的 ${preview.files.length} 个文件，投递箱里的其他文件不受影响。`]
+  for (const file of preview.files) {
+    const record = preview.records.find((item) => item.pathKey === file.pathKey)
+    lines.push(`- ${file.path}：${REIMPORT_REASONS[file.reason]}${record ? `；成为一条新资料（${record.kind}，${record.reusesFiles ? '复用已有的生成文件' : '重新生成文件'}），加到所在城市排序的末尾` : ''}${file.pendingDeletion ? '；它排队等待的删除会取消' : ''}。`)
+  }
+  if (preview.otherNewFiles) lines.push(`\n投递箱里另有 ${preview.otherNewFiles} 个新文件没有导入，留给下一次普通导入。`)
+  const { blockers } = preview
+  if (blockers.errors.length) lines.push(`\n需要处理（${blockers.errors.length}）：`, ...blockers.errors.map((error) => `- ${error}`))
+  if (blockers.uncertain.length) lines.push(`\n提醒（${blockers.uncertain.length}）：`, ...blockers.uncertain.map((warning) => `- ${warning}`))
+  if (blockers.bindings.length) {
+    lines.push(`\n待确认的文件夹绑定（${blockers.bindings.length}）：确认之后加 --accept-folder-bindings。`, ...blockers.bindings.map((pin) => `- ${pin.folder.slice(INBOX_PREFIX.length)} → ${pin.names?.['zh-Hans'] ?? ''} / ${pin.names?.en ?? ''}`))
+  }
+  if (!apply) {
+    lines.push(`\n预览摘要：${preview.digest}`)
+    if (preview.records.length) lines.push(`确认无误后运行 npm run media:import -- --reimport <同样的路径> --digest ${preview.digest} 写入。`)
+  }
+  return lines
+}
+
+/** A refusal of a re-import's eligibility, as the command line says it. */
+const REIMPORT_REFUSALS = Object.freeze({
+  missing: '--reimport 的路径不在投递箱中。',
+  live: '--reimport 的文件已经是一条资料的来源。',
+  'not-deleted': '--reimport 的文件不是彻底删除过的文件。',
+})
+
 /**
  * Run media:check / media:import on the new library of `privatePaths`. `argv` are the arguments after the script;
  * `leaseToken` a lease the caller holds (STARMAP_LIBRARY_LEASE). Resolves the exit code.
@@ -140,9 +179,10 @@ export async function runStoreMediaCli({ privatePaths, argv = [], log = console.
     return 1
   }
   const apply = args.flags.has('--apply')
-  // 3C-5 F: writing a re-read needs the digest of the preview the user checked (nothing is written without it).
-  if (apply && args.reread.length && !args.digest) {
-    logError('[import-media] 写入重新读取的说明要带 --digest <预览摘要>：先运行 npm run media:check -- --reread <路径>，核对后把它打印的预览摘要交回。没有写入。')
+  // 3C-5 F: writing a re-read or a re-import needs the digest of the preview the user checked (nothing is written without it).
+  if (apply && (args.reread.length || args.reimport.length) && !args.digest) {
+    const option = args.reread.length ? '--reread' : '--reimport'
+    logError(`[import-media] 写入 ${option} 要带 --digest <预览摘要>：先运行 npm run media:check -- ${option} <路径>，核对后把它打印的预览摘要交回。没有写入。`)
     return 2
   }
   const file = storeFileOf(privatePaths)
@@ -168,7 +208,19 @@ export async function runStoreMediaCli({ privatePaths, argv = [], log = console.
         for (const line of rereadLines(plan, false)) log(line)
         return plan.problems.length ? 1 : 0
       }
-      const plan = await service.planImport({ explicitPaths: args.reimport, blockOnWarnings: false })
+      if (args.reimport.length) {
+        let preview
+        try {
+          preview = await service.planReimport({ paths: args.reimport, onlyDeleted: false, blockOnWarnings: false })
+        } catch (error) {
+          if (error?.code !== 'E_MEDIA_REIMPORT_NOT_DELETED') throw error
+          logError(`[import-media] ${REIMPORT_REFUSALS[error.params?.reason] ?? error.message}`)
+          return 1
+        }
+        for (const line of reimportLines(preview, false)) log(line)
+        return preview.blockers.errors.length ? 1 : 0
+      }
+      const plan = await service.planImport({ blockOnWarnings: false })
       for (const line of service.reportLines(plan)) log(line)
       const pending = plan.registry.pendingFileOps.length
       if (pending) log(`\n有 ${pending} 个文件等待删除，下一次媒体写入（或 npm run library:recover -- --confirm）会执行。`)
@@ -204,19 +256,36 @@ export async function runStoreMediaCli({ privatePaths, argv = [], log = console.
         log(result.committed ? `\n已写入（修订号 ${result.revision}）。` : '\n没有需要写入的变化。')
         return result.plan.problems.length || result.plan.conflicts.length ? 1 : 0
       }
-      const result = await service.importInbox({
-        requestId: uuidv7(), kind: MEDIA_KINDS.cli, actor: 'media-import', leaseToken: lease, explicitPaths: args.reimport, blockOnWarnings: false,
-        acceptFolderBindings: args.flags.has('--accept-folder-bindings'), acceptSourceMatches: args.flags.has('--accept-source-matches'),
-        // A --reimport path the scan does not find gives no record: refused before anything is written.
-        expect: (plan) => {
-          const scanned = new Set(plan.scan.facts.map((fact) => fact.pathKey))
-          const missing = args.reimport.filter((value) => !scanned.has(pathKeyOf(value)))
-          if (missing.length) {
-            const error = new Error(`--reimport 的路径不在投递箱中：${missing.map((value) => value.slice(INBOX_PREFIX.length)).join('、')}`)
-            error.code = 'E_ARGUMENT'
-            throw error
+      if (args.reimport.length) {
+        // 3C-5 F: only the given files (an explicit-only import), with the preview's digest checked under the lease.
+        let result
+        try {
+          result = await service.reimportFiles({
+            paths: args.reimport, planDigest: args.digest, onlyDeleted: false, requestId: uuidv7(), kind: MEDIA_KINDS.cli, actor: 'media-import',
+            leaseToken: lease, acceptFolderBindings: args.flags.has('--accept-folder-bindings'), blockOnWarnings: false,
+          })
+        } catch (error) {
+          if (error?.code === 'E_MEDIA_PREVIEW_STALE') {
+            logError('[import-media] 预览之后投递箱或新库有了变化，没有写入。请重新运行 npm run media:check -- --reimport <路径>，核对后交回新的预览摘要。')
+            return 2
           }
-        },
+          if (error?.code !== 'E_MEDIA_REIMPORT_NOT_DELETED') throw error
+          logError(`[import-media] ${REIMPORT_REFUSALS[error.params?.reason] ?? error.message}`)
+          return 1
+        }
+        if (result.blocked) {
+          const { blockers } = result.plan
+          for (const error of blockers.errors) log(`- ${error}`)
+          if (blockers.errors.length) return 1
+          log('\n没有写入。有待确认的文件夹绑定：确认之后加 --accept-folder-bindings。')
+          return 2
+        }
+        log(result.committed ? `重新导入完成（修订号 ${result.revision}）。` : '没有需要导入的文件：它已经是一条资料的来源。')
+        return 0
+      }
+      const result = await service.importInbox({
+        requestId: uuidv7(), kind: MEDIA_KINDS.cli, actor: 'media-import', leaseToken: lease, blockOnWarnings: false,
+        acceptFolderBindings: args.flags.has('--accept-folder-bindings'), acceptSourceMatches: args.flags.has('--accept-source-matches'),
       })
       for (const line of service.reportLines(result.plan)) log(line)
       if (result.drained?.paused) log('\n备份正在复制媒体，待删文件暂缓，下一次媒体写入会执行。')
@@ -228,12 +297,6 @@ export async function runStoreMediaCli({ privatePaths, argv = [], log = console.
       }
       log(result.committed ? `\n导入完成（修订号 ${result.revision}）。` : '\n没有需要导入的变化。')
       return 0
-    } catch (error) {
-      if (error?.code === 'E_ARGUMENT') {
-        logError(`[import-media] ${error.message}`)
-        return 1
-      }
-      throw error
     } finally { await handle.close() }
   }, { leaseToken })
 }
