@@ -15,10 +15,11 @@
  * commit: the records and every view row naming them gone (tombstoned), their sources deleted, the links gone, the
  * source files and the directories no record links any more queued in pending_file_ops → the queued files removed.
  * The Inbox is not scanned.
- * Re-reading descriptions (planReread / rereadDescriptions, design v2 §5, the command line's --reread): the records of
- * the present sources under some Inbox paths take the place, kind, title and sidecar values their folder and sidecar
- * give now (mediaRecords.ts rereadMediaRecordCommands), and their sources the new description digest. A record whose
- * present sources describe it differently is refused and listed; a source whose file is gone or changed is listed.
+ * Re-reading descriptions (planReread / rereadDescriptions, design v2 §5, the command line's --reread, 3C-5 F the page):
+ * the records in a scope take the place, kind, title and sidecar values their folder and sidecar give now (mediaRecords.ts
+ * rereadMediaRecordCommands), and their sources the new description digest. A record whose present sources describe it
+ * differently is refused and listed; a source whose file is gone or changed is listed. A preview gives a digest; the
+ * write computes the plan again under the lease and writes only when the digest is the same (E_MEDIA_PREVIEW_STALE).
  *
  * `store` is the media store adapter: { readOnly, meta(), official() → { revision, reader } (3C-5 E: the official reader at the
  * store's current revision, ../src/data/store/officialReader.ts; the media rules read their places, editor lists and media
@@ -33,6 +34,7 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { sha256File } from './file-hash.mjs'
 import { atomicJsonWrite } from './json-file.mjs'
+import { hash, isPlanDigest, stable } from './media-digest.mjs'
 import { runPendingFileOps } from './media-file-ops.mjs'
 import { classifyScan, liveRecordsOf, pinsFor, registryDeltaOf, resolveClassification } from './media-registry.mjs'
 import { IMPORT_BLOCKING_PATTERN, describeMediaFile, scanInbox } from './media-scan.mjs'
@@ -41,7 +43,7 @@ import { publishGeneratedFiles } from './media-inbox.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { officialReader } from '../src/data/store/officialReader.ts'
 import { indexReadModel } from '../src/worldgraph/readModel/lookup.ts'
-import { createMediaRecordCommands, removeMediaRecordCommands, rereadChanges, rereadMediaRecordCommands } from '../src/data/store/mediaRecords.ts'
+import { createMediaRecordCommands, removeMediaRecordCommands, rereadDiff, rereadMediaRecordCommands } from '../src/data/store/mediaRecords.ts'
 import { deletableMediaOf, generatedDirectoriesOf } from '../src/data/v2media/editorWrites.ts'
 import { placeConfigOf } from '../src/data/v2media/importPlan.ts'
 import { V2WriteError } from '../src/data/editor/errors.ts'
@@ -58,7 +60,11 @@ import { V2WriteError } from '../src/data/editor/errors.ts'
 export const releaseImageFiles = () => sharp.cache(false)
 
 /** `kind` prefixes of the service's requests (the host's receipts and op_log). */
-export const MEDIA_KINDS = Object.freeze({ import: 'starmap.media.import', delete: 'starmap.media.delete', task: 'starmap.media.task-import', cli: 'starmap.media.cli-import' })
+export const MEDIA_KINDS = Object.freeze({
+  import: 'starmap.media.import', delete: 'starmap.media.delete', task: 'starmap.media.task-import', cli: 'starmap.media.cli-import',
+  // 3C-5 F: the page's re-reading and re-importing (the command line keeps cli-import.reread and cli-import).
+  reread: 'starmap.media.reread', reimport: 'starmap.media.reimport',
+})
 
 const fail = (code, params) => { throw new V2WriteError(code, params) }
 const nonEmpty = (block) => Object.fromEntries(Object.entries(block).filter(([, list]) => list.length > 0))
@@ -108,9 +114,10 @@ async function syncDirectory(directory) {
 }
 
 /**
- * The service for one private root. `allocateId` gives the UUIDv7 of new rows (tests inject it); `hashFile` is injectable.
+ * The service for one private root. `allocateId` gives the UUIDv7 of new rows (tests inject it); `hashFile` is injectable,
+ * and so is `readImage` (the image reader of a re-read when the stored dimensions do not apply; tests count it).
  */
-export function createMediaService({ privatePaths, store, allocateId = () => uuidv7(), hashFile = sha256File }) {
+export function createMediaService({ privatePaths, store, allocateId = () => uuidv7(), hashFile = sha256File, readImage }) {
   releaseImageFiles()
 
   /** A request already committed: its receipt (a retry); the same id with another body or base is E_OPERATION_CONFLICT. */
@@ -294,70 +301,159 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
   }
 
   /**
-   * What re-reading the descriptions under `paths` (portable `MediaInbox/…` files or folders) would do, without
-   * writing: { revision, records (each { recordId, assetId, sources, changes, item, digest, seqs }), conflicts (each
-   * { assetId, sources }), problems (lines) }. `changes` lists what differs (place, title, described keys).
+   * A re-read scope, normalized (it is part of the digest): { paths } (portable `MediaInbox/…` files or folders, path
+   * keys; the command line), { mediaIds } (media ids, which are asset ids) or { cityId } (a city place). Media the reader
+   * does not have: E_MEDIA_NOT_FOUND; a place that is not a city: E_UNKNOWN_PLACE_REF.
    */
-  async function planReread({ paths }) {
+  function rereadScopeOf(scope, reader) {
+    if (Array.isArray(scope?.paths) && scope.paths.length && scope.paths.every((value) => typeof value === 'string')) {
+      return { paths: [...new Set(scope.paths.map((value) => pathKeyOf(value).replace(/\/+$/, '')))].sort() }
+    }
+    if (Array.isArray(scope?.mediaIds) && scope.mediaIds.length && scope.mediaIds.every((value) => typeof value === 'string')) {
+      const mediaIds = [...new Set(scope.mediaIds)].sort()
+      for (const id of mediaIds) if (!reader.mediaItem(id)) fail('E_MEDIA_NOT_FOUND')
+      return { mediaIds }
+    }
+    if (typeof scope?.cityId === 'string' && scope.cityId) {
+      if (reader.place(scope.cityId)?.subtype !== 'city') fail('E_UNKNOWN_PLACE_REF')
+      return { cityId: scope.cityId }
+    }
+    return fail('E_REQUEST_INVALID', { reason: '重新读取说明的范围无效。' })
+  }
+
+  /**
+   * What re-reading descriptions would do, without writing (3C-5 F: the preview the page and the command line show, and
+   * the plan a write computes again under the lease). `scope` (see rereadScopeOf): the records of the present sources under
+   * some paths, some records by media id, or a city's records together with those whose present source now lies in a
+   * folder of that city. Every present source of a record counts, also one outside the scope: all must describe it alike.
+   * Resolves { libraryId, revision, scope, records, conflicts, problems, withoutSource, digest }:
+   * - records (sorted by record id): { recordId, assetId, placeId, sources (Inbox-relative paths), sourceFacts (path,
+   *   pathKey, seq, sha256, descriptionDigest, registered), diff ([{ field, from, to }], rereadDiff), changes (the fields),
+   *   item, digest (the description digest), seqs (sources whose registered digest differs) };
+   * - conflicts: { recordId, assetId, sources [{ path, pathKey, sha256, descriptionDigest }] } (sources disagree: not written);
+   * - problems: { recordId, assetId, path, pathKey, reason (missing | content-changed | unreadable), line } (not written);
+   * - withoutSource: { recordId, assetId } (no present source: nothing to read);
+   * - digest: what a write must confirm (see the file header of ./media-digest.mjs): the library id and revision, the
+   *   scope, and per record its field changes and its sources (sequence, path, content, scanned and registered
+   *   description digests), the conflicts, the problems and the records without source.
+   * Dimensions: a record whose source has the content its asset links takes the asset's stored width and height (the
+   * same file, already oriented) instead of reading the image again; any other reads the file.
+   */
+  async function planReread({ scope }) {
     const { revision, reader } = await store.official()
+    // Read at once (see the file header): the places, the scope and the stored dimensions of the media.
     const places = reader.places()
+    const normalized = rereadScopeOf(scope, reader)
+    const entities = store.mediaEntities().filter((row) => row.typeId === 'starmap:media' && typeof row.fields?.asset === 'string')
+    const stored = new Map()
+    for (const row of entities) {
+      const media = reader.mediaItem(row.fields.asset)
+      if (media && Number.isFinite(media.width) && Number.isFinite(media.height) && media.width > 0 && media.height > 0) stored.set(row.fields.asset, { width: media.width, height: media.height })
+    }
+    const { libraryId } = store.meta()
     const registry = store.mediaRegistry()
-    const assetOf = new Map(store.mediaEntities().map((row) => [row.id, row.fields.asset]))
+    const assetOf = new Map(entities.map((row) => [row.id, row.fields.asset]))
+    const placeOf = new Map(entities.map((row) => [row.id, row.fields.place]))
+    const linked = new Map(registry.assetFiles.map((link) => [link.assetId, link.sha256]))
     const scan = await scanInbox({ privatePaths, places, cache: registry.scanCache, hashFile })
     const facts = new Map(scan.facts.map((fact) => [fact.pathKey, fact]))
-    const scopes = paths.map((value) => pathKeyOf(value).replace(/\/+$/, ''))
-    const inScope = (key) => scopes.some((scope) => key === scope || key.startsWith(`${scope}/`))
     const present = registry.sources.filter((source) => source.state === 'present')
-    const recordIds = [...new Set(present.filter((source) => inScope(source.pathKey)).map((source) => source.recordId))]
+    const presentOf = new Map()
+    for (const source of present) presentOf.set(source.recordId, [...(presentOf.get(source.recordId) ?? []), source])
+    let inScope
+    if (normalized.paths) {
+      const within = (key) => normalized.paths.some((prefix) => key === prefix || key.startsWith(`${prefix}/`))
+      inScope = present.filter((source) => within(source.pathKey)).map((source) => source.recordId)
+    } else if (normalized.mediaIds) {
+      const wanted = new Set(normalized.mediaIds)
+      inScope = entities.filter((row) => wanted.has(row.fields.asset)).map((row) => row.id)
+      if (new Set(inScope.map((id) => assetOf.get(id))).size !== wanted.size) fail('E_MEDIA_NOT_FOUND')
+    } else {
+      inScope = [
+        ...entities.filter((row) => row.fields.place === normalized.cityId).map((row) => row.id),
+        ...present.filter((source) => facts.get(source.pathKey)?.placeId === normalized.cityId).map((source) => source.recordId),
+      ]
+    }
+    const recordIds = [...new Set(inScope)].filter((id) => assetOf.has(id)).sort()
     const relative = (value) => value.slice('MediaInbox/'.length)
-    const records = []
+    const byPath = (a, b) => (a.pathKey < b.pathKey ? -1 : a.pathKey > b.pathKey ? 1 : a.seq - b.seq)
+    const pending = []
     const conflicts = []
     const problems = []
+    const withoutSource = []
     for (const recordId of recordIds) {
       const assetId = assetOf.get(recordId)
-      if (typeof assetId !== 'string') continue
-      // Every present source of the record counts, also those outside the paths: they must describe it alike.
+      const sources = [...(presentOf.get(recordId) ?? [])].sort(byPath)
+      if (sources.length === 0) {
+        withoutSource.push({ recordId, assetId })
+        continue
+      }
       const described = []
-      for (const source of present.filter((item) => item.recordId === recordId)) {
+      for (const source of sources) {
         const fact = facts.get(source.pathKey)
-        if (!fact || fact.sha256 !== source.sha256) problems.push(`${relative(source.path)}：不在投递箱中，或者内容变了。请先运行 npm run media:import。`)
+        const problem = { recordId, assetId, path: relative(source.path), pathKey: source.pathKey }
+        if (!fact) problems.push({ ...problem, reason: 'missing', line: `${problem.path}：不在投递箱中。请先运行 npm run media:import。` })
+        else if (fact.sha256 !== source.sha256) problems.push({ ...problem, reason: 'content-changed', line: `${problem.path}：内容变了。请先运行 npm run media:import。` })
         else described.push({ source, fact })
       }
       if (described.length === 0) continue
       if (new Set(described.map(({ fact }) => fact.descriptionDigest)).size > 1) {
-        conflicts.push({ assetId, sources: described.map(({ source }) => relative(source.path)) })
+        conflicts.push({ recordId, assetId, sources: described.map(({ source, fact }) => ({ path: relative(source.path), pathKey: source.pathKey, sha256: fact.sha256, descriptionDigest: fact.descriptionDigest })) })
         continue
       }
-      const result = await describeMediaFile(described[0].fact)
+      const { fact } = described[0]
+      const dimensions = linked.get(assetId) === fact.sha256 ? stored.get(assetId) : undefined
+      const result = await describeMediaFile(fact, { readImage: dimensions ? async () => dimensions : readImage })
       if (!result.item) {
-        problems.push(...result.errors)
+        for (const line of result.errors) problems.push({ recordId, assetId, path: relative(described[0].source.path), pathKey: described[0].source.pathKey, reason: 'unreadable', line })
         continue
       }
-      const changes = store.read((reader) => rereadChanges({ assetId, item: result.item }, { reader }))
-      records.push({
-        recordId, assetId, sources: described.map(({ source }) => relative(source.path)), changes, item: result.item,
-        digest: described[0].fact.descriptionDigest, seqs: described.filter(({ source }) => source.descriptionDigest !== described[0].fact.descriptionDigest).map(({ source }) => source.seq),
-      })
+      pending.push({ recordId, assetId, described, item: result.item })
     }
-    return { revision, records, conflicts, problems }
+    // The differences in one read of the store.
+    const diffs = store.read((scopeReader) => pending.map(({ assetId, item }) => rereadDiff({ assetId, item }, { reader: scopeReader })))
+    const records = pending.map(({ recordId, assetId, described, item }, index) => {
+      const digest = described[0].fact.descriptionDigest
+      return {
+        recordId, assetId, placeId: placeOf.get(recordId), sources: described.map(({ source }) => relative(source.path)),
+        sourceFacts: described.map(({ source, fact }) => ({ path: relative(source.path), pathKey: source.pathKey, seq: source.seq, sha256: fact.sha256, descriptionDigest: fact.descriptionDigest, registered: source.descriptionDigest ?? null })),
+        diff: diffs[index], changes: diffs[index].map((entry) => entry.field), item, digest,
+        seqs: described.filter(({ source }) => source.descriptionDigest !== digest).map(({ source }) => source.seq),
+      }
+    })
+    const digest = hash(stable({
+      kind: 'starmap.media-reread', version: 1, library: [libraryId, revision], scope: normalized,
+      records: records.map((record) => [record.recordId, record.assetId, record.diff.map((entry) => [entry.field, entry.from, entry.to]),
+        record.sourceFacts.map((source) => [source.seq, source.pathKey, source.sha256, source.descriptionDigest, source.registered])]),
+      conflicts: conflicts.map((conflict) => [conflict.recordId, conflict.assetId, conflict.sources.map((source) => [source.pathKey, source.sha256, source.descriptionDigest])]),
+      problems: problems.map((problem) => [problem.recordId, problem.pathKey, problem.reason]),
+      withoutSource: withoutSource.map((record) => record.recordId),
+    }))
+    return { libraryId, revision, scope: normalized, records, conflicts, problems, withoutSource, digest }
   }
 
   /**
-   * Re-read the descriptions under `paths` (see planReread) in one commit. Resolves { duplicate, receipt } for a
-   * request already committed, { committed: false, plan } when nothing changes, otherwise { committed: true, revision,
-   * receipt, plan }. Conflicts and problems are not written; the caller reports them.
+   * Re-read descriptions in one commit (3C-5 F): `scope` and `planDigest` are what the preview showed. Under the lease
+   * the caller holds, the plan is computed again and must have that digest (E_MEDIA_PREVIEW_STALE otherwise, nothing
+   * written); `baseRevision` is checked when given (E_STALE). Only that plan is written: the records with changes, and
+   * the registered description digests of their sources; conflicts and problems are not. Resolves { duplicate, receipt }
+   * for a request already committed, { committed: false, plan } when nothing changes, otherwise { committed: true,
+   * revision, receipt, plan, updatedIds }.
    */
-  async function rereadDescriptions({ paths, requestId, kind = `${MEDIA_KINDS.cli}.reread`, actor = 'media-import', leaseToken }) {
+  async function rereadDescriptions({ scope, planDigest, requestId, kind = `${MEDIA_KINDS.cli}.reread`, actor = 'media-import', baseRevision, leaseToken }) {
     if (store.readOnly) fail('E_STORE_READ_ONLY')
-    const replay = replayOf(requestId, kind)
+    if (!isPlanDigest(planDigest)) fail('E_REQUEST_INVALID', { reason: '预览摘要必须是 64 位小写十六进制。' })
+    const replay = replayOf(requestId, kind, baseRevision)
     if (replay) return replay
-    const plan = await planReread({ paths })
+    const plan = await planReread({ scope })
+    if (baseRevision !== undefined && plan.revision !== baseRevision) fail('E_STALE')
+    if (plan.digest !== planDigest) fail('E_MEDIA_PREVIEW_STALE')
     const changing = plan.records.filter((record) => record.changes.length > 0)
     const sources = plan.records.flatMap((record) => record.seqs.map((seq) => ({ op: 'update', seq, descriptionDigest: record.digest })))
-    if (changing.length === 0 && sources.length === 0) return { committed: false, plan, revision: plan.revision }
+    if (changing.length === 0 && sources.length === 0) return { committed: false, plan, revision: plan.revision, updatedIds: [] }
     const commands = changing.length ? store.read((reader) => rereadMediaRecordCommands(changing.map(({ assetId, item }) => ({ assetId, item })), { reader })).commands : []
     const result = await store.commit({ requestId, baseRevision: plan.revision, kind, actor, commands: [...commands], media: nonEmpty({ sources }) }, { leaseToken })
-    return { committed: true, revision: result.revision, receipt: result.receipt, plan }
+    return { committed: true, revision: result.revision, receipt: result.receipt, plan, updatedIds: changing.map((record) => record.assetId) }
   }
 
   return {

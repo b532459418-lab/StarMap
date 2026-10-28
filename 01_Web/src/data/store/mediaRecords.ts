@@ -209,18 +209,28 @@ function mediaEntityOf(reader: ScopeReader, assetId: string): StoreEntity | unde
   return entity?.typeId === OFFICIAL.media ? entity : undefined
 }
 
-/** The rows a re-read gives and what it changes (`place`, `title`, described keys). */
-function rereadRows(reader: ScopeReader, update: RereadMediaRecord): { asset: AssetReference; entity: StoreEntity; nextAsset: AssetReference; nextEntity: StoreEntity; changed: string[] } {
+/** One field a re-read changes: its value in the store now (`from`, the page's value, edits made in the app included) and the value the Inbox gives (`to`); null when absent. */
+export interface RereadDiff {
+  readonly field: string
+  readonly from: JsonValue
+  readonly to: JsonValue
+}
+
+/** The rows a re-read gives and what it changes (`place`, the described keys, `title`, in that order). */
+function rereadRows(reader: ScopeReader, update: RereadMediaRecord): { asset: AssetReference; entity: StoreEntity; nextAsset: AssetReference; nextEntity: StoreEntity; changed: string[]; diff: RereadDiff[] } {
   const asset = reader.get('assets', update.assetId) as AssetReference | undefined
   if (!asset) reject('E_MEDIA_NOT_FOUND', 'assets')
   const entity = mediaEntityOf(reader, update.assetId)
   if (!entity) reject('E_MEDIA_NOT_FOUND', 'entities')
   const item = update.item as unknown as Json
   const attributes: Json = { ...asset!.attributes as Json }
-  const changed: string[] = []
-  if (entity!.fields.place !== update.item.placeId) changed.push('place')
+  const diff: RereadDiff[] = []
+  const differs = (field: string, from: unknown, to: unknown) => {
+    if (jsonKey((from ?? null) as JsonValue) !== jsonKey((to ?? null) as JsonValue)) diff.push({ field, from: structuredClone(from ?? null) as JsonValue, to: structuredClone(to ?? null) as JsonValue })
+  }
+  differs('place', entity!.fields.place, update.item.placeId)
   for (const key of DESCRIBED_KEYS) {
-    if (jsonKey(attributes[key] ?? null) !== jsonKey(item[key] ?? null)) changed.push(key)
+    differs(key, attributes[key], item[key])
     if (item[key] === undefined) delete attributes[key]
     else attributes[key] = structuredClone(item[key]) as JsonValue
   }
@@ -228,7 +238,8 @@ function rereadRows(reader: ScopeReader, update: RereadMediaRecord): { asset: As
   const fits = title !== undefined && fitsStoreTitle(title)
   const v2 = plain(entity!.extensions?.v2) ? { ...entity!.extensions!.v2 as Json } : {}
   const currentTitle = Object.keys(entity!.title.names).length ? entity!.title : v2.title
-  if (jsonKey(currentTitle ?? null) !== jsonKey(title ?? null)) changed.push('title')
+  differs('title', currentTitle, title)
+  const changed = diff.map(entry => entry.field)
   delete v2.title
   if (title !== undefined && !fits) v2.title = title as unknown as JsonValue
   const extensions: Json = { ...(entity!.extensions as Json | undefined ?? {}) }
@@ -241,7 +252,7 @@ function rereadRows(reader: ScopeReader, update: RereadMediaRecord): { asset: As
     ...(Object.keys(extensions).length ? { extensions } : {}),
   } as StoreEntity
   const nextAsset = { ...asset!, revision: asset!.revision + 1, attributes: attributes as JsonObject }
-  return { asset: asset!, entity: entity!, nextAsset, nextEntity, changed }
+  return { asset: asset!, entity: entity!, nextAsset, nextEntity, changed, diff }
 }
 
 /** What re-reading a record would change: `place`, `title` and the described keys that differ (empty: nothing). */
@@ -249,21 +260,41 @@ export function rereadChanges(update: RereadMediaRecord, { reader }: Pick<MediaR
   return rereadRows(reader, update).changed
 }
 
+/** What re-reading a record would change, field by field, with the store's value and the Inbox's (empty: nothing). */
+export function rereadDiff(update: RereadMediaRecord, { reader }: Pick<MediaRecordsContext, 'reader'>): RereadDiff[] {
+  return rereadRows(reader, update).diff
+}
+
 /**
  * Re-read the descriptions of records: each entity's city and title and its asset's described keys follow `item`.
- * Ids, hidden lists, orders, cover flags and generated files are left as they are; a record whose description is the
- * same gets no command.
+ * Ids, hidden lists, orders and generated files are left as they are; a record whose description is the same gets no
+ * command. 3C-5 F: a record that moves to another city is never a cover there (its flag is cleared); when it was its
+ * old city's cover, that city's covers follow markCovers again without it (as a removal does).
  */
 export function rereadMediaRecordCommands(updates: readonly RereadMediaRecord[], { reader }: Pick<MediaRecordsContext, 'reader'>): MediaRecordsPlan {
+  const rows = updates.map(update => rereadRows(reader, update)).filter(row => row.changed.length > 0)
+  const moved = rows.filter(row => row.changed.includes('place'))
+  const vacated = new Set(moved.filter(row => row.asset.attributes.isCover === true && typeof row.entity.fields.place === 'string').map(row => row.entity.fields.place as string))
+  for (const row of moved) {
+    if (row.nextAsset.attributes.isCover === true) row.nextAsset = { ...row.nextAsset, attributes: { ...row.nextAsset.attributes, isCover: false } }
+  }
+  const byAsset = new Map(rows.map(row => [row.asset.id, row]))
+  const others: FormalCommand[] = []
+  for (const update of vacated.size ? covers(reader, vacated, [], new Set(moved.map(row => row.asset.id))).updates : []) {
+    const row = byAsset.get((update as { id: string }).id)
+    const isCover = ((update as { value: AssetReference }).value).attributes.isCover
+    // A cover that is re-read in the same batch takes its new flag in its own update.
+    if (row) row.nextAsset = { ...row.nextAsset, attributes: { ...row.nextAsset.attributes, isCover } }
+    else others.push(update)
+  }
   const commands: FormalCommand[] = []
-  for (const update of updates) {
-    const { asset, entity, nextAsset, nextEntity, changed } = rereadRows(reader, update)
-    if (changed.length === 0) continue
+  for (const { asset, entity, nextAsset, nextEntity } of rows) {
     if (jsonKey(asset.attributes) !== jsonKey(nextAsset.attributes)) {
       commands.push({ op: 'update', table: 'assets', id: asset.id, expectedRevision: asset.revision, value: nextAsset as unknown as FormalRow })
     }
     commands.push({ op: 'update', table: 'entities', id: entity.id, expectedRevision: entity.revision, value: nextEntity as unknown as FormalRow })
   }
+  commands.push(...others)
   return Object.freeze({ commands: Object.freeze(commands), renumbered: Object.freeze([]) })
 }
 

@@ -66,6 +66,20 @@ export async function scanInbox({ privatePaths, places, cache = [], hashFile = s
   // 3C-5 E: the store's places, checked by Core when they were written (no V2 validation of a places file any more).
   const index = createMediaPlaceIndex(places)
   const cached = new Map(cache.map((row) => [row.pathKey, row]))
+  // 3C-5 F: per scan, the portable path of a folder and the description of a file without sidecar entry are computed once
+  // (every photo of a city shares them); the values are the same as computing them for each file.
+  const folders = new Map()
+  const folderOf = (directory) => {
+    if (!folders.has(directory)) folders.set(directory, inboxPathOf(inboxRoot, directory))
+    return folders.get(directory)
+  }
+  const plainDescriptions = new Map()
+  const descriptionOf = (placeId, kind, sidecar) => {
+    if (Object.keys(sidecar).length > 0) return descriptionDigestOf({ placeId, kind, metadata: sidecar })
+    const key = `${placeId}|${kind}`
+    if (!plainDescriptions.has(key)) plainDescriptions.set(key, descriptionDigestOf({ placeId, kind, metadata: sidecar }))
+    return plainDescriptions.get(key)
+  }
   await walkInbox({
     inboxRoot, index, errors, warnings, pins,
     onFile: async ({ filePath, kind, unlabelled, city, metadata, countryRoot, cityRoot }) => {
@@ -95,8 +109,8 @@ export async function scanInbox({ privatePaths, places, cache = [], hashFile = s
       facts.push(Object.freeze({
         path: pathValue, pathKey, relativePath, absolutePath: filePath, size: info.size, mtimeMs: info.mtimeMs, sha256, fromCache,
         extension, kind, unlabelled, placeId: city.id, metadata: sidecar, originalFileName: path.basename(filePath),
-        countryFolder: inboxPathOf(inboxRoot, countryRoot), cityFolder: inboxPathOf(inboxRoot, cityRoot),
-        descriptionDigest: descriptionDigestOf({ placeId: city.id, kind, metadata: sidecar }),
+        countryFolder: folderOf(countryRoot), cityFolder: folderOf(cityRoot),
+        descriptionDigest: descriptionOf(city.id, kind, sidecar),
       }))
     },
   })

@@ -14,18 +14,11 @@
  *   (confirmed with `acceptSourceMatches`) and `missing` (sources the import marks missing).
  * - Blockers: scan and file errors (E_MEDIA_PLAN_SCAN) and uncertain information (E_MEDIA_PLAN_UNCERTAIN), as in V2.
  */
-import { createHash } from 'node:crypto'
+import { hash, stable } from './media-digest.mjs'
 import { resolveClassification } from './media-registry.mjs'
 import { INBOX_PREFIX, pathKeyOf } from './store-media-registry.mjs'
 import { V2WriteError } from '../src/data/editor/errors.ts'
 
-const hash = (value) => createHash('sha256').update(value).digest('hex')
-const normalized = (value) => {
-  if (Array.isArray(value)) return value.map(normalized)
-  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalized(value[key])]))
-  return value
-}
-const stable = (value) => JSON.stringify(normalized(value) ?? null)
 const inboxRelative = (portable) => portable.slice(INBOX_PREFIX.length)
 
 /** The Inbox paths (portable, `MediaInbox/…`) of a task's selected files. */
