@@ -65,3 +65,29 @@ test('Cesium code is content-hashed and its workers and assets load from the ver
   expect(cesiumResponses.some((entry) => entry.startsWith(`200 ${staticPrefix}Assets/`))).toBe(true)
   expect(cesiumResponses.filter((entry) => !entry.startsWith(`200 ${staticPrefix}`))).toEqual([])
 })
+
+// The globe's recovery after a failure is product behaviour (map-recovery.spec.mjs covers it in depth on the dev
+// server): the public build shows the notice instead of Cesium's panel, and Reload map brings a new globe.
+test('a lost WebGL context shows the map notice, and Reload map brings a new globe', async ({ page }) => {
+  await page.goto('/')
+  const canvas = page.locator('.cesium-widget canvas')
+  await expect(canvas).toBeVisible()
+  await canvas.evaluate((element) => {
+    element.dataset.smokeLost = 'true'
+    const gl = element.getContext('webgl2') ?? element.getContext('webgl')
+    gl.getExtension('WEBGL_lose_context').loseContext()
+  })
+  const notice = page.getByRole('alert').filter({ hasText: 'The map stopped drawing' })
+  await expect(notice).toBeVisible()
+  await expect(page.locator('.cesium-widget-errorPanel')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Reload map', exact: true }).click()
+  await expect(notice).toHaveCount(0)
+  await expect(canvas).toHaveCount(1)
+  await expect(canvas).toBeVisible()
+  const globe = await canvas.evaluate((element) => {
+    const gl = element.getContext('webgl2') ?? element.getContext('webgl')
+    return { replaced: element.dataset.smokeLost === undefined, lost: gl.isContextLost(), width: gl.drawingBufferWidth }
+  })
+  expect(globe.replaced && !globe.lost && globe.width > 0, JSON.stringify(globe)).toBe(true)
+  await expect(page.locator('.cesium-widget-errorPanel')).toHaveCount(0)
+})

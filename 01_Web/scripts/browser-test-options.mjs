@@ -13,7 +13,8 @@
 const GROUP_ARGS = Object.freeze({
   '--performance': Object.freeze([]),
   '--time-filters': Object.freeze(['time-filter']),
-  '--critical-flows': Object.freeze(['critical-flows.spec.mjs']),
+  // The globe's recovery after a failure (map-recovery.spec.mjs) runs with the critical flows.
+  '--critical-flows': Object.freeze(['critical-flows.spec.mjs', 'map-recovery.spec.mjs']),
   '--media-recovery': Object.freeze(['media-recovery.spec.mjs']),
   '--media-lifecycle': Object.freeze(['media-recovery.spec.mjs', '--grep', 'lost responses, storage loss']),
   // The built public bundle through `vite preview`; the config then matches only *.smoke.mjs.
