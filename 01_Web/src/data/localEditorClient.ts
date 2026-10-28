@@ -88,6 +88,17 @@ export const deleteHiddenLocalWantToGo: LocalEditorApi['deleteHiddenLocalWantToG
   withApi((api) => api.deleteHiddenLocalWantToGo(...args))
 export const convertLocalWantToGoToTravel: LocalEditorApi['convertLocalWantToGoToTravel'] = (...args) =>
   withApi((api) => api.convertLocalWantToGoToTravel(...args))
+// 3C-5 F: re-reading descriptions and re-importing.
+export const previewMediaReread: LocalEditorApi['previewMediaReread'] = (...args) =>
+  withApi((api) => api.previewMediaReread(...args))
+export const rereadMedia: LocalEditorApi['rereadMedia'] = (...args) =>
+  withApi((api) => api.rereadMedia(...args))
+export const listMediaReimportCandidates: LocalEditorApi['listMediaReimportCandidates'] = (...args) =>
+  withApi((api) => api.listMediaReimportCandidates(...args))
+export const previewMediaReimport: LocalEditorApi['previewMediaReimport'] = (...args) =>
+  withApi((api) => api.previewMediaReimport(...args))
+export const reimportMedia: LocalEditorApi['reimportMedia'] = (...args) =>
+  withApi((api) => api.reimportMedia(...args))
 
 const mediaJobsApi: MediaJobsApi = {
   read: () => withApi((api) => api.readMediaJobs()),

@@ -7,6 +7,7 @@ import { droneEditorResources } from './droneEditorResources.ts'
 import { mediaViewerResources } from './mediaViewerResources.ts'
 import { mediaImportResources } from './mediaImportResources.ts'
 import { mediaRecoveryResources } from './mediaRecoveryResources.ts'
+import { mediaMaintenanceResources } from './mediaMaintenanceResources.ts'
 import { editorResources } from './editorResources.ts'
 import { detailsResources } from './detailsResources.ts'
 import { journeyResources } from './journeyResources.ts'
@@ -25,6 +26,7 @@ export const resources = {
     mediaViewer: mediaViewerResources.zh,
     mediaImport: mediaImportResources.zh,
     mediaRecovery: mediaRecoveryResources.zh,
+    mediaMaintenance: mediaMaintenanceResources.zh,
     editor: editorResources.zh, details: detailsResources.zh, journey: journeyResources.zh,
     common: {
       language: '界面语言', subtitle: '记录你走过的地方，让每段旅程成为可以重温的故事。',
@@ -62,6 +64,7 @@ export const resources = {
     mediaViewer: mediaViewerResources.en,
     mediaImport: mediaImportResources.en,
     mediaRecovery: mediaRecoveryResources.en,
+    mediaMaintenance: mediaMaintenanceResources.en,
     editor: editorResources.en, details: detailsResources.en, journey: journeyResources.en,
     common: {
       language: 'Interface language', subtitle: 'Map the places you have visited and turn every journey into a story you can revisit.',
