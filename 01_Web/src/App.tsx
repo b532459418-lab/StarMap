@@ -77,6 +77,10 @@ const CityPhotoGalleryModal = lazy(() => import('./components/CityPhotoGalleryMo
 const MediaRecoveryCenter = import.meta.env.DEV && localEditorAvailable
   ? lazy(() => import('./components/MediaRecoveryCenter').then((module) => ({ default: module.MediaRecoveryCenter })))
   : undefined
+// 3C-5 F: re-reading descriptions and re-importing deleted photos (opened from the city and drone cards).
+const MediaRereadDialog = import.meta.env.DEV && localEditorAvailable
+  ? lazy(() => import('./components/MediaRereadDialog').then((module) => ({ default: module.MediaRereadDialog })))
+  : undefined
 const WantToGoAddDialog = import.meta.env.DEV && localEditorAvailable
   ? lazy(() => import('./components/WantToGoAddDialog').then((module) => ({ default: module.WantToGoAddDialog })))
   : undefined
@@ -1074,6 +1078,11 @@ function App() {
             setSelectionMode('city')
             setGlobeDistance(cityDistance)
           }} />
+        </Suspense>
+      ) : null}
+      {MediaRereadDialog ? (
+        <Suspense fallback={null}>
+          <MediaRereadDialog />
         </Suspense>
       ) : null}
       {WantToGoAddDialog && isAddWantToGoOpen ? (

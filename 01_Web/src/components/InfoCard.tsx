@@ -21,6 +21,7 @@ import { PlaceChoiceList } from './PlaceChoiceList'
 import { JourneyChoiceList } from './JourneyChoiceList'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
 import { MediaRecoveryEntry } from './MediaRecoveryEntry'
+import { MediaMaintenanceEntry } from './MediaMaintenanceEntry'
 import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
 import { CityWantToGoAction } from './CityWantToGoAction'
 import { DraftConflictNotice } from './DraftConflictNotice'
@@ -721,6 +722,10 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
 
             {localEditorAvailable && isCityMode ? (
               <MediaRecoveryEntry countryId={country.id} cityId={city.id} />
+            ) : null}
+            {/* 3C-5 F: re-reading this city's descriptions and re-importing its deleted photos (not while its photos are edited). */}
+            {import.meta.env.DEV && localEditorAvailable && isCityMode && !photoEditing ? (
+              <MediaMaintenanceEntry cityId={city.id} cityName={name(city)} />
             ) : null}
 
             {isCountryGrid && cityEditing && hiddenCityIdsForCountry.length > 0 ? (

@@ -146,3 +146,21 @@ export const MEDIA_REREAD_FIELDS = Object.freeze(['place', 'kind', 'date', 'reso
 
 /** The preview is out of date: the write was refused before anything was written (preview again). */
 export const isStalePreviewCode = (code: unknown) => code === 'E_MEDIA_PREVIEW_STALE' || code === 'E_STALE'
+
+/**
+ * A field value of a re-read preview as text, or undefined when it is empty (null, an empty string). Titles and other
+ * localized values take the page's language first, then English, then any; a place id is named by `placeName`; a
+ * position is `lat, lng`; anything else is its JSON.
+ */
+export function rereadValueText(field: string, value: unknown, locale: string, placeName: (id: string) => string): string | undefined {
+  if (value === null || value === undefined || value === '') return undefined
+  if (field === 'place' && typeof value === 'string') return placeName(value)
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (object(value) && object(value.names)) {
+    const names = value.names as Record<string, unknown>
+    const chosen = [names[locale], names.en, ...Object.values(names)].find((name) => typeof name === 'string' && name)
+    return typeof chosen === 'string' ? chosen : undefined
+  }
+  if (object(value) && typeof value.lat === 'number' && typeof value.lng === 'number') return `${value.lat}, ${value.lng}`
+  return JSON.stringify(value)
+}

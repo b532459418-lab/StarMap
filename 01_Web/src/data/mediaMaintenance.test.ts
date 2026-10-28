@@ -110,3 +110,22 @@ test('a write that confirms a preview is not sent again after E_STALE: the page 
     await assert.rejects(previewMediaReread({ mediaId: 'media-1' }), { code: 'E_EDITOR_RESPONSE_INVALID' })
   })
 })
+
+test('values of a re-read preview as text, and why an entry is disabled', async () => {
+  const { rereadValueText } = await import('./mediaMaintenance.ts')
+  const { mediaMaintenanceBlockOf } = await import('./mediaMaintenanceUi.ts')
+  const place = (id: string) => `Place ${id}`
+  assert.equal(rereadValueText('place', 'city-1', 'en', place), 'Place city-1')
+  assert.equal(rereadValueText('title', { names: { 'zh-Hans': '港口', en: 'Harbor' } }, 'zh-Hans', place), '港口')
+  assert.equal(rereadValueText('title', { names: { 'zh-Hans': '港口', en: 'Harbor' } }, 'fr', place), 'Harbor')
+  assert.equal(rereadValueText('position', { lat: 1.5, lng: -2 }, 'en', place), '1.5, -2')
+  assert.equal(rereadValueText('altitudeMeters', 120, 'en', place), '120')
+  assert.deepEqual([null, undefined, ''].map((value) => rereadValueText('date', value, 'en', place)), [undefined, undefined, undefined])
+  const clear = { storeReadOnly: false, storeMigrationRequired: false, legacyUnmigrated: false, storeRecoveryRequired: false, mediaTaskOpen: false, otherWriting: false }
+  assert.equal(mediaMaintenanceBlockOf(clear), undefined)
+  assert.equal(mediaMaintenanceBlockOf({ ...clear, storeReadOnly: true, mediaTaskOpen: true }), 'readOnly')
+  assert.equal(mediaMaintenanceBlockOf({ ...clear, legacyUnmigrated: true }), 'migration')
+  assert.equal(mediaMaintenanceBlockOf({ ...clear, storeRecoveryRequired: true }), 'recovery')
+  assert.equal(mediaMaintenanceBlockOf({ ...clear, mediaTaskOpen: true, otherWriting: true }), 'mediaTask')
+  assert.equal(mediaMaintenanceBlockOf({ ...clear, otherWriting: true }), 'otherWriting')
+})
