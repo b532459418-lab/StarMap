@@ -928,7 +928,7 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     if (ms) await new Promise((resolve) => setTimeout(resolve, ms))
     return fulfil ? route.fulfill(fulfil) : route.continue()
   })
-  const markReykjavik = async (page, { observePause = false, whilePaused } = {}) => {
+  const markReykjavik = async (page, { observePause = false } = {}) => {
     await finishRenderSchedulerTrace(page)
     await finishRenderCpuProfile(page)
     if (observePause) await armRenderSchedulerTrace(page)
@@ -947,9 +947,31 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       if (session) await diagnosticDeadline(session.detach()).catch(() => {})
     }
     const action = () => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
-    if (observePause) await observePauseDuring(page, action, whilePaused)
+    if (observePause) await observePauseDuring(page, action)
     else await action()
   }
+  /**
+   * The next click on the Want to Go button shows the page `name` as soon as the save's pause has started: in the page,
+   * right after the app's own click handler (or on the first task that sees the pause, if it starts later), with no
+   * input-driver wait, which on a busy runner can outlast the 1.5 s watchdog. Records whether the loop was paused at the
+   * switch and how long after the save's click it came (an upper bound of the time since the pause started).
+   */
+  const showPageAtPause = (page, name) => page.evaluate((name) => {
+    delete window.__starmapPageAtPause
+    const saveClicked = (event) => {
+      if (!event.target.closest?.('.atlas-city-wtg-button')) return
+      document.removeEventListener('click', saveClicked)
+      const show = () => {
+        const { paused } = window.__travelAtlasDebugRenderLoop.state()
+        if (!paused && performance.now() - event.timeStamp < 1500) return void setTimeout(show, 0)
+        const at = performance.now()
+        ;[...document.querySelectorAll('nav button')].find((button) => button.textContent.trim() === name).click()
+        window.__starmapPageAtPause = { paused, msAfterSaveClick: Math.round((at - event.timeStamp) * 10) / 10 }
+      }
+      show()
+    }
+    document.addEventListener('click', saveClicked)
+  }, name)
   /** After a reload: the page restores the selected city, or it is selected again. */
   async function reykjavikAgain(page) {
     await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
@@ -1005,9 +1027,15 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await openMap(page)
     await selectReykjavik(page)
     await holdWrite(page, { ms: 2500 })
-    // Another page.
-    await markReykjavik(page, { observePause: true,
-      whilePaused: () => page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).press('Enter') })
+    // Another page, shown in the page as soon as the pause has started (the real save, its write request).
+    const requested = page.waitForRequest((sent) => sent.method() === 'POST' && new URL(sent.url()).pathname === '/__travelatlas/editor/wanttogo')
+    await showPageAtPause(page, 'Collection')
+    await markReykjavik(page)
+    await requested
+    await expect.poll(() => page.evaluate(() => window.__starmapPageAtPause), { timeout: 5000 }).toBeTruthy()
+    const shown = await page.evaluate(() => window.__starmapPageAtPause)
+    test.info().annotations.push({ type: 'page switch at the pause', description: JSON.stringify(shown) })
+    expect.soft(shown.paused, `the loop was paused when the page switched: ${JSON.stringify(shown)}`).toBe(true)
     await expectRendering(page, 'page')
     await expect(page.locator('.collection-card').filter({ has: page.getByRole('heading', { name: 'Reykjavik', exact: true }) })).toHaveCount(1, { timeout: 10000 })
     await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
