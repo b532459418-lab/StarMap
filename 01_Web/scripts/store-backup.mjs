@@ -48,6 +48,9 @@ import { getPrivatePaths } from './private-profile.mjs'
 import { privateDataSource, storeFileOf } from './private-data-source.mjs'
 import { StoreToolError } from './store-tool-error.mjs'
 import { projectStoreToCanonical } from '../src/data/store/projectCanonical.ts'
+import { officialReader } from '../src/data/store/officialReader.ts'
+import { readModelOf } from '../src/worldgraph/readModel/build.ts'
+import { indexReadModel } from '../src/worldgraph/readModel/lookup.ts'
 import { openStore } from './store-host.mjs'
 import { upgradeStore } from './store-upgrade.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
@@ -128,11 +131,13 @@ export function openReadOnly(file) {
 /**
  * What the media references of a store are checked against (checkMediaReferences of ./library-backup.mjs): the media
  * items and the places of its official view, in the shape of the V2 files that function reads (3C-5 E: before, the V2
- * files of the projection, whose media items and places are these).
+ * files of the projection, whose media items and places are these). 3C-5 G: with the media without a place
+ * (officialReader placelessMedia(), which the official view leaves out), so their files are checked like the others.
  */
 const mediaReferencesOf = (rows) => {
   const { canonical } = projectStoreToCanonical(rows, { source: 'local', track: false, freeze: false })
-  return { media: canonical.media, places: { places: canonical.places } }
+  const placeless = officialReader(indexReadModel(readModelOf(rows, { origin: 'local' }))).placelessMedia()
+  return { media: { ...canonical.media, items: [...canonical.media.items, ...placeless] }, places: { places: canonical.places } }
 }
 
 /** The media references of a store's rows, and its media registry. */

@@ -11,6 +11,8 @@
  * 3. The filtered read model passes the full read-model check, its V2 view the V2 checks, with no new problem.
  * 4. The media file list holds only files of kept media.
  * 5. Without hidden content the read model comes back as it was (same JSON text).
+ * 6. 3C-5 G: a media entity without a place goes, with its asset, its media order item and its files; the rest is as
+ *    without it.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -29,6 +31,13 @@ import { integrityProblems } from '../src/data/compat/v2/v2Integrity.ts'
 import { formalStateOfReadModel, readModelOf } from '../src/worldgraph/readModel/build.ts'
 import { validateReadModel } from '../src/worldgraph/readModel/check.ts'
 import { emptyFormalState } from '../src/worldgraph/store/formal.ts'
+import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts'
+import { memoryReader } from '../src/worldgraph/store/reader.ts'
+import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
+import { createMediaRecordCommands } from '../src/data/store/mediaRecords.ts'
+import { officialReader } from '../src/data/store/officialReader.ts'
+import { memoryScopeReader } from '../src/data/store/scopeReader.ts'
+import { indexReadModel } from '../src/worldgraph/readModel/lookup.ts'
 
 const NOW = '2000-01-01T00:00:00.000Z'
 const readModelOfFiles = (files) => migrationReadModel(files, { now: '2026-10-15T00:00:00.000Z' }).model
@@ -228,4 +237,41 @@ test('5. without hidden content the read model comes back as it was, to the byte
   assert.equal(JSON.stringify(filterReadModelForPersonalBuild(JSON.parse(sample)).model), JSON.stringify(JSON.parse(sample)))
   // The frozen baseline fixture hides a city, so it is covered by test 1b instead.
   assert.deepEqual(compared, ['synthetic, nothing hidden', 'public V2 sample', 'frozen backup fixture'])
+})
+
+/** `model` with one media entity without a place, created the way an import of the Inbox's `_no-place` folder does. */
+function withPlacelessMedia(model) {
+  const state = formalStateOfReadModel(model)
+  const allocateId = sequentialUuids(Date.UTC(2033, 0, 1))
+  const item = {
+    id: 'ignored', kind: 'photo', scope: 'city', src: '/media/user/0123456789abcdef/original.jpg', originalFileName: 'no-place-original-name.jpg',
+    variants: { original: { src: '/media/user/0123456789abcdef/original.jpg', width: 4, height: 3 }, thumb: { src: '/media/user/0123456789abcdef/thumb.webp', width: 4, height: 3 } },
+    width: 4, height: 3, isCover: false, status: 'ready',
+  }
+  const record = { assetId: allocateId(), entityId: allocateId(), item, appendToCityOrder: true }
+  const { commands, renumbered } = createMediaRecordCommands([record], { reader: memoryScopeReader(state), allocateId })
+  assert.deepEqual(renumbered, [])
+  const next = applyChangeSet(state, planCommands(memoryReader(state), commands, { baseRevision: state.revision, now: NOW, policy: OFFICIAL_POLICY }))
+  return { model: readModelOf(next, { origin: 'local' }), record }
+}
+const tablesOf = (model) => Object.fromEntries(Object.entries(model).filter(([key]) => key !== 'revision'))
+
+test('6. 3C-5 G: a media entity without a place goes, with its asset, its media order item and its files; the rest is as without it', () => {
+  const visibleOnly = hiddenContentFixture()
+  Object.assign(visibleOnly.editorState, { hiddenCountryIds: [], hiddenCityIds: [], hiddenMediaIds: [], hiddenDroneMediaIds: [] })
+  for (const item of visibleOnly.wantToGo.items) item.hidden = false
+  for (const [name, files] of [['hidden content', hiddenContentFixture()], ['nothing hidden', visibleOnly]]) {
+    const before = readModelOfFiles(files)
+    const { model, record } = withPlacelessMedia(before)
+    assert.equal(officialReader(indexReadModel(model)).placelessMedia().length, 1, name)
+    const filtered = filterReadModelForPersonalBuild(model)
+    const text = JSON.stringify(filtered.model)
+    for (const value of [record.assetId, record.entityId, 'no-place-original-name.jpg', '0123456789abcdef']) assert.equal(text.includes(value), false, `${name}: ${value}`)
+    assert.equal(filtered.mediaFiles.some((file) => file.startsWith('0123456789abcdef/')), false, name)
+    // Everything else is what the build gives without it (the revision moved on with the record).
+    const without = filterReadModelForPersonalBuild(before)
+    assert.deepEqual(tablesOf(filtered.model), tablesOf(without.model), name)
+    assert.deepEqual(filtered.mediaFiles, without.mediaFiles, name)
+    assert.doesNotThrow(() => validateReadModel(filtered.model, OFFICIAL_POLICY), name)
+  }
 })

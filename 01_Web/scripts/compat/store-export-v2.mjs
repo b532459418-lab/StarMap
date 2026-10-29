@@ -8,7 +8,9 @@
  *   V2 import finds it again, the others keep their ids; `media-source-index.local.json` is written from the registry
  *   (each exported id → its present and missing sources); and a read-only V2 scan of the exported files against the
  *   Inbox lists what a V2 `media:import` would then add, change or remove (D2 records of one content merge, records
- *   whose sources are gone disappear, descriptions follow the sidecars again).
+ *   whose sources are gone disappear, descriptions follow the sidecars again). 3C-5 G: media without a place (the Inbox
+ *   folder `_no-place`) cannot be V2 media (V2 requires a city): they are not exported, and are listed on their own line
+ *   (their asset ids; V2's scan ignores the `_no-place` folder, so they are not among what a V2 import would add).
  *
  * Compat (3C-5 E spec §2.4): V2 files are read and written only to migrate a library, to show a root that awaits
  * migration (read-only), and to export a library to V2 (this command). Ordinary read and write code does not import
@@ -31,9 +33,11 @@ import { V2_FILE_KEYS, V2_FILE_NAMES, validateV2Files } from '../../src/data/com
 import { serializeV2 } from '../../src/data/compat/v2/v2Serializer.ts'
 import { V2_MEDIA_SOURCE_INDEX_FILE_NAME, mediaSourceIndexFileOf } from '../../src/data/compat/v2/v2MediaFiles.ts'
 import { OFFICIAL } from '../../src/data/store/officialDefinitions.ts'
+import { officialReader } from '../../src/data/store/officialReader.ts'
 import { projectStoreToCanonical } from '../../src/data/store/projectCanonical.ts'
 import { contentHashOf, mediaIdOf } from '../../src/data/v2media/importPlan.ts'
 import { formalStateOfReadModel, readModelOf } from '../../src/worldgraph/readModel/build.ts'
+import { indexReadModel } from '../../src/worldgraph/readModel/lookup.ts'
 
 /**
  * `store:export-v2`: the five V2 files of the store in a new directory. Returns { out, files, skipped, lines }. The rows
@@ -119,11 +123,14 @@ export async function exportStoreV2(privatePaths, { out, now = new Date().toISOS
   const target = newOutput(out, '--out <新目录>')
   requireStoreMode(privatePaths)
   const handle = openReadOnly(storeFileOf(privatePaths))
-  let projected, revision, state, registry
+  let projected, revision, state, registry, placeless
   try {
     state = handle.readFormalState()
     revision = state.revision
-    projected = exportedV2Of(readModelOf(state, { origin: 'local' }))
+    const model = readModelOf(state, { origin: 'local' })
+    projected = exportedV2Of(model)
+    // 3C-5 G: the media without a place, which the official view (and so the export) leaves out.
+    placeless = officialReader(indexReadModel(model)).placelessMedia()
     registry = handle.mediaRegistry()
   } finally { await handle.close() }
   if (registry.pendingFileOps.length) {
@@ -156,6 +163,10 @@ export async function exportStoreV2(privatePaths, { out, now = new Date().toISOS
   } else {
     lines.push('回到 V2 之后运行 npm run media:import 不会改变媒体。')
   }
+  if (placeless.length) {
+    lines.push(`没有地点的媒体 ${placeless.length} 条：V2 要求媒体有地点，没有导出；新库与它的备份里仍然保留（V2 的扫描不读投递箱的 _no-place 文件夹，回到 V2 之后也不会把它们当成新资料）：`)
+    for (const media of placeless) lines.push(`  媒体 ${media.id}`)
+  }
   if (skipped.length) {
     lines.push(`V2 表达不了、没有导出的内容：${skipped.length} 行（${Object.entries(skippedCounts(skipped)).map(([table, count]) => `${table} ${count}`).join('，')}）。新库与它的备份里仍然保留：`)
     for (const row of skipped) lines.push(`  ${row.table} ${row.id}`)
@@ -163,7 +174,7 @@ export async function exportStoreV2(privatePaths, { out, now = new Date().toISOS
     lines.push('新库的全部内容都已导出，没有 V2 表达不了的内容。')
   }
   lines.push(`回到 V2 模式：停止开发服务器，把这五个文件和 ${V2_MEDIA_SOURCE_INDEX_FILE_NAME} 放进 data/v2/，再把 ${STORE_FILE_SEGMENTS.join('/')} 移出私人根。`)
-  return { out: target, files, index, remapped, losses, skipped, lines }
+  return { out: target, files, index, remapped, losses, skipped, placeless: placeless.map((media) => media.id), lines }
 }
 
 // ---------------------------------------------------------------------------

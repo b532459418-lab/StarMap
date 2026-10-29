@@ -5,7 +5,7 @@
  * listing such a file with placeId null. Synthetic data only.
  */
 import assert from 'node:assert/strict'
-import { mkdir, rename, stat } from 'node:fs/promises'
+import { mkdir, rename, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { COLOR, PLACE, importedV2Library, inboxFile, makeImage, writeJson } from './media-inbox.fixture.mjs'
@@ -15,17 +15,23 @@ import { withLibraryOperation } from './library-operation-lock.mjs'
 import { createMediaService, handleMediaStore } from './media-service.mjs'
 import { scanInbox } from './media-scan.mjs'
 import { storeFileOf } from './private-data-source.mjs'
+import { getPrivatePaths } from './private-profile.mjs'
 import { openStore } from './store-host.mjs'
 import { NOW } from './store-media.fixture.mjs'
 import { pathKeyOf } from './store-media-registry.mjs'
 import { storeTaskPlanOf } from './store-media-jobs.mjs'
 import { applyMigration } from './compat/store-migrate.mjs'
+import { exportStoreV2 } from './compat/store-export-v2.mjs'
+import { backupStore, restoreStore } from './store-backup.mjs'
 import { projectToV2Files } from './compat/store-projection.mjs'
 import { tempPrivateRoot } from './store-mode.fixture.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { assertMediaJobPreview } from '../src/data/mediaJobs.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { officialReader } from '../src/data/store/officialReader.ts'
+import { filterReadModelForPersonalBuild } from '../src/data/store/personalBuildReadModel.ts'
+import { publicReadModelOf } from '../src/data/store/publicReadModel.ts'
+import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { indexReadModel } from '../src/worldgraph/readModel/lookup.ts'
 import { createMediaPlaceIndex } from '../src/data/v2media/importPlan.ts'
 
@@ -169,4 +175,46 @@ test('a media task\'s preview lists a file of _no-place among the whole Inbox\'s
   assert.deepEqual(placeless, ['_no-place/photos/lost.jpg', '_无地点/drone/flight.jpg'])
   assert.deepEqual(preview.blockers, [])
   assert.doesNotThrow(() => assertMediaJobPreview({ jobId: job.jobId, revision: 1, selectedFileIds: [job.files[0].fileId], blockers: preview.blockers, plan: { digest: preview.digest, summary: preview.summary } }))
+})
+
+test('privacy and export: the public read model and the personal build leave media without a place out, store:export-v2 lists them, a backup checks their files and restores them', async (t) => {
+  const { paths, directory } = await migratedLibrary(t, 'starmap-media-placeless-export-')
+  await writePlaceless(paths)
+  await importNow(paths)
+  const state = await storeState(paths)
+  const placeless = officialReader(indexReadModel(state.model)).placelessMedia()
+  assert.equal(placeless.length, 2)
+  const ids = placeless.flatMap((media) => [media.id, media.entityId])
+  const directories = placeless.map((media) => media.src.split('/')[3])
+  // The public read model: private entities only, so nothing of them.
+  const publicText = JSON.stringify(publicReadModelOf(state.model))
+  for (const id of ids) assert.equal(publicText.includes(id), false, id)
+  // The personal build: neither their rows nor their files; what is shown stays.
+  const build = filterReadModelForPersonalBuild(state.model)
+  const buildText = JSON.stringify(build.model)
+  for (const id of ids) assert.equal(buildText.includes(id), false, id)
+  for (const name of ['lost.jpg', 'flight.jpg', 'Synthetic flight']) assert.equal(buildText.includes(name), false, name)
+  assert.equal(build.mediaFiles.some((file) => directories.some((directory) => file.startsWith(`${directory}/`))), false)
+  assert.ok(build.mediaFiles.length > 0, 'the media with a place keep their files')
+  assert.deepEqual(officialReader(indexReadModel(build.model)).placelessMedia(), [])
+  assert.deepEqual(officialViewOf(build.model, 'local'), officialViewOf(state.model, 'local'), 'the library hides nothing: the build shows all of it')
+  // store:export-v2: valid V2 without them, a line that lists their asset ids, not in the source index, not "added" by V2.
+  const exported = await exportStoreV2(paths, { out: path.join(directory, 'export'), now: NOW })
+  assert.deepEqual(exported.placeless, placeless.map((media) => media.id))
+  const text = exported.lines.join('\n')
+  assert.match(text, /没有地点的媒体 2 条/)
+  for (const media of placeless) assert.ok(exported.lines.includes(`  媒体 ${media.id}`), media.id)
+  for (const name of ['lost.jpg', 'flight.jpg']) assert.equal(text.includes(name), false, `${name}: messages carry ids, never values`)
+  assert.equal(exported.files.media.items.some((item) => placeless.some((media) => media.id === item.id)), false)
+  assert.equal(Object.keys(exported.index.sourcesById).some((id) => placeless.some((media) => media.id === id)), false)
+  assert.deepEqual([exported.losses.added, exported.losses.problems], [[], 0])
+  // store:backup checks their files like the others: one missing is refused before the registry check would see it.
+  await backupStore(paths, { out: path.join(directory, 'backup'), now: NOW })
+  const restored = path.join(directory, 'restored')
+  await restoreStore({ from: path.join(directory, 'backup'), to: restored, now: NOW })
+  const handle = openStore(storeFileOf(getPrivatePaths({ STARMAP_PRIVATE_ROOT: restored })), { readOnly: true, policy: OFFICIAL_POLICY })
+  try { assert.deepEqual(officialReader(indexReadModel(handle.readModel())).placelessMedia(), placeless) } finally { await handle.close() }
+  const original = path.join(paths.root, ...placeless[0].src.slice(1).split('/'))
+  await unlink(original)
+  await assert.rejects(backupStore(paths, { out: path.join(directory, 'backup-2'), now: NOW }), { code: 'E_BACKUP_MEDIA_MISSING' })
 })
