@@ -37,7 +37,7 @@ test('each group keeps its existing Playwright selection', () => {
   const expected = {
     '--performance': [],
     '--time-filters': ['time-filter'],
-    '--critical-flows': ['critical-flows.spec.mjs'],
+    '--critical-flows': ['critical-flows.spec.mjs', 'map-recovery.spec.mjs'],
     '--media-recovery': ['media-recovery.spec.mjs'],
     '--media-lifecycle': ['media-recovery.spec.mjs', '--grep', 'lost responses, storage loss'],
     // The config selects *.smoke.mjs for this group (see playwright-config.test.mjs).

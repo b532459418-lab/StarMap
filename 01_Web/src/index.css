@@ -359,6 +359,53 @@ button {
   background: #020817;
 }
 
+/* The map region takes the focus only from script (after Reload map); it is not a control to outline. */
+.cesium-atlas-shell:focus {
+  outline: none;
+}
+
+/* A lost context leaves a blank canvas: the map's dark background shows instead. */
+.cesium-atlas-shell[data-map-failure='context-lost'] .cesium-widget {
+  visibility: hidden;
+}
+
+/* The notice after a globe failure (CesiumAtlasGlobe): a small card in the middle of the map, not a dialog. */
+.atlas-map-recovery {
+  position: absolute;
+  z-index: 3;
+  top: 45%;
+  left: 50%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  width: max-content;
+  max-width: min(34rem, calc(100vw - 32px));
+  padding: 10px 12px 10px 18px;
+  border-radius: 20px;
+  font-size: 0.875rem;
+  transform: translate(-50%, -50%);
+}
+
+.atlas-map-recovery button {
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 999px;
+  padding: 5px 14px;
+  background: rgba(148, 163, 184, 0.16);
+  color: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.atlas-map-recovery button:hover {
+  background: rgba(148, 163, 184, 0.28);
+}
+
+.atlas-map-recovery button:focus-visible {
+  outline: 2px solid #67e8f9;
+  outline-offset: 2px;
+}
+
 .cesium-atlas-shell .cesium-viewer,
 .cesium-atlas-shell .cesium-viewer-cesiumWidgetContainer,
 .cesium-atlas-shell .cesium-widget,

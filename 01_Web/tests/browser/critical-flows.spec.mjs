@@ -687,6 +687,12 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
   test.beforeEach(async () => { await createBrowserFixture(root()) })
   const loop = (page) => page.evaluate(() => window.__travelAtlasDebugRenderLoop?.state())
+  /** The invariant of these cases: Cesium never stopped with an error (its scene.renderError), and no WebGL context was lost. */
+  const expectNoRenderError = (state, when) => {
+    const { renderErrorCount, lastRenderError, contextLostCount } = state?.diagnostics ?? {}
+    expect({ renderErrorCount, contextLostCount }, `Cesium render errors ${renderErrorCount} and lost WebGL contexts ${contextLostCount} ${when} (viewer ${state?.viewer}): ${lastRenderError}`)
+      .toEqual({ renderErrorCount: 0, contextLostCount: 0 })
+  }
   /** Paused now: the loop is off and no frame is drawn. */
   async function expectPaused(page) {
     await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000, intervals: [25, 50] }).toBe(true)
@@ -726,28 +732,35 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       if (observationResult.status === 'rejected') throw observationResult.reason
     } finally { page.off('request', request) }
   }
-  /** Resumed (by `endedBy` when given): the loop is on, and the frames go on after the resume. */
+  /**
+   * Resumed (by `endedBy` when given) and rendering: the loop is on, no render error and no lost context, and at least
+   * two new frames within 5 s (a stopped loop draws none; software GL on CI can draw a frame only every second or so).
+   */
   async function expectRendering(page, endedBy) {
     await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000 }).toBe(false)
     const state = await loop(page)
-    expect(state.useDefaultRenderLoop).toBe(true)
+    // A lost context or a render error first: they explain a loop that stays off.
+    expectNoRenderError(state, `at the resume (${endedBy ?? 'any'})`)
+    expect(state.useDefaultRenderLoop, 'the loop is on at the resume').toBe(true)
     if (endedBy) expect(state.episodes.at(-1)?.endedBy).toBe(endedBy)
     let lastObserved = state
     try {
       await expect.poll(async () => {
         lastObserved = await loop(page)
         return lastObserved.frames - state.framesAtResume
-      }, { timeout: 5000, intervals: [100, 250] }).toBeGreaterThan(5)
+      }, { timeout: 5000, intervals: [100, 250] }).toBeGreaterThanOrEqual(2)
     } catch (error) {
       // No extra page RPC after the deadline; preserve the original failure even if attachment collection fails.
       await (async () => {
         const evidence = test.info().outputPath('render-recovery-diagnostics.json')
-        await writeFile(evidence, JSON.stringify({ budgetMs: 5000, minimumExclusiveFrames: 5, expectedCause: endedBy ?? null,
+        await writeFile(evidence, JSON.stringify({ budgetMs: 5000, minimumFrames: 2, expectedCause: endedBy ?? null,
           baseline: state, lastObserved, collectedAfterFailure: true }) + '\n')
         await test.info().attach('Render recovery failure diagnostics', { path: evidence, contentType: 'application/json' })
       })().catch(() => {})
       throw error
     }
+    expect(lastObserved.useDefaultRenderLoop, 'the loop is still on').toBe(true)
+    expectNoRenderError(lastObserved, `after the resume (${endedBy ?? 'any'})`)
     return state
   }
   // Diagnostic-only proposal: browser CPU sampling is armed before the real save action, never inside its frame gate.
@@ -904,6 +917,9 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     // These share Chromium instrumentation: finish the trace while the CPU sampler is still attached.
     await finishRenderSchedulerTrace(page, info)
     await finishRenderCpuProfile(page, info)
+    // Checked last, so a failure here never skips the evidence above. A closed page has no state to check.
+    const final = await loop(page).catch(() => undefined)
+    if (final?.diagnostics) expectNoRenderError(final, 'at the end of the case')
   })
 
   /** The want-to-go write of the info card, answered after `ms` (or as `fulfil` says). */

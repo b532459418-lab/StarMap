@@ -33,6 +33,7 @@ This repository is the **StarMap Core / Community Edition**, licensed under [MIT
 ## Highlights
 
 - Interactive Cesium globe with country, city, route, and camera navigation.
+- When the map stops drawing (for example after a graphics reset), it shows a notice and can reload just the map, keeping the rest of the page.
 - Map and Journey views with responsive glass UI.
 - Map layer panel: switch the Travel and Want to Go layers on or off independently; the choice is remembered across sessions.
 - Places you want to go: add a city or a whole country with a note, hide, restore, or permanently delete it, and see a heart badge where it overlaps a city you have already visited.

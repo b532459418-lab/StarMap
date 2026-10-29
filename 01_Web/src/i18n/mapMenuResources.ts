@@ -35,6 +35,9 @@ export const mapMenuResources = {
     legacyUnmigrated: '私人目录里有旧格式的数据，还没有迁移。迁移之前地图是空的，编辑也不会保存。',
     legacyMigration: '迁移：这个版本不再带迁移工具，请先检出 StarMap 的提交 4fd32a9（最后一个带迁移工具的版本）完成迁移，再回到最新版本，步骤见 README 的 Private Data Format 一节。',
     legacyRemove: '不需要这些旧数据的话，把私人目录 data/ 下的四个旧文件（travel-map、want-to-go、editor-state、user-media 的 .local.json）移到别处，然后刷新页面。',
+    mapRegion: '地图',
+    mapStopped: '地图停止了绘制。可以只重新加载地图，页面上的其他内容都会保留。',
+    reloadMap: '重新加载地图',
   },
   en: {
     sources: 'Map imagery',
@@ -74,5 +77,8 @@ export const mapMenuResources = {
     legacyUnmigrated: 'Your private folder contains data in the old format that has not been migrated. The map stays empty and edits cannot be saved until migration is complete.',
     legacyMigration: 'To migrate, first check out StarMap commit 4fd32a9, the last version with the migration tools, complete the migration, then return to the latest version. See the README section “Private Data Format” for the steps.',
     legacyRemove: 'If you do not need the old data, move the four old .local.json files (travel-map, want-to-go, editor-state, and user-media) out of the private folder’s data/ directory, then refresh the page.',
+    mapRegion: 'Map',
+    mapStopped: 'The map stopped drawing. You can reload just the map; everything else on the page stays as it is.',
+    reloadMap: 'Reload map',
   },
 }

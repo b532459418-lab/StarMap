@@ -47,6 +47,7 @@ import { CesiumConstellationSky } from './CesiumConstellationSky'
 import { useStableCallback } from './useStableCallback'
 import { useElementCache } from './useElementCache'
 import { bindRenderLoop, renderPauseState, resumeRendering, subscribeRenderPause } from '../data/renderPause'
+import { createMapRecovery, guardRenderLoop, type MapFailure } from '../data/mapRecovery'
 import { droneMarkerName } from './droneMediaLabels.ts'
 import { createCameraCommandObserver } from './cameraCommandObservation'
 import type { CameraCommandObservation, CameraCommandState } from './cameraCommandObservation'
@@ -370,6 +371,9 @@ const isPositionFacingCamera = (
   return Cartesian3.dot(surfaceNormal, cameraVector) > -80_000
 }
 
+/** Viewers that lost their WebGL context or stopped with a render error: their loop stays off (../data/mapRecovery.ts). */
+const failedViewers = new WeakSet<CesiumViewer>()
+
 const setsMatch = <T,>(left: Set<T> | null, right: Set<T>) =>
   left !== null &&
   left.size === right.size &&
@@ -513,6 +517,10 @@ type TravelAtlasDebugRenderLoop = {
       longTasks: { at: number; durationMs: number }[]
       longTaskSupported: boolean
       renderErrorCount: number
+      /** The last error Cesium stopped rendering with (`scene.renderError`), shortened. */
+      lastRenderError: string | undefined
+      /** The browser lost this viewer's WebGL context (`webglcontextlost`); Cesium cannot render after that. */
+      contextLostCount: number
       droppedFrameTimings: number
       droppedLongTasks: number
     } | undefined
@@ -1161,7 +1169,8 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement
     if (!viewer) return undefined
-    const unbind = bindRenderLoop(viewer)
+    // A failed viewer's loop stays off, also when a pause ends.
+    const unbind = bindRenderLoop(guardRenderLoop(viewer, () => !failedViewers.has(viewer)))
     if (!import.meta.env.DEV) return unbind
     let frames = 0
     let framesAtResume = 0
@@ -1175,6 +1184,8 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     let droppedFrameTimings = 0
     let droppedLongTasks = 0
     let renderErrorCount = 0
+    let lastRenderError: string | undefined
+    let contextLostCount = 0
     let frameStartedAt: number | undefined
     let previousFrameAt: number | undefined
     let longTaskSupported = false
@@ -1195,7 +1206,9 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
       previousFrameAt = at
       if (frameTimings.length > 16) { frameTimings.shift(); droppedFrameTimings++ }
     }
-    const renderError = () => { renderErrorCount++ }
+    const renderError = (_scene: unknown, error: unknown) => { renderErrorCount++; lastRenderError = String(error).slice(0, 300) }
+    const canvas = viewer.canvas
+    const contextLost = () => { contextLostCount++ }
     try {
       if (typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes.includes('longtask')) {
         longTaskObserver = new PerformanceObserver((list) => {
@@ -1212,6 +1225,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     viewer.scene.preRender.addEventListener(beginFrame)
     viewer.scene.postRender.addEventListener(countFrame)
     viewer.scene.renderError.addEventListener(renderError)
+    canvas.addEventListener('webglcontextlost', contextLost)
     const stopListening = subscribeRenderPause((paused) => { if (!paused) framesAtResume = frames })
     const id = viewerReadyVersion
     const shown = (key: string, entityId: string) => viewer.entities.values.some((entity) => entity.isShowing
@@ -1228,7 +1242,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
           requestRenderMode: viewer.scene.requestRenderMode, maximumRenderTimeChange: String(viewer.scene.maximumRenderTimeChange),
           sceneUpdates, updateTimings: updateTimings.map((entry) => ({ ...entry })), droppedUpdateTimings,
           frameTimings: frameTimings.map((entry) => ({ ...entry })), longTasks: longTasks.map((entry) => ({ ...entry })),
-          longTaskSupported, renderErrorCount, droppedFrameTimings, droppedLongTasks,
+          longTaskSupported, renderErrorCount, lastRenderError, contextLostCount, droppedFrameTimings, droppedLongTasks,
         },
       }),
       entityShowing: (entityId) => ({ place: shown('entityId', entityId), badge: shown('badgeForEntityId', entityId) }),
@@ -1238,6 +1252,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     return () => {
       stopListening()
       longTaskObserver?.disconnect()
+      canvas.removeEventListener('webglcontextlost', contextLost)
       if (!viewer.isDestroyed()) {
         viewer.scene.preUpdate.removeEventListener(countUpdate)
         viewer.scene.preRender.removeEventListener(beginFrame)
@@ -1264,6 +1279,68 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     },
     [],
   )
+  // The globe after a failure (../data/mapRecovery.ts): a lost WebGL context or a render error stops that viewer's loop
+  // for good and shows the notice. Its button, or the context coming back, rebuilds only the viewer (viewerKey) with
+  // the camera where it was; everything else on the page stays.
+  const [recovery] = useState(createMapRecovery)
+  const [mapFailure, setMapFailure] = useState<MapFailure>()
+  const savedCameraRef = useRef<{ position: Cartesian3; direction: Cartesian3; up: Cartesian3 }>(undefined)
+  const rebuildViewer = useCallback(() => {
+    const viewer = viewerRef.current?.cesiumElement
+    if (viewer && !viewer.isDestroyed()) {
+      const { positionWC, directionWC, upWC } = viewer.camera
+      savedCameraRef.current = { position: Cartesian3.clone(positionWC), direction: Cartesian3.clone(directionWC), up: Cartesian3.clone(upWC) }
+    }
+    setMapFailure(undefined)
+    setViewerKey((key) => key + 1)
+  }, [])
+  const reloadMap = useCallback(() => {
+    recovery.reload()
+    rebuildViewer()
+    // The button leaves with the notice; the focus goes to the map it reloads.
+    globeShellRef.current?.focus()
+  }, [rebuildViewer, recovery])
+  useEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer) return undefined
+    const saved = savedCameraRef.current
+    savedCameraRef.current = undefined
+    if (saved) viewer.camera.setView({ destination: saved.position, orientation: { direction: saved.direction, up: saved.up } })
+    const { canvas, cesiumWidget: widget } = viewer
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl')
+    let current = true
+    const fail = (failure: MapFailure | undefined) => {
+      failedViewers.add(viewer)
+      if (!viewer.isDestroyed()) viewer.useDefaultRenderLoop = false
+      setMapFailure(failure)
+    }
+    // Default prevented: the browser may give the context back.
+    const lost = (event: Event) => {
+      event.preventDefault()
+      if (current) fail(recovery.contextLost().failure)
+    }
+    const restored = () => { if (current && recovery.contextRestored()) rebuildViewer() }
+    const renderError = () => { if (current) fail(recovery.renderError().failure) }
+    // The lost event comes in a later task, and a frame can come first: no frame renders on a lost context (Cesium
+    // would stop with a RangeError).
+    const render = widget.render
+    widget.render = () => {
+      if (!gl?.isContextLost()) render.call(widget)
+      else if (current) fail(recovery.contextLost().failure)
+    }
+    canvas.addEventListener('webglcontextlost', lost)
+    canvas.addEventListener('webglcontextrestored', restored)
+    viewer.scene.renderError.addEventListener(renderError)
+    return () => {
+      current = false
+      canvas.removeEventListener('webglcontextlost', lost)
+      canvas.removeEventListener('webglcontextrestored', restored)
+      if (!viewer.isDestroyed()) {
+        viewer.scene.renderError.removeEventListener(renderError)
+        widget.render = render
+      }
+    }
+  }, [rebuildViewer, recovery, viewerReadyVersion])
 
   // PR3：可渲染集合只来自 layerData（FR-MR-1）。layerData 的引用由 App 的 useMemo 稳住，
   // 所以这两个 useMemo 的依赖不会每次渲染都变，下游的 useEffect 也不会被反复重建（AC-8）。
@@ -2104,12 +2181,16 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     <div
       ref={globeShellRef}
       className={`cesium-atlas-shell absolute inset-0 h-full w-full bg-[#020817]`}
+      role="region"
+      aria-label={t('mapMenu:mapRegion')}
+      tabIndex={-1}
       data-focus-offset-x={focusOffset.x}
       data-focus-offset-y={focusOffset.y}
       data-visible-city-count={visibleCityIds?.size ?? mappedCities.length}
       data-visible-route-count={visibleRouteIds?.size ?? mappedRoutes.length}
       data-active-route-pairs={activeRoutePairs}
       data-map-source={mapSource}
+      data-map-failure={mapFailure}
     >
       <Viewer
         key={viewerKey}
@@ -2128,6 +2209,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
         selectionIndicator={false}
         timeline={false}
         useBrowserRecommendedResolution={false}
+        showRenderLoopErrors={false}
       >
         <ImageryLayer
           key={`${mapSource}-base`}
@@ -2328,6 +2410,12 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
         aria-hidden="true"
         className="atlas-cursor-trail"
       />
+      {mapFailure && showMapContent ? (
+        <div className="atlas-map-recovery glass-panel" role="alert">
+          <p>{t('mapMenu:mapStopped')}</p>
+          <button type="button" onClick={reloadMap}>{t('mapMenu:reloadMap')}</button>
+        </div>
+      ) : null}
 
       <div className="cesium-map-status pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full border border-white/14 bg-slate-950/62 px-4 py-2 text-xs font-semibold text-slate-200 shadow-lg backdrop-blur-2xl">
         {t('auxiliary:mappedCities', { count: travelPlaceCount })} · {t('auxiliary:routeSegments', { count: mappedRoutes.length })}
