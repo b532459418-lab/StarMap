@@ -10,6 +10,10 @@ import { requireLocalEditorReload, withLocalEditorWrite, type MediaImportPermit 
 import { pauseRendering } from './renderPause.ts'
 import { sendStoreWrite, type StoreWriteHeaders } from './storeWriteProtocol.ts'
 import { assertMediaJob, assertMediaJobsRead, assertMediaJobPreview, type MediaJob, type MediaJobsRead, type MediaJobPreview, type MediaJobIntent, type MediaJobVersion } from './mediaJobs.ts'
+import {
+  isMediaReimportCandidates, isMediaReimportPreview, isMediaReimportResult, isMediaRereadPreview, isMediaRereadResult,
+  type MediaReimportCandidates, type MediaReimportPreview, type MediaReimportResult, type MediaRereadPreview, type MediaRereadResult, type MediaRereadScope,
+} from './mediaMaintenance.ts'
 
 /** 第 2A 批：409 `E_PLACE_CHOICE_REQUIRED` 的候选列表交给界面（./placeChoice.ts）。 */
 export { placeChoiceCandidatesOf, type PlaceChoiceCandidate } from './placeChoice.ts'
@@ -63,6 +67,11 @@ export interface EditorWriteOptions {
   readonly baseRevision?: number
   readonly changedMeanwhile?: () => boolean
   readonly onApplied?: () => void
+  /**
+   * 3C-5 F: false for a write that confirms a preview (re-reading, re-importing). Its E_STALE is not retried on the new
+   * revision (the server would only refuse the preview's digest there): it reaches the caller, which asks to preview again.
+   */
+  readonly retryStale?: false
 }
 /** E_STALE retries of one write: the changes are fetched and the request sent again on the new revision. */
 export const STALE_RETRIES = 3
@@ -111,7 +120,7 @@ const sendToStore = async <T>(send: (protocol: StoreWriteHeaders) => Promise<T>,
         return result
       } catch (error) {
         const sync = storeSync
-        if (!sync || !(error instanceof LocalEditorError) || error.code !== 'E_STALE' || attempt >= STALE_RETRIES) throw error
+        if (!sync || !(error instanceof LocalEditorError) || error.code !== 'E_STALE' || attempt >= STALE_RETRIES || options.retryStale === false) throw error
         await sync.pull()
         if (options.changedMeanwhile?.()) throw new LocalEditorError({ code: 'E_DRAFT_CONFLICT' })
         const next = sync.baseRevision()
@@ -237,7 +246,11 @@ export const previewMediaJob = async (jobId: string, input: MediaJobVersion & {s
   assertMediaJob(body.job)
   if (body.job.jobId !== jobId || body.job.libraryId !== input.libraryId || body.job.revision !== input.revision || body.plan === null || typeof body.plan !== 'object') throw responseInvalid()
   const plan = body.plan as Record<string, unknown>
-  const result = {jobId, revision: body.job.revision, plan: {digest: plan.digest, summary: plan.summary}, selectedFileIds: plan.selectedFileIds, blockers: plan.blockers}
+  const result = {
+    jobId, revision: body.job.revision, plan: {digest: plan.digest, summary: plan.summary}, selectedFileIds: plan.selectedFileIds, blockers: plan.blockers,
+    // 3C-5 F: the files deleted for good this import skips (a hint; absent from older answers).
+    ...(Number.isSafeInteger(plan.deletedSkipped) && Number(plan.deletedSkipped) > 0 ? {deletedSkipped: Number(plan.deletedSkipped)} : {}),
+  }
   // The new library's preview only (3C-5 E: no V2 import any more).
   assertMediaJobPreview(result)
   if (body.job.canImport !== (result.blockers.length === 0)) throw responseInvalid()
@@ -255,6 +268,44 @@ export const pauseMediaJob = (jobId: string, input: MediaJobVersion, permit: Med
 export const closeMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('close', jobId, input, permit)
 /** Batch 1 D2: end an open/paused task without touching any file; the next import realigns with the Inbox. */
 export const abandonMediaJob = (jobId: string, input: MediaJobVersion, permit: MediaImportPermit) => mutateMediaJob('abandon', jobId, input, permit)
+
+// ---- 3C-5 F：重新读取说明与重新导入 ----
+// 预览只读（不带请求协议、不取库租约）；执行经 `editorWrite` 带上请求编号与预览的修订号，交回预览的摘要，不自动重发：
+// 预览之后有任何变化时服务端以 E_MEDIA_PREVIEW_STALE（或 E_STALE）拒绝，什么都不写，页面请用户重新预览。
+
+const mediaPreview = async <T>(path: string, body: unknown, valid: (value: unknown) => value is T): Promise<T> => {
+  const response = await fetch(path, { method: 'POST', headers: editorHeaders, body: JSON.stringify(body) })
+  const value = await parseResponse<unknown>(response)
+  if (!valid(value)) throw responseInvalid()
+  return value
+}
+const confirmed = <T>(valid: (value: unknown) => value is T) => async (response: Response): Promise<T> => {
+  const value = await parseResponse<unknown>(response)
+  if (!valid(value)) throw responseInvalid()
+  return value
+}
+
+/** What re-reading the descriptions of one item or of a city's items would change. */
+export const previewMediaReread = (scope: MediaRereadScope): Promise<MediaRereadPreview> =>
+  mediaPreview('/__travelatlas/editor/media/reread/preview', { scope }, isMediaRereadPreview)
+
+/** Write a re-read preview: the same scope and its digest, on the preview's revision. */
+export const rereadMedia = (preview: Pick<MediaRereadPreview, 'scope' | 'planDigest' | 'revision'>, options: EditorWriteOptions = {}): Promise<MediaRereadResult> =>
+  editorWrite('/__travelatlas/editor/media/reread', 'POST', { scope: preview.scope, planDigest: preview.planDigest }, confirmed(isMediaRereadResult),
+    { ...options, baseRevision: preview.revision, retryStale: false })
+
+/** The files deleted for good and back in the Inbox (scans the Inbox): of one city, or all. */
+export const listMediaReimportCandidates = (cityId?: string): Promise<MediaReimportCandidates> =>
+  mediaPreview('/__travelatlas/editor/media/reimport/candidates', cityId === undefined ? {} : { cityId }, isMediaReimportCandidates)
+
+/** What re-importing one of those files would do (the record it becomes; nothing else of the Inbox is imported). */
+export const previewMediaReimport = (path: string): Promise<MediaReimportPreview> =>
+  mediaPreview('/__travelatlas/editor/media/reimport/preview', { path }, isMediaReimportPreview)
+
+/** Write a re-import preview: the same file and its digest, on the preview's revision; `acceptFolderBindings` confirms the bindings it listed. */
+export const reimportMedia = (preview: Pick<MediaReimportPreview, 'planDigest' | 'revision'> & { file: { path: string } }, { acceptFolderBindings = false }: { acceptFolderBindings?: boolean } = {}, options: EditorWriteOptions = {}): Promise<MediaReimportResult> =>
+  editorWrite('/__travelatlas/editor/media/reimport', 'POST', { path: preview.file.path, planDigest: preview.planDigest, ...(acceptFolderBindings ? { acceptFolderBindings: true } : {}) },
+    confirmed(isMediaReimportResult), { ...options, baseRevision: preview.revision, retryStale: false })
 
 /** 彻底删除隐藏媒体。V2 模式的请求不变；新库模式（3C-4c）经 `editorWrite` 带上请求编号与修订号。 */
 export const deleteHiddenLocalMedia = (cityId: string, ids: string[], options?: EditorWriteOptions) => editorWrite('/__travelatlas/editor/media/delete', 'POST', { cityId, ids },

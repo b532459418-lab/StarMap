@@ -84,6 +84,7 @@ function ImportScope({ job, preview, disabled, onImport }: {
     <p>{t('planEffects', { restored: summary.editorEffects.restoredMediaIds.length, pins: summary.pins.length, outputs: summary.outputs.length })}</p>
     {unsent > 0 ? <p>{t('partial', { received: preview.selectedFileIds.length, unsent })}</p> : null}
     {summary.missing ? <p>{t('planMissing', { count: summary.missing })}</p> : null}
+    {preview.deletedSkipped ? <p data-testid="media-import-deleted-skipped">{t('mediaMaintenance:deletedSkipped', { count: preview.deletedSkipped })}</p> : null}
     {impactGroups.map((group) => <details key={group.testId} data-testid={group.testId} open={group.ids.length > 0}>
       <summary>{group.title}</summary>
       {group.ids.length > 0 ? <ul className="atlas-media-recovery-sources">

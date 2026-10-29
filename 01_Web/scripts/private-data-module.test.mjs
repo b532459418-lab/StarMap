@@ -25,7 +25,7 @@ import {
 import { getPrivatePaths, V2_DATA_FILE_NAMES, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { STORE_WRITE_ROUTES } from './store-session.mjs'
 import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
-import { V2_MEDIA_ROUTES, v2MediaRoute } from './v2-media-store.mjs'
+import { MEDIA_PREVIEW_ROUTES, V2_MEDIA_ROUTES, v2MediaRoute } from './v2-media-store.mjs'
 import { V2_FILE_KEYS, V2_FILE_NAMES } from '../src/data/compat/v2/v2Schema.ts'
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -223,11 +223,22 @@ const WRITE_ENDPOINTS = [
   'POST /__travelatlas/editor/upload',
   'POST /__travelatlas/editor/import',
   'POST /__travelatlas/editor/media/delete',
+  // 3C-5 F: re-reading and re-importing (their previews only read, but go through the same refusals).
+  'POST /__travelatlas/editor/media/reread/preview',
+  'POST /__travelatlas/editor/media/reread',
+  'POST /__travelatlas/editor/media/reimport/candidates',
+  'POST /__travelatlas/editor/media/reimport/preview',
+  'POST /__travelatlas/editor/media/reimport',
 ]
 const MEDIA_ENDPOINTS = [
   'POST /__travelatlas/editor/upload',
   'POST /__travelatlas/editor/import',
   'POST /__travelatlas/editor/media/delete',
+  'POST /__travelatlas/editor/media/reread/preview',
+  'POST /__travelatlas/editor/media/reread',
+  'POST /__travelatlas/editor/media/reimport/candidates',
+  'POST /__travelatlas/editor/media/reimport/preview',
+  'POST /__travelatlas/editor/media/reimport',
 ]
 const NON_MEDIA_WRITE_ENDPOINTS = WRITE_ENDPOINTS.filter((endpoint) => !MEDIA_ENDPOINTS.includes(endpoint))
 const READ_ONLY_ENDPOINTS = [
@@ -245,23 +256,29 @@ const sourceBetween = (source, start, end, includeEnd) => {
   return source.slice(from, includeEnd ? to + end.length : to)
 }
 
-test('插件的编辑接口：只读端点（两个目录搜索；读模型按常量路径）是插件里仅有的按方法与路径写死的分支；11 个写入端点全在两张路由表里', () => {
+test('插件的编辑接口：只读端点（两个目录搜索；读模型按常量路径）是插件里仅有的按方法与路径写死的分支；16 个写入端点全在两张路由表里', () => {
   const branches = [...pluginSource().matchAll(/request\.method === '([A-Z]+)' && url\.pathname === '([^']+)'/g)].map(([, method, pathname]) => `${method} ${pathname}`)
   assert.deepEqual([...branches].sort(), [...READ_ONLY_ENDPOINTS].sort())
-  assert.equal(WRITE_ENDPOINTS.length, 11)
+  assert.equal(WRITE_ENDPOINTS.length, 16)
   assert.deepEqual(
     [...Object.keys(STORE_WRITE_ROUTES), ...Object.keys(V2_MEDIA_ROUTES)].sort(),
     [...WRITE_ENDPOINTS].sort(),
   )
 })
 
-test('媒体路由表：三个媒体端点经 V2_MEDIA_ROUTES；别的端点（含换了方法的）没有媒体路由', () => {
+test('媒体路由表：八个媒体端点经 V2_MEDIA_ROUTES（3C-5 F 的三个预览不取租约）；别的端点（含换了方法的）没有媒体路由', () => {
   assert.deepEqual(Object.keys(V2_MEDIA_ROUTES).sort(), [...MEDIA_ENDPOINTS].sort())
   assert.deepEqual(Object.fromEntries(MEDIA_ENDPOINTS.map((endpoint) => [endpoint, v2MediaRoute(...endpoint.split(' '))])), {
     'POST /__travelatlas/editor/upload': 'upload',
     'POST /__travelatlas/editor/import': 'import',
     'POST /__travelatlas/editor/media/delete': 'delete',
+    'POST /__travelatlas/editor/media/reread/preview': 'reread-preview',
+    'POST /__travelatlas/editor/media/reread': 'reread',
+    'POST /__travelatlas/editor/media/reimport/candidates': 'reimport-candidates',
+    'POST /__travelatlas/editor/media/reimport/preview': 'reimport-preview',
+    'POST /__travelatlas/editor/media/reimport': 'reimport',
   })
+  assert.deepEqual([...MEDIA_PREVIEW_ROUTES].sort(), ['reimport-candidates', 'reimport-preview', 'reread-preview'])
   for (const endpoint of [...NON_MEDIA_WRITE_ENDPOINTS, ...READ_ONLY_ENDPOINTS, 'GET /__travelatlas/editor/upload', 'POST /__travelatlas/editor/media']) {
     assert.equal(v2MediaRoute(...endpoint.split(' ')), undefined, endpoint)
   }

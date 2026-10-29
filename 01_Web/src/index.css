@@ -7447,6 +7447,13 @@ ol.atlas-media-recovery-sources { list-style: decimal; }
 .atlas-media-recovery-error { color: #ffd2ac; white-space: pre-line; }
 .atlas-media-recovery-center details > summary { cursor: pointer; }
 
+/* 3C-5 F: re-reading descriptions and re-importing deleted photos (local editor only; the dialogs reuse the panel above). */
+.atlas-media-maintenance-entry { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.atlas-media-maintenance-entry > p { flex-basis: 100%; margin: 0; }
+.atlas-media-maintenance-warning { color: #ffd2ac; }
+.atlas-media-maintenance ul ul { margin: 4px 0 0; padding-left: 18px; list-style: disc; }
+.atlas-media-maintenance li > small { display: block; margin-top: 4px; }
+
 @media (max-width: 640px) {
   .atlas-media-recovery-backdrop { padding: 8px; }
   .atlas-media-recovery-center { max-height: calc(100dvh - 16px); padding: 14px; border-radius: 15px; }

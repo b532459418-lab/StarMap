@@ -147,6 +147,8 @@ const STORE_ACTOR = 'local-editor'
 /** Host codes the client handles by name, with their status; every other failure is E_STORE_FAILED. */
 const CLIENT_CODES = Object.freeze({
   E_STALE: 409, E_OPERATION_CONFLICT: 409, E_LIBRARY_BUSY: 409, E_STORE_BUSY: 409, E_STORE_READ_ONLY: 409, E_OUTCOME_UNKNOWN: 500,
+  // 3C-5 F: a stale media preview; media that is gone (also the code mediaRecords.ts rejects with).
+  E_MEDIA_PREVIEW_STALE: 409, E_MEDIA_NOT_FOUND: 409, E_MEDIA_REIMPORT_NOT_DELETED: 409,
 })
 
 /** A failure of a store read or write as the local editor's response: { status, body } (codes only, never values). */

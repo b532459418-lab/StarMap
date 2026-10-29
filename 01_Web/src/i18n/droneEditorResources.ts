@@ -57,7 +57,7 @@ export const droneEditorResources = {
     "panoramaWarning_other": "检测到 {{count}} 张图片不是常见的 2:1 等距柱状全景图，强行打开会产生明显拉伸。请把类型改为“航拍照片”，或重新选择正确的 360 全景图。",
     "aerialPanoramaHint_other": "检测到 {{count}} 张图片接近 2:1，可能是 360 全景图。如果它能水平环绕，请改选“360 全景”；如果只是普通宽幅航拍，可以继续导入。",
     "restoreHidden_other": "恢复本城隐藏影像（{{count}}）",
-    "deleteConfirm_other": "确定永久删除本城已隐藏的 {{count}} 个影像吗？\n\n这会同时删除投递箱原图、生成后的网页文件和目录记录，无法恢复。"
+    "deleteConfirm_other": "确定永久删除本城已隐藏的 {{count}} 个影像吗？\n\n这会同时删除投递箱原图、生成后的网页文件和目录记录，无法恢复。以后把原图放回投递箱，可以在「重新导入删除过的照片」里恢复。"
   },
   "en": {
     "heading": "Drone Media",
@@ -125,7 +125,7 @@ export const droneEditorResources = {
     "aerialPanoramaHint_other": "{{count}} images are close to 2:1 and may be 360° panoramas. Choose 360° panorama if they wrap horizontally; normal wide aerial photos can still be imported.",
     "restoreHidden_one": "Restore hidden city media ({{count}})",
     "restoreHidden_other": "Restore hidden city media ({{count}})",
-    "deleteConfirm_one": "Permanently delete {{count}} hidden media item from this city?\n\nIts Inbox original, generated web files and catalog record will be deleted. This cannot be undone.",
-    "deleteConfirm_other": "Permanently delete {{count}} hidden media items from this city?\n\nTheir Inbox originals, generated web files and catalog records will be deleted. This cannot be undone."
+    "deleteConfirm_one": "Permanently delete {{count}} hidden media item from this city?\n\nIts Inbox original, generated web files and catalog record will be deleted. This cannot be undone. If you later put the original back into the Inbox, “Re-import deleted photos” can restore it.",
+    "deleteConfirm_other": "Permanently delete {{count}} hidden media items from this city?\n\nTheir Inbox originals, generated web files and catalog records will be deleted. This cannot be undone. If you later put the originals back into the Inbox, “Re-import deleted photos” can restore them."
   }
 }

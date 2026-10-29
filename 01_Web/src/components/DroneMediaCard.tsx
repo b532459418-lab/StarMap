@@ -17,6 +17,7 @@ import type { DroneMediaItem } from '../data/droneMedia'
 import { useDroneMedia } from '../data/droneMedia'
 import type { CityId } from '../types/travel'
 import { LocalEditorToolbar } from './LocalEditorToolbar'
+import { MediaMaintenanceEntry } from './MediaMaintenanceEntry'
 import { DraftConflictNotice } from './DraftConflictNotice'
 import { MediaRecoveryEntry } from './MediaRecoveryEntry'
 import { requestMediaRecovery } from '../data/mediaRecoveryUi.ts'
@@ -470,6 +471,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
           </p>
         ) : null}
         {localEditorAvailable ? <MediaRecoveryEntry countryId={city.countryId} cityId={city.id} /> : null}
+        {import.meta.env.DEV && localEditorAvailable && !editing ? <MediaMaintenanceEntry cityId={city.id} cityName={name(city)} /> : null}
 
         {editing && hiddenIdsForCity.length > 0 ? (
           <div className="atlas-local-editor-hidden-actions">

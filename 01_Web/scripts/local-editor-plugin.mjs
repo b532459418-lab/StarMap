@@ -16,7 +16,7 @@ import {
 } from './private-data-module.mjs'
 import { getPrivatePaths, V2_PRIVATE_FILE_KEYS } from './private-profile.mjs'
 import { privateDataState } from './private-data-source.mjs'
-import { v2MediaRoute } from './v2-media-store.mjs'
+import { MEDIA_PREVIEW_ROUTES, v2MediaRoute } from './v2-media-store.mjs'
 import { V2WriteError } from '../src/data/editor/errors.ts'
 import { filterReadModelForPersonalBuild } from '../src/data/store/personalBuildReadModel.ts'
 import { createEditorWriteContext, editorErrorBody, normalizeLocalEditorError, readJsonBody } from './local-editor-errors.mjs'
@@ -810,6 +810,12 @@ export function travelAtlasLocalEditor(options = {}) {
                   invalidatePrivateDataModuleOnce()
                 }
                 return sendJson(response, jobResult.status, withDelta(jobResult.body, session, jobFrom))
+              }
+              // 3C-5 F：重新读取说明与重新导入的预览只读：不取租约（同媒体任务的预览），由 handleStoreMediaPreview 检查。
+              if (MEDIA_PREVIEW_ROUTES.has(mediaRouteName)) {
+                const { handleStoreMediaPreview } = await import('./store-media-endpoints.mjs')
+                const preview = await handleStoreMediaPreview({ routeName: mediaRouteName, privatePaths, mediaStore: await session.mediaStore(), input: await readJsonBody(request), deps: storeMediaDeps() })
+                return sendJson(response, preview.status, preview.body)
               }
               // 3C-4c：三个媒体端点写新库（./store-media-endpoints.mjs），在库租约之下；有未完成的媒体任务时拒绝，同 V2。
               const mediaInput = mediaRouteName === 'upload' ? undefined : await readJsonBody(request)

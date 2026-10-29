@@ -11,7 +11,7 @@ import { validateV2Files } from '../compat/v2/v2Schema.ts'
 import type { CanonicalMediaItem } from '../canonical/types.ts'
 import { memoryScopeReader } from './scopeReader.ts'
 import { storeFrom, viewOf } from './v2Store.fixture.ts'
-import { createMediaRecordCommands, removeMediaRecordCommands, rereadChanges, rereadMediaRecordCommands, type NewMediaRecord } from './mediaRecords.ts'
+import { createMediaRecordCommands, removeMediaRecordCommands, rereadChanges, rereadDiff, rereadMediaRecordCommands, type NewMediaRecord } from './mediaRecords.ts'
 import { OFFICIAL, OFFICIAL_POLICY, VIEW_SCOPES } from './officialDefinitions.ts'
 import { NOW, edgeCaseFixture } from './v2Store.fixture.ts'
 
@@ -148,4 +148,49 @@ test('re-reading a description: city, title and described keys follow the Inbox;
   // A description without a date removes it again.
   const again = apply(state, rereadMediaRecordCommands([{ assetId: record.assetId, item: { ...described, date: undefined } as unknown as CanonicalMediaItem }], { reader: memoryScopeReader(state) }).commands)
   assert.equal(viewOf(again).media.items.find(entry => entry.id === record.assetId)!.date, undefined)
+})
+
+test('re-read differences: each changed field with the store value (an edit made in the app included) and the Inbox value', () => {
+  const { store, cities, allocateId } = fixtureStore()
+  const [city, other] = cities
+  const record: NewMediaRecord = { assetId: allocateId(), entityId: allocateId(),
+    item: item({ placeId: city.id, originalFileName: 'p.jpg', description: 'Synthetic old', title: { names: { en: 'Synthetic title' } } } as Partial<CanonicalMediaItem> & { placeId: string; originalFileName: string }) }
+  const created = apply(store.state, createMediaRecordCommands([record], { reader: memoryScopeReader(store.state), allocateId }).commands)
+  // The title as the app saved it later (an edit of the entity's title).
+  const entity = created.entities.find(row => row.id === record.entityId)!
+  const edited = apply(created, [{ op: 'update', table: 'entities', id: entity.id, expectedRevision: entity.revision, value: { ...entity, revision: entity.revision + 1, title: { names: { en: 'Edited in the app' } } } }])
+  const described = item({ placeId: other.id, originalFileName: 'p.jpg', date: '2026-08-01', title: { names: { en: 'Synthetic title' } } } as Partial<CanonicalMediaItem> & { placeId: string; originalFileName: string })
+  assert.deepEqual(rereadDiff({ assetId: record.assetId, item: described }, { reader: memoryScopeReader(edited) }), [
+    { field: 'place', from: city.id, to: other.id },
+    { field: 'date', from: null, to: '2026-08-01' },
+    { field: 'description', from: 'Synthetic old', to: null },
+    { field: 'title', from: { names: { en: 'Edited in the app' } }, to: { names: { en: 'Synthetic title' } } },
+  ])
+  assert.deepEqual(rereadChanges({ assetId: record.assetId, item: described }, { reader: memoryScopeReader(edited) }), ['place', 'date', 'description', 'title'])
+  assert.throws(() => rereadDiff({ assetId: allocateId(), item: described }, { reader: memoryScopeReader(edited) }), { code: 'E_MEDIA_NOT_FOUND' })
+})
+
+test('a record a re-read moves to another city is never a cover there; its old city takes the next cover (3C-5 F)', () => {
+  const { store, cities, allocateId } = fixtureStore()
+  const [a, b] = cities
+  const record = (placeId: string, originalFileName: string): NewMediaRecord => ({ assetId: allocateId(), entityId: allocateId(), item: item({ placeId, originalFileName }) })
+  const moving = record(a.id, 'cover-a.jpg')
+  const staying = record(a.id, 'z-a.jpg')
+  const there = record(b.id, 'cover-b.jpg')
+  const created = apply(store.state, createMediaRecordCommands([moving, staying, there], { reader: memoryScopeReader(store.state), allocateId }).commands)
+  const flags = (state: FormalState) => Object.fromEntries(viewOf(state).media.items.filter(media => [moving, staying, there].some(entry => entry.assetId === media.id)).map(media => [media.originalFileName, [media.placeId === a.id ? 'A' : 'B', media.isCover]]))
+  assert.deepEqual(flags(created), { 'cover-a.jpg': ['A', true], 'z-a.jpg': ['A', false], 'cover-b.jpg': ['B', true] })
+  const coversOf = (state: FormalState, placeId: string) => viewOf(state).media.items.filter(media => media.placeId === placeId && media.kind === 'photo' && media.isCover).map(media => media.id)
+  const coversInB = coversOf(created, b.id)
+  const state = apply(created, rereadMediaRecordCommands([{ assetId: moving.assetId, item: { ...moving.item, placeId: b.id } }], { reader: memoryScopeReader(created) }).commands)
+  assert.deepEqual([flags(state)['cover-a.jpg'], flags(state)['cover-b.jpg']], [['B', false], ['B', true]])
+  assert.deepEqual(coversOf(state, b.id), coversInB.filter(id => id !== moving.assetId), 'the new city keeps its covers')
+  assert.equal(coversOf(state, a.id).length, 1, 'the old city has one cover again')
+  assert.deepEqual(validateV2Files(viewOf(state)), [])
+  // Moving a photo that is no cover changes no flag.
+  const flagsOf = (from: FormalState) => Object.fromEntries(viewOf(from).media.items.map(media => [media.id, media.isCover]))
+  const quietMover = viewOf(state).media.items.find(media => media.placeId === a.id && media.kind === 'photo' && !media.isCover)!
+  const quiet = apply(state, rereadMediaRecordCommands([{ assetId: quietMover.id, item: { ...quietMover, placeId: b.id } }], { reader: memoryScopeReader(state) }).commands)
+  assert.equal(viewOf(quiet).media.items.find(media => media.id === quietMover.id)!.placeId, b.id)
+  assert.deepEqual(flagsOf(quiet), flagsOf(state))
 })

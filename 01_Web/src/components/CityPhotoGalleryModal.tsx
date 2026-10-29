@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { getMediaSource } from '../data/mediaCatalog'
 import type { ImportedMediaCatalogItem } from '../data/mediaCatalog'
+import { localEditorAvailable } from '../data/editorState'
+import { requestMediaReread } from '../data/mediaMaintenanceUi.ts'
 import { useDialogFocus } from './useDialogFocus'
 
 export type CityPhotoGalleryRequest = {
@@ -97,6 +99,22 @@ export function CityPhotoGalleryModal({
             <p>{t('photos', { count: photos.length })}</p>
           </div>
           <div className="city-photo-gallery-actions">
+            {/* 3C-5 F (local editor only): re-read this photo's description. The gallery closes first, so focus is back on
+                its opener when the re-read dialog opens and returns there afterwards. */}
+            {import.meta.env.DEV && localEditorAvailable && mode === 'viewer' ? (
+              <button
+                type="button"
+                className="city-photo-gallery-view-toggle"
+                data-testid="media-reread-one"
+                onClick={() => {
+                  const request = { scope: { mediaId: activePhoto.id }, name: activePhoto.originalFileName }
+                  onClose()
+                  window.setTimeout(() => requestMediaReread(request), 0)
+                }}
+              >
+                <span>{t('mediaMaintenance:rereadOne')}</span>
+              </button>
+            ) : null}
             <button
               type="button"
               className="city-photo-gallery-view-toggle"
