@@ -20,6 +20,7 @@ import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts
 import { StoreError, jsonKey } from '../src/worldgraph/store/primitives.ts'
 import { memoryReader, refKey, referencesOf } from '../src/worldgraph/store/reader.ts'
 import { NOW as FIXTURE_NOW } from '../src/worldgraph/store/store.fixture.ts'
+import { OFFICIAL_DEFINITIONS_VERSION } from '../src/data/store/officialDefinitions.ts'
 
 const LIBRARY_ID = '01900000-0000-7000-8000-00000000abcd'
 const NOW = '2026-10-13T00:00:00.000Z'
@@ -115,7 +116,7 @@ test('adapter: Node version gate, connection settings read back, SQLite errors c
 
 test('create writes the schema, store_meta, application_id and user_version in one exclusive step', async (t) => {
   const { file, handle } = await freshStore(t)
-  assert.deepEqual(handle.meta(), { format: STORE_FORMAT, formatVersion: STORE_FORMAT_VERSION, libraryId: LIBRARY_ID, revision: 0, createdAt: NOW })
+  assert.deepEqual(handle.meta(), { format: STORE_FORMAT, formatVersion: STORE_FORMAT_VERSION, definitionsVersion: OFFICIAL_DEFINITIONS_VERSION, libraryId: LIBRARY_ID, revision: 0, createdAt: NOW })
   assert.equal(handle.readOnly, false)
   await handle.close()
   const db = rawConnection(file, { readOnly: true })
@@ -128,6 +129,8 @@ test('create writes the schema, store_meta, application_id and user_version in o
       ...Object.values(ROW_TABLES).map((spec) => spec.sql), 'store_meta', 'refs', 'tombstones', 'receipts', 'op_log', 'id_map', 'pending_file_ops',
       // 3C-4c (format 2): the media registry.
       'media_files', 'media_asset_files', 'media_sources', 'media_scan_cache',
+      // 3C-5 G (format 4): the official definitions version.
+      'store_definitions',
     ].sort())
     for (const { name, sql } of tables) assert.match(sql, /\) STRICT(, WITHOUT ROWID)?$/, name)
     // Plain-column references are foreign keys checked at COMMIT.

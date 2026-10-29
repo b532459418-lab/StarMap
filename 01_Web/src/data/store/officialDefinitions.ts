@@ -120,6 +120,16 @@ const V2_SOURCE_TITLES: Readonly<Record<string, readonly [string, string]>> = {
   [V2_SOURCES.import]: ['V2 file metadata', 'V2 文件元信息'],
 }
 
+/**
+ * The version of OFFICIAL_DEFINITIONS (3C-5 G). A store records the version its official definition rows have (the
+ * host's `store_definitions` table, store format 4); a store of an older version opens with E_STORE_UPGRADE_REQUIRED
+ * and `npm run store:upgrade` brings its rows to these (./definitionUpgrades.ts), one of a newer version opens with
+ * E_STORE_TOO_NEW. Raise it with every change of OFFICIAL_DEFINITIONS, and freeze the version it replaces in
+ * ./officialDefinitionHistory.fixture.ts: its test requires every version to be a compatible evolution of the one
+ * before (Core's checkDefinitionChange). Version 1: the definitions of every store before 3C-5 G.
+ */
+export const OFFICIAL_DEFINITIONS_VERSION = 1
+
 /** The official definition rows, in dependency order. */
 export const OFFICIAL_DEFINITIONS = freezeCopy({
   sources: [USER_SOURCE],

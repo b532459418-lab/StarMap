@@ -128,6 +128,13 @@ its source, citing the evidence that holds its region (before, the evidence of t
 added country, and only a dated one had an entry). A store of format 1 or 2 opens with `E_STORE_UPGRADE_REQUIRED`;
 `npm run store:upgrade` takes it to format 3 in one transaction (format 1's media seed, and a visit entry for each
 added country that had none; `src/data/store/storeFormatUpgrades.ts`).
+Store format 4 (3C-5 G): the table `store_definitions` records the version of the store's official definitions
+(`OFFICIAL_DEFINITIONS_VERSION` in `src/data/store/officialDefinitions.ts`; every version is frozen in
+`officialDefinitionHistory.fixture.ts`, and its test requires each to be a compatible evolution of the one before). A store
+whose format or definitions are older than the code's opens with `E_STORE_UPGRADE_REQUIRED`, one whose are newer with
+`E_STORE_TOO_NEW`; `npm run store:upgrade` takes both to the code's in one transaction under the library lease
+(`src/data/store/definitionUpgrades.ts`: new definitions are created, changed ones updated only when Core's
+`checkDefinitionChange` accepts them, so an incompatible change refuses the whole upgrade and changes nothing).
 The read model `starmap.read-model` (3C-5A) is a read-only copy of the store's rows (Core `src/worldgraph/readModel/`):
 the host builds it with `readModel()`, without tombstones, review receipts or the host's own tables, and
 `npm run store:export-read-model -- --out <new file> [--public]` writes it (`--public`: `src/data/store/publicReadModel.ts`;

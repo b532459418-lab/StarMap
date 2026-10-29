@@ -1,7 +1,8 @@
 /**
  * `npm run store:upgrade` (3C-4c, design v2 §2): upgrade the new library of a private root to the current store format,
  * in place. A store of an older format (format 1: before the media registry; format 2: before every added country had
- * its visit entry, 3C-5 E) opens with E_STORE_UPGRADE_REQUIRED, and the App shows that error with this command; nothing
+ * its visit entry, 3C-5 E; format 3: before the store recorded its official definitions version, 3C-5 G) or of older
+ * official definitions opens with E_STORE_UPGRADE_REQUIRED, and the App shows that error with this command; nothing
  * upgrades a store by itself.
  *
  * - Under the library lease (store-host.mjs upgradeStoreFile): the old format is checked exactly (schema, store_meta,
@@ -11,7 +12,11 @@
  *   (../src/data/store/storeFormatUpgrades.ts; the revision then moves on by one). Any failure leaves the file at its
  *   old format.
  * - Afterwards the full check (checkStoreFile: quick_check, Core's validation, the media registry) runs on the result.
- * - A store already at the current format is left alone (exit 0).
+ * - 3C-5 G: in the same transaction the official definition rows are brought to the code's (../src/data/store/
+ *   definitionUpgrades.ts) and the store's definitions version (store_definitions, format 4) to OFFICIAL_DEFINITIONS_VERSION;
+ *   a store at the current format whose definitions are older gets only that. An incompatible definition refuses the
+ *   upgrade (E_SCHEMA_CHANGE) and a store whose definitions are newer than the code's is E_STORE_TOO_NEW; nothing changes.
+ * - A store already at the current format and definitions version is left alone (exit 0).
  *
  * Messages carry codes, counts and the private root's path, never values. Exit codes: 0 done or nothing to do, 1 refused
  * or failed.
@@ -27,6 +32,7 @@ import { projectToV2Files } from './compat/store-projection.mjs'
 import { uuidv7 } from '../src/data/canonical/uuidv7.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { storeFormatUpgradeCommands } from '../src/data/store/storeFormatUpgrades.ts'
+import { officialDefinitionSyncCommands } from '../src/data/store/definitionUpgrades.ts'
 
 /**
  * The seed of a format-1 store (3C-4c, design v2 §5): the media registry from the store's own rows and projection, the
@@ -53,23 +59,27 @@ export function seedFromStore(privatePaths, report = () => {}) {
  * (a function returning an ISO time) and `requestId` are injectable (tests). Resolves { result, check, lines, seed };
  * a refusal throws StoreToolError, and a failed check after the upgrade does too (the upgrade itself is then committed).
  */
-export async function upgradeStore(privatePaths, { prepare, now, newId = uuidv7, requestId = uuidv7() } = {}) {
+export async function upgradeStore(privatePaths, { prepare, now, newId = uuidv7, requestId = uuidv7(), definitions, definitionsVersion } = {}) {
   if (privateDataSource(privatePaths) !== 'store') {
     throw new StoreToolError('E_NOT_STORE_MODE', ['这个私人根没有 data/store/world.sqlite（不是新库模式），没有可以升级的新库。'])
   }
   const file = storeFileOf(privatePaths)
-  let seed, created = []
+  let seed, created = [], synced = []
   const result = await upgradeStoreFile(file, {
     privatePaths, policy: OFFICIAL_POLICY, requestId, prepare: prepare ?? seedFromStore(privatePaths, (report) => { seed = report }), ...(now ? { now } : {}),
+    ...(definitionsVersion === undefined ? {} : { definitionsVersion }),
     commands: ({ state, fromVersion }) => {
       created = storeFormatUpgradeCommands(state, fromVersion, { now: now ? now() : new Date().toISOString(), newId })
-      return created
+      // 3C-5 G: the official definition rows brought to the code's, in the same request (an incompatible change throws
+      // E_SCHEMA_CHANGE here, before the transaction: nothing is written).
+      synced = officialDefinitionSyncCommands(state, definitions)
+      return [...created, ...synced]
     },
   })
   if (!result.upgraded) {
-    return { result, check: undefined, lines: [`新库已经是当前的存储格式（${STORE_FORMAT_VERSION}），没有改动。`] }
+    return { result, check: undefined, lines: [`新库已经是当前的存储格式（${STORE_FORMAT_VERSION}）和官方定义版本（${result.toDefinitions}），没有改动。`] }
   }
-  const check = await checkStoreFile(file, { policy: OFFICIAL_POLICY })
+  const check = await checkStoreFile(file, { policy: OFFICIAL_POLICY, ...(definitionsVersion === undefined ? {} : { definitionsVersion }) })
   if (!check.ok) {
     throw new StoreToolError('E_UPGRADE_CHECK', [`升级已经提交（格式 ${result.fromVersion} → ${result.toVersion}），但之后的全量检查没有通过：`, ...check.problems])
   }
@@ -78,10 +88,11 @@ export async function upgradeStore(privatePaths, { prepare, now, newId = uuidv7,
     result, check, seed,
     lines: [
       result.revision === result.fromRevision
-        ? `已把新库从存储格式 ${result.fromVersion} 升级到 ${result.toVersion}（修订号 ${result.revision} 不变）。`
-        : `已把新库从存储格式 ${result.fromVersion} 升级到 ${result.toVersion}（修订号 ${result.fromRevision} → ${result.revision}）。`,
+        ? `已把新库从存储格式 ${result.fromVersion} 升级到 ${result.toVersion}，官方定义版本 ${result.fromDefinitions} → ${result.toDefinitions}（修订号 ${result.revision} 不变）。`
+        : `已把新库从存储格式 ${result.fromVersion} 升级到 ${result.toVersion}，官方定义版本 ${result.fromDefinitions} → ${result.toDefinitions}（修订号 ${result.fromRevision} → ${result.revision}）。`,
       ...(result.fromVersion < 2 ? (seed ? seedReportLines(seed) : [`媒体登记：文件 ${media.files ?? 0} 条，资产关联 ${media.assetFiles ?? 0} 条，来源 ${media.sources ?? 0} 条。`]) : []),
       ...(result.fromVersion < 3 ? [`手动添加的国家：${created.length} 个没有访问日期的国家补上了访问条目（官方视图从此按条目识别它们，3C-5 E）。`] : []),
+      ...(synced.length ? [`官方定义：更新或新增了 ${synced.length} 条定义（3C-5 G）。`] : []),
       '全量检查通过。',
     ],
   }
