@@ -14,6 +14,7 @@ import { walkInbox } from './media-inbox.mjs'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { createMediaService, handleMediaStore } from './media-service.mjs'
 import { scanInbox } from './media-scan.mjs'
+import { runStoreMediaCli } from './store-media-cli.mjs'
 import { storeFileOf } from './private-data-source.mjs'
 import { getPrivatePaths } from './private-profile.mjs'
 import { openStore } from './store-host.mjs'
@@ -55,6 +56,13 @@ async function storeState(paths) {
 }
 const sourceAt = (state, portable) => state.registry.sources.find((item) => item.pathKey === pathKeyOf(portable) && item.state === 'present')
 const entityAt = (state, portable) => state.entities.find((entity) => entity.id === sourceAt(state, portable)?.recordId)
+/** `npm run media:check -- …` (reads only): its printed lines. */
+async function check(paths, argv) {
+  const lines = []
+  const code = await runStoreMediaCli({ privatePaths: paths, argv, log: (line) => lines.push(String(line)), logError: (line) => lines.push(String(line)) })
+  assert.equal(code, 0, lines.join('\n'))
+  return lines.join('\n')
+}
 
 const NO_PLACE_PHOTO = 'MediaInbox/_no-place/photos/lost.jpg'
 const NO_PLACE_DRONE = 'MediaInbox/_无地点/drone/flight.jpg'
@@ -133,6 +141,7 @@ test('moves between _no-place and a city folder keep the record and its place; a
   assert.equal(entityAt(state, inCity).id, record.id)
   assert.equal(Object.hasOwn(entityAt(state, inCity).fields, 'place'), false)
   // A re-read of the path gives it Harbor Town (null → place).
+  assert.match(await check(paths, ['--reread', inCity]), new RegExp(`place：无 → ${PLACE.harbor}`), 'media:check names the absent place 无')
   let preview = await withService(paths, (service) => service.planReread({ scope: { paths: [inCity] } }))
   assert.deepEqual(preview.records.map((item) => item.diff.find((entry) => entry.field === 'place')), [{ field: 'place', from: null, to: PLACE.harbor }])
   assert.equal((await withService(paths, (service, leaseToken) => service.rereadDescriptions({ scope: { paths: [inCity] }, planDigest: preview.digest, requestId: uuidv7(), leaseToken }))).committed, true)
@@ -144,6 +153,7 @@ test('moves between _no-place and a city folder keep the record and its place; a
   await rename(inboxFile(paths, inCity), inboxFile(paths, NO_PLACE_PHOTO))
   await importNow(paths)
   const assetId = entityAt(await storeState(paths), NO_PLACE_PHOTO).fields.asset
+  assert.match(await check(paths, ['--reread', NO_PLACE_PHOTO]), new RegExp(`place：${PLACE.harbor} → 无`))
   preview = await withService(paths, (service) => service.planReread({ scope: { mediaIds: [assetId] } }))
   assert.deepEqual(preview.records[0].diff.find((entry) => entry.field === 'place'), { field: 'place', from: PLACE.harbor, to: null })
   await withService(paths, (service, leaseToken) => service.rereadDescriptions({ scope: { mediaIds: [assetId] }, planDigest: preview.digest, requestId: uuidv7(), leaseToken }))
