@@ -144,6 +144,12 @@ export const isMediaReimportResult = (value: unknown): value is MediaReimportRes
 /** The fields a re-read can change, in the order the preview lists them (place, the described keys, title). */
 export const MEDIA_REREAD_FIELDS = Object.freeze(['place', 'kind', 'date', 'resolution', 'captureType', 'description', 'position', 'altitudeMeters', 'relativeAltitudeMeters', 'status', 'title'] as const)
 
+/**
+ * The text key of an empty value of a re-read preview: `noPlace` for the place (3C-5 G: a file moved into the Inbox's
+ * `_no-place` folder loses its place, "X → none"), `empty` for any other field.
+ */
+export const rereadEmptyKey = (field: string): 'noPlace' | 'empty' => (field === 'place' ? 'noPlace' : 'empty')
+
 /** The preview is out of date: the write was refused before anything was written (preview again). */
 export const isStalePreviewCode = (code: unknown) => code === 'E_MEDIA_PREVIEW_STALE' || code === 'E_STALE'
 

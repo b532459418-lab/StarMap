@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { previewMediaReread, rereadMedia } from '../data/localEditorClient'
-import { isStalePreviewCode, rereadValueText, type MediaRereadPreview, type MediaRereadProblemReason, type MediaRereadScope } from '../data/mediaMaintenance.ts'
+import { isStalePreviewCode, rereadEmptyKey, rereadValueText, type MediaRereadPreview, type MediaRereadProblemReason, type MediaRereadScope } from '../data/mediaMaintenance.ts'
 import { MEDIA_REREAD_OPEN_EVENT, type MediaRereadRequest } from '../data/mediaMaintenanceUi.ts'
 import { formatEditorError } from '../i18n/editorErrors.ts'
 import { usePlaceNames } from '../i18n/usePlaceNames'
@@ -94,7 +94,7 @@ export function MediaRereadDialog() {
       setPhase(isStalePreviewCode(codeOf(error)) ? { kind: 'stale' } : { kind: 'failed', error })
     }
   }
-  const text = (field: string, value: unknown) => rereadValueText(field, value, locale, placeName) ?? t('empty')
+  const text = (field: string, value: unknown) => rereadValueText(field, value, locale, placeName) ?? (rereadEmptyKey(field) === 'noPlace' ? t('noPlace') : t('empty'))
   const fieldLabel = (field: string) => {
     switch (field) {
       case 'place': return t('field_place')

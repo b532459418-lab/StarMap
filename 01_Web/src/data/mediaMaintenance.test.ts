@@ -112,7 +112,7 @@ test('a write that confirms a preview is not sent again after E_STALE: the page 
 })
 
 test('values of a re-read preview as text, and why an entry is disabled', async () => {
-  const { rereadValueText } = await import('./mediaMaintenance.ts')
+  const { rereadEmptyKey, rereadValueText } = await import('./mediaMaintenance.ts')
   const { mediaMaintenanceBlockOf } = await import('./mediaMaintenanceUi.ts')
   const place = (id: string) => `Place ${id}`
   assert.equal(rereadValueText('place', 'city-1', 'en', place), 'Place city-1')
@@ -121,6 +121,9 @@ test('values of a re-read preview as text, and why an entry is disabled', async 
   assert.equal(rereadValueText('position', { lat: 1.5, lng: -2 }, 'en', place), '1.5, -2')
   assert.equal(rereadValueText('altitudeMeters', 120, 'en', place), '120')
   assert.deepEqual([null, undefined, ''].map((value) => rereadValueText('date', value, 'en', place)), [undefined, undefined, undefined])
+  // 3C-5 G: a place that a re-read removes (or gives) reads "none", any other empty value "(empty)".
+  assert.equal(rereadValueText('place', null, 'en', place), undefined)
+  assert.deepEqual(['place', 'date', 'title'].map(rereadEmptyKey), ['noPlace', 'empty', 'empty'])
   const clear = { storeReadOnly: false, storeMigrationRequired: false, legacyUnmigrated: false, storeRecoveryRequired: false, mediaTaskOpen: false, otherWriting: false }
   assert.equal(mediaMaintenanceBlockOf(clear), undefined)
   assert.equal(mediaMaintenanceBlockOf({ ...clear, storeReadOnly: true, mediaTaskOpen: true }), 'readOnly')
