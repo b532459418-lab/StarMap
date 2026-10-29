@@ -37,7 +37,8 @@
 export function liveRecordsOf({ entities }, assetFiles) {
   const linked = new Map(assetFiles.map((link) => [link.assetId, link.sha256]))
   return entities.filter((entity) => entity.typeId === 'starmap:media' && typeof entity.fields?.asset === 'string')
-    .map((entity) => ({ recordId: entity.id, assetId: entity.fields.asset, placeId: entity.fields.place, sha256: linked.get(entity.fields.asset) }))
+    // 3C-5 G: a record without a place has placeId null, as a fact of the `_no-place` folder has.
+    .map((entity) => ({ recordId: entity.id, assetId: entity.fields.asset, placeId: entity.fields.place ?? null, sha256: linked.get(entity.fields.asset) }))
 }
 
 /** Kinds of a confirmation: an ambiguous match, content a deleted source had, a file that replaced another at its path. */

@@ -24,7 +24,8 @@ export type MediaJobPreview = {
   deletedSkipped?: number
   plan: {digest: string; summary: {
     addedIds: string[]; updatedIds: string[]; removedIds: string[]
-    sources: {id: string; sourcePath: string; sha256: string; bytes: number; kind: string; placeId: string}[]
+    /** 3C-5 G: `placeId` null for a file of the Inbox's `_no-place` folder (or the source of a record without a place). */
+    sources: {id: string; sourcePath: string; sha256: string; bytes: number; kind: string; placeId: string | null}[]
     /** Batch 2A: folder bindings found by name (or a legacy country.json); importing them needs the user's confirmation. */
     pins: MediaFolderBinding[]
     /** `sha256` is null for a file the new library generates at import (3C-4c). */
@@ -136,7 +137,7 @@ export function assertMediaJobPreview(value: unknown): asserts value is MediaJob
   const summary = value.plan.summary
   if (!Array.isArray(summary.sourceMatches) || summary.missing === undefined) throw invalid()
   if (!strings(summary.addedIds) || !strings(summary.updatedIds) || !strings(summary.removedIds)
-    || !Array.isArray(summary.sources) || summary.sources.some(item => !record(item) || typeof item.id !== 'string' || !relativePath(item.sourcePath) || !hash(item.sha256) || !Number.isSafeInteger(item.bytes) || Number(item.bytes) <= 0 || !['photo', 'aerialPhoto', 'panorama360', 'video'].includes(String(item.kind)) || !uuid(item.placeId))
+    || !Array.isArray(summary.sources) || summary.sources.some(item => !record(item) || typeof item.id !== 'string' || !relativePath(item.sourcePath) || !hash(item.sha256) || !Number.isSafeInteger(item.bytes) || Number(item.bytes) <= 0 || !['photo', 'aerialPhoto', 'panorama360', 'video'].includes(String(item.kind)) || !(item.placeId === null || uuid(item.placeId)))
     || !Array.isArray(summary.pins) || summary.pins.some(item => !record(item) || !relativePath(item.sourcePath) || !uuid(item.placeId)
       || !relativePath(item.folder) || item.sourcePath !== `${item.folder}/place.json` || !['city', 'country'].includes(String(item.subtype))
       || !['name', 'country.json'].includes(String(item.source)) || !record(item.names) || Object.values(item.names).some(name => typeof name !== 'string'))
