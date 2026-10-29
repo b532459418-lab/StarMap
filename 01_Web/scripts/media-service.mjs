@@ -235,6 +235,9 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     const lines = [
       `StarMap 媒体导入（新库）：投递箱 ${plan.scan.facts.length} 个文件；新资料 ${plan.newRecords.length}，移动 ${c.moves.length}，不在投递箱中 ${plan.decisions.gone.length}，已删除不再导入 ${c.deletedSkips.length}。`,
     ]
+    // 3C-5 G: media without a place (the `_no-place` folder) become records the App does not show yet.
+    const placeless = plan.newRecords.filter((item) => item.fact.placeId === null).length
+    if (placeless) lines.push(`\n没有地点的新资料 ${placeless} 条（来自投递箱的 _no-place 文件夹）：会导入，但应用里暂不显示。`)
     if (c.deletedSkips.length) {
       // 3C-5 F: the files skipped by rule 3 are listed, so they can be restored on purpose.
       lines.push(`\n之前彻底删除过、又出现在投递箱里的文件（${c.deletedSkips.length}）：没有导入。要恢复，用 npm run media:check -- --reimport <路径> 预览，或者在应用的城市面板里「重新导入删除过的照片」。`,
@@ -382,7 +385,9 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     }
     if (Array.isArray(scope?.mediaIds) && scope.mediaIds.length && scope.mediaIds.every((value) => typeof value === 'string')) {
       const mediaIds = [...new Set(scope.mediaIds)].sort()
-      for (const id of mediaIds) if (!reader.mediaItem(id)) fail('E_MEDIA_NOT_FOUND')
+      // 3C-5 G: media without a place too (the official view leaves them out).
+      const placeless = new Set(reader.placelessMedia().map((media) => media.id))
+      for (const id of mediaIds) if (!reader.mediaItem(id) && !placeless.has(id)) fail('E_MEDIA_NOT_FOUND')
       return { mediaIds }
     }
     if (typeof scope?.cityId === 'string' && scope.cityId) {
@@ -417,14 +422,15 @@ export function createMediaService({ privatePaths, store, allocateId = () => uui
     const normalized = rereadScopeOf(scope, reader)
     const entities = store.mediaEntities().filter((row) => row.typeId === 'starmap:media' && typeof row.fields?.asset === 'string')
     const stored = new Map()
+    const placeless = new Map(reader.placelessMedia().map((media) => [media.id, media]))
     for (const row of entities) {
-      const media = reader.mediaItem(row.fields.asset)
+      const media = reader.mediaItem(row.fields.asset) ?? placeless.get(row.fields.asset)
       if (media && Number.isFinite(media.width) && Number.isFinite(media.height) && media.width > 0 && media.height > 0) stored.set(row.fields.asset, { width: media.width, height: media.height })
     }
     const { libraryId } = store.meta()
     const registry = store.mediaRegistry()
     const assetOf = new Map(entities.map((row) => [row.id, row.fields.asset]))
-    const placeOf = new Map(entities.map((row) => [row.id, row.fields.place]))
+    const placeOf = new Map(entities.map((row) => [row.id, row.fields.place ?? null]))
     const linked = new Map(registry.assetFiles.map((link) => [link.assetId, link.sha256]))
     const scan = await scanInbox({ privatePaths, places, cache: registry.scanCache, hashFile })
     const facts = new Map(scan.facts.map((fact) => [fact.pathKey, fact]))

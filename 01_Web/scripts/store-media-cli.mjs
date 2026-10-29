@@ -104,15 +104,15 @@ async function verifyGeneratedFiles(privatePaths, registry) {
   return [`校验：核对了新库登记的 ${checked} 个生成文件。`, ...lines]
 }
 
-/** A value of a re-read difference as the command line prints it. */
-const valueText = (value) => (value === null ? '（空）' : typeof value === 'string' ? value : JSON.stringify(value))
+/** A value of a re-read difference as the command line prints it; 3C-5 G: an absent place is 无 (media without a place). */
+const valueText = (value, field) => (value === null ? (field === 'place' ? '无' : '（空）') : typeof value === 'string' ? value : JSON.stringify(value))
 
 const rereadLines = (plan, apply) => {
   const changed = plan.records.filter((record) => record.changes.length)
   const lines = [`重新读取说明：${plan.records.length} 条资料，其中 ${changed.length} 条有变化。`]
   for (const record of changed) {
     lines.push(`- ${record.sources.join('、')}：${record.changes.join('、')}`)
-    for (const entry of record.diff) lines.push(`    ${entry.field}：${valueText(entry.from)} → ${valueText(entry.to)}`)
+    for (const entry of record.diff) lines.push(`    ${entry.field}：${valueText(entry.from, entry.field)} → ${valueText(entry.to, entry.field)}`)
   }
   if (plan.conflicts.length) {
     lines.push(`

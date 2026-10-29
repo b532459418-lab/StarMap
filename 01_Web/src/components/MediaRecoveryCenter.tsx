@@ -54,9 +54,11 @@ function ImportScope({ job, preview, disabled, onImport }: {
     const source = sourcesById.get(id)
     const title = item ? name({ nameZh: item.titleZh, nameEn: item.titleEn }) : ''
     const fileName = item?.originalFileName || source?.sourcePath.split('/').at(-1)
+    // 3C-5 G: a file of the Inbox's `_no-place` folder has no place (placeId null).
+    const placeId = item?.cityId ?? source?.placeId
     return {
       label: title && fileName ? `${title} · ${fileName}` : title || fileName || t('mediaRecord', { id }),
-      target: targetLabel(item?.cityId ?? source?.placeId, item?.countryId),
+      target: placeId === null ? t('noPlace') : targetLabel(placeId, item?.countryId),
     }
   }
   const impactGroups = [
@@ -111,7 +113,7 @@ function ImportScope({ job, preview, disabled, onImport }: {
       <ul className="atlas-media-recovery-sources">
         {summary.sources.map((source) => <li key={`${source.id}/${source.sourcePath}`}>
           <span>{source.sourcePath}</span>
-          <small>{places.has(source.placeId) ? name({ id: source.placeId }) : t('unknownPlace')}{source.placeId !== job.cityId ? ` · ${t('otherCity')}` : ''}</small>
+          <small>{source.placeId === null ? t('noPlace') : places.has(source.placeId) ? name({ id: source.placeId }) : t('unknownPlace')}{source.placeId !== null && source.placeId !== job.cityId ? ` · ${t('otherCity')}` : ''}</small>
         </li>)}
       </ul>
     </details>

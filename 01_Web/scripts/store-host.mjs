@@ -25,6 +25,7 @@ import { FORMAL_TABLES, readFormalState as readFormalStateCore } from '../src/wo
 import { memoryReader, refKey, referencesOf } from '../src/worldgraph/store/reader.ts'
 import { planCommands } from '../src/worldgraph/store/planner.ts'
 import { readModelOf } from '../src/worldgraph/readModel/build.ts'
+import { OFFICIAL_DEFINITIONS_VERSION } from '../src/data/store/officialDefinitions.ts'
 import {
   StoreError, freezeCopy, jsonKey, opaqueId, reject, revision, shape, utcTimestamp, uuid, validateJson,
 } from '../src/worldgraph/store/primitives.ts'
@@ -35,9 +36,10 @@ export const STORE_FORMAT = 'starmap.formal-store'
 /**
  * Also the SQLite `user_version`. Raise it only together with an entry in MIGRATIONS. 2 since 3C-4c: the media registry
  * (./store-media-registry.mjs, design v2 §2). 3 since 3C-5 E: the same schema; every added country has its visit entry
- * (../src/data/store/storeFormatUpgrades.ts), so the official view reads added countries by the entry.
+ * (../src/data/store/storeFormatUpgrades.ts), so the official view reads added countries by the entry. 4 since 3C-5 G:
+ * the `store_definitions` table records the version of the store's official definitions (DEFINITIONS_SCHEMA).
  */
-export const STORE_FORMAT_VERSION = 3
+export const STORE_FORMAT_VERSION = 4
 /** `PRAGMA application_id` of a formal store file ('SMF1'). */
 export const STORE_APPLICATION_ID = 0x534d4631
 /**
@@ -56,7 +58,20 @@ export const storePathFor = (privateRoot) => path.join(privateRoot, ...STORE_REL
  * store:upgrade`), never by an open. Version 1 is the first; 1 → 2 adds the media registry; 2 → 3 changes no table
  * (the rows it needs come with the upgrade's request: upgradeStoreFile `commands`).
  */
-const MIGRATIONS = Object.freeze({ 1: Object.freeze({ to: 2, statements: MEDIA_SCHEMA }), 2: Object.freeze({ to: 3, statements: Object.freeze([]) }) })
+/**
+ * 3C-5 G: the version of the store's official definitions (../src/data/store/officialDefinitions.ts
+ * OFFICIAL_DEFINITIONS_VERSION), one row. A store opens only when it equals the code's: an older one is
+ * E_STORE_UPGRADE_REQUIRED (`npm run store:upgrade` brings the rows and the version up), a newer one E_STORE_TOO_NEW.
+ */
+export const DEFINITIONS_SCHEMA = Object.freeze([
+  'CREATE TABLE store_definitions (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), version INTEGER NOT NULL CHECK (version >= 1)) STRICT',
+])
+const MIGRATIONS = Object.freeze({
+  1: Object.freeze({ to: 2, statements: MEDIA_SCHEMA }),
+  2: Object.freeze({ to: 3, statements: Object.freeze([]) }),
+  // 3C-5 G: every store before format 4 has the official definitions of version 1.
+  3: Object.freeze({ to: 4, statements: Object.freeze([...DEFINITIONS_SCHEMA, 'INSERT INTO store_definitions (singleton, version) VALUES (1, 1)']) }),
+})
 
 const fail = (code, details) => { throw new StoreHostError(code, details) }
 const missing = (error) => error?.code === 'ENOENT'
@@ -192,8 +207,10 @@ export const SCHEMA_V1 = Object.freeze([
 
 /** Every CREATE statement of user_version 2 (3C-4c): version 1 and the media registry (./store-media-registry.mjs). */
 export const SCHEMA_V2 = Object.freeze([...SCHEMA_V1, ...MEDIA_SCHEMA])
+/** Every CREATE statement of user_version 4 (3C-5 G): version 2's (3 is 2's) and the definitions version. */
+export const SCHEMA_V4 = Object.freeze([...SCHEMA_V2, ...DEFINITIONS_SCHEMA])
 /** The schema of each format version this host knows (the current one, and the ones it upgrades from). 3 is 2's. */
-const SCHEMAS = Object.freeze({ 1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V2 })
+const SCHEMAS = Object.freeze({ 1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V2, 4: SCHEMA_V4 })
 
 /** The host's own tables besides store_meta (tableCounts). */
 const HOST_TABLES = Object.freeze(['refs', 'tombstones', 'receipts', 'op_log', 'id_map', 'pending_file_ops', ...MEDIA_TABLES])
@@ -773,6 +790,29 @@ function formatDiagnostic(db, version) {
   if (pragmaValue(db, 'auto_vacuum') !== STORE_AUTO_VACUUM) return { code: 'E_STORE_SCHEMA', detail: { pragma: 'auto_vacuum' } }
   const meta = db.prepare('SELECT format, format_version FROM store_meta WHERE singleton = 1').get()
   if (meta?.format !== STORE_FORMAT || meta.format_version !== version) return { code: 'E_STORE_SCHEMA', detail: { table: 'store_meta' } }
+  if (version >= 4 && definitionsVersionOf(db) === undefined) return { code: 'E_STORE_SCHEMA', detail: { table: 'store_definitions' } }
+  return undefined
+}
+
+/**
+ * The version of the official definitions a store records (3C-5 G): its `store_definitions` row; 1 for a store of an
+ * older format (every store before format 4 has version 1); undefined when a format-4 store lacks the row.
+ */
+function definitionsVersionOf(db, formatVersion = 4) {
+  if (formatVersion < 4) return 1
+  const row = db.prepare('SELECT version FROM store_definitions WHERE singleton = 1').get()
+  return Number.isSafeInteger(row?.version) && row.version >= 1 ? row.version : undefined
+}
+
+/**
+ * 3C-5 G: the store's definitions version against the code's (`expected`): older is E_STORE_UPGRADE_REQUIRED, newer
+ * E_STORE_TOO_NEW (code that predates them), both with `detail.definitions`. Undefined when they are equal.
+ */
+function definitionsDiagnostic(db, expected) {
+  const definitions = definitionsVersionOf(db)
+  if (definitions === undefined) return { code: 'E_STORE_SCHEMA', detail: { table: 'store_definitions' } }
+  if (definitions < expected) return { code: 'E_STORE_UPGRADE_REQUIRED', detail: { definitions } }
+  if (definitions > expected) return { code: 'E_STORE_TOO_NEW', detail: { definitions } }
   return undefined
 }
 
@@ -785,7 +825,7 @@ function formatDiagnostic(db, version) {
  * { code, detail? }. Never repairs or upgrades anything: an older store stays as it is until
  * `npm run store:upgrade` (upgradeStoreFile).
  */
-function openDiagnostic(db) {
+function openDiagnostic(db, settings) {
   try {
     if (pragmaValue(db, 'application_id') !== STORE_APPLICATION_ID) return { code: 'E_STORE_APPLICATION_ID' }
     const version = pragmaValue(db, 'user_version')
@@ -795,7 +835,7 @@ function openDiagnostic(db) {
         ? { code: 'E_STORE_UPGRADE_REQUIRED', detail: { version } }
         : { code: 'E_STORE_VERSION', detail: { version } }
     }
-    return formatDiagnostic(db, STORE_FORMAT_VERSION)
+    return formatDiagnostic(db, STORE_FORMAT_VERSION) ?? definitionsDiagnostic(db, settings.definitionsVersion)
   } catch (error) {
     return openFailure(error)
   }
@@ -886,7 +926,10 @@ function writeOptions(options) {
 function hostOptions(options) {
   const now = options.now ?? (() => new Date().toISOString())
   if (typeof now !== 'function') fail('E_STORE_OPTIONS', { path: 'now' })
-  return { now, policy: options.policy ?? {}, phase: options.unsafeTestPhase }
+  // 3C-5 G: the official definitions version the store must have (tests set another one to play older or newer code).
+  const definitionsVersion = options.definitionsVersion ?? OFFICIAL_DEFINITIONS_VERSION
+  if (!Number.isSafeInteger(definitionsVersion) || definitionsVersion < 1) fail('E_STORE_OPTIONS', { path: 'definitionsVersion' })
+  return { now, policy: options.policy ?? {}, phase: options.unsafeTestPhase, definitionsVersion }
 }
 
 /**
@@ -926,7 +969,7 @@ function openHandle(file, options, { session }) {
   const timings = { connectMs: performance.now() - started }
   let diagnostic
   try {
-    diagnostic = openDiagnostic(db)
+    diagnostic = openDiagnostic(db, settings)
     if (!diagnostic && session) diagnostic = startSession(db, settings, timings)
   } catch (error) { closeQuietly(db); throw error }
   timings.openMs = performance.now() - started
@@ -947,7 +990,7 @@ function readOnlyHandle(file, settings, diagnostic) {
   let failure = diagnostic
   try {
     db = openConnection(file, { readOnly: true })
-    failure ??= openDiagnostic(db)
+    failure ??= openDiagnostic(db, settings)
   } catch (error) {
     closeQuietly(db)
     db = undefined
@@ -1086,8 +1129,8 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
     /** Open timings in milliseconds (connectMs, openMs, and quickCheckMs when the open ran quick_check), for benchmarks. */
     get openTimings() { return timings },
     /**
-     * store_meta as an object: format, formatVersion, libraryId, revision, createdAt, and restoredFrom (the JSON value
-     * setRestoredFrom wrote) when the store was restored from a backup.
+     * store_meta as an object: format, formatVersion, definitionsVersion (3C-5 G, store_definitions), libraryId, revision,
+     * createdAt, and restoredFrom (the JSON value setRestoredFrom wrote) when the store was restored from a backup.
      */
     meta() {
       return readTransaction((connection) => {
@@ -1098,8 +1141,8 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
           try { restoredFrom = deepFreeze(JSON.parse(row.restored_from)) } catch { fail('E_STORE_CORRUPT', { path: 'store_meta.restored_from' }) }
         }
         return Object.freeze({
-          format: row.format, formatVersion: row.format_version, libraryId: row.library_id, revision: row.revision, createdAt: row.created_at,
-          ...(restoredFrom === undefined ? {} : { restoredFrom }),
+          format: row.format, formatVersion: row.format_version, definitionsVersion: definitionsVersionOf(connection, row.format_version),
+          libraryId: row.library_id, revision: row.revision, createdAt: row.created_at, ...(restoredFrom === undefined ? {} : { restoredFrom }),
         })
       })
     },
@@ -1389,6 +1432,7 @@ export async function createStore(file, options = {}) {
       // The creating handle is the store's first writer session: clean_shutdown 0 until its close().
       db.prepare('INSERT INTO store_meta (singleton, format, format_version, library_id, revision, created_at, clean_shutdown) VALUES (1, ?, ?, ?, 0, ?, 0)')
         .run(STORE_FORMAT, STORE_FORMAT_VERSION, options.libraryId, createdAt)
+      db.prepare('INSERT INTO store_definitions (singleton, version) VALUES (1, ?)').run(settings.definitionsVersion)
       if (initial) applyRequest(db, initial, requestDigest(initial), createdAt, settings, () => {})
       db.exec('COMMIT')
     } catch (error) {
@@ -1444,26 +1488,28 @@ export async function upgradeStoreFile(file, options = {}) {
     try {
       if (pragmaValue(db, 'application_id') !== STORE_APPLICATION_ID) fail('E_STORE_APPLICATION_ID', { outcome: 'not_committed' })
       const version = pragmaValue(db, 'user_version')
-      if (version === STORE_FORMAT_VERSION) {
-        const current = formatDiagnostic(db, version)
-        if (current) fail(current.code, { outcome: 'not_committed' })
-        return Object.freeze({ upgraded: false, fromVersion: version, toVersion: version, revision: currentRevision(db) })
-      }
       if (version > STORE_FORMAT_VERSION) fail('E_STORE_TOO_NEW', { outcome: 'not_committed' })
+      const old = version <= STORE_FORMAT_VERSION && Object.hasOwn(SCHEMAS, version) ? formatDiagnostic(db, version) : undefined
+      if (old) fail(old.code, { outcome: 'not_committed' })
+      // 3C-5 G: the definitions version goes up with the format, in the same transaction (every older format has 1).
+      const fromDefinitions = Object.hasOwn(SCHEMAS, version) ? definitionsVersionOf(db, version) : undefined
+      const toDefinitions = settings.definitionsVersion
+      if (fromDefinitions > toDefinitions) fail('E_STORE_TOO_NEW', { path: 'definitions', outcome: 'not_committed' })
+      if (version === STORE_FORMAT_VERSION && fromDefinitions === toDefinitions) {
+        return Object.freeze({ upgraded: false, fromVersion: version, toVersion: version, fromDefinitions, toDefinitions, revision: currentRevision(db) })
+      }
       const steps = []
       for (let from = version; from < STORE_FORMAT_VERSION; from = MIGRATIONS[from].to) {
         if (!MIGRATIONS[from]) fail('E_STORE_VERSION', { outcome: 'not_committed' })
         steps.push(MIGRATIONS[from])
       }
-      const target = steps.at(-1).to
-      const old = formatDiagnostic(db, version)
-      if (old) fail(old.code, { outcome: 'not_committed' })
+      const target = steps.at(-1)?.to ?? version
       if (quickCheck(db, settings).length) fail('E_STORE_CORRUPT', { outcome: 'not_committed' })
       let state
       db.exec('BEGIN')
       try { state = formalStateValue(db) } finally { if (transactionState(db) === true) db.exec('ROLLBACK') }
       const media = await options.prepare?.({ state, revision: state.revision, fromVersion: version })
-      const commands = options.commands?.({ state, fromVersion: version }) ?? []
+      const commands = options.commands?.({ state, fromVersion: version, fromDefinitions, toDefinitions }) ?? []
       const request = validRequest({
         requestId: options.requestId, baseRevision: state.revision, kind: STORE_UPGRADE_KIND, actor: options.actor ?? STORE_UPGRADE_ACTOR, commands,
         media: media ?? {},
@@ -1477,11 +1523,14 @@ export async function upgradeStoreFile(file, options = {}) {
         const { receipt } = applyRequest(db, request, requestDigest(request), at, settings, () => {})
         db.exec(`PRAGMA user_version = ${target}`)
         if (db.prepare('UPDATE store_meta SET format_version = ? WHERE singleton = 1').run(target).changes !== 1) inconsistent('store_meta')
-        const upgraded = formatDiagnostic(db, target)
+        if (db.prepare('UPDATE store_definitions SET version = ? WHERE singleton = 1').run(toDefinitions).changes !== 1) inconsistent('store_definitions')
+        const upgraded = formatDiagnostic(db, target) ?? definitionsDiagnostic(db, toDefinitions)
         if (upgraded) fail(upgraded.code, { path: 'schema' })
         commitIssued = true
         db.exec('COMMIT')
-        return Object.freeze({ upgraded: true, fromVersion: version, toVersion: target, fromRevision: state.revision, revision: receipt.revision, receipt })
+        return Object.freeze({
+          upgraded: true, fromVersion: version, toVersion: target, fromDefinitions, toDefinitions, fromRevision: state.revision, revision: receipt.revision, receipt,
+        })
       } catch (error) {
         throw settleFailure(db, error, commitIssued)
       }
@@ -1498,8 +1547,8 @@ export async function upgradeStoreFile(file, options = {}) {
  * { ok: true, upgradeRequired: true }: library:recover can clear a lock left on it, after which store:upgrade (which
  * needs the lease) can run. Without this the two would wait on each other.
  */
-function checkOlderStoreFile(file, policy) {
-  const settings = hostOptions({ policy })
+function checkOlderStoreFile(file, policy, definitionsVersion) {
+  const settings = hostOptions({ policy, ...(definitionsVersion === undefined ? {} : { definitionsVersion }) })
   let db
   try {
     db = openConnection(absoluteFile(file))
@@ -1523,13 +1572,13 @@ function checkOlderStoreFile(file, policy) {
  * but starts no writer session, so clean_shutdown is left as it was and a clean store is not
  * written at all. Any open diagnostic or check problem is reported; nothing is repaired.
  */
-export async function checkStoreFile(file, { policy } = {}) {
+export async function checkStoreFile(file, { policy, definitionsVersion } = {}) {
   let handle
-  try { handle = openHandle(file, { lock: withoutLibraryLock, policy }, { session: false }) } catch (error) {
+  try { handle = openHandle(file, { lock: withoutLibraryLock, policy, ...(definitionsVersion === undefined ? {} : { definitionsVersion }) }, { session: false }) } catch (error) {
     return Object.freeze({ ok: false, problems: Object.freeze([error?.code ?? 'E_STORE_OPEN']) })
   }
   try {
-    if (handle.diagnostic?.code === 'E_STORE_UPGRADE_REQUIRED') return checkOlderStoreFile(file, policy)
+    if (handle.diagnostic?.code === 'E_STORE_UPGRADE_REQUIRED') return checkOlderStoreFile(file, policy, definitionsVersion)
     if (handle.diagnostic) return Object.freeze({ ok: false, problems: Object.freeze([handle.diagnostic.code]) })
     return handle.check()
   } catch (error) {

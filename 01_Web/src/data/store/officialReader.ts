@@ -28,6 +28,9 @@ import {
   type OfficialEntryRole, type ViewScopeAccess,
 } from './projectCanonical.ts'
 
+/** 3C-5 G: a media item without a place (officialReader placelessMedia()). */
+export type PlacelessMediaItem = Omit<CanonicalMediaItem, 'placeId'> & { readonly entityId: string }
+
 /** The index the reader needs: lookups, and reverse references (the host's live index has them). */
 export interface OfficialReaderIndex extends ReadModelIndex {
   referencesTo?(table: ReadModelTable, id: string): readonly Ref[]
@@ -97,6 +100,11 @@ export interface OfficialReader {
    * any. Two assets with one V2 id (no valid library has them): the first by media entity id answers.
    */
   mediaItem(id: string): CanonicalMediaItem | undefined
+  /**
+   * 3C-5 G: the media whose entity has no place, which the official view (Canonical) leaves out: each as mediaItem would
+   * give it, without `placeId`, with its media entity's id; in the original media order, then by entity id.
+   */
+  placelessMedia(): readonly PlacelessMediaItem[]
   /** The items and settings of one view scope. */
   scope(scope: string): { readonly items: readonly ViewItem[]; readonly settings: readonly ViewSetting[] }
   /** The view item of `scope` that targets `table`/`id`, if any. */
@@ -190,6 +198,30 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
       if (!mediaItems.has(item.id)) mediaItems.set(item.id, item)
     }
     return mediaItems
+  }
+  /** 3C-5 G: the media entities without `place` (see placelessMedia). */
+  let placeless: readonly PlacelessMediaItem[] | undefined
+  const placelessIndex = () => {
+    if (placeless) return placeless
+    const at = new Map<string, ViewItem>()
+    for (const item of index.viewItemsOf(VIEW_SCOPES.mediaOrder)) if (item.itemTable === 'assets' && !at.has(item.itemId)) at.set(item.itemId, item)
+    const found: { item: PlacelessMediaItem; order?: ViewItem }[] = []
+    for (const entity of index.entitiesOfType(OFFICIAL.media)) {
+      if (Object.hasOwn(entity.fields, 'place')) continue
+      const asset = typeof entity.fields.asset === 'string' ? index.get('assets', entity.fields.asset) as AssetReference | undefined : undefined
+      if (!asset) continue
+      const { placeId: _placeId, ...value } = mediaValueOf(entity, asset)
+      void _placeId
+      found.push({ item: { ...value, entityId: entity.id } as unknown as PlacelessMediaItem, order: at.get(asset.id) })
+    }
+    const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+    found.sort((a, b) => {
+      if (a.order && b.order) return compare(a.order.position, b.order.position) || compare(a.order.id, b.order.id)
+      if (a.order || b.order) return a.order ? -1 : 1
+      return compare(a.item.entityId, b.item.entityId)
+    })
+    placeless = Object.freeze(found.map(({ item }) => item))
+    return placeless
   }
   const scopeAccess: ViewScopeAccess = { items: (scope) => index.viewItemsOf(scope), settings: (scope) => index.viewSettingsOf(scope) }
   let lists: EditorLists | undefined
@@ -347,6 +379,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
       return lists
     },
     mediaItem: (id) => mediaIndex().get(id),
+    placelessMedia: () => placelessIndex(),
     scope: (scope) => ({ items: index.viewItemsOf(scope), settings: index.viewSettingsOf(scope) }),
     viewItem: (scope, table, id) => index.viewItemsOf(scope).filter((item) => item.itemTable === table && item.itemId === id)
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0],

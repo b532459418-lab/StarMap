@@ -13,13 +13,13 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { withLibraryOperation } from './library-operation-lock.mjs'
 import { storeFileOf } from './private-data-source.mjs'
-import { STORE_FORMAT_VERSION, STORE_UPGRADE_KIND, checkStoreFile, openStore, upgradeStoreFile } from './store-host.mjs'
+import { DEFINITIONS_SCHEMA, STORE_FORMAT_VERSION, STORE_UPGRADE_KIND, checkStoreFile, openStore, upgradeStoreFile } from './store-host.mjs'
 import { recoverLibrary } from './store-recover.mjs'
 import { applyMigration } from './compat/store-migrate.mjs'
 import { rawConnection, pragmaValue } from './store-sqlite.mjs'
 import { runStoreUpgradeCli, upgradeStore } from './store-upgrade.mjs'
 import { downgradeStoreToFormat1, edgeV2Files, quietly, tempPrivateRoot, writeV2Files } from './store-mode.fixture.mjs'
-import { OFFICIAL, OFFICIAL_POLICY, V2_SOURCES } from '../src/data/store/officialDefinitions.ts'
+import { OFFICIAL, OFFICIAL_DEFINITIONS_VERSION, OFFICIAL_POLICY, V2_SOURCES } from '../src/data/store/officialDefinitions.ts'
 import { projectStoreToCanonical } from '../src/data/store/projectCanonical.ts'
 
 const NOW = '2026-10-16T00:00:00.000Z'
@@ -198,7 +198,7 @@ async function format2Store(t) {
   } finally { await handle.close() }
   const state = await readState(file)
   const db = rawConnection(file)
-  try { db.exec('PRAGMA user_version = 2'); db.exec('UPDATE store_meta SET format_version = 2') } finally { db.close() }
+  try { db.exec('DROP TABLE store_definitions'); db.exec('PRAGMA user_version = 2'); db.exec('UPDATE store_meta SET format_version = 2') } finally { db.close() }
   return { root, paths, file, canonical, state, removed }
 }
 
@@ -234,7 +234,7 @@ test('format 2 → 3: the upgrade gives an added country without a visit date it
   assert.equal(bytesOf(file), bytes)
 })
 
-test('format 1 → 3 in one transaction: the media registry seeded and the visit entries written by one request', async (t) => {
+test('format 1 → current in one transaction: the media registry seeded and the visit entries written by one request', async (t) => {
   const { paths, file, canonical, state } = await format2Store(t)
   downgradeStoreToFormat1(file)
   const { result, check } = await upgradeStore(paths, { requestId: id(80), now: () => NOW })
@@ -253,13 +253,17 @@ test('restoring a backup of a format-2 store upgrades it: the revision moves on 
   const { paths, root, canonical, state } = await format2Store(t)
   // Back up the store at format 3 rows-wise identical, then turn the snapshot into format 2 with matching hashes.
   const db = rawConnection(storeFileOf(paths))
-  try { db.exec(`PRAGMA user_version = ${STORE_FORMAT_VERSION}`); db.exec(`UPDATE store_meta SET format_version = ${STORE_FORMAT_VERSION}`) } finally { db.close() }
+  try {
+    db.exec(`PRAGMA user_version = ${STORE_FORMAT_VERSION}`); db.exec(`UPDATE store_meta SET format_version = ${STORE_FORMAT_VERSION}`)
+    for (const statement of DEFINITIONS_SCHEMA) db.exec(statement)
+    db.prepare('INSERT INTO store_definitions (singleton, version) VALUES (1, ?)').run(OFFICIAL_DEFINITIONS_VERSION)
+  } finally { db.close() }
   const { BACKUP_FILES, backupStore, restoreStore } = await import('./store-backup.mjs')
   const out = path.join(path.dirname(root), 'backup')
   await backupStore(paths, { out, now: NOW, backupId: '019a0000-0000-7000-8000-00000000e020' })
   const snapshot = path.join(out, BACKUP_FILES.store)
   const raw2 = rawConnection(snapshot)
-  try { raw2.exec('PRAGMA user_version = 2'); raw2.exec('UPDATE store_meta SET format_version = 2') } finally { raw2.close() }
+  try { raw2.exec('DROP TABLE store_definitions'); raw2.exec('PRAGMA user_version = 2'); raw2.exec('UPDATE store_meta SET format_version = 2') } finally { raw2.close() }
   const { readFile } = await import('node:fs/promises')
   const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
   const manifestFile = path.join(out, BACKUP_FILES.manifest)

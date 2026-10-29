@@ -13,6 +13,9 @@
  * 3C-5B: the App's own path is checked too: the read model as the virtual module inlines it (JSON), read with
  * readReadModel and seen through officialViewOf (./projectCanonical.ts; ../appStoreCore.ts and ../rawInputs.ts make exactly
  * these calls). Its derived baseline must hit the same locks and its time query context must equal the readV2 path's.
+ *
+ * 3C-5 G: a media item without a place, created the way an import creates it, changes nothing the official view gives:
+ * the same Canonical, the same locked baseline; the official reader lists it with placelessMedia().
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -29,7 +32,16 @@ import { buildBaseline, stableStringify } from '../derive/baseline.ts'
 import { deriveTimeQueryContext } from '../derive/timeQueryContext.ts'
 import { OFFICIAL_POLICY } from './officialDefinitions.ts'
 import { officialViewOf, projectStoreToCanonical } from './projectCanonical.ts'
-import { migrateIntoEmptyStore, migrationInputs } from './v2Store.fixture.ts'
+import { NOW as FIXTURE_NOW, migrateIntoEmptyStore, migrationInputs } from './v2Store.fixture.ts'
+import { applyChangeSet, planCommands } from '../../worldgraph/store/planner.ts'
+import { memoryReader } from '../../worldgraph/store/reader.ts'
+import type { FormalState } from '../../worldgraph/store/formal.ts'
+import { sequentialUuids } from '../canonical/v2.fixture.ts'
+import type { CanonicalMediaItem } from '../canonical/types.ts'
+import { createMediaRecordCommands } from './mediaRecords.ts'
+import { memoryScopeReader } from './scopeReader.ts'
+import { officialReader } from './officialReader.ts'
+import { indexReadModel } from '../../worldgraph/readModel/lookup.ts'
 
 const NOW = '2000-01-01T00:00:00.000Z'
 const baselineText = (canonical: CanonicalData) => stableStringify(buildBaseline(deriveAppDataFromCanonical(canonical, { now: NOW }), { now: NOW }))
@@ -76,4 +88,29 @@ for (const [name, files, source, lock] of inputs) test(`the App's path (3C-5B): 
   assert.equal(text, baselineText(viaV2))
   if (lock !== undefined) assert.equal(lockOf(text), lock)
   assert.deepEqual(deriveTimeQueryContext(viaApp), deriveTimeQueryContext(viaV2))
+})
+
+/** The migrated store with one media record without a place, created as the media service creates records. */
+function withPlacelessMedia(state: FormalState): FormalState {
+  const allocateId = sequentialUuids(Date.UTC(2033, 0, 1))
+  const item = {
+    id: 'ignored', kind: 'photo', scope: 'city', src: '/media/user/0123456789abcdef/original.jpg', originalFileName: 'no-place.jpg',
+    variants: { original: { src: '/media/user/0123456789abcdef/original.jpg', width: 4, height: 3 } }, width: 4, height: 3, isCover: false, status: 'ready',
+  } as unknown as CanonicalMediaItem
+  const records = [{ assetId: allocateId(), entityId: allocateId(), item, appendToCityOrder: true }]
+  const { commands } = createMediaRecordCommands(records, { reader: memoryScopeReader(state), allocateId })
+  return applyChangeSet(state, planCommands(memoryReader(state), commands, { baseRevision: state.revision, now: FIXTURE_NOW, policy: OFFICIAL_POLICY }))
+}
+
+for (const [name, files, source, lock] of inputs) test(`3C-5 G: a media item without a place changes nothing the official view gives, and keeps the derived baseline: ${name}`, () => {
+  const viaV2 = canonicalForInputs({ v2Files: files(), source })
+  const state = withPlacelessMedia(migrateIntoEmptyStore(files()).state)
+  const inlined = JSON.parse(JSON.stringify(readModelOf(state, { origin: source === 'sample' ? 'sample' : 'local' })))
+  const model = readReadModel(inlined)
+  const viaApp = officialViewOf(model, source)
+  assert.deepEqual(viaApp, viaV2)
+  const text = baselineText(viaApp)
+  if (lock !== undefined) assert.equal(lockOf(text), lock)
+  assert.equal(text, baselineText(viaV2))
+  assert.deepEqual(officialReader(indexReadModel(model)).placelessMedia().map(media => media.originalFileName), ['no-place.jpg'])
 })

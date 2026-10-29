@@ -63,13 +63,16 @@ export function mediaAssetRow(record: NewMediaRecord, isCover: boolean): AssetRe
   return { id: record.assetId, revision: 0, source: sourceRef(OFFICIAL.user, record.assetId), attributes: { ...attributes, isCover } as JsonObject }
 }
 
-/** The `starmap:media` entity of a new record: its city and asset; a title the store cannot hold stays verbatim in extensions. */
+/**
+ * The `starmap:media` entity of a new record: its city and asset; a title the store cannot hold stays verbatim in
+ * extensions. 3C-5 G: an item without a place (`placeId` absent) gives an entity without the `place` field.
+ */
 export function mediaEntityRow(record: NewMediaRecord): StoreEntity {
   const { placeId, title } = record.item
   const fits = title !== undefined && fitsStoreTitle(title)
   return {
     id: record.entityId, revision: 0, typeId: OFFICIAL.media, title: fits ? title : { names: {} },
-    fields: { place: placeId, asset: record.assetId }, source: sourceRef(OFFICIAL.user, record.entityId), visibility: 'private',
+    fields: { ...(typeof placeId === 'string' ? { place: placeId } : {}), asset: record.assetId }, source: sourceRef(OFFICIAL.user, record.entityId), visibility: 'private',
     ...(title !== undefined && !fits ? { extensions: { v2: { title: title as unknown as JsonValue } } } : {}),
   } satisfies StoreEntity
 }
@@ -170,7 +173,8 @@ function covers(reader: ScopeReader, placeIds: ReadonlySet<string>, created: rea
  */
 export function createMediaRecordCommands(records: readonly NewMediaRecord[], { reader, allocateId }: MediaRecordsContext): MediaRecordsPlan {
   const renumbered: string[] = []
-  const cities = new Set(records.filter(record => record.item.kind === 'photo').map(record => record.item.placeId))
+  // 3C-5 G: a record without a place has no city: no cover, no city order (it still joins the original media order).
+  const cities = new Set(records.filter(record => record.item.kind === 'photo' && typeof record.item.placeId === 'string').map(record => record.item.placeId))
   const { flags, updates } = covers(reader, cities, records, new Set())
   const commands: FormalCommand[] = []
   for (const record of records) commands.push({ op: 'create', table: 'assets', value: mediaAssetRow(record, flags.get(record.assetId) ?? false) })
@@ -178,7 +182,7 @@ export function createMediaRecordCommands(records: readonly NewMediaRecord[], { 
   commands.push(...updates)
   commands.push(...appendRows(reader, VIEW_SCOPES.mediaOrder, records.map(record => record.assetId), allocateId, renumbered))
   const byCityOrder = new Map<string, { scope: string; placeId: string; assetIds: string[] }>()
-  for (const record of records.filter(item => item.appendToCityOrder)) {
+  for (const record of records.filter(item => item.appendToCityOrder && typeof item.item.placeId === 'string')) {
     const scope = cityOrderScopeOf(record.item.kind)
     const key = `${scope}\u0000${record.item.placeId}`
     if (!byCityOrder.has(key)) byCityOrder.set(key, { scope, placeId: record.item.placeId, assetIds: [] })
@@ -216,6 +220,13 @@ export interface RereadDiff {
   readonly to: JsonValue
 }
 
+/** An entity's fields with `place` set to `placeId`, or without `place` when there is none (3C-5 G: a re-read may remove it). */
+function fieldsWithPlace(fields: StoreEntity['fields'], placeId: string | undefined): StoreEntity['fields'] {
+  const { place: _place, ...rest } = fields as Json
+  void _place
+  return (typeof placeId === 'string' ? { ...rest, place: placeId } : rest) as StoreEntity['fields']
+}
+
 /** The rows a re-read gives and what it changes (`place`, the described keys, `title`, in that order). */
 function rereadRows(reader: ScopeReader, update: RereadMediaRecord): { asset: AssetReference; entity: StoreEntity; nextAsset: AssetReference; nextEntity: StoreEntity; changed: string[]; diff: RereadDiff[] } {
   const asset = reader.get('assets', update.assetId) as AssetReference | undefined
@@ -248,7 +259,7 @@ function rereadRows(reader: ScopeReader, update: RereadMediaRecord): { asset: As
   const { extensions: _extensions, ...entityRest } = entity!
   void _extensions
   const nextEntity = {
-    ...entityRest, revision: entity!.revision + 1, title: fits ? title : { names: {} }, fields: { ...entity!.fields, place: update.item.placeId },
+    ...entityRest, revision: entity!.revision + 1, title: fits ? title : { names: {} }, fields: fieldsWithPlace(entity!.fields, update.item.placeId),
     ...(Object.keys(extensions).length ? { extensions } : {}),
   } as StoreEntity
   const nextAsset = { ...asset!, revision: asset!.revision + 1, attributes: attributes as JsonObject }

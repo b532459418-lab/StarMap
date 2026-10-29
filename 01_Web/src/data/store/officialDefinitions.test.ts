@@ -6,10 +6,13 @@ import { memoryReader } from '../../worldgraph/store/reader.ts'
 import { applyChangeSet, planCommands } from '../../worldgraph/store/planner.ts'
 import { StoreError } from '../../worldgraph/store/schema.ts'
 import { TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID } from '../../worldgraph/layers.ts'
+import { checkDefinitionChange } from '../../worldgraph/store/evolution.ts'
 import {
-  OFFICIAL, OFFICIAL_DEFINITIONS, OFFICIAL_POLICY, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES,
+  OFFICIAL, OFFICIAL_DEFINITIONS, OFFICIAL_DEFINITIONS_VERSION, OFFICIAL_POLICY, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES,
   mapListScope, officialDefinitionCommands, v2SourceDefinition,
 } from './officialDefinitions.ts'
+import { OFFICIAL_DEFINITION_HISTORY } from './officialDefinitionHistory.fixture.ts'
+import { officialDefinitionSyncCommands, type OfficialDefinitionSet } from './definitionUpgrades.ts'
 
 const NOW = '2026-10-13T00:00:00.000Z'
 const fails = (fn: () => unknown, code: string) => assert.throws(fn, (e: unknown) => e instanceof StoreError && e.code === code)
@@ -49,7 +52,8 @@ test('field contract of every official definition', () => {
   assert.deepEqual(fields(OFFICIAL_DEFINITIONS.entityTypes), {
     [OFFICIAL.place]: [{ key: 'subtype', kind: 'text', required: true }, { key: 'iso3166Alpha2', kind: 'text' }],
     [OFFICIAL.journey]: [],
-    [OFFICIAL.media]: [{ key: 'place', kind: 'entity_ref', required: true }, { key: 'asset', kind: 'asset_ref', required: true }],
+    // 3C-5 G (definitions version 2): a media entity's place is optional.
+    [OFFICIAL.media]: [{ key: 'place', kind: 'entity_ref' }, { key: 'asset', kind: 'asset_ref', required: true }],
   })
   assert.deepEqual(fields(OFFICIAL_DEFINITIONS.layers), {
     [OFFICIAL.travel]: [{ key: 'date', kind: 'date_evidence', required: true }, { key: 'note', kind: 'text' }, { key: 'tripTitle', kind: 'text' }],
@@ -84,4 +88,46 @@ test('view scopes are distinct and stay within the 256-character scope limit wit
   const longest = mapListScope(scopes.reduce((a, b) => (a.length >= b.length ? a : b)), '01a0ed02-3f48-70a0-9146-47667ddcbf4e')
   assert.ok(longest.length <= 256)
   assert.ok(UNRESOLVED_KEY_PREFIX.length > 0 && !scopes.some(s => s.startsWith(UNRESOLVED_KEY_PREFIX)))
+})
+
+test('3C-5 G: the definitions history is frozen, each version a compatible evolution of the one before, the last the current one', () => {
+  const versions = Object.keys(OFFICIAL_DEFINITION_HISTORY).map(Number).sort((a, b) => a - b)
+  assert.deepEqual(versions, Array.from({ length: OFFICIAL_DEFINITIONS_VERSION }, (_, index) => index + 1), 'one entry per version, none skipped')
+  assert.deepEqual(OFFICIAL_DEFINITION_HISTORY[OFFICIAL_DEFINITIONS_VERSION], OFFICIAL_DEFINITIONS, 'the last version is OFFICIAL_DEFINITIONS')
+  const tables = ['sources', 'entityTypes', 'relationTypes', 'layers'] as const
+  for (const version of versions.slice(1)) {
+    const before = OFFICIAL_DEFINITION_HISTORY[version - 1], after = OFFICIAL_DEFINITION_HISTORY[version]
+    for (const table of tables) {
+      for (const row of before[table]) {
+        const next = (after[table] as readonly { id: string }[]).find(candidate => candidate.id === row.id)
+        assert.ok(next, `version ${version} keeps ${table} ${row.id}`)
+        checkDefinitionChange(table, row, next)
+      }
+    }
+  }
+  // An install of every version upgrades to the current one through the sync, and the planner accepts it.
+  for (const version of versions) {
+    const old = OFFICIAL_DEFINITION_HISTORY[version]
+    const installed = applyChangeSet(emptyFormalState(), plan(emptyFormalState(), [
+      ...old.sources.map(value => ({ op: 'create' as const, table: 'sources' as const, value })),
+      ...old.entityTypes.map(value => ({ op: 'create' as const, table: 'entityTypes' as const, value })),
+      ...old.relationTypes.map(value => ({ op: 'create' as const, table: 'relationTypes' as const, value })),
+      ...old.layers.map(value => ({ op: 'create' as const, table: 'layers' as const, value })),
+    ]))
+    const sync = officialDefinitionSyncCommands(installed)
+    const upgraded = sync.length ? applyChangeSet(installed, plan(installed, sync)) : installed
+    assert.deepEqual(officialDefinitionSyncCommands(upgraded), [], `version ${version} → current, then nothing left`)
+  }
+})
+
+test('3C-5 G: an incompatible definition is refused by the sync with E_SCHEMA_CHANGE', () => {
+  const state = install()
+  const narrowed = structuredClone(OFFICIAL_DEFINITIONS) as unknown as OfficialDefinitionSet & { layers: { acceptedEntityTypes: string[] }[] }
+  narrowed.layers[0].acceptedEntityTypes = []
+  // An empty list accepts every type (wider): compatible. A new required field is not.
+  assert.equal(officialDefinitionSyncCommands(state, narrowed).length, 1)
+  const required = structuredClone(OFFICIAL_DEFINITIONS) as unknown as { entityTypes: { fields: { key: string; kind: string; required?: boolean }[] }[] }
+  required.entityTypes[0].fields.push({ key: 'synthetic', kind: 'text', required: true })
+  fails(() => officialDefinitionSyncCommands(state, required as unknown as OfficialDefinitionSet), 'E_SCHEMA_CHANGE')
+  assert.deepEqual(officialDefinitionSyncCommands(state), [], 'the current definitions need nothing')
 })

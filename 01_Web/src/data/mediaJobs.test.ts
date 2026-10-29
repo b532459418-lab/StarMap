@@ -344,3 +344,12 @@ test('3C-5 E: only the new library\'s preview is accepted: without its fields (a
     setStoreBaseRevision(undefined)
   }
 })
+test('3C-5 G: a source without a place (the Inbox\'s _no-place folder) has placeId null; any other value that is not a place id is still refused', () => {
+  const base = planOf()
+  const source = base.plan.summary.sources[0]
+  const withSources = (sources: unknown[]) => ({...base, plan: {...base.plan, summary: {...base.plan.summary, sources}}})
+  assert.doesNotThrow(() => assertMediaJobPreview(withSources([source, {...source, id: 'new-2', sourcePath: '_no-place/photos/x.jpg', placeId: null}])))
+  for (const placeId of [undefined, '', 'not-a-place', 3]) {
+    assert.throws(() => assertMediaJobPreview(withSources([{...source, placeId}])), code('E_EDITOR_RESPONSE_INVALID'), String(placeId))
+  }
+})

@@ -74,11 +74,44 @@ export function downgradeStoreToFormat1(file) {
   const db = rawConnection(file)
   try {
     db.exec('BEGIN IMMEDIATE')
+    // 3C-5 G: store_definitions (format 4) may be gone already (a store turned into format 2 first).
+    db.exec('DROP TABLE IF EXISTS store_definitions')
     for (const table of ['media_scan_cache', 'media_sources', 'media_asset_files', 'media_files']) db.exec(`DROP TABLE ${table}`)
     db.exec('PRAGMA user_version = 1')
     db.exec('UPDATE store_meta SET format_version = 1')
     db.exec('COMMIT')
   } finally { db.close() }
+}
+
+/**
+ * 3C-5 G: turn a closed current store into one of format 3 (before `store_definitions`), whose official definition rows
+ * are `definitions` (default: the code's): the store a version before 3C-5 G left. Rows of the definition tables are
+ * rewritten in place with revision 0, as a store created with those definitions has them.
+ */
+export function downgradeStoreToFormat3(file, definitions) {
+  const db = rawConnection(file)
+  try {
+    db.exec('BEGIN IMMEDIATE')
+    db.exec('DROP TABLE store_definitions')
+    for (const [table, sql] of [['sources', 'sources'], ['entityTypes', 'entity_types'], ['relationTypes', 'relation_types'], ['layers', 'layers']]) {
+      for (const row of definitions?.[table] ?? []) {
+        const { id, revision: _revision, ...body } = row
+        void _revision
+        if (table === 'layers') delete body.systemKey
+        const changed = db.prepare(`UPDATE ${sql} SET revision = 0, body = ? WHERE id = ?`).run(JSON.stringify(body), id).changes
+        if (changed !== 1) throw new Error(`downgradeStoreToFormat3: no ${table} row ${id}`)
+      }
+    }
+    db.exec('PRAGMA user_version = 3')
+    db.exec('UPDATE store_meta SET format_version = 3')
+    db.exec('COMMIT')
+  } finally { db.close() }
+}
+
+/** 3C-5 G: set the official definitions version a current store records (a store left by newer or older code). */
+export function setStoreDefinitionsVersion(file, version) {
+  const db = rawConnection(file)
+  try { db.prepare('UPDATE store_definitions SET version = ? WHERE singleton = 1').run(version) } finally { db.close() }
 }
 
 /** Lines collected from a tool's `log` / `logError`. */

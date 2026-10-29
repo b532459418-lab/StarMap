@@ -81,7 +81,7 @@ export async function scanInbox({ privatePaths, places, cache = [], hashFile = s
     return plainDescriptions.get(key)
   }
   await walkInbox({
-    inboxRoot, index, errors, warnings, pins,
+    inboxRoot, index, errors, warnings, pins, placeless: true,
     onFile: async ({ filePath, kind, unlabelled, city, metadata, countryRoot, cityRoot }) => {
       const relativePath = toPosix(path.relative(inboxRoot, filePath))
       const extension = path.extname(filePath).toLowerCase()
@@ -108,9 +108,10 @@ export async function scanInbox({ privatePaths, places, cache = [], hashFile = s
       const sidecar = metadata ?? {}
       facts.push(Object.freeze({
         path: pathValue, pathKey, relativePath, absolutePath: filePath, size: info.size, mtimeMs: info.mtimeMs, sha256, fromCache,
-        extension, kind, unlabelled, placeId: city.id, metadata: sidecar, originalFileName: path.basename(filePath),
-        countryFolder: folderOf(countryRoot), cityFolder: folderOf(cityRoot),
-        descriptionDigest: descriptionOf(city.id, kind, sidecar),
+        // 3C-5 G: a file of the `_no-place` folder has no place (null) and no country folder.
+        extension, kind, unlabelled, placeId: city?.id ?? null, metadata: sidecar, originalFileName: path.basename(filePath),
+        countryFolder: countryRoot ? folderOf(countryRoot) : null, cityFolder: folderOf(cityRoot),
+        descriptionDigest: descriptionOf(city?.id ?? null, kind, sidecar),
       }))
     },
   })
@@ -161,7 +162,11 @@ export async function describeMediaFile(fact, { readImage = (file) => sharp(file
     }
   }
   const hash = contentHashOf(fact.sha256)
-  const item = buildMediaItem({ hash, extension: fact.extension, kind: fact.kind, placeId: fact.placeId, originalFileName: fact.originalFileName, dimensions, metadata: fact.metadata })
+  const built = buildMediaItem({ hash, extension: fact.extension, kind: fact.kind, placeId: fact.placeId, originalFileName: fact.originalFileName, dimensions, metadata: fact.metadata })
+  // 3C-5 G: an item without a place has no `placeId` (its media entity gets no `place` field).
+  const { placeId: _placeId, ...withoutPlace } = built
+  void _placeId
+  const item = fact.placeId === null ? withoutPlace : built
   if (item.status === 'needsMetadata') warnings.push(`${fact.relativePath} 缺少日期或分辨率；会进入目录，但暂不显示为 Drone Media。`)
   const files = generatedFilesOf(hash, fact.extension)
   return {

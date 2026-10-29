@@ -173,7 +173,22 @@ export const unlabelledDroneWarning = (relativePath) => `${relativePath} 未标�
  * order: `city` is the place it belongs to (a file's sidecar entry may name another city), `metadata` its sidecar entry
  * (drone files; undefined for photos). Reads only; never writes.
  */
-export async function walkInbox({ inboxRoot, index, errors, warnings, pins, onFile }) {
+/**
+ * 3C-5 G: the Inbox folders of media without a place, at the top level: `_no-place`, or `_无地点` (compared like the
+ * photos and drone folder names, after normalizeName). Inside, the layout of a city folder (`photos/`, `drone/`,
+ * `media.json`).
+ */
+export const PLACELESS_FOLDER_NAMES = Object.freeze(['_no-place', '_无地点'])
+const PLACELESS_FOLDER_KEYS = new Set(PLACELESS_FOLDER_NAMES.map((name) => normalizeName(name)))
+export const isPlacelessFolder = (name) => name.startsWith('_') && PLACELESS_FOLDER_KEYS.has(normalizeName(name))
+
+/**
+ * Walk the Inbox: every country folder, its city folders, their photos and drone files (`onFile` per file, with its city
+ * place). Top-level folders whose name starts with `_` are skipped, except, with `placeless` (3C-5 G, the new library's
+ * scan), the folders of media without a place (isPlacelessFolder): their files come with `city: null` and no country
+ * folder. Such a file cannot name a place in media.json (an error): to give it one, move it into a city folder.
+ */
+export async function walkInbox({ inboxRoot, index, errors, warnings, pins, onFile, placeless = false }) {
   const relative = (filePath) => path.relative(inboxRoot, filePath)
   const bindingOf = (directory, lookup) => ({
     directory,
@@ -204,6 +219,7 @@ export async function walkInbox({ inboxRoot, index, errors, warnings, pins, onFi
   }
 
   const scanDrone = async (droneRoot, city, cityRoot, cityLabel, countryRoot) => {
+    // `city` null: a folder of media without a place (3C-5 G).
     if (!droneRoot) return
     // 与旧导入器相同：城市文件夹的 media.json，没有则读 drone/media.json；两处都没有时同样报「无法读取」。
     const cityMetadataPath = path.join(cityRoot, 'media.json')
@@ -218,7 +234,15 @@ export async function walkInbox({ inboxRoot, index, errors, warnings, pins, onFi
 
     for (const filePath of await listMediaFiles(droneRoot)) {
       const fileMetadata = metadataForFile(metadata, toPosix(path.relative(cityRoot, filePath)), path.basename(filePath))
-      const owner = resolveFileOverride(index, city, fileMetadata, relative(filePath))
+      let owner
+      if (city === null) {
+        const named = ['placeId', 'countryId', 'cityId'].some((key) => typeof fileMetadata?.[key] === 'string' && fileMetadata[key].trim())
+        if (named) {
+          errors.push(`${relative(filePath)} 在没有地点的文件夹里，media.json 不能给它指定地点；要有地点，请把它移到城市文件夹。`)
+          continue
+        }
+        owner = { ok: true, place: null }
+      } else owner = resolveFileOverride(index, city, fileMetadata, relative(filePath))
       if (!owner.ok) {
         errors.push(owner.error)
         continue
@@ -229,7 +253,7 @@ export async function walkInbox({ inboxRoot, index, errors, warnings, pins, onFi
   }
 
   const scanCity = async (cityRoot, country, city, countryRoot) => {
-    const cityLabel = `${placeDisplayName(country)}/${placeDisplayName(city)}`
+    const cityLabel = city === null ? path.basename(cityRoot) : `${placeDisplayName(country)}/${placeDisplayName(city)}`
     const directMedia = (await readdir(cityRoot, { withFileTypes: true }))
       .filter((entry) => entry.isFile() && !IGNORED_CONTROL_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
     if (directMedia.length > 0) {
@@ -258,7 +282,11 @@ export async function walkInbox({ inboxRoot, index, errors, warnings, pins, onFi
     return
   }
   for (const countryEntry of await listDirectories(inboxRoot)) {
-    if (countryEntry.name.startsWith('_')) continue
+    if (countryEntry.name.startsWith('_')) {
+      // 3C-5 G: a folder of media without a place is scanned like a city folder without a city.
+      if (placeless && isPlacelessFolder(countryEntry.name)) await scanCity(path.join(inboxRoot, countryEntry.name), null, null, null)
+      continue
+    }
     const countryRoot = path.join(inboxRoot, countryEntry.name)
     const placeConfig = await readControlFile(path.join(countryRoot, 'place.json'), `${countryEntry.name}/place.json`)
     const countryConfig = await readControlFile(path.join(countryRoot, 'country.json'), `${countryEntry.name}/country.json`)

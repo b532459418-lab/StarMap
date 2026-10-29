@@ -17,6 +17,8 @@
  *   layer whatever the editor hides.
  * - Media entities that are hidden themselves (their asset is in a hidden media scope), or that belong to a hidden
  *   city or to a city of a hidden country, with their assets.
+ * - Media entities without a place (3C-5 G: the Inbox folder `_no-place`), with their assets and files: no page shows
+ *   them yet, so the build does not carry them (a later batch that shows them decides again).
  * - Added countries of hidden countries: their evidence row and their visit entry.
  * - Places: a hidden country or city, and every place only removed content referred to (with the country of a removed
  *   city), unless something kept still refers to it (a kept entry, media entity or added country, or a kept place's
@@ -32,7 +34,8 @@
  *
  * Kept rows are the input's own (except the rewritten sequences): visible entries keep every field, a visible asset's
  * `originalFileName` included (a separate decision). Rows the official view does not read are not touched unless they
- * refer to a removed row. Without anything hidden the model comes back with the same JSON text.
+ * refer to a removed row. Without anything hidden (and without media that have no place) the model comes back with the
+ * same JSON text.
  *
  * `mediaFiles` lists the files under `media/user/` that the kept media entities' assets refer to (`src` and every
  * variant), as POSIX paths relative to `media/user/`, sorted; URLs outside `/media/user/` and paths that leave it are
@@ -147,7 +150,8 @@ export function filterReadModelForPersonalBuild(input: unknown): PersonalBuildRe
   const assetOfMedia = (entity: StoreEntity) => (typeof entity.fields.asset === 'string' ? entity.fields.asset : undefined)
   const removedMediaEntity = (entity: StoreEntity) => {
     const asset = assetOfMedia(entity), place = placeOfMedia(entity)
-    return (asset !== undefined && hiddenMedia.has(asset)) || (place !== undefined && inHiddenPlace(place))
+    // 3C-5 G: a media entity without a place goes too (no page shows it yet).
+    return (asset !== undefined && hiddenMedia.has(asset)) || place === undefined || inHiddenPlace(place)
   }
 
   const removedEntries = new Set(model.entries.filter(removedEntry).map((entry) => entry.id))

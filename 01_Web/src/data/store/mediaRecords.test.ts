@@ -194,3 +194,42 @@ test('a record a re-read moves to another city is never a cover there; its old c
   assert.equal(viewOf(quiet).media.items.find(media => media.id === quietMover.id)!.placeId, b.id)
   assert.deepEqual(flagsOf(quiet), flagsOf(state))
 })
+
+test('3C-5 G: a record without a place has no place field, joins no city order and no cover; a re-read can remove or give a place', () => {
+  const { store, cities, allocateId } = fixtureStore()
+  const [a, b] = cities
+  const cover: NewMediaRecord = { assetId: allocateId(), entityId: allocateId(), item: item({ placeId: a.id, originalFileName: 'cover-a.jpg' }) }
+  const placed: NewMediaRecord = { assetId: allocateId(), entityId: allocateId(), item: item({ placeId: a.id, originalFileName: 'z-a.jpg' }) }
+  const { placeId: _placeId, ...withoutPlace } = item({ placeId: a.id, originalFileName: 'cover-none.jpg' })
+  void _placeId
+  const none: NewMediaRecord = { assetId: allocateId(), entityId: allocateId(), appendToCityOrder: true, item: withoutPlace as unknown as CanonicalMediaItem }
+  const created = apply(store.state, createMediaRecordCommands([cover, placed, none], { reader: memoryScopeReader(store.state), allocateId }).commands)
+  const entity = created.entities.find(row => row.id === none.entityId)!
+  assert.deepEqual(entity.fields, { asset: none.assetId }, 'no place field')
+  assert.equal(created.assets.find(row => row.id === none.assetId)!.attributes.isCover, false, 'never a cover, even named cover-')
+  const view = viewOf(created)
+  assert.deepEqual(view.media.items.map(media => media.id).includes(none.assetId), false, 'the official view leaves it out')
+  for (const order of Object.values(view.editorState.mediaOrderByCity)) assert.equal(order.includes(none.assetId), false, 'no city order')
+  assert.deepEqual(validateV2Files(view), [])
+  // A re-read that removes the place of a city's cover: no place, no cover; the old city takes the next cover.
+  const coverBefore = viewOf(created).media.items.filter(media => media.placeId === a.id && media.kind === 'photo' && media.isCover).map(media => media.id)
+  assert.deepEqual(coverBefore, [cover.assetId])
+  const { placeId: _coverPlace, ...coverWithoutPlace } = cover.item
+  void _coverPlace
+  const reader = memoryScopeReader(created)
+  assert.deepEqual(rereadDiff({ assetId: cover.assetId, item: coverWithoutPlace as unknown as CanonicalMediaItem }, { reader }), [{ field: 'place', from: a.id, to: null }])
+  const removed = apply(created, rereadMediaRecordCommands([{ assetId: cover.assetId, item: coverWithoutPlace as unknown as CanonicalMediaItem }], { reader }).commands)
+  const removedEntity = removed.entities.find(row => row.id === cover.entityId)!
+  assert.equal(Object.hasOwn(removedEntity.fields, 'place'), false)
+  assert.equal(removed.assets.find(row => row.id === cover.assetId)!.attributes.isCover, false)
+  assert.equal(viewOf(removed).media.items.filter(media => media.placeId === a.id && media.kind === 'photo' && media.isCover).length, 1, 'the old city has one cover again')
+  assert.deepEqual(validateV2Files(viewOf(removed)), [])
+  // A re-read that gives the placeless record a place: it is in that city now, and not its cover.
+  const coversInB = viewOf(removed).media.items.filter(media => media.placeId === b.id && media.isCover).map(media => media.id)
+  const readerAfter = memoryScopeReader(removed)
+  assert.deepEqual(rereadDiff({ assetId: none.assetId, item: { ...withoutPlace, placeId: b.id } as unknown as CanonicalMediaItem }, { reader: readerAfter }), [{ field: 'place', from: null, to: b.id }])
+  const given = apply(removed, rereadMediaRecordCommands([{ assetId: none.assetId, item: { ...withoutPlace, placeId: b.id } as unknown as CanonicalMediaItem }], { reader: readerAfter }).commands)
+  const media = viewOf(given).media.items.find(entry => entry.id === none.assetId)!
+  assert.deepEqual([media.placeId, media.isCover], [b.id, false])
+  assert.deepEqual(viewOf(given).media.items.filter(entry => entry.placeId === b.id && entry.isCover).map(entry => entry.id), coversInB)
+})

@@ -106,7 +106,7 @@ const OPEN_HINTS = Object.freeze({
   E_STORE_BUSY: '另一个进程正在写入这个库（例如另一个开发服务器或 store:* 命令）。关掉它之后刷新页面。',
   E_STORE_ALREADY_OPEN: '这个进程已经打开了这个库。重启开发服务器。',
   E_STORE_NOT_FOUND: 'data/store/world.sqlite 不见了。重启开发服务器。',
-  E_STORE_TOO_NEW: '库的格式比这个版本的程序新。请使用更新的 StarMap。',
+  E_STORE_TOO_NEW: '库的存储格式或官方定义比这个版本的程序新。请使用更新的 StarMap。',
   E_STORE_UPGRADE_REQUIRED: '库是旧的存储格式。停掉开发服务器，在 01_Web 下运行 npm run store:upgrade，再重新启动。',
   E_STORE_CORRUPT: '库检查没有通过。请从备份恢复（npm run store:restore），或在 01_Web 下运行 npm run library:recover 查看。',
 })
