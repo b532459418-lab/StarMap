@@ -23,13 +23,13 @@ import type { ReadModelIndex } from '../../worldgraph/readModel/lookup.ts'
 import type { ReadModelTable } from '../../worldgraph/readModel/types.ts'
 import type { CanonicalEditorState, CanonicalMediaItem, CanonicalPlace, CanonicalWantToGoItem } from '../canonical/types.ts'
 import { OFFICIAL, V2_SOURCES, VIEW_SCOPES } from './officialDefinitions.ts'
-
-/** 3C-5 G: a media item without a place (officialReader placelessMedia()). */
-export type PlacelessMediaItem = Omit<CanonicalMediaItem, 'placeId'> & { readonly entityId: string }
 import {
   addedCountryTieBreak, addedCountryValueOf, editorListsOf, laterVisit, mediaValueOf, officialEntryRole, placeValueOf, recordIdOf, recordValueOf, wishValueOf,
   type OfficialEntryRole, type ViewScopeAccess,
 } from './projectCanonical.ts'
+
+/** 3C-5 G: a media item without a place (officialReader placelessMedia()). */
+export type PlacelessMediaItem = Omit<CanonicalMediaItem, 'placeId'> & { readonly entityId: string }
 
 /** The index the reader needs: lookups, and reverse references (the host's live index has them). */
 export interface OfficialReaderIndex extends ReadModelIndex {
