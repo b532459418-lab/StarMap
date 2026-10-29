@@ -55,3 +55,31 @@ for (const [name, files] of migrationInputs()) test(`the official reader answers
     for (const place of view.places) assert.equal(reader.countryOf(place.id), place.subtype === 'country' ? place.id : place.partOf, `${label}: country of ${place.id}`)
   }
 })
+
+test('3C-5 G: placelessMedia() lists the media without a place (in the media order), which mediaItem and the official view leave out', async () => {
+  const { sequentialUuids } = await import('../canonical/v2.fixture.ts')
+  const { createMediaRecordCommands } = await import('./mediaRecords.ts')
+  const { memoryScopeReader } = await import('./scopeReader.ts')
+  const { applyChangeSet, planCommands } = await import('../../worldgraph/store/planner.ts')
+  const { memoryReader } = await import('../../worldgraph/store/reader.ts')
+  const { OFFICIAL_POLICY } = await import('./officialDefinitions.ts')
+  const [, files] = migrationInputs()[0]
+  const state = migrateIntoEmptyStore(files()).state
+  const allocateId = sequentialUuids(Date.UTC(2033, 0, 1))
+  const item = (name: string) => ({ id: 'ignored', kind: 'photo', scope: 'city', src: '/media/user/0123456789abcdef/original.jpg', originalFileName: name,
+    variants: { original: { src: '/media/user/0123456789abcdef/original.jpg', width: 4, height: 3 } }, width: 4, height: 3, isCover: false, status: 'ready', title: { names: { en: name } } })
+  const names = ['second.jpg', 'first.jpg']
+  const records = names.map((name) => ({ assetId: allocateId(), entityId: allocateId(), item: item(name) as never }))
+  const { commands } = createMediaRecordCommands(records, { reader: memoryScopeReader(state), allocateId })
+  const next = applyChangeSet(state, planCommands(memoryReader(state), commands, { baseRevision: state.revision, now: '2033-01-01T00:00:00.000Z', policy: OFFICIAL_POLICY }))
+  const reader = officialReader(indexReadModel(readModelOf(next, { origin: 'local' })))
+  const listed = reader.placelessMedia()
+  assert.deepEqual(listed.map((media) => [media.id, media.entityId, media.originalFileName, (media as { placeId?: string }).placeId]),
+    records.map((record, index) => [record.assetId, record.entityId, names[index], undefined]), 'in the media order (the order they were created)')
+  assert.deepEqual(listed[0].title, { names: { en: 'second.jpg' } })
+  for (const record of records) assert.equal(reader.mediaItem(record.assetId), undefined)
+  const projection = projectStoreToCanonical(next, { source: 'local' })
+  assert.deepEqual(projection.canonical, projectStoreToCanonical(state, { source: 'local' }).canonical)
+  const skipped = new Set(projection.skipped.map((row) => `${row.table}/${row.id}`))
+  for (const record of records) assert.ok(skipped.has(`entities/${record.entityId}`) && skipped.has(`assets/${record.assetId}`), 'listed among the rows Canonical cannot express')
+})

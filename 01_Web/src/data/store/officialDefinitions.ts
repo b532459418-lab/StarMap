@@ -75,8 +75,9 @@ const JOURNEY_TYPE: FormalEntityType = {
 const MEDIA_TYPE: FormalEntityType = {
   id: OFFICIAL.media, revision: 0, title: title('Media', '媒体'), schemaVersion: 1,
   fields: [
-    // The city the media belongs to.
-    { key: 'place', kind: 'entity_ref', required: true },
+    // The city the media belongs to. Optional since definitions version 2 (3C-5 G): media without a place (the Inbox
+    // folder `_no-place`) have no such field; the official view leaves them out (officialReader placelessMedia()).
+    { key: 'place', kind: 'entity_ref' },
     // The file reference; its attributes keep the media metadata.
     { key: 'asset', kind: 'asset_ref', required: true },
   ],
@@ -126,9 +127,10 @@ const V2_SOURCE_TITLES: Readonly<Record<string, readonly [string, string]>> = {
  * and `npm run store:upgrade` brings its rows to these (./definitionUpgrades.ts), one of a newer version opens with
  * E_STORE_TOO_NEW. Raise it with every change of OFFICIAL_DEFINITIONS, and freeze the version it replaces in
  * ./officialDefinitionHistory.fixture.ts: its test requires every version to be a compatible evolution of the one
- * before (Core's checkDefinitionChange). Version 1: the definitions of every store before 3C-5 G.
+ * before (Core's checkDefinitionChange). Version 1: the definitions of every store before 3C-5 G. Version 2 (3C-5 G): a
+ * media entity's `place` is optional.
  */
-export const OFFICIAL_DEFINITIONS_VERSION = 1
+export const OFFICIAL_DEFINITIONS_VERSION = 2
 
 /** The official definition rows, in dependency order. */
 export const OFFICIAL_DEFINITIONS = freezeCopy({

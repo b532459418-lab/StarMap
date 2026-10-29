@@ -128,8 +128,7 @@
       "fields": [
         {
           "key": "place",
-          "kind": "entity_ref",
-          "required": true
+          "kind": "entity_ref"
         },
         {
           "key": "asset",

@@ -52,7 +52,8 @@ test('field contract of every official definition', () => {
   assert.deepEqual(fields(OFFICIAL_DEFINITIONS.entityTypes), {
     [OFFICIAL.place]: [{ key: 'subtype', kind: 'text', required: true }, { key: 'iso3166Alpha2', kind: 'text' }],
     [OFFICIAL.journey]: [],
-    [OFFICIAL.media]: [{ key: 'place', kind: 'entity_ref', required: true }, { key: 'asset', kind: 'asset_ref', required: true }],
+    // 3C-5 G (definitions version 2): a media entity's place is optional.
+    [OFFICIAL.media]: [{ key: 'place', kind: 'entity_ref' }, { key: 'asset', kind: 'asset_ref', required: true }],
   })
   assert.deepEqual(fields(OFFICIAL_DEFINITIONS.layers), {
     [OFFICIAL.travel]: [{ key: 'date', kind: 'date_evidence', required: true }, { key: 'note', kind: 'text' }, { key: 'tripTitle', kind: 'text' }],
