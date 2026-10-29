@@ -59,11 +59,29 @@ The importer matches folders against the places of the new library (`<private-ro
 
 A private folder that still holds legacy-format data it has not migrated cannot import media: `npm run media:check` and `npm run media:import` stop with exit code 2 and explain how to migrate (see [Legacy-format data](../../01_Web/README.md#legacy-format-data)). After the migration, a legacy `country.json` still resolves through the place's old country key, as described above.
 
+## Media Without a Place
+
+Some media belong to no city: a photo you want to keep but cannot place, one taken in transit. Since 3C-5 G the Inbox has one folder for them:
+
+```text
+MediaInbox/
+└─ _no-place/              or _无地点/ (the same folder)
+   ├─ photos/
+   ├─ drone/
+   └─ media.json           optional drone metadata, without a place
+```
+
+- Inside it, the layout of a city folder. A file directly in the folder is an error, and so is a `media.json` entry that names a place (`placeId`, or `countryId` with `cityId`): to give a file a place, put it into that city's folder instead. Other top-level folders whose names start with `_` are still ignored.
+- `npm run media:check`, `npm run media:import`, media tasks, re-reads and re-imports handle it like a city folder. Its files become records **without a place**: the import report counts them (`没有地点的新资料 N 条`), and the App does not show them yet. The personal build leaves them and their files out, the public read model never contains them (they are private), `npm run store:export-v2` cannot write them as V2 media and lists them by id, and backups keep them and check their files.
+- **Giving one a place later:** the user moves the file into the city's folder (an Agent never moves Inbox originals) and runs `npm run media:import` (a move: the same record, still without a place). Then re-read it: `npm run media:check -- --reread <its new Inbox path>` lists `place：无 → <city's place id>` with a digest, and `npm run media:import -- --reread <its new Inbox path> --digest <digest>` writes it; the record then appears in that city (not as its cover). The other way round works the same: a file moved into `_no-place` and re-read loses its place (`<place id> → 无`; the App's re-read preview shows `<city> → none`).
+- **Deleting one for good:** the App does not list these records yet, so it cannot delete them. Give the record a place as above, hide it in that city, then use **Delete hidden media**.
+- **Agent rule:** put a file into `_no-place` only when the user explicitly says it has no place. A place that is unknown or uncertain is a question to ask, as for any other file; `_no-place` is never a way around that question.
+
 ## Agent Workflow
 
 1. Read the project media-import route in `AGENTS.md`, then read the full [media import protocol](../../03_Reference/TravelAtlas_media_import_protocol.md).
 2. Confirm that every file has a reliable existing country and city. For drone media, read embedded metadata first and confirm the media type, date, and resolution. Coordinates and altitude improve map behavior but are optional.
-3. If any country, city, media type, date, coordinate, privacy status, or intended use is missing or uncertain, ask the smallest necessary question and stop. Without a reliable answer, do not guess, copy, convert, catalog, or import that item.
+3. If any country, city, media type, date, coordinate, privacy status, or intended use is missing or uncertain, ask the smallest necessary question and stop. Without a reliable answer, do not guess, copy, convert, catalog, or import that item. Use `_no-place/` only when the user explicitly says an item has no place (see Media Without a Place); an uncertain place is never a reason to use it.
 4. From `01_Web/`, run `npm run media:check`. Any `需要处理` result or warning caused by unresolved required data blocks the import, even if the command exits successfully.
 5. Only after a clean preflight, run `npm run media:import`. It imports into the new library and creates content-addressed `thumb`, `preview`, and `original` tiers outside the Inbox; reload the preview and verify City Info, City Cards/Photos, Drone Media, and the 360 Viewer as applicable.
 6. Finish with `npm run privacy:check`, `npm run lint`, and `npm run build:personal`, then report imported counts and unresolved items. Before any public release, run `npm run release:check` separately from a clean source worktree.
@@ -74,7 +92,7 @@ Original media in `MediaInbox` is immutable by default: never move, rename, over
 
 - `<country>/place.json` and `<country>/<city>/place.json` bind a folder to a place id (`{ "placeId": "…" }`). StarMap normally writes them itself: into a folder an upload creates (never into an existing folder), and on import once you confirm a binding found by name. Write one by hand only to resolve a reported ambiguity, with a place id the preflight reports (or one from the `places.local.json` that `npm run store:export-v2` writes).
 - `<country>/country.json` maps an ambiguous country folder to an existing legacy `countryId`.
-- `<country>/<city>/media.json` records drone type and capture metadata using `media.example.json` as the shape reference. An entry may also carry `placeId` (a city place id) to assign one file to another city; the legacy `countryId` + `cityId` pair is still accepted. Giving both and having them disagree is an error.
+- `<country>/<city>/media.json` (and `_no-place/media.json`) records drone type and capture metadata using `media.example.json` as the shape reference. An entry may also carry `placeId` (a city place id) to assign one file to another city; the legacy `countryId` + `cityId` pair is still accepted. Giving both and having them disagree is an error.
 
 These JSON files are metadata, not media derivatives. Converted, resized, optimized, or otherwise derived media must never be written into the Inbox. The editor's `.bak` backups of these files are ignored by the importer.
 
