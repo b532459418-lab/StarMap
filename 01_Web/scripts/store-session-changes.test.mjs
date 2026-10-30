@@ -113,3 +113,22 @@ test('a restore (the restore mark moves) and a new session: the page reads the w
   assert.equal((await restarted.changesSince(1)).body.reason, 'restart')
   assert.equal((await restarted.changesSince(5)).body.reason, 'ahead')
 })
+
+test('性能续 P6: after a commit that only changes the media registry, the next commit is still one delta since that revision', async (t) => {
+  const { session, files, write } = await changesSession(t)
+  assert.equal((await session.moduleExports()).revision, 1)
+  // A registry-only commit (an import that only registered a moved source): no row, the revision stays.
+  const media = await session.mediaStore()
+  const registered = await media.commit({
+    requestId: requestId(), baseRevision: 1, kind: 'test.registry-only', actor: 'test', commands: [],
+    media: { scanCache: [{ op: 'put', path: 'MediaInbox/Synthland/Harbor Town/photos/moved.jpg', size: 1, mtimeMs: 0, sha256: 'a'.repeat(64) }] },
+  })
+  assert.equal(registered.status, 'committed')
+  assert.equal(session.cachedRevision, 1)
+  // The next commit changes rows: what a media answer from revision 1 gets (deltaSince) is that commit alone.
+  const wish = files.wantToGo.items[0]
+  const answer = await write({ id: wish.id, note: 'Synthetic after the registry' }, 1, 1)
+  assert.equal(answer.body.revision, 2)
+  assert.deepEqual(session.deltaSince(1), answer.body.delta)
+  assert.deepEqual((await session.changesSince(1)).body.deltas, [answer.body.delta])
+})
