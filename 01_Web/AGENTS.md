@@ -36,6 +36,8 @@ npm run dev:personal
 
 Codex 固定使用端口 5173，DSH 固定使用端口 5174。启用 strict port；若 5173 被占用，停止并报告，不得自动改用 5174。
 
+React StrictMode（性能续，作者 2026-10-30 决定）：日常的 `npm run dev:personal` 不再包 StrictMode，渲染与 effect 不再各调用两次；浏览器测试的开发服务器由 `playwright.config.mjs` 设 `VITE_STARMAP_STRICT_MODE=1`，仍然开着 StrictMode，双重调用的检查留在测试里。`dev:public` 与公开构建不变（见 `src/main.tsx`）。
+
 ## Imagery Source Credential Boundary
 
 - StarMap supports Cesium ion imagery, Tianditu imagery with Chinese labels, and the bundled low-resolution Natural Earth II fallback. Cesium remains the 3D engine; switching sources changes imagery, not the globe implementation.
