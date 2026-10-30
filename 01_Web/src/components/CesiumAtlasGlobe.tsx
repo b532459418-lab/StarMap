@@ -641,9 +641,17 @@ const installDebugCameraApi = (
 
 // 3C-5 D: the map's place, badge and route entities as memoized components with plain props. A save no longer reloads
 // the page, so the globe renders again after every change of the data; only the entities whose own values changed render
-// (and so update their Cesium entity). Titles are compared as JSON (the data store makes new objects).
+// (and so update their Cesium entity). Titles are compared by value (the data store makes new objects); 性能续 ⑤: member
+// by member instead of as JSON (about 12 000 entities on every render of the globe).
+const samePlainValue = (a: unknown, b: unknown): boolean => {
+  if (Object.is(a, b)) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) return false
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length
+    && keys.every((key) => Object.hasOwn(b, key) && samePlainValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
+}
 const sameEntityProps = <P extends object>(a: P, b: P) => (Object.keys(a) as (keyof P)[]).every((key) => key === 'title'
-  ? a[key] === b[key] || JSON.stringify(a[key]) === JSON.stringify(b[key])
+  ? samePlainValue(a[key], b[key])
   : Object.is(a[key], b[key]))
 
 type TravelCityEntityProps = {

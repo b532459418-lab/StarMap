@@ -159,13 +159,13 @@ function App() {
       : restoredSelectionMode === 'country'
         ? countryDistance
         : overviewDistance
-  const defaultSelectedDayId = [...journeyDays].sort((left, right) =>
-    `${right.date}-${right.id}`.localeCompare(`${left.date}-${left.id}`),
-  )[0]?.id ?? ''
-  const restoredSelectedDayId = restoredViewState.selectedDayId
+  // The day restored, or the latest one (the first of the days sorted by date and id, descending). Only the initial
+  // value of the selected day: computed once (性能续 ④: it sorted every journey day on every render).
+  const restoredSelectedDayId = () => restoredViewState.selectedDayId
     && journeyDays.some((day) => day.id === restoredViewState.selectedDayId)
     ? restoredViewState.selectedDayId
-    : defaultSelectedDayId
+    : journeyDays.reduce<(typeof journeyDays)[number] | undefined>((latest, day) => (latest === undefined
+      || `${day.date}-${day.id}`.localeCompare(`${latest.date}-${latest.id}`) > 0 ? day : latest), undefined)?.id ?? ''
   const restoredActivePage: AtlasPage = ['map', 'journey', 'collection', 'about'].includes(restoredViewState.activePage ?? '')
     ? restoredViewState.activePage as AtlasPage
     : 'map'
