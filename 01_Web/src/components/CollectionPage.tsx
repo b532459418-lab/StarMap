@@ -357,14 +357,14 @@ const CollectionCard = memo(function CollectionCard({
     : { startDate: entry.addedAt },
   { unknown: t('details:unknownDate'), yearOnly: t('journey:yearOnly'), partial: t('details:dateQualitypartial'),
     missing: t('details:dateQualitymissing'), invalid: t('details:dateQualityinvalid') })
-  const dateLabel = fromTravelLog ? t('details:plannedVisit', { date }) : t('added', { date })
+  const dateLabel = fromTravelLog ? t('details:plannedVisit', { date }) : t('collection:added', { date })
 
   const tags: { id: string; label: string }[] = []
-  if (entry.subtype === 'country') tags.push({ id: 'country', label: t('wholeCountry') })
-  if (entry.hidden) tags.push({ id: 'hidden', label: t('hidden') })
-  if (!entry.location) tags.push({ id: 'no-location', label: t('noLocation') })
-  if (fromTravelLog) tags.push({ id: 'travel-log', label: t('readOnlyTravel') })
-  if (isSample) tags.push({ id: 'sample', label: t('sample') })
+  if (entry.subtype === 'country') tags.push({ id: 'country', label: t('collection:wholeCountry') })
+  if (entry.hidden) tags.push({ id: 'hidden', label: t('collection:hidden') })
+  if (!entry.location) tags.push({ id: 'no-location', label: t('collection:noLocation') })
+  if (fromTravelLog) tags.push({ id: 'travel-log', label: t('collection:readOnlyTravel') })
+  if (isSample) tags.push({ id: 'sample', label: t('collection:sample') })
 
   const runWrite = (action: (options: { onApplied: () => void }) => Promise<unknown>, failureKey: string) => {
     setBusy(true)
@@ -409,7 +409,7 @@ const CollectionCard = memo(function CollectionCard({
 
   const deleteEntry = () => {
     if (!writableId) return
-    if (!window.confirm(t('deleteConfirm', { name }))) return
+    if (!window.confirm(t('collection:deleteConfirm', { name }))) return
     runWrite((done) => deleteHiddenLocalWantToGo([writableId], done), 'deleteFailed')
   }
 
@@ -423,7 +423,7 @@ const CollectionCard = memo(function CollectionCard({
       <p className="collection-card-meta">{[countryName, dateLabel].filter(Boolean).join(' · ')}</p>
 
       {tags.length > 0 ? (
-        <ul className="collection-tags" aria-label={t('tags', { name })}>
+        <ul className="collection-tags" aria-label={t('collection:tags', { name })}>
           {tags.map((tag) => (
             <li key={tag.id} className="collection-tag" data-tag={tag.id}>{tag.label}</li>
           ))}
@@ -453,11 +453,11 @@ const CollectionCard = memo(function CollectionCard({
               type="button"
               className="collection-action collection-action-primary"
               disabled={busy}
-              aria-label={t('viewFor', { name })}
+              aria-label={t('collection:viewFor', { name })}
               onClick={() => onViewOnMap(entry)}
             >
               <LocateFixed aria-hidden="true" />
-              <span>{t('view')}</span>
+              <span>{t('collection:view')}</span>
             </button>
           ) : null}
 
@@ -468,12 +468,12 @@ const CollectionCard = memo(function CollectionCard({
               data-blocked={convertBlockReason ? 'true' : undefined}
               disabled={busy || convertBlockReason !== undefined}
               title={localizedConversionReason(convertBlockReason, t)}
-              aria-label={t('visitedFor', { name })}
+              aria-label={t('collection:visitedFor', { name })}
               aria-describedby={convertBlockReason ? convertHintId : undefined}
               onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
               <Footprints aria-hidden="true" />
-              <span>{t('visited')}</span>
+              <span>{t('collection:visited')}</span>
             </button>
           ) : null}
 
@@ -483,11 +483,11 @@ const CollectionCard = memo(function CollectionCard({
                 type="button"
                 className="collection-action"
                 disabled={busy}
-                aria-label={t('editNoteFor', { name })}
+                aria-label={t('collection:editNoteFor', { name })}
                 onClick={startEditingNote}
               >
                 <PencilLine aria-hidden="true" />
-                <span>{t('editNote')}</span>
+                <span>{t('collection:editNote')}</span>
               </button>
               {entry.hidden ? (
                 <>
@@ -495,21 +495,21 @@ const CollectionCard = memo(function CollectionCard({
                     type="button"
                     className="collection-action"
                     disabled={busy}
-                    aria-label={t('restoreFor', { name })}
+                    aria-label={t('collection:restoreFor', { name })}
                     onClick={restoreEntry}
                   >
                     <Eye aria-hidden="true" />
-                    <span>{t('restore')}</span>
+                    <span>{t('collection:restore')}</span>
                   </button>
                   <button
                     type="button"
                     className="collection-action collection-action-danger"
                     disabled={busy}
-                    aria-label={t('deleteFor', { name })}
+                    aria-label={t('collection:deleteFor', { name })}
                     onClick={deleteEntry}
                   >
                     <Trash2 aria-hidden="true" />
-                    <span>{t('delete')}</span>
+                    <span>{t('collection:delete')}</span>
                   </button>
                 </>
               ) : (
@@ -517,11 +517,11 @@ const CollectionCard = memo(function CollectionCard({
                   type="button"
                   className="collection-action"
                   disabled={busy}
-                  aria-label={t('hideFor', { name })}
+                  aria-label={t('collection:hideFor', { name })}
                   onClick={hideEntry}
                 >
                   <EyeOff aria-hidden="true" />
-                  <span>{t('hide')}</span>
+                  <span>{t('collection:hide')}</span>
                 </button>
               )}
             </>
@@ -583,13 +583,13 @@ function CollectionNoteEditor({ entry, item, name, t, busy, canSave, onCancel, o
         onDiscard={onCancel}
         copyText={noteDraft}
       />
-      <label htmlFor={noteId} className="sr-only">{t('note', { name })}</label>
+      <label htmlFor={noteId} className="sr-only">{t('collection:note', { name })}</label>
       <textarea
         id={noteId}
         value={noteDraft}
         maxLength={noteMaxLength}
         rows={3}
-        placeholder={t('notePlaceholder')}
+        placeholder={t('collection:notePlaceholder')}
         disabled={busy}
         onChange={(event) => setNoteDraft(event.target.value)}
       />
@@ -600,20 +600,20 @@ function CollectionNoteEditor({ entry, item, name, t, busy, canSave, onCancel, o
             type="button"
             className="collection-action"
             disabled={busy}
-            aria-label={t('cancelNoteFor', { name })}
+            aria-label={t('collection:cancelNoteFor', { name })}
             onClick={onCancel}
           >
-            {t('cancel')}
+            {t('collection:cancel')}
           </button>
           <button
             type="button"
             className="collection-action collection-action-primary"
             disabled={busy || noteConflict || !canSave}
             aria-describedby={noteConflict ? noteConflictId : undefined}
-            aria-label={t('saveNoteFor', { name })}
+            aria-label={t('collection:saveNoteFor', { name })}
             onClick={() => onSave(noteDraft, noteDraftHandle.writeOptions())}
           >
-            {t(busy ? 'saving' : 'save')}
+            {t(busy ? 'collection:saving' : 'collection:save')}
           </button>
         </div>
       </div>
