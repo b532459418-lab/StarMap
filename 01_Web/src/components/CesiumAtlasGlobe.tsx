@@ -71,6 +71,8 @@ type CesiumAtlasGlobeProps = {
   showCity3DTiles?: boolean
   /** Google 3D tiles could not be created; the owner of the City 3D state turns it off so the globe returns. */
   onCity3DUnavailable?: () => void
+  /** 性能续 c: the map has drawn its first frame (each viewer once; keep it stable). */
+  onFirstFrame?: () => void
   showLabelsOverlay?: boolean
   selectedCountryId?: CountryId
   selectedCityId?: CityId
@@ -864,6 +866,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
   mapSource,
   showCity3DTiles = false,
   onCity3DUnavailable,
+  onFirstFrame,
   showLabelsOverlay = true,
   selectedCountryId,
   selectedCityId,
@@ -1639,6 +1642,18 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
 
     configureViewer(viewer)
   }, [viewerReadyVersion])
+
+  // 性能续 c: tell the page when the map has drawn its first frame (it then loads code it will need, when idle).
+  useEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer || !onFirstFrame) return undefined
+    const first = () => {
+      viewer.scene.postRender.removeEventListener(first)
+      onFirstFrame()
+    }
+    viewer.scene.postRender.addEventListener(first)
+    return () => { if (!viewer.isDestroyed()) viewer.scene.postRender.removeEventListener(first) }
+  }, [viewerReadyVersion, onFirstFrame])
 
   // 性能续 b: the map's entities (cities, want-to-go places and badges, routes, drone markers) are shown or hidden with
   // the map page in one step, the entity collection's own `show` (an entity shows only when its collection does), instead
