@@ -1,5 +1,5 @@
 import { editorErrorNotice, localizedConversionReason } from '../i18n/editorErrors.ts'
-import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
+import { useLocalizedNoticeWith } from '../i18n/useLocalizedNotice'
 import { memo, useCallback, useId, useMemo, useState } from 'react'
 import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
 import { localEditorAvailable } from '../data/editorState'
@@ -15,6 +15,9 @@ import { collectionEntryKey, filterCollection } from '../worldgraph/collection'
 import { originalNameSubtitle, resolveName } from '../worldgraph/localizedText'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
+import type { EditorWriteOptions } from '../data/localEditorApi'
+import type { UiLocale } from '../data/uiLocale'
 import { formatRecordDate } from '../data/derive/recordDateLabel'
 import type { WantToGoItem } from '../data/derive/wantToGo'
 import type { TravelMapRecord } from '../types/travel'
@@ -86,6 +89,9 @@ const isFromTravelLog = (entry: CollectionEntry) => entry.readOnly && entry.sour
 export const CollectionPage = memo(function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertToTravel }: CollectionPageProps) {
   const { locale } = useUiLocale()
   const { t } = useTranslation('collection')
+  // 性能续 a: the cards' translations, one subscription for all of them.
+  const { t: cardT } = useTranslation(['collection', 'details', 'journey'])
+  const { t: noticeT } = useTranslation(['editor', 'details'])
   const searchId = useId()
   const sortId = useId()
   const sectionTitleId = useId()
@@ -267,6 +273,9 @@ export const CollectionPage = memo(function CollectionPage({ entries, onViewOnMa
                   onNoteDraft: pinWhileDrafting,
                   onViewOnMap,
                   onConvertToTravel,
+                  t: cardT,
+                  noticeT,
+                  locale,
                 }
                 return cardElements.element(key, props, () => <CollectionCard key={key} {...props} />)
               })}
@@ -280,6 +289,10 @@ export const CollectionPage = memo(function CollectionPage({ entries, onViewOnMa
 
 type CollectionCardProps = {
   entry: CollectionEntry
+  /** 性能续 a: the page's translations (collection, details, journey; editor for the notices) and locale. */
+  t: TFunction
+  noticeT: TFunction
+  locale: UiLocale
   /** The want-to-go item, or the planned record, behind this row (from the page; see recordsOf). */
   item?: WantToGoItem
   planned?: TravelMapRecord
@@ -297,27 +310,24 @@ type CollectionCardProps = {
 const sameCard = (a: CollectionCardProps, b: CollectionCardProps) => a.onViewOnMap === b.onViewOnMap && a.onConvertToTravel === b.onConvertToTravel
   && a.onNoteDraft === b.onNoteDraft && a.writeAvailable === b.writeAvailable && a.plannedConvertAvailable === b.plannedConvertAvailable
   && a.wantToGoBlockReason === b.wantToGoBlockReason && a.plannedBlockReason === b.plannedBlockReason
+  && a.t === b.t && a.noticeT === b.noticeT && a.locale === b.locale
   && JSON.stringify(a.entry) === JSON.stringify(b.entry) && JSON.stringify(a.item) === JSON.stringify(b.item) && JSON.stringify(a.planned) === JSON.stringify(b.planned)
 
+/**
+ * 性能续 a: a card holds as little as it can (3500 of them mount at once): the page gives it the translations and the
+ * locale (one subscription instead of three per card), and the note draft lives in CollectionNoteEditor, mounted only
+ * while the note is being edited (no store subscription per card).
+ */
 const CollectionCard = memo(function CollectionCard({
   entry, item, planned, wantToGoBlockReason, plannedBlockReason, writeAvailable, plannedConvertAvailable, onViewOnMap, onConvertToTravel, onNoteDraft,
+  t, noticeT, locale,
 }: CollectionCardProps) {
-  const { locale } = useUiLocale()
-  const { t } = useTranslation(['collection', 'details', 'journey'])
-  const noteId = useId()
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useLocalizedNotice()
-  const [noteDraft, setNoteDraft] = useState('')
-  // 3C-5 D: the note draft remembers the revision and the item as they were when editing started; when the item
-  // changes elsewhere (or goes), the card shows the conflict and the save waits for the user's choice.
-  const noteProbe = useMemo(() => wishProbe(isFromTravelLog(entry) ? undefined : entry.recordId), [entry])
-  const noteDraftHandle = useDraft(noteProbe)
-  const editingNote = noteDraftHandle.active
-  const noteConflict = noteDraftHandle.status === 'changed' || noteDraftHandle.status === 'deleted'
-  const noteConflictId = useId()
+  const [notice, setNotice] = useLocalizedNoticeWith(noticeT)
+  const [editingNote, setEditingNote] = useState(false)
   const endNoteDraft = () => {
-    noteDraftHandle.end()
+    setEditingNote(false)
     onNoteDraft?.(entry, false)
   }
   const fromTravelLog = isFromTravelLog(entry)
@@ -374,17 +384,17 @@ const CollectionCard = memo(function CollectionCard({
       })
   }
 
+  // The draft starts with the editor (CollectionNoteEditor: its revision and the item as they are now).
   const startEditingNote = () => {
-    noteDraftHandle.begin()
-    setNoteDraft(entry.note ?? '')
+    setEditingNote(true)
     setNotice('')
     onNoteDraft?.(entry, true)
   }
 
-  const saveNote = () => {
+  const saveNote = (text: string, options: EditorWriteOptions) => {
     if (!writableId) return
     // 空串即删除备注（端点负责 trim 与删除）。
-    runWrite((done) => updateLocalWantToGo(writableId, { note: noteDraft }, { ...noteDraftHandle.writeOptions(), ...done }), 'saveFailed')
+    runWrite((done) => updateLocalWantToGo(writableId, { note: text }, { ...options, ...done }), 'saveFailed')
   }
 
   const hideEntry = () => {
@@ -421,53 +431,17 @@ const CollectionCard = memo(function CollectionCard({
       ) : null}
 
       {editingNote ? (
-        <div className="collection-note-editor">
-          <DraftConflictNotice
-            id={noteConflictId}
-            status={noteDraftHandle.status}
-            before={noteDraftHandle.baseValue}
-            after={noteDraftHandle.current}
-            busy={busy}
-            onKeepMine={() => { noteDraftHandle.keepMine(); setNotice('') }}
-            onTakeTheirs={() => { noteDraftHandle.begin(); setNoteDraft(item?.note ?? ''); setNotice('') }}
-            onDiscard={endNoteDraft}
-            copyText={noteDraft}
-          />
-          <label htmlFor={noteId} className="sr-only">{t('note', { name })}</label>
-          <textarea
-            id={noteId}
-            value={noteDraft}
-            maxLength={noteMaxLength}
-            rows={3}
-            placeholder={t('notePlaceholder')}
-            disabled={busy}
-            onChange={(event) => setNoteDraft(event.target.value)}
-          />
-          <div className="collection-note-footer">
-            <small>{noteDraft.length}/{noteMaxLength}</small>
-            <div className="collection-note-buttons">
-              <button
-                type="button"
-                className="collection-action"
-                disabled={busy}
-                aria-label={t('cancelNoteFor', { name })}
-                onClick={endNoteDraft}
-              >
-                {t('cancel')}
-              </button>
-              <button
-                type="button"
-                className="collection-action collection-action-primary"
-                disabled={busy || noteConflict || !writableId}
-                aria-describedby={noteConflict ? noteConflictId : undefined}
-                aria-label={t('saveNoteFor', { name })}
-                onClick={saveNote}
-              >
-                {t(busy ? 'saving' : 'save')}
-              </button>
-            </div>
-          </div>
-        </div>
+        <CollectionNoteEditor
+          entry={entry}
+          item={item}
+          name={name}
+          t={t}
+          busy={busy}
+          canSave={writableId !== undefined}
+          onCancel={endNoteDraft}
+          onSave={saveNote}
+          setNotice={setNotice}
+        />
       ) : entry.note ? (
         <p className="collection-card-note">“{entry.note}”</p>
       ) : null}
@@ -563,3 +537,77 @@ const CollectionCard = memo(function CollectionCard({
     </li>
   )
 }, sameCard)
+
+/**
+ * A card's note editor (性能续 a: mounted only while the note is edited, so a card without an open editor holds no draft
+ * and no store subscription). 3C-5 D: the draft starts with the editor and remembers the revision and the item as they
+ * were then; when the item changes elsewhere (or goes), the editor shows the conflict and the save waits for the user's
+ * choice.
+ */
+function CollectionNoteEditor({ entry, item, name, t, busy, canSave, onCancel, onSave, setNotice }: {
+  entry: CollectionEntry
+  item?: WantToGoItem
+  name: string
+  t: TFunction
+  busy: boolean
+  canSave: boolean
+  onCancel: () => void
+  onSave: (text: string, options: EditorWriteOptions) => void
+  setNotice: (notice: '') => void
+}) {
+  const noteId = useId()
+  const noteConflictId = useId()
+  const [noteDraft, setNoteDraft] = useState(() => entry.note ?? '')
+  const noteProbe = useMemo(() => wishProbe(isFromTravelLog(entry) ? undefined : entry.recordId), [entry])
+  const noteDraftHandle = useDraft(noteProbe, { open: true })
+  const noteConflict = noteDraftHandle.status === 'changed' || noteDraftHandle.status === 'deleted'
+  return (
+    <div className="collection-note-editor">
+      <DraftConflictNotice
+        id={noteConflictId}
+        status={noteDraftHandle.status}
+        before={noteDraftHandle.baseValue}
+        after={noteDraftHandle.current}
+        busy={busy}
+        onKeepMine={() => { noteDraftHandle.keepMine(); setNotice('') }}
+        onTakeTheirs={() => { noteDraftHandle.begin(); setNoteDraft(item?.note ?? ''); setNotice('') }}
+        onDiscard={onCancel}
+        copyText={noteDraft}
+      />
+      <label htmlFor={noteId} className="sr-only">{t('note', { name })}</label>
+      <textarea
+        id={noteId}
+        value={noteDraft}
+        maxLength={noteMaxLength}
+        rows={3}
+        placeholder={t('notePlaceholder')}
+        disabled={busy}
+        onChange={(event) => setNoteDraft(event.target.value)}
+      />
+      <div className="collection-note-footer">
+        <small>{noteDraft.length}/{noteMaxLength}</small>
+        <div className="collection-note-buttons">
+          <button
+            type="button"
+            className="collection-action"
+            disabled={busy}
+            aria-label={t('cancelNoteFor', { name })}
+            onClick={onCancel}
+          >
+            {t('cancel')}
+          </button>
+          <button
+            type="button"
+            className="collection-action collection-action-primary"
+            disabled={busy || noteConflict || !canSave}
+            aria-describedby={noteConflict ? noteConflictId : undefined}
+            aria-label={t('saveNoteFor', { name })}
+            onClick={() => onSave(noteDraft, noteDraftHandle.writeOptions())}
+          >
+            {t(busy ? 'saving' : 'save')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
