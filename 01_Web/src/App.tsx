@@ -79,8 +79,10 @@ const loadCollectionPage = () => import('./components/CollectionPage').then((mod
 const LazyCollectionPage = lazy(() => loadCollectionPage().then((module) => ({ default: module.CollectionPage })))
 const prefetchCollectionPage = () => {
   if (collectionPageModule) return
-  const idle = window.requestIdleCallback ?? ((work: () => void) => window.setTimeout(work, 1))
-  idle(() => { void loadCollectionPage().catch(() => undefined) })
+  const load = () => { void loadCollectionPage().catch(() => undefined) }
+  // The globe renders every frame, so an idle period can be long in coming: at most 1 s.
+  if (window.requestIdleCallback) window.requestIdleCallback(load, { timeout: 1000 })
+  else window.setTimeout(load, 1)
 }
 function CollectionPage(props: ComponentProps<typeof CollectionPageComponent>) {
   const [Page] = useState(() => collectionPageModule?.CollectionPage ?? LazyCollectionPage)
