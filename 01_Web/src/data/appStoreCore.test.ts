@@ -187,3 +187,41 @@ test('the page queries: one result per snapshot and arguments, equal to the dire
   assert.equal(alone.queries.browseProjection(filters), alone.queries.browseProjection({ ...filters }))
   assert.equal(alone.queries.collection('en'), alone.queries.collection('en'))
 })
+
+test('性能续 ②: an order-only save keeps the time query context and its queries; hiding a country does not', () => {
+  let state = doubleRunStore(migratedFiles()).state
+  const store = createAppStore(snapshotOf(state), OPTIONS)
+  store.replace(readModelOf(state, { origin: 'local' }), IDENTITY)
+  const filters = { travel: { from: '2000-01-01', to: '2100-12-31', includeUncertain: true } }
+  const layers = [TRAVEL_LAYER_ID, WANT_TO_GO_LAYER_ID]
+  const commit = (operations: unknown[], n: number) => {
+    const ctx = stepContext(n)
+    const plan = NATIVE_WRITES['POST /__travelatlas/editor/view'].plan(officialReader(liveReadModelIndex(readModelOf(state, { origin: 'local' }))), { operations }, ctx)
+    assert.ok(plan.commands.length > 0, 'the write changes something')
+    const changeSet = planCommands(memoryReader(state), plan.commands, { baseRevision: state.revision, now: ctx.now.toISOString(), policy: OFFICIAL_POLICY })
+    state = applyChangeSet(state, changeSet)
+    assert.equal(store.apply(changesOf(changeSet)), true)
+    return store.getSnapshot()
+  }
+  const before = store.getSnapshot()
+  const context = before.timeQueryContext()
+  const projection = before.queries.browseProjection(filters)
+  const filtered = before.queries.visiblePlaces(layers, filters)
+  const countryIds = before.appData.travelAtlas.countries.map((country) => country.id)
+  assert.ok(countryIds.length >= 2)
+  // The country list in another order: an editor-state change the time context does not read.
+  const reordered = [countryIds[1], countryIds[0], ...countryIds.slice(2)]
+  const ordered = commit([{ op: 'order', scope: 'countries', ids: reordered, baseline: before.canonical.editorState.countryOrder }], 1)
+  assert.notEqual(ordered.canonical.editorState, before.canonical.editorState, 'the editor state changed')
+  assert.equal(ordered.timeQueryContext(), context, 'the same time query context')
+  assert.equal(ordered.queries.browseProjection(filters), projection, 'the same browse projection')
+  // The filtered places depend on the world graph as well (the country order is part of it): kept exactly when it is.
+  const sameGraph = ordered.appData.worldGraph.worldGraphSnapshot === before.appData.worldGraph.worldGraphSnapshot
+  assert.equal(ordered.queries.visiblePlaces(layers, filters) === filtered, sameGraph, 'the filtered places follow the graph')
+  // A hidden country: the time context reads it (browsable records), so it and its queries are computed again.
+  const hidden = commit([{ op: 'hide', scope: 'countries', add: [countryIds[0]], remove: [] }], 2)
+  assert.notEqual(hidden.timeQueryContext(), context, 'a new time query context')
+  assert.notEqual(hidden.queries.browseProjection(filters), projection, 'a new browse projection')
+  // Both equal what a snapshot computed from scratch gives.
+  assertSameSnapshot(hidden, snapshotOf(state), 'after the order and the hide')
+})
