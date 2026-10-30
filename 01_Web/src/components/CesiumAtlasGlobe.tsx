@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ArcType,
   BoundingSphere,
@@ -1640,6 +1640,15 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     configureViewer(viewer)
   }, [viewerReadyVersion])
 
+  // 性能续 b: the map's entities (cities, want-to-go places and badges, routes, drone markers) are shown or hidden with
+  // the map page in one step, the entity collection's own `show` (an entity shows only when its collection does), instead
+  // of a new `show` on each of about 12 000 entity components at every page switch. Before the browser paints.
+  useLayoutEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer || viewer.isDestroyed()) return
+    viewer.entities.show = showMapContent
+  }, [showMapContent, viewerReadyVersion])
+
   useEffect(() => {
     if (!showMapContent) return undefined
 
@@ -2284,7 +2293,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
             (selectionMode !== 'city' || isCityRoute)
           const props: RouteEntityProps = {
             name: `${route.journeyId}: ${route.fromCityId} to ${route.toCityId}${route.dateMatch === 'uncertain' ? ` · ${uncertainDateLabel}` : ''}`,
-            show: showMapContent && isVisible,
+            show: isVisible,
             dashed: route.dateMatch === 'uncertain',
             isActive,
             isMuted,
@@ -2295,7 +2304,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
         })}
 
         {mappedCities.map((city) => {
-          const show = showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)
+          const show = visibleCityIds?.has(city.sourceId) ?? true
           if (!city.layerIds.includes(TRAVEL_LAYER_ID)) {
             const props: WantToGoPlaceEntityProps = {
               sourceId: city.sourceId,
@@ -2351,7 +2360,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
             title: city.title,
             locale,
             wantToGoLabel,
-            show: showMapContent && (visibleCityIds?.has(city.sourceId) ?? true),
+            show: visibleCityIds?.has(city.sourceId) ?? true,
             lng: city.lng,
             lat: city.lat,
             isMuted: selectionMode !== 'overview' && !isSelected && !isCountryCity,
@@ -2370,7 +2379,6 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
             <Entity
               key={item.id}
               name={droneMarkerName(item)}
-              show={showMapContent}
               position={droneMediaPosition(item)}
               onClick={() => onSelectDroneMediaItem(item)}
               billboard={{
