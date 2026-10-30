@@ -18,10 +18,17 @@
  *   revision; ./localEditorApi.ts).
  *
  * Constraint: browser only (it reads the page's data store).
+ *
+ * 性能续 P5 (the author's decision of 2026-10-23): an editor that tells its own values (`local`, plain data, and the
+ * values it started from, `begin(localAtStart)`) follows new data when it has no local edits: instead of `changed`, the
+ * hook calls `onFollow` in a layout effect (the editor starts its draft again from the new data; nothing is shown in
+ * between) and reports `editing`. With local edits the conflict is shown as before; a record gone is `deleted` as before
+ * (./draftStatus.ts). An editor that does not tell its values is judged as before.
  */
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { appStore, useAppSelector } from './appStore.ts'
 import type { AppSnapshot } from './appStoreCore.ts'
+import { draftStatusOf, sameDraftValue } from './draftStatus.ts'
 import type { EditorWriteOptions } from './localEditorApi.ts'
 
 /** What a draft concerns, as the page's data show it (plain values, compared as JSON; undefined: the record is gone). */
@@ -40,7 +47,8 @@ export interface Draft<V> {
   readonly current?: V
   /** `editing`, or `changed` / `deleted` when the data the draft concerns changed meanwhile; undefined without a draft. */
   readonly status?: DraftStatus
-  begin(): void
+  /** Start the draft from the data on the page now; `localAtStart`: the editor's own values it starts with (P5). */
+  begin(localAtStart?: unknown): void
   end(): void
   /** Keep the draft: the data on the page now become its base (its save writes its own fields over them). */
   keepMine(): void
@@ -51,6 +59,16 @@ export interface Draft<V> {
 interface DraftState<V> {
   readonly baseRevision: number
   readonly baseValue: V
+  readonly localAtStart?: unknown
+}
+
+export interface DraftOptions {
+  /** The draft starts with the component (a dialog that is itself the draft). */
+  readonly open?: boolean
+  /** 性能续 P5: the editor's own values now (plain data); with `open`, its first values are where the draft starts. */
+  readonly local?: unknown
+  /** 性能续 P5: the data changed and the editor has no local edits: start the draft again from the new data. */
+  readonly onFollow?: () => void
 }
 
 /**
@@ -66,39 +84,49 @@ export function once(end: () => void): () => void {
   }
 }
 
-const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 /** The selected JSON when the record is gone (JSON.stringify(undefined) is undefined), and without a draft. */
 const GONE = 'starmap:draft:gone'
 const NO_DRAFT = 'starmap:draft:none'
 
-/** `open`: the draft starts with the component (a dialog that is itself the draft). */
-export function useDraft<V>(probe: DraftProbe<V>, { open = false }: { readonly open?: boolean } = {}): Draft<V> {
+export function useDraft<V>(probe: DraftProbe<V>, { open = false, local, onFollow }: DraftOptions = {}): Draft<V> {
   const [state, setState] = useState<DraftState<V> | undefined>(() => {
     if (!open) return undefined
     const now = appStore.getSnapshot()
-    return { baseRevision: now.revision, baseValue: probe(now) }
+    return { baseRevision: now.revision, baseValue: probe(now), localAtStart: local }
   })
   // Subscribed only while a draft is open, and only to what it concerns (as JSON): an editor without a draft does not
   // render again when the data move on, and one with a draft only when its record changes.
   const selectCurrent = useCallback((snapshot: AppSnapshot) => (state ? JSON.stringify(probe(snapshot)) ?? GONE : NO_DRAFT), [state, probe])
   const currentJson = useAppSelector(selectCurrent)
-  const start = useCallback(() => {
+  const start = useCallback((localAtStart?: unknown) => {
     const now = appStore.getSnapshot()
-    setState({ baseRevision: now.revision, baseValue: probe(now) })
+    setState({ baseRevision: now.revision, baseValue: probe(now), localAtStart })
+  }, [probe])
+  const keep = useCallback(() => {
+    const now = appStore.getSnapshot()
+    setState((last) => ({ baseRevision: now.revision, baseValue: probe(now), localAtStart: last?.localAtStart }))
   }, [probe])
   const end = useCallback(() => setState(undefined), [])
   const current = useMemo(() => (currentJson === GONE || currentJson === NO_DRAFT ? undefined : JSON.parse(currentJson) as V), [currentJson])
-  const status: DraftStatus | undefined = !state ? undefined
-    : current === undefined && state.baseValue !== undefined ? 'deleted'
-      : sameValue(current, state.baseValue) ? 'editing' : 'changed'
+  const judgement = !state ? undefined : draftStatusOf({ base: state.baseValue, current, localAtStart: state.localAtStart, local })
+  // P5: following, the editor starts again from the new data before the browser paints (no notice in between).
+  const following = judgement === 'follow'
+  const onFollowRef = useRef(onFollow)
+  useLayoutEffect(() => { onFollowRef.current = onFollow })
+  useLayoutEffect(() => {
+    if (!following) return
+    if (onFollowRef.current) onFollowRef.current()
+    else keep()
+  }, [following, currentJson, keep])
+  const status: DraftStatus | undefined = judgement === undefined ? undefined : judgement === 'follow' ? 'editing' : judgement
   return {
     active: state !== undefined,
     ...(state ? { baseRevision: state.baseRevision, baseValue: state.baseValue, current, status } : {}),
     begin: start,
     end,
-    keepMine: start,
+    keepMine: keep,
     writeOptions: () => (state
-      ? { baseRevision: state.baseRevision, changedMeanwhile: () => !sameValue(probe(appStore.getSnapshot()), state.baseValue) }
+      ? { baseRevision: state.baseRevision, changedMeanwhile: () => !sameDraftValue(probe(appStore.getSnapshot()), state.baseValue) }
       : {}),
   }
 }

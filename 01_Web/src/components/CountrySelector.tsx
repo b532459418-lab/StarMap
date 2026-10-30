@@ -93,10 +93,14 @@ export function CountrySelector({
     : [...countries].reverse()).map((country) => country.id)
   // 3C-5 D: the draft starts when editing starts, from the data on the page then (its baseline and revision), and ends
   // with the save or the exit; without a draft the list shows the data. Saves apply only the difference from the baseline (D1).
-  const countryDraft = useDraft(countryListProbe)
-  const isEditingCountries = countryDraft.active
   const [draftCountryIds, setDraftCountryIds] = useState<CountryId[]>([])
   const [draftHiddenCountryIds, setDraftHiddenCountryIds] = useState<CountryId[]>([])
+  // 性能续 P5: without local edits the draft follows new data (it starts again from them, no notice).
+  const countryDraft = useDraft(countryListProbe, {
+    local: { order: draftCountryIds, hidden: draftHiddenCountryIds },
+    onFollow: () => startCountryDraft(),
+  })
+  const isEditingCountries = countryDraft.active
   const [baselineCountryOrder, setBaselineCountryOrder] = useState<readonly CountryId[]>([])
   const [baselineHiddenCountryIds, setBaselineHiddenCountryIds] = useState<readonly CountryId[]>([])
   const [draggedCountryId, setDraggedCountryId] = useState<CountryId>()
@@ -120,7 +124,7 @@ export function CountrySelector({
   }, [countries])
 
   const startCountryDraft = () => {
-    countryDraft.begin()
+    countryDraft.begin({ order: defaultCountryIds, hidden: travelAtlasEditorState.hiddenCountryIds })
     setDraftCountryIds(defaultCountryIds)
     setDraftHiddenCountryIds(travelAtlasEditorState.hiddenCountryIds)
     setBaselineCountryOrder(travelAtlasEditorState.countryOrder)

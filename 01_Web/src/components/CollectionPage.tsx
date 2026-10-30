@@ -559,7 +559,16 @@ function CollectionNoteEditor({ entry, item, name, t, busy, canSave, onCancel, o
   const noteConflictId = useId()
   const [noteDraft, setNoteDraft] = useState(() => entry.note ?? '')
   const noteProbe = useMemo(() => wishProbe(isFromTravelLog(entry) ? undefined : entry.recordId), [entry])
-  const noteDraftHandle = useDraft(noteProbe, { open: true })
+  // 性能续 P5: the note as the editor started it; without local edits the editor follows a new note (no notice).
+  const noteDraftHandle = useDraft(noteProbe, {
+    open: true,
+    local: { note: noteDraft },
+    onFollow: () => {
+      const note = noteDraftHandle.current?.note ?? ''
+      noteDraftHandle.begin({ note })
+      setNoteDraft(note)
+    },
+  })
   const noteConflict = noteDraftHandle.status === 'changed' || noteDraftHandle.status === 'deleted'
   return (
     <div className="collection-note-editor">
@@ -570,7 +579,7 @@ function CollectionNoteEditor({ entry, item, name, t, busy, canSave, onCancel, o
         after={noteDraftHandle.current}
         busy={busy}
         onKeepMine={() => { noteDraftHandle.keepMine(); setNotice('') }}
-        onTakeTheirs={() => { noteDraftHandle.begin(); setNoteDraft(item?.note ?? ''); setNotice('') }}
+        onTakeTheirs={() => { noteDraftHandle.begin({ note: item?.note ?? '' }); setNoteDraft(item?.note ?? ''); setNotice('') }}
         onDiscard={onCancel}
         copyText={noteDraft}
       />

@@ -128,16 +128,55 @@ test('media recovery imports a received file once after explicit scope confirmat
   await center.getByRole('checkbox', { name: 'I confirm this whole Inbox scope, including other cities and any removals.', exact: true }).check()
   await center.getByRole('button', { name: 'Import confirmed files', exact: true }).click()
   await expect(center.getByTestId('media-job-card').locator('header strong')).toHaveText('Completed', { timeout: 30000 })
-  // 3C-5 D: no reload; the dev server pushes the new revision. The photo editor stayed open during the import (its list
-  // changed meanwhile, so it shows the conflict notice): leaving it shows the imported photo.
+  // 3C-5 D: no reload; the dev server pushes the new revision. 性能续 P5: the photo editor stayed open during the import
+  // with no local edits, so it follows the new data: its list has the imported photo, no conflict notice, save enabled.
   await center.getByRole('button', { name: 'Close completed task', exact: true }).click()
   await center.getByRole('button', { name: 'Close panel', exact: true }).click()
   await expect(center).toHaveCount(0)
+  const info = page.locator('.atlas-info-panel')
+  await expect(info.getByRole('button', { name: 'Hide photo', exact: true })).toHaveCount(1, { timeout: 30000 })
+  await expect(info.getByRole('alert')).toHaveCount(0)
+  await expect(info.getByRole('button', { name: 'Save city photos', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Exit editing city photos', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Open photo 1 of Reykjavik', exact: true })).toBeVisible({ timeout: 30000 })
   expect(imports).toBe(1)
   expect(uploads).toBe(1)
   expect((await readFixture('media')).items.filter((item) => item.placeId === fixtureIds.reykjavik)).toHaveLength(1)
+})
+
+/** 性能续 P5: upload one synthetic photo through the open photo editor and import it from the media recovery center. */
+async function importPhotoThroughEditor(page, name) {
+  const image = await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 90, g: 150, b: 60 } } }).png().toBuffer()
+  await page.locator('.atlas-info-panel input[type=file]').setInputFiles({ name, mimeType: 'image/png', buffer: image })
+  const center = page.getByTestId('media-recovery-center')
+  await center.getByRole('button', { name: 'Review import scope', exact: true }).click()
+  await center.getByRole('checkbox', { name: 'I confirm this whole Inbox scope, including other cities and any removals.', exact: true }).check()
+  await center.getByRole('button', { name: 'Import confirmed files', exact: true }).click()
+  await expect(center.getByTestId('media-job-card').locator('header strong')).toHaveText('Completed', { timeout: 30000 })
+  await center.getByRole('button', { name: 'Close completed task', exact: true }).click()
+  await center.getByRole('button', { name: 'Close panel', exact: true }).click()
+  await expect(center).toHaveCount(0)
+}
+
+test('性能续 P5: a photo editor with a local edit still shows the conflict when its own upload is imported', async ({ page }) => {
+  await seedSampleMedia()
+  await openMap(page)
+  await selectReykjavik(page)
+  const info = page.locator('.atlas-info-panel')
+  await info.getByRole('button', { name: 'Edit city photos', exact: true }).click()
+  // A local edit: one photo hidden in the draft (not saved).
+  const hide = info.getByRole('button', { name: 'Hide photo', exact: true })
+  const photos = await hide.count()
+  expect(photos).toBeGreaterThan(1)
+  await hide.first().click()
+  await expect(hide).toHaveCount(photos - 1)
+  await importPhotoThroughEditor(page, 'browser-conflict.png')
+  // The import appended the photo to the city's order: the data changed while the draft has an edit.
+  const alert = info.getByRole('alert')
+  await expect(alert).toContainText('This record was changed elsewhere', { timeout: 30000 })
+  await expect(info.getByRole('button', { name: 'Save city photos', exact: true })).toBeDisabled()
+  // The draft is kept until the user chooses (its hidden photo is still out of the list).
+  await expect(hide).toHaveCount(photos - 1)
 })
 
 test('Collection conversion writes a footprint and returns to the same city', async ({ page }) => {
@@ -615,6 +654,25 @@ test.describe('incremental refresh (3C-5 D)', () => {
       await expect(card(other, 'Nuuk').locator('.collection-card-note')).toHaveText('“Synthetic note from the second tab”')
       await expect(card(page, 'Nuuk').locator('.collection-card-note')).toHaveText('“Synthetic note from the second tab”')
       expect((await readFixture('wantToGo')).items.find((item) => item.placeId === fixtureIds.nuuk).note).toBe('Synthetic note from the second tab')
+    } finally { await other.close() }
+  })
+
+  test('性能续 P5: a note editor without local edits follows a note saved in another tab, with no notice', async ({ page }) => {
+    const other = await page.context().newPage()
+    try {
+      await Promise.all([page, other].map(async (tab) => {
+        await openMap(tab)
+        await openCollection(tab)
+        await tab.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
+      }))
+      // The second tab only opened its editor; the first one saves a note.
+      const otherBefore = await renderedRevision(other)
+      await card(page, 'Nuuk').locator('textarea').fill('Synthetic note the other tab follows')
+      await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click())
+      await waitForRenderedRevision(other, { before: otherBefore })
+      await expect(card(other, 'Nuuk').locator('textarea')).toHaveValue('Synthetic note the other tab follows')
+      await expect(card(other, 'Nuuk').getByRole('alert')).toHaveCount(0)
+      await expect(other.getByRole('button', { name: 'Save note for Nuuk', exact: true })).toBeEnabled()
     } finally { await other.close() }
   })
 
