@@ -693,13 +693,69 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     expect({ renderErrorCount, contextLostCount }, `Cesium render errors ${renderErrorCount} and lost WebGL contexts ${contextLostCount} ${when} (viewer ${state?.viewer}): ${lastRenderError}`)
       .toEqual({ renderErrorCount: 0, contextLostCount: 0 })
   }
-  /** Paused now: the loop is off and no frame is drawn. */
+  /**
+   * Paused now: the loop is off and no frame is drawn while it is. 性能续 P7: a pause may end normally within the
+   * window (on a busy runner the window and the page calls take longer than a short save); then no frame was drawn
+   * from `before` until the resume (`framesAtResume`), and the frames after the resume are the loop running again.
+   */
   async function expectPaused(page) {
     await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000, intervals: [25, 50] }).toBe(true)
     const before = await loop(page)
     await page.waitForTimeout(250)
     const after = await loop(page)
-    expect(after.frames, `no frame while paused: ${JSON.stringify([before, after])}`).toBe(before.frames)
+    const evidence = `no frame while paused: ${JSON.stringify([before, after])}`
+    expect(after.viewer, evidence).toBe(before.viewer)
+    // The same pause: still paused, and no episode ended since `before` (the last one recorded is the same).
+    const lastEnded = (state) => JSON.stringify(state.episodes.at(-1) ?? null)
+    if (after.paused && lastEnded(after) === lastEnded(before)) expect(after.frames, evidence).toBe(before.frames)
+    else {
+      // The pause ended in the window: its episode is recorded, and the resume came with no frame drawn since `before`.
+      expect(lastEnded(after), evidence).not.toBe(lastEnded(before))
+      expect(after.framesAtResume, evidence).toBe(before.frames)
+    }
+  }
+  /**
+   * 性能续 P7: the pause of the next click on `selector` is bounded by the watchdog without a duration budget. In the
+   * page, right after the app's own click handler (as showPageAtPause), a timer of the watchdog's limit is set once the
+   * pause has started; the watchdog's timer was set earlier with the same delay, so it runs first however late the main
+   * thread lets timers run (long tasks, a GPU wait, a starved CPU). When the probe fires, that pause must be over.
+   */
+  const PAUSE_LIMIT_MS = 1500 // ../../src/data/renderPause.ts RENDER_PAUSE_LIMIT_MS
+  const armPauseProbe = (page, selector) => page.evaluate(({ selector, limitMs }) => {
+    delete window.__starmapPauseProbe
+    const clicked = (event) => {
+      if (!event.target.closest?.(selector)) return
+      document.removeEventListener('click', clicked)
+      // The debug object of this moment: it reads the pause state of the page even after its viewer is replaced.
+      const debug = window.__travelAtlasDebugRenderLoop
+      const arm = () => {
+        const state = debug.state()
+        if (!state.paused) {
+          if (performance.now() - event.timeStamp < limitMs) return void setTimeout(arm, 0)
+          window.__starmapPauseProbe = { armed: false, fired: true }
+          return
+        }
+        const last = state.episodes.at(-1)
+        const armedAt = performance.now()
+        window.__starmapPauseProbe = { armed: true, fired: false }
+        setTimeout(() => {
+          const now = debug.state()
+          window.__starmapPauseProbe = { armed: true, fired: true, paused: now.paused, ended: now.episodes.at(-1) !== undefined && now.episodes.at(-1) !== last,
+            firedAfterMs: Math.round(performance.now() - armedAt), episode: now.episodes.at(-1) }
+        }, limitMs)
+      }
+      arm()
+    }
+    document.addEventListener('click', clicked)
+  }, { selector, limitMs: PAUSE_LIMIT_MS })
+  /** The probe of armPauseProbe fired: the pause it saw start had ended (by the watchdog at the latest). */
+  async function expectEndedByTheLimit(page) {
+    await expect.poll(() => page.evaluate(() => window.__starmapPauseProbe?.fired === true), { timeout: 30000 }).toBe(true)
+    const probe = await page.evaluate(() => window.__starmapPauseProbe)
+    test.info().annotations.push({ type: 'pause probe', description: JSON.stringify(probe) })
+    expect(probe, `the pause was over when a ${PAUSE_LIMIT_MS} ms timer set at its start fired: ${JSON.stringify(probe)}`)
+      .toMatchObject({ armed: true, paused: false, ended: true })
+    return probe
   }
   /** Observe the actual pending-write phase, not the input driver's later post-action settling. */
   async function observePauseDuring(page, action, whilePaused) {
@@ -985,11 +1041,13 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await selectReykjavik(page)
     await expectRendering(page)
     await holdWrite(page, { ms: 600 })
+    await armPauseProbe(page, '.atlas-city-wtg-button')
     await markReykjavik(page, { observePause: true })
     await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
     const state = await expectRendering(page, 'applied')
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThan(500)
-    expect(state.episodes.at(-1).pausedMs).toBeLessThan(1500)
+    // Within the limit (性能续 P7: by the probe, not a duration).
+    await expectEndedByTheLimit(page)
   })
 
   test('a refused save, an unknown outcome, or applying that throws: the map renders again at once', async ({ page }) => {
@@ -1059,10 +1117,12 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await expectRendering(page, 'hidden')
     await expect(page.locator('.collection-card textarea')).toHaveCount(0, { timeout: 10000 })
     // The watchdog: a save whose answer takes longer than the limit.
+    await armPauseProbe(page, 'button[aria-label="Hide: Nuuk"]')
     await observePauseDuring(page, () => page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click())
     const state = await expectRendering(page, 'limit')
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThanOrEqual(1500)
-    expect(state.episodes.at(-1).pausedMs).toBeLessThan(1700)
+    // Ended by the watchdog when its time came (性能续 P7: the probe instead of a 1.7 s budget).
+    await expectEndedByTheLimit(page)
     await expect(page.getByRole('button', { name: 'Restore: Nuuk', exact: true })).toBeVisible({ timeout: 10000 })
   })
 
@@ -1099,18 +1159,22 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       }).observe({ type: 'longtask' })
       return performance.now()
     })
+    await armPauseProbe(page, 'button[aria-label="Restore: Akureyri"]')
     await observePauseDuring(page,
       () => page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click(),
       () => page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer()))
     await expect.poll(async () => (await loop(page))?.viewer, { timeout: 10000 }).not.toBe(viewer)
     await expect(page.getByRole('button', { name: 'Hide: Akureyri', exact: true })).toBeVisible()
-    // Ended by the applying, or by the watchdog; the watchdog's timer can only fire once the main thread is free, so
-    // the pause may run past the limit by the long tasks during it (the window ends a little late: the click itself).
+    // Ended by the applying, or by the watchdog. 性能续 P7: the watchdog's timer runs only when the main thread lets it
+    // (making the new viewer is a long task; a GPU wait or a starved CPU is not one), so no duration budget: when a
+    // timer set at the pause's start for the same limit fired, the pause was over. The pause and the long tasks during
+    // it stay as evidence.
     const replaced = await expectRendering(page)
     const { endedBy, pausedMs } = replaced.episodes.at(-1)
     expect(['applied', 'limit']).toContain(endedBy)
     const blockedMs = await page.evaluate(([from, to]) => window.__starmapLongTasks
       .reduce((sum, [start, end]) => sum + Math.max(0, Math.min(end, to) - Math.max(start, from)), 0), [clickedAt, clickedAt + pausedMs + 250])
-    expect(pausedMs, `long tasks during the pause: ${Math.round(blockedMs)} ms`).toBeLessThan(1500 + blockedMs + 500)
+    test.info().annotations.push({ type: 'pause and long tasks', description: JSON.stringify({ endedBy, pausedMs, blockedMs: Math.round(blockedMs) }) })
+    await expectEndedByTheLimit(page)
   })
 })
