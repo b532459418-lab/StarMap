@@ -1,7 +1,9 @@
 import { editorErrorNotice, localizedConversionReason } from '../i18n/editorErrors.ts'
 import { useLocalizedNoticeWith } from '../i18n/useLocalizedNotice'
 import { memo, useCallback, useId, useMemo, useState } from 'react'
-import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
+import { Heart, Plus, Search } from 'lucide-react'
+// 收藏页首开 (I-1): the cards' icons, one element each shared by all cards (the markup lucide renders).
+import { cardIcons } from './staticIcons'
 import { localEditorAvailable } from '../data/editorState'
 import { deleteHiddenLocalWantToGo, updateLocalWantToGo } from '../data/localEditorClient'
 import { once, useDraft } from '../data/drafts'
@@ -456,7 +458,7 @@ const CollectionCard = memo(function CollectionCard({
               aria-label={t('collection:viewFor', { name })}
               onClick={() => onViewOnMap(entry)}
             >
-              <LocateFixed aria-hidden="true" />
+              {cardIcons.locateFixed}
               <span>{t('collection:view')}</span>
             </button>
           ) : null}
@@ -472,7 +474,7 @@ const CollectionCard = memo(function CollectionCard({
               aria-describedby={convertBlockReason ? convertHintId : undefined}
               onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
-              <Footprints aria-hidden="true" />
+              {cardIcons.footprints}
               <span>{t('collection:visited')}</span>
             </button>
           ) : null}
@@ -486,7 +488,7 @@ const CollectionCard = memo(function CollectionCard({
                 aria-label={t('collection:editNoteFor', { name })}
                 onClick={startEditingNote}
               >
-                <PencilLine aria-hidden="true" />
+                {cardIcons.pencilLine}
                 <span>{t('collection:editNote')}</span>
               </button>
               {entry.hidden ? (
@@ -498,7 +500,7 @@ const CollectionCard = memo(function CollectionCard({
                     aria-label={t('collection:restoreFor', { name })}
                     onClick={restoreEntry}
                   >
-                    <Eye aria-hidden="true" />
+                    {cardIcons.eye}
                     <span>{t('collection:restore')}</span>
                   </button>
                   <button
@@ -508,7 +510,7 @@ const CollectionCard = memo(function CollectionCard({
                     aria-label={t('collection:deleteFor', { name })}
                     onClick={deleteEntry}
                   >
-                    <Trash2 aria-hidden="true" />
+                    {cardIcons.trash2}
                     <span>{t('collection:delete')}</span>
                   </button>
                 </>
@@ -520,7 +522,7 @@ const CollectionCard = memo(function CollectionCard({
                   aria-label={t('collection:hideFor', { name })}
                   onClick={hideEntry}
                 >
-                  <EyeOff aria-hidden="true" />
+                  {cardIcons.eyeOff}
                   <span>{t('collection:hide')}</span>
                 </button>
               )}
