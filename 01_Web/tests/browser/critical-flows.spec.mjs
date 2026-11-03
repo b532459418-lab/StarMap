@@ -198,6 +198,72 @@ test('Collection conversion writes a footprint and returns to the same city', as
   expect((await readFixture('wantToGo')).items.filter((item) => item.placeId === fixtureIds.nuuk)).toHaveLength(1)
 })
 
+// 收藏页首开: Collection's code arrives through state (src/App.tsx CollectionPage), never through `lazy`.
+test.describe("Collection's code", () => {
+  const collectionModule = (url) => new URL(url).pathname === '/src/components/CollectionPage.tsx'
+  const readModel = (url) => new URL(url).pathname === '/__travelatlas/editor/read-model'
+
+  test('a reload on Collection mounts the restored page together with the data (its code is loaded with them)', async ({ page }) => {
+    await openMap(page)
+    await openCollection(page)
+    // The first commit with the App (the data are there): does the Collection stage already hold the page and its cards?
+    await page.addInitScript(() => {
+      new MutationObserver((records, observer) => {
+        const stage = document.querySelector('.atlas-collection-stage')
+        if (!stage) return
+        observer.disconnect()
+        window.__collectionAtFirstCommit = { page: stage.firstElementChild !== null, cards: stage.getElementsByClassName('collection-card').length }
+      }).observe(document, { childList: true, subtree: true })
+    })
+    // The data wait until the page has Collection's code (an import of the same module resolves once it has run), so
+    // that the order of the two requests does not decide the case.
+    let releaseData
+    const dataReleased = new Promise((resolve) => { releaseData = resolve })
+    await page.route(readModel, async (route) => { await dataReleased; await route.continue() })
+    await page.reload({ waitUntil: 'commit' })
+    await page.waitForFunction(() => import('/src/components/CollectionPage.tsx').then(() => new Promise((resolve) => setTimeout(() => resolve(true), 100))), undefined, { timeout: 30_000 })
+    releaseData()
+    await expect(page.locator('.collection-card').first()).toBeVisible()
+    const first = await page.evaluate(() => window.__collectionAtFirstCommit)
+    expect(first?.page, 'the restored Collection is in the first commit with the data, not an empty stage first').toBe(true)
+    expect(first.cards).toBeGreaterThan(0)
+  })
+
+  test('opened before its code arrives: the stage stays empty, then the page mounts and can be used', async ({ page }) => {
+    let releaseCode
+    const codeReleased = new Promise((resolve) => { releaseCode = resolve })
+    let requested = false
+    await page.route(collectionModule, async (route) => { requested = true; await codeReleased; await route.continue() })
+    await openMap(page)
+    await page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).click()
+    await expect(page.locator('.atlas-experience')).toHaveAttribute('data-page', 'collection')
+    await expect.poll(() => requested).toBe(true)
+    await page.waitForTimeout(300)
+    expect(await page.locator('.atlas-collection-stage').evaluate((stage) => stage.childElementCount)).toBe(0)
+    releaseCode()
+    await expect(page.getByRole('heading', { name: 'Places you want to go', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Edit note for Nuuk', exact: true })).toBeEnabled()
+  })
+
+  test('a failed load reaches the same place as a failed lazy component: an uncaught error, the page is removed', async ({ page }) => {
+    // Another page of the context: this one ends in an uncaught error on purpose (the fixture's page fails on any).
+    const other = await page.context().newPage()
+    try {
+      const errors = []
+      other.on('pageerror', (error) => errors.push(error.message))
+      await other.addInitScript(() => localStorage.setItem('starmap.uiLocale', 'en'))
+      await other.route(collectionModule, (route) => route.abort())
+      await openMap(other)
+      expect(errors, 'the prefetch fails quietly').toEqual([])
+      await other.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).click()
+      await expect.poll(() => errors.length).toBeGreaterThan(0)
+      expect(errors.join('\n')).toMatch(/dynamically imported module|Importing a module script failed/)
+      // No error boundary above the page: React removes the whole tree, as it did for the lazy component.
+      await expect(other.locator('#root > *')).toHaveCount(0)
+    } finally { await other.close() }
+  })
+})
+
 test('mobile panels switch without losing an open city-photo draft or overflowing', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await openMap(page)
