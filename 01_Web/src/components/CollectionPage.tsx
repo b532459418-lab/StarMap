@@ -1,7 +1,10 @@
 import { editorErrorNotice, localizedConversionReason } from '../i18n/editorErrors.ts'
 import { useLocalizedNoticeWith } from '../i18n/useLocalizedNotice'
 import { memo, useCallback, useId, useMemo, useState } from 'react'
-import { Eye, EyeOff, Footprints, Heart, LocateFixed, PencilLine, Plus, Search, Trash2 } from 'lucide-react'
+import { Heart, Plus, Search } from 'lucide-react'
+// 收藏页首开 (I-1): the cards' icons, one element each shared by all cards (the markup lucide renders).
+import { cardIcons } from './staticIcons'
+import { collectionCardText, regionName, type CollectionCardText } from './collectionCardText'
 import { localEditorAvailable } from '../data/editorState'
 import { deleteHiddenLocalWantToGo, updateLocalWantToGo } from '../data/localEditorClient'
 import { once, useDraft } from '../data/drafts'
@@ -64,17 +67,6 @@ const statusOptions: { id: CollectionStatusFilter }[] = [
 const sortOptions: { id: CollectionSort }[] = [
   { id: 'recent' }, { id: 'name' }, { id: 'country' },
 ]
-const regionNames = new Map<string, Intl.DisplayNames>()
-const regionName = (countryCode: string, locale: string) => {
-  try {
-    let names = regionNames.get(locale)
-    if (!names) {
-      names = new Intl.DisplayNames([locale], { type: 'region' })
-      regionNames.set(locale, names)
-    }
-    return names.of(countryCode) ?? countryCode
-  } catch { return countryCode }
-}
 
 const isFromTravelLog = (entry: CollectionEntry) => entry.readOnly && entry.source === PLANNED_SOURCE
 
@@ -92,6 +84,8 @@ export const CollectionPage = memo(function CollectionPage({ entries, onViewOnMa
   // 性能续 a: the cards' translations, one subscription for all of them.
   const { t: cardT } = useTranslation(['collection', 'details', 'journey'])
   const { t: noticeT } = useTranslation(['editor', 'details'])
+  // 收藏页首开 §4.3: the cards' texts that do not depend on the card, translated once.
+  const cardText = useMemo(() => collectionCardText(cardT), [cardT])
   const searchId = useId()
   const sortId = useId()
   const sectionTitleId = useId()
@@ -274,6 +268,7 @@ export const CollectionPage = memo(function CollectionPage({ entries, onViewOnMa
                   onViewOnMap,
                   onConvertToTravel,
                   t: cardT,
+                  text: cardText,
                   noticeT,
                   locale,
                 }
@@ -292,6 +287,8 @@ type CollectionCardProps = {
   /** 性能续 a: the page's translations (collection, details, journey; editor for the notices) and locale. */
   t: TFunction
   noticeT: TFunction
+  /** 收藏页首开 §4.3: the texts that do not depend on the card (./collectionCardText.ts, from `t`). */
+  text: CollectionCardText
   locale: UiLocale
   /** The want-to-go item, or the planned record, behind this row (from the page; see recordsOf). */
   item?: WantToGoItem
@@ -310,7 +307,7 @@ type CollectionCardProps = {
 const sameCard = (a: CollectionCardProps, b: CollectionCardProps) => a.onViewOnMap === b.onViewOnMap && a.onConvertToTravel === b.onConvertToTravel
   && a.onNoteDraft === b.onNoteDraft && a.writeAvailable === b.writeAvailable && a.plannedConvertAvailable === b.plannedConvertAvailable
   && a.wantToGoBlockReason === b.wantToGoBlockReason && a.plannedBlockReason === b.plannedBlockReason
-  && a.t === b.t && a.noticeT === b.noticeT && a.locale === b.locale
+  && a.t === b.t && a.text === b.text && a.noticeT === b.noticeT && a.locale === b.locale
   && JSON.stringify(a.entry) === JSON.stringify(b.entry) && JSON.stringify(a.item) === JSON.stringify(b.item) && JSON.stringify(a.planned) === JSON.stringify(b.planned)
 
 /**
@@ -320,7 +317,7 @@ const sameCard = (a: CollectionCardProps, b: CollectionCardProps) => a.onViewOnM
  */
 const CollectionCard = memo(function CollectionCard({
   entry, item, planned, wantToGoBlockReason, plannedBlockReason, writeAvailable, plannedConvertAvailable, onViewOnMap, onConvertToTravel, onNoteDraft,
-  t, noticeT, locale,
+  t, text, noticeT, locale,
 }: CollectionCardProps) {
   const convertHintId = useId()
   const [busy, setBusy] = useState(false)
@@ -355,16 +352,15 @@ const CollectionCard = memo(function CollectionCard({
   const date = formatRecordDate(planned
     ? { startDate: planned.start_date, endDate: planned.end_date, year: planned.year }
     : { startDate: entry.addedAt },
-  { unknown: t('details:unknownDate'), yearOnly: t('journey:yearOnly'), partial: t('details:dateQualitypartial'),
-    missing: t('details:dateQualitymissing'), invalid: t('details:dateQualityinvalid') })
+  text.date)
   const dateLabel = fromTravelLog ? t('details:plannedVisit', { date }) : t('collection:added', { date })
 
   const tags: { id: string; label: string }[] = []
-  if (entry.subtype === 'country') tags.push({ id: 'country', label: t('collection:wholeCountry') })
-  if (entry.hidden) tags.push({ id: 'hidden', label: t('collection:hidden') })
-  if (!entry.location) tags.push({ id: 'no-location', label: t('collection:noLocation') })
-  if (fromTravelLog) tags.push({ id: 'travel-log', label: t('collection:readOnlyTravel') })
-  if (isSample) tags.push({ id: 'sample', label: t('collection:sample') })
+  if (entry.subtype === 'country') tags.push({ id: 'country', label: text.tags.country })
+  if (entry.hidden) tags.push({ id: 'hidden', label: text.tags.hidden })
+  if (!entry.location) tags.push({ id: 'no-location', label: text.tags.noLocation })
+  if (fromTravelLog) tags.push({ id: 'travel-log', label: text.tags.travelLog })
+  if (isSample) tags.push({ id: 'sample', label: text.tags.sample })
 
   const runWrite = (action: (options: { onApplied: () => void }) => Promise<unknown>, failureKey: string) => {
     setBusy(true)
@@ -456,8 +452,8 @@ const CollectionCard = memo(function CollectionCard({
               aria-label={t('collection:viewFor', { name })}
               onClick={() => onViewOnMap(entry)}
             >
-              <LocateFixed aria-hidden="true" />
-              <span>{t('collection:view')}</span>
+              {cardIcons.locateFixed}
+              <span>{text.view}</span>
             </button>
           ) : null}
 
@@ -472,8 +468,8 @@ const CollectionCard = memo(function CollectionCard({
               aria-describedby={convertBlockReason ? convertHintId : undefined}
               onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
-              <Footprints aria-hidden="true" />
-              <span>{t('collection:visited')}</span>
+              {cardIcons.footprints}
+              <span>{text.visited}</span>
             </button>
           ) : null}
 
@@ -486,8 +482,8 @@ const CollectionCard = memo(function CollectionCard({
                 aria-label={t('collection:editNoteFor', { name })}
                 onClick={startEditingNote}
               >
-                <PencilLine aria-hidden="true" />
-                <span>{t('collection:editNote')}</span>
+                {cardIcons.pencilLine}
+                <span>{text.editNote}</span>
               </button>
               {entry.hidden ? (
                 <>
@@ -498,8 +494,8 @@ const CollectionCard = memo(function CollectionCard({
                     aria-label={t('collection:restoreFor', { name })}
                     onClick={restoreEntry}
                   >
-                    <Eye aria-hidden="true" />
-                    <span>{t('collection:restore')}</span>
+                    {cardIcons.eye}
+                    <span>{text.restore}</span>
                   </button>
                   <button
                     type="button"
@@ -508,8 +504,8 @@ const CollectionCard = memo(function CollectionCard({
                     aria-label={t('collection:deleteFor', { name })}
                     onClick={deleteEntry}
                   >
-                    <Trash2 aria-hidden="true" />
-                    <span>{t('collection:delete')}</span>
+                    {cardIcons.trash2}
+                    <span>{text.delete}</span>
                   </button>
                 </>
               ) : (
@@ -520,8 +516,8 @@ const CollectionCard = memo(function CollectionCard({
                   aria-label={t('collection:hideFor', { name })}
                   onClick={hideEntry}
                 >
-                  <EyeOff aria-hidden="true" />
-                  <span>{t('collection:hide')}</span>
+                  {cardIcons.eyeOff}
+                  <span>{text.hide}</span>
                 </button>
               )}
             </>

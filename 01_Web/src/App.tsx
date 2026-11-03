@@ -69,14 +69,12 @@ const DronePanoramaModal = lazy(() =>
 // Collection 与更新页第一次打开时才加载并挂载，之后一直挂载，保留各自的滚动位置；城市照片浮层点开时才加载。
 // Journey 页不拆：它的时间线在切页后会被立即读取（time-filters 浏览器用例），而且体积很小。
 // 性能续 c (the author's decision of 2026-10-30): Collection's code is loaded ahead, after the map has drawn its first
-// frame, when the browser is idle (code only: nothing renders). Opened after that, the page renders at once; opened
-// before, it is the lazy component as before. Decided once per mount, so a page never changes its component type.
+// frame, when the browser is idle (code only: nothing renders). Opened after that, the page renders at once.
 let collectionPageModule: typeof import('./components/CollectionPage') | undefined
 const loadCollectionPage = () => import('./components/CollectionPage').then((module) => {
   collectionPageModule = module
   return module
 })
-const LazyCollectionPage = lazy(() => loadCollectionPage().then((module) => ({ default: module.CollectionPage })))
 const prefetchCollectionPage = () => {
   if (collectionPageModule) return
   const load = () => { void loadCollectionPage().catch(() => undefined) }
@@ -84,9 +82,33 @@ const prefetchCollectionPage = () => {
   if (window.requestIdleCallback) window.requestIdleCallback(load, { timeout: 1000 })
   else window.setTimeout(load, 1)
 }
+// 收藏页首开 (a): a page that reloads on Collection restores Collection, which mounts with the data, before the map has
+// drawn its first frame: its code is loaded at once, together with the data, so that its first render usually has it.
+if (readAtlasViewState().activePage === 'collection') void loadCollectionPage().catch(() => undefined)
+type CollectionPageCode =
+  | { readonly status: 'loading' }
+  | { readonly status: 'ready'; readonly Page: typeof CollectionPageComponent }
+  | { readonly status: 'failed'; readonly error: unknown }
+/**
+ * 收藏页首开 (b): the page's component comes through state, not `lazy`: when its code is not there yet the stage stays
+ * empty (as the Suspense fallback did) and the code, once there, mounts the page in one ordinary update. A lazy
+ * component suspended instead, and React rendered its retry in 5 ms slices between the globe's frames (until the
+ * scheduler's 5 s timeout finished it in one go). A failed load is thrown while rendering, so it reaches the same error
+ * boundary a failed lazy component reached.
+ */
 function CollectionPage(props: ComponentProps<typeof CollectionPageComponent>) {
-  const [Page] = useState(() => collectionPageModule?.CollectionPage ?? LazyCollectionPage)
-  return <Page {...props} />
+  const [code, setCode] = useState<CollectionPageCode>(() => collectionPageModule ? { status: 'ready', Page: collectionPageModule.CollectionPage } : { status: 'loading' })
+  useEffect(() => {
+    if (code.status !== 'loading') return undefined
+    let live = true
+    loadCollectionPage().then(
+      (module) => { if (live) setCode({ status: 'ready', Page: module.CollectionPage }) },
+      (error: unknown) => { if (live) setCode({ status: 'failed', error }) },
+    )
+    return () => { live = false }
+  }, [code.status])
+  if (code.status === 'failed') throw code.error
+  return code.status === 'ready' ? <code.Page {...props} /> : null
 }
 const ReleaseUpdatePage = lazy(() => import('./components/UpdateChecker').then((module) => ({ default: module.ReleaseUpdatePage })))
 const CityPhotoGalleryModal = lazy(() => import('./components/CityPhotoGalleryModal').then((module) => ({ default: module.CityPhotoGalleryModal })))

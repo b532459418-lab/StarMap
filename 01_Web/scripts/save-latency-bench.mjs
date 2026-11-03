@@ -2,7 +2,7 @@
  * "Save to usable" in a real browser (3C-5 D, spec §2.4; external review §5-5, D9): from the click on a save until the
  * commit is done, the page shows the data of that revision and the next operation can run. Synthetic data only.
  *
- *   node scripts/save-latency-bench.mjs --dir <empty temp dir> [--scale real|small|tiny] [--runs 20] [--ops note,hide,order,maphide,collection]
+ *   node scripts/save-latency-bench.mjs --dir <empty temp dir> [--scale real|small|tiny] [--runs 20] [--ops note,hide,order,maphide,collection,collectionRestore]
  *                                       [--out result.json] [--profile <file prefix> [--profile-runs 1,2] [--react]] [--throttle N] [--gpu]
  *
  * - Generates the store root of the scale (./store-mode-bench.mjs generateRoots: real = 100 countries, 2 900 cities,
@@ -32,7 +32,12 @@
  *   load), waits until the data and the map are there, opens Collection from the header and measures until its first
  *   card has an enabled control (`shownMs`) and until all its cards are mounted (`allMs`, as many as the list's count
  *   says), each a frame more; then the map and Collection again (the second opening). The module requests of an
- *   opening (the lazy code) are kept too.
+ *   opening (the lazy code) are kept too. 收藏页首开: a run ends on the map, so every reload starts there and the first
+ *   opening is a click from the map (the page keeps its view state in sessionStorage: a reload on Collection restores
+ *   Collection, and a click on it then changes nothing).
+ * - 收藏页首开: `collectionRestore`: the page reloaded while on Collection (it restores Collection); from the start of
+ *   the navigation until the first card has an enabled control (`shownMs`), all cards are mounted (`allMs`) and a frame
+ *   more (`totalMs`), measured in the new document from its first frame on; `dataMs` is when the data were rendered.
  * - 性能续: every run keeps its long animation frames (≥ 50 ms, with script attribution). Diagnostics: `--profile-runs
  *   1,2` (which runs are profiled), `--react` (React commits of the profiled runs through a DevTools-hook stub: render
  *   time and the self time of each component), `--throttle N` (CDP CPU throttling).
@@ -113,6 +118,29 @@ try {
         if (window.__benchLoaf.length > 4000) window.__benchLoaf.splice(0, 2000)
       }).observe({ type: 'long-animation-frame', buffered: true })
     } catch { /* no LoAF */ }
+    // 收藏页首开 (collectionRestore): in a document the bench reloaded on Collection, from its first frame on, each frame
+    // looks at the first card (a live collection) and, once it is there, at the count of the list.
+    if (sessionStorage.getItem('starmapBenchRestore') === '1') {
+      sessionStorage.removeItem('starmapBenchRestore')
+      const restore = window.__benchRestore = {}
+      const cards = document.getElementsByClassName('collection-card')
+      const frame = () => {
+        const now = performance.now()
+        if (restore.dataMs === undefined && document.documentElement.dataset.starmapRevision !== undefined) restore.dataMs = now
+        if (restore.shownMs === undefined && cards[0]?.querySelector('button:not([disabled])')) restore.shownMs = now
+        if (restore.shownMs !== undefined) {
+          const expected = Number((document.querySelector('.collection-section-count')?.textContent ?? '').match(/[\d,]+/)?.[0].replace(/,/g, ''))
+          if (!(expected > 0) || cards.length >= expected) {
+            restore.allMs = now
+            restore.cards = cards.length
+            requestAnimationFrame(() => { restore.totalMs = performance.now() })
+            return
+          }
+        }
+        if (now < 170_000) requestAnimationFrame(frame)
+      }
+      requestAnimationFrame(frame)
+    }
     if (!react) return
     // A DevTools hook (Vite's React Refresh wraps it): per commit, the self render time of each component that rendered
     // (React's development build keeps actualDuration), as React DevTools' profiler computes it.
@@ -349,7 +377,7 @@ try {
   const record = (op, sample) => {
     const entry = result.ops[op] ??= { samples: [] }
     entry.samples.push(sample)
-    console.log(`${op} #${entry.samples.length}: ${sample.totalMs} ms${sample.reloaded ? ' (reloaded)' : ''}${sample.pauses ? ` paused ${JSON.stringify(sample.pauses)}` : ''}${sample.timings ? ` ${JSON.stringify(sample.timings)}` : ''} requests ${JSON.stringify(sample.requests)} browser ${JSON.stringify(sample.browser)}${sample.cards ? ` cards ${sample.cards} shown ${sample.shownMs} ms all ${sample.allMs} ms modules ${JSON.stringify(sample.modules)}` : ''}${sample.longFrames ? ` long frames ${JSON.stringify(sample.longFrames)}` : ''}`)
+    console.log(`${op} #${entry.samples.length}: ${sample.totalMs} ms${sample.reloaded ? ' (reloaded)' : ''}${sample.pauses ? ` paused ${JSON.stringify(sample.pauses)}` : ''}${sample.timings ? ` ${JSON.stringify(sample.timings)}` : ''} requests ${JSON.stringify(sample.requests)} browser ${JSON.stringify(sample.browser)}${sample.cards ? ` cards ${sample.cards} shown ${sample.shownMs} ms all ${sample.allMs} ms${sample.modules ? ` modules ${JSON.stringify(sample.modules)}` : ''}${sample.dataMs !== undefined ? ` data ${sample.dataMs} ms` : ''}` : ''}${sample.longFrames ? ` long frames ${JSON.stringify(sample.longFrames)}` : ''}`)
   }
   // 性能续: Collection opened for the first time after a page load (each run reloads the page, the first run is the
   // first load of the session), then a second time after the map.
@@ -364,6 +392,26 @@ try {
       await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
       await settle()
       record('collectionSecond', await profiling('collectionSecond', () => openCollection()))
+      // 收藏页首开: back on the map (its view state is what the next reload restores), so that the next first opening is
+      // a click from the map too.
+      await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
+      await page.waitForFunction(() => document.querySelector('.atlas-experience')?.getAttribute('data-page') === 'map')
+      await delay(500)
+    }
+  }
+  // 收藏页首开: the page reloaded while on Collection (it restores Collection), from the navigation until its cards.
+  if (ops.includes('collectionRestore')) {
+    if (await page.evaluate(() => document.querySelector('.atlas-experience')?.getAttribute('data-page')) !== 'collection') {
+      await page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).click()
+      await page.locator('.collection-card').first().waitFor()
+    }
+    for (let run = 0; run < runs; run++) {
+      await settle()
+      await page.evaluate(() => sessionStorage.setItem('starmapBenchRestore', '1'))
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      const restore = await (await page.waitForFunction(() => window.__benchRestore?.totalMs !== undefined && window.__benchRestore, undefined, { timeout: 170_000 })).jsonValue()
+      const longFrames = await longFramesSince(await page.evaluate(() => performance.timeOrigin), restore.totalMs)
+      record('collectionRestore', { totalMs: Math.round(restore.totalMs * 10) / 10, shownMs: Math.round(restore.shownMs), allMs: Math.round(restore.allMs), dataMs: Math.round(restore.dataMs ?? NaN), cards: restore.cards, longFrames })
     }
   }
   // Items of the synthetic data: wish-k is on "City k" (k < cities), every 20th is hidden, odd ones have a note.
@@ -444,7 +492,7 @@ try {
     // How long the map was paused during each run (A′).
     const paused = entry.samples.filter((sample) => sample.pauses).map((sample) => sample.pauses.reduce((sum, pause) => sum + pause.pausedMs, 0))
     if (paused.length) entry.pausedMs = stats(paused)
-    for (const key of ['shownMs', 'allMs']) {
+    for (const key of ['shownMs', 'allMs', 'dataMs']) {
       const values = entry.samples.map((sample) => sample[key]).filter((value) => typeof value === 'number')
       if (values.length) entry[key] = stats(values)
     }
