@@ -128,16 +128,55 @@ test('media recovery imports a received file once after explicit scope confirmat
   await center.getByRole('checkbox', { name: 'I confirm this whole Inbox scope, including other cities and any removals.', exact: true }).check()
   await center.getByRole('button', { name: 'Import confirmed files', exact: true }).click()
   await expect(center.getByTestId('media-job-card').locator('header strong')).toHaveText('Completed', { timeout: 30000 })
-  // 3C-5 D: no reload; the dev server pushes the new revision. The photo editor stayed open during the import (its list
-  // changed meanwhile, so it shows the conflict notice): leaving it shows the imported photo.
+  // 3C-5 D: no reload; the dev server pushes the new revision. 性能续 P5: the photo editor stayed open during the import
+  // with no local edits, so it follows the new data: its list has the imported photo, no conflict notice, save enabled.
   await center.getByRole('button', { name: 'Close completed task', exact: true }).click()
   await center.getByRole('button', { name: 'Close panel', exact: true }).click()
   await expect(center).toHaveCount(0)
+  const info = page.locator('.atlas-info-panel')
+  await expect(info.getByRole('button', { name: 'Hide photo', exact: true })).toHaveCount(1, { timeout: 30000 })
+  await expect(info.getByRole('alert')).toHaveCount(0)
+  await expect(info.getByRole('button', { name: 'Save city photos', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Exit editing city photos', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Open photo 1 of Reykjavik', exact: true })).toBeVisible({ timeout: 30000 })
   expect(imports).toBe(1)
   expect(uploads).toBe(1)
   expect((await readFixture('media')).items.filter((item) => item.placeId === fixtureIds.reykjavik)).toHaveLength(1)
+})
+
+/** 性能续 P5: upload one synthetic photo through the open photo editor and import it from the media recovery center. */
+async function importPhotoThroughEditor(page, name) {
+  const image = await sharp({ create: { width: 48, height: 32, channels: 3, background: { r: 90, g: 150, b: 60 } } }).png().toBuffer()
+  await page.locator('.atlas-info-panel input[type=file]').setInputFiles({ name, mimeType: 'image/png', buffer: image })
+  const center = page.getByTestId('media-recovery-center')
+  await center.getByRole('button', { name: 'Review import scope', exact: true }).click()
+  await center.getByRole('checkbox', { name: 'I confirm this whole Inbox scope, including other cities and any removals.', exact: true }).check()
+  await center.getByRole('button', { name: 'Import confirmed files', exact: true }).click()
+  await expect(center.getByTestId('media-job-card').locator('header strong')).toHaveText('Completed', { timeout: 30000 })
+  await center.getByRole('button', { name: 'Close completed task', exact: true }).click()
+  await center.getByRole('button', { name: 'Close panel', exact: true }).click()
+  await expect(center).toHaveCount(0)
+}
+
+test('性能续 P5: a photo editor with a local edit still shows the conflict when its own upload is imported', async ({ page }) => {
+  await seedSampleMedia()
+  await openMap(page)
+  await selectReykjavik(page)
+  const info = page.locator('.atlas-info-panel')
+  await info.getByRole('button', { name: 'Edit city photos', exact: true }).click()
+  // A local edit: one photo hidden in the draft (not saved).
+  const hide = info.getByRole('button', { name: 'Hide photo', exact: true })
+  const photos = await hide.count()
+  expect(photos).toBeGreaterThan(1)
+  await hide.first().click()
+  await expect(hide).toHaveCount(photos - 1)
+  await importPhotoThroughEditor(page, 'browser-conflict.png')
+  // The import appended the photo to the city's order: the data changed while the draft has an edit.
+  const alert = info.getByRole('alert')
+  await expect(alert).toContainText('This record was changed elsewhere', { timeout: 30000 })
+  await expect(info.getByRole('button', { name: 'Save city photos', exact: true })).toBeDisabled()
+  // The draft is kept until the user chooses (its hidden photo is still out of the list).
+  await expect(hide).toHaveCount(photos - 1)
 })
 
 test('Collection conversion writes a footprint and returns to the same city', async ({ page }) => {
@@ -618,6 +657,25 @@ test.describe('incremental refresh (3C-5 D)', () => {
     } finally { await other.close() }
   })
 
+  test('性能续 P5: a note editor without local edits follows a note saved in another tab, with no notice', async ({ page }) => {
+    const other = await page.context().newPage()
+    try {
+      await Promise.all([page, other].map(async (tab) => {
+        await openMap(tab)
+        await openCollection(tab)
+        await tab.getByRole('button', { name: 'Edit note for Nuuk', exact: true }).click()
+      }))
+      // The second tab only opened its editor; the first one saves a note.
+      const otherBefore = await renderedRevision(other)
+      await card(page, 'Nuuk').locator('textarea').fill('Synthetic note the other tab follows')
+      await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Save note for Nuuk', exact: true }).click())
+      await waitForRenderedRevision(other, { before: otherBefore })
+      await expect(card(other, 'Nuuk').locator('textarea')).toHaveValue('Synthetic note the other tab follows')
+      await expect(card(other, 'Nuuk').getByRole('alert')).toHaveCount(0)
+      await expect(other.getByRole('button', { name: 'Save note for Nuuk', exact: true })).toBeEnabled()
+    } finally { await other.close() }
+  })
+
   test('two tabs edit the same note: the later tab can use the new content instead', async ({ page }) => {
     const other = await page.context().newPage()
     try {
@@ -693,13 +751,69 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     expect({ renderErrorCount, contextLostCount }, `Cesium render errors ${renderErrorCount} and lost WebGL contexts ${contextLostCount} ${when} (viewer ${state?.viewer}): ${lastRenderError}`)
       .toEqual({ renderErrorCount: 0, contextLostCount: 0 })
   }
-  /** Paused now: the loop is off and no frame is drawn. */
+  /**
+   * Paused now: the loop is off and no frame is drawn while it is. 性能续 P7: a pause may end normally within the
+   * window (on a busy runner the window and the page calls take longer than a short save); then no frame was drawn
+   * from `before` until the resume (`framesAtResume`), and the frames after the resume are the loop running again.
+   */
   async function expectPaused(page) {
     await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000, intervals: [25, 50] }).toBe(true)
     const before = await loop(page)
     await page.waitForTimeout(250)
     const after = await loop(page)
-    expect(after.frames, `no frame while paused: ${JSON.stringify([before, after])}`).toBe(before.frames)
+    const evidence = `no frame while paused: ${JSON.stringify([before, after])}`
+    expect(after.viewer, evidence).toBe(before.viewer)
+    // The same pause: still paused, and no episode ended since `before` (the last one recorded is the same).
+    const lastEnded = (state) => JSON.stringify(state.episodes.at(-1) ?? null)
+    if (after.paused && lastEnded(after) === lastEnded(before)) expect(after.frames, evidence).toBe(before.frames)
+    else {
+      // The pause ended in the window: its episode is recorded, and the resume came with no frame drawn since `before`.
+      expect(lastEnded(after), evidence).not.toBe(lastEnded(before))
+      expect(after.framesAtResume, evidence).toBe(before.frames)
+    }
+  }
+  /**
+   * 性能续 P7: the pause of the next click on `selector` is bounded by the watchdog without a duration budget. In the
+   * page, right after the app's own click handler (as showPageAtPause), a timer of the watchdog's limit is set once the
+   * pause has started; the watchdog's timer was set earlier with the same delay, so it runs first however late the main
+   * thread lets timers run (long tasks, a GPU wait, a starved CPU). When the probe fires, that pause must be over.
+   */
+  const PAUSE_LIMIT_MS = 1500 // ../../src/data/renderPause.ts RENDER_PAUSE_LIMIT_MS
+  const armPauseProbe = (page, selector) => page.evaluate(({ selector, limitMs }) => {
+    delete window.__starmapPauseProbe
+    const clicked = (event) => {
+      if (!event.target.closest?.(selector)) return
+      document.removeEventListener('click', clicked)
+      // The debug object of this moment: it reads the pause state of the page even after its viewer is replaced.
+      const debug = window.__travelAtlasDebugRenderLoop
+      const arm = () => {
+        const state = debug.state()
+        if (!state.paused) {
+          if (performance.now() - event.timeStamp < limitMs) return void setTimeout(arm, 0)
+          window.__starmapPauseProbe = { armed: false, fired: true }
+          return
+        }
+        const last = state.episodes.at(-1)
+        const armedAt = performance.now()
+        window.__starmapPauseProbe = { armed: true, fired: false }
+        setTimeout(() => {
+          const now = debug.state()
+          window.__starmapPauseProbe = { armed: true, fired: true, paused: now.paused, ended: now.episodes.at(-1) !== undefined && now.episodes.at(-1) !== last,
+            firedAfterMs: Math.round(performance.now() - armedAt), episode: now.episodes.at(-1) }
+        }, limitMs)
+      }
+      arm()
+    }
+    document.addEventListener('click', clicked)
+  }, { selector, limitMs: PAUSE_LIMIT_MS })
+  /** The probe of armPauseProbe fired: the pause it saw start had ended (by the watchdog at the latest). */
+  async function expectEndedByTheLimit(page) {
+    await expect.poll(() => page.evaluate(() => window.__starmapPauseProbe?.fired === true), { timeout: 30000 }).toBe(true)
+    const probe = await page.evaluate(() => window.__starmapPauseProbe)
+    test.info().annotations.push({ type: 'pause probe', description: JSON.stringify(probe) })
+    expect(probe, `the pause was over when a ${PAUSE_LIMIT_MS} ms timer set at its start fired: ${JSON.stringify(probe)}`)
+      .toMatchObject({ armed: true, paused: false, ended: true })
+    return probe
   }
   /** Observe the actual pending-write phase, not the input driver's later post-action settling. */
   async function observePauseDuring(page, action, whilePaused) {
@@ -985,11 +1099,13 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await selectReykjavik(page)
     await expectRendering(page)
     await holdWrite(page, { ms: 600 })
+    await armPauseProbe(page, '.atlas-city-wtg-button')
     await markReykjavik(page, { observePause: true })
     await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
     const state = await expectRendering(page, 'applied')
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThan(500)
-    expect(state.episodes.at(-1).pausedMs).toBeLessThan(1500)
+    // Within the limit (性能续 P7: by the probe, not a duration).
+    await expectEndedByTheLimit(page)
   })
 
   test('a refused save, an unknown outcome, or applying that throws: the map renders again at once', async ({ page }) => {
@@ -1059,10 +1175,12 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await expectRendering(page, 'hidden')
     await expect(page.locator('.collection-card textarea')).toHaveCount(0, { timeout: 10000 })
     // The watchdog: a save whose answer takes longer than the limit.
+    await armPauseProbe(page, 'button[aria-label="Hide: Nuuk"]')
     await observePauseDuring(page, () => page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click())
     const state = await expectRendering(page, 'limit')
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThanOrEqual(1500)
-    expect(state.episodes.at(-1).pausedMs).toBeLessThan(1700)
+    // Ended by the watchdog when its time came (性能续 P7: the probe instead of a 1.7 s budget).
+    await expectEndedByTheLimit(page)
     await expect(page.getByRole('button', { name: 'Restore: Nuuk', exact: true })).toBeVisible({ timeout: 10000 })
   })
 
@@ -1099,18 +1217,22 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       }).observe({ type: 'longtask' })
       return performance.now()
     })
+    await armPauseProbe(page, 'button[aria-label="Restore: Akureyri"]')
     await observePauseDuring(page,
       () => page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click(),
       () => page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer()))
     await expect.poll(async () => (await loop(page))?.viewer, { timeout: 10000 }).not.toBe(viewer)
     await expect(page.getByRole('button', { name: 'Hide: Akureyri', exact: true })).toBeVisible()
-    // Ended by the applying, or by the watchdog; the watchdog's timer can only fire once the main thread is free, so
-    // the pause may run past the limit by the long tasks during it (the window ends a little late: the click itself).
+    // Ended by the applying, or by the watchdog. 性能续 P7: the watchdog's timer runs only when the main thread lets it
+    // (making the new viewer is a long task; a GPU wait or a starved CPU is not one), so no duration budget: when a
+    // timer set at the pause's start for the same limit fired, the pause was over. The pause and the long tasks during
+    // it stay as evidence.
     const replaced = await expectRendering(page)
     const { endedBy, pausedMs } = replaced.episodes.at(-1)
     expect(['applied', 'limit']).toContain(endedBy)
     const blockedMs = await page.evaluate(([from, to]) => window.__starmapLongTasks
       .reduce((sum, [start, end]) => sum + Math.max(0, Math.min(end, to) - Math.max(start, from)), 0), [clickedAt, clickedAt + pausedMs + 250])
-    expect(pausedMs, `long tasks during the pause: ${Math.round(blockedMs)} ms`).toBeLessThan(1500 + blockedMs + 500)
+    test.info().annotations.push({ type: 'pause and long tasks', description: JSON.stringify({ endedBy, pausedMs, blockedMs: Math.round(blockedMs) }) })
+    await expectEndedByTheLimit(page)
   })
 })

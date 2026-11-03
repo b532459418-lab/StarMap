@@ -93,10 +93,14 @@ export function CountrySelector({
     : [...countries].reverse()).map((country) => country.id)
   // 3C-5 D: the draft starts when editing starts, from the data on the page then (its baseline and revision), and ends
   // with the save or the exit; without a draft the list shows the data. Saves apply only the difference from the baseline (D1).
-  const countryDraft = useDraft(countryListProbe)
-  const isEditingCountries = countryDraft.active
   const [draftCountryIds, setDraftCountryIds] = useState<CountryId[]>([])
   const [draftHiddenCountryIds, setDraftHiddenCountryIds] = useState<CountryId[]>([])
+  // 性能续 P5: without local edits the draft follows new data (it starts again from them, no notice).
+  const countryDraft = useDraft(countryListProbe, {
+    local: { order: draftCountryIds, hidden: draftHiddenCountryIds },
+    onFollow: () => startCountryDraft(),
+  })
+  const isEditingCountries = countryDraft.active
   const [baselineCountryOrder, setBaselineCountryOrder] = useState<readonly CountryId[]>([])
   const [baselineHiddenCountryIds, setBaselineHiddenCountryIds] = useState<readonly CountryId[]>([])
   const [draggedCountryId, setDraggedCountryId] = useState<CountryId>()
@@ -120,7 +124,7 @@ export function CountrySelector({
   }, [countries])
 
   const startCountryDraft = () => {
-    countryDraft.begin()
+    countryDraft.begin({ order: defaultCountryIds, hidden: travelAtlasEditorState.hiddenCountryIds })
     setDraftCountryIds(defaultCountryIds)
     setDraftHiddenCountryIds(travelAtlasEditorState.hiddenCountryIds)
     setBaselineCountryOrder(travelAtlasEditorState.countryOrder)
@@ -692,16 +696,19 @@ type CountryRowProps = {
 /** The same country for its row: the values the row shows (the data store makes new objects after a save). */
 const countryValues = (country: Country) => [country.id, country.accent, country.flagCode, country.flag, country.nameZh, country.nameEn]
 
+/** The same country's body: the values it shows (性能续 ①: the editing state is not one of them). */
+const sameRowBody = (a: CountryRowBodyProps, b: CountryRowBodyProps) => a.isSelected === b.isSelected
+  && a.selectedCityId === b.selectedCityId && a.activeDroneMediaCityId === b.activeDroneMediaCityId && a.droneCityIds === b.droneCityIds
+  && a.actions === b.actions && sameCities(a.cities, b.cities)
+  && (a.country === b.country || JSON.stringify(countryValues(a.country)) === JSON.stringify(countryValues(b.country)))
+
 /**
  * 3C-5 D: one country of the list, memoized on its values: a save, or the saving state, renders only the rows whose
- * values changed (leaving the editing mode still renders them all).
+ * values changed. 性能续 ①: entering or leaving the editing mode renders only the rows' frames and their editing tools;
+ * the body (the country button and its cities) does not depend on it and stays as it was.
  */
-const CountryRow = memo(function CountryRow({
-  country, isSelected, isEditing, isDragging, cities, selectedCityId, activeDroneMediaCityId, droneCityIds, actions,
-}: CountryRowProps) {
-  const { t } = useTranslation(['details', 'editor', 'journey'])
-  const { name, subtitle } = usePlaceNames()
-  const flagUrl = countryFlagUrl(country.flagCode)
+const CountryRow = memo(function CountryRow({ isEditing, isDragging, ...body }: CountryRowProps) {
+  const { country, actions } = body
   return (
     <div
       data-flip-id={country.id}
@@ -710,7 +717,21 @@ const CountryRow = memo(function CountryRow({
       data-editing={isEditing}
       data-dragging={isDragging}
     >
-      {isEditing ? (
+      {isEditing ? <CountryRowTools country={country} actions={actions} /> : null}
+      <CountryRowBody {...body} />
+    </div>
+  )
+}, (a, b) => a.isEditing === b.isEditing && a.isDragging === b.isDragging && sameRowBody(a, b))
+
+type CountryRowBodyProps = Omit<CountryRowProps, 'isEditing' | 'isDragging'>
+
+/** The editing tools of a country row (drag, hide): only while the list is being edited. */
+function CountryRowTools({ country, actions }: { country: Country; actions: CountryRowActions }) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { name } = usePlaceNames()
+  return (
+    <>
+      {(
         <div className="atlas-local-editor-row-tools">
           <button
             type="button"
@@ -763,13 +784,28 @@ const CountryRow = memo(function CountryRow({
             <X />
           </button>
         </div>
-      ) : null}
+      )}
+    </>
+  )
+}
+
+/** A country row's body: the country button and its cities (memoized without the editing state). */
+const CountryRowBody = memo(function CountryRowBody({
+  country, isSelected, cities, selectedCityId, activeDroneMediaCityId, droneCityIds, actions,
+}: CountryRowBodyProps) {
+  const { t } = useTranslation(['details', 'editor', 'journey'])
+  const { name, subtitle } = usePlaceNames()
+  const flagUrl = countryFlagUrl(country.flagCode)
+  return (
+    <>
       <button
         type="button"
         aria-expanded={isSelected}
         data-selected={isSelected}
-        onClick={() => {
-          if (!isEditing) actions.onSelectCountry(country.id)
+        onClick={(event) => {
+          // While the list is being edited a click on the country does not select it (the row's frame tells).
+          if (event.currentTarget.closest('[data-editing="true"]')) return
+          actions.onSelectCountry(country.id)
         }}
         onPointerEnter={(event) => {
           if (event.pointerType === 'mouse') actions.onHoverCountry(country.id)
@@ -838,9 +874,6 @@ const CountryRow = memo(function CountryRow({
           </div>
         </div>
       </div>
-    </div>
+    </>
   )
-}, (a, b) => a.isSelected === b.isSelected && a.isEditing === b.isEditing && a.isDragging === b.isDragging
-  && a.selectedCityId === b.selectedCityId && a.activeDroneMediaCityId === b.activeDroneMediaCityId && a.droneCityIds === b.droneCityIds
-  && a.actions === b.actions && sameCities(a.cities, b.cities)
-  && (a.country === b.country || JSON.stringify(countryValues(a.country)) === JSON.stringify(countryValues(b.country))))
+}, sameRowBody)

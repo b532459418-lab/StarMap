@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { UIEvent } from 'react'
+import type { ComponentProps, UIEvent } from 'react'
+import type { CollectionPage as CollectionPageComponent } from './components/CollectionPage'
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { AtlasHeader } from './components/AtlasHeader'
 import type { AtlasPage } from './components/AtlasHeader'
@@ -67,7 +68,26 @@ const DronePanoramaModal = lazy(() =>
 // 首屏地图之外、只在切页或点开时才用到的组件（第 5B 批），公开版与个人版都按需加载：
 // Collection 与更新页第一次打开时才加载并挂载，之后一直挂载，保留各自的滚动位置；城市照片浮层点开时才加载。
 // Journey 页不拆：它的时间线在切页后会被立即读取（time-filters 浏览器用例），而且体积很小。
-const CollectionPage = lazy(() => import('./components/CollectionPage').then((module) => ({ default: module.CollectionPage })))
+// 性能续 c (the author's decision of 2026-10-30): Collection's code is loaded ahead, after the map has drawn its first
+// frame, when the browser is idle (code only: nothing renders). Opened after that, the page renders at once; opened
+// before, it is the lazy component as before. Decided once per mount, so a page never changes its component type.
+let collectionPageModule: typeof import('./components/CollectionPage') | undefined
+const loadCollectionPage = () => import('./components/CollectionPage').then((module) => {
+  collectionPageModule = module
+  return module
+})
+const LazyCollectionPage = lazy(() => loadCollectionPage().then((module) => ({ default: module.CollectionPage })))
+const prefetchCollectionPage = () => {
+  if (collectionPageModule) return
+  const load = () => { void loadCollectionPage().catch(() => undefined) }
+  // The globe renders every frame, so an idle period can be long in coming: at most 1 s.
+  if (window.requestIdleCallback) window.requestIdleCallback(load, { timeout: 1000 })
+  else window.setTimeout(load, 1)
+}
+function CollectionPage(props: ComponentProps<typeof CollectionPageComponent>) {
+  const [Page] = useState(() => collectionPageModule?.CollectionPage ?? LazyCollectionPage)
+  return <Page {...props} />
+}
 const ReleaseUpdatePage = lazy(() => import('./components/UpdateChecker').then((module) => ({ default: module.ReleaseUpdatePage })))
 const CityPhotoGalleryModal = lazy(() => import('./components/CityPhotoGalleryModal').then((module) => ({ default: module.CityPhotoGalleryModal })))
 
@@ -159,13 +179,13 @@ function App() {
       : restoredSelectionMode === 'country'
         ? countryDistance
         : overviewDistance
-  const defaultSelectedDayId = [...journeyDays].sort((left, right) =>
-    `${right.date}-${right.id}`.localeCompare(`${left.date}-${left.id}`),
-  )[0]?.id ?? ''
-  const restoredSelectedDayId = restoredViewState.selectedDayId
+  // The day restored, or the latest one (the first of the days sorted by date and id, descending). Only the initial
+  // value of the selected day: computed once (性能续 ④: it sorted every journey day on every render).
+  const restoredSelectedDayId = () => restoredViewState.selectedDayId
     && journeyDays.some((day) => day.id === restoredViewState.selectedDayId)
     ? restoredViewState.selectedDayId
-    : defaultSelectedDayId
+    : journeyDays.reduce<(typeof journeyDays)[number] | undefined>((latest, day) => (latest === undefined
+      || `${day.date}-${day.id}`.localeCompare(`${latest.date}-${latest.id}`) > 0 ? day : latest), undefined)?.id ?? ''
   const restoredActivePage: AtlasPage = ['map', 'journey', 'collection', 'about'].includes(restoredViewState.activePage ?? '')
     ? restoredViewState.activePage as AtlasPage
     : 'map'
@@ -779,6 +799,7 @@ function App() {
               globeScale={globeDistance}
               resetVersion={globeResetVersion}
               showMapContent={activePage === 'map'}
+              onFirstFrame={prefetchCollectionPage}
               layerData={mapLayerData}
               activeDroneMediaCityId={activeDroneMediaCityId}
               activeDroneMediaItemId={activeDroneMediaItemId}

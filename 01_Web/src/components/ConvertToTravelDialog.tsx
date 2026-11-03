@@ -107,7 +107,13 @@ function ConvertToTravelDialogContent({
     () => (target.source === 'want-to-go' ? wishProbe(target.recordId) : plannedProbe(target.recordId)) as DraftProbe<unknown>,
     [target.source, target.recordId],
   )
-  const recordDraft = useDraft(recordProbe, { open: true })
+  // 性能续 P5: the form is the dialog's own input; while it is as it opened, a record changed elsewhere is followed (the
+  // new data become the draft's base, no notice). Any input keeps the conflict notice; a record gone too.
+  const recordDraft = useDraft(recordProbe, {
+    open: true,
+    local: { startDate, endDate, tripTitle, keepWantToGo, journeyChoice: journeyChoice ?? null },
+    onFollow: () => recordDraft.keepMine(),
+  })
   const recordConflict = recordDraft.status === 'changed' || recordDraft.status === 'deleted'
   const recordConflictId = useId()
 

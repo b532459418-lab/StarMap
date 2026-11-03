@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ArcType,
   BoundingSphere,
@@ -71,6 +71,8 @@ type CesiumAtlasGlobeProps = {
   showCity3DTiles?: boolean
   /** Google 3D tiles could not be created; the owner of the City 3D state turns it off so the globe returns. */
   onCity3DUnavailable?: () => void
+  /** 性能续 c: the map has drawn its first frame (each viewer once; keep it stable). */
+  onFirstFrame?: () => void
   showLabelsOverlay?: boolean
   selectedCountryId?: CountryId
   selectedCityId?: CityId
@@ -641,9 +643,17 @@ const installDebugCameraApi = (
 
 // 3C-5 D: the map's place, badge and route entities as memoized components with plain props. A save no longer reloads
 // the page, so the globe renders again after every change of the data; only the entities whose own values changed render
-// (and so update their Cesium entity). Titles are compared as JSON (the data store makes new objects).
+// (and so update their Cesium entity). Titles are compared by value (the data store makes new objects); 性能续 ⑤: member
+// by member instead of as JSON (about 12 000 entities on every render of the globe).
+const samePlainValue = (a: unknown, b: unknown): boolean => {
+  if (Object.is(a, b)) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) return false
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length
+    && keys.every((key) => Object.hasOwn(b, key) && samePlainValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
+}
 const sameEntityProps = <P extends object>(a: P, b: P) => (Object.keys(a) as (keyof P)[]).every((key) => key === 'title'
-  ? a[key] === b[key] || JSON.stringify(a[key]) === JSON.stringify(b[key])
+  ? samePlainValue(a[key], b[key])
   : Object.is(a[key], b[key]))
 
 type TravelCityEntityProps = {
@@ -856,6 +866,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
   mapSource,
   showCity3DTiles = false,
   onCity3DUnavailable,
+  onFirstFrame,
   showLabelsOverlay = true,
   selectedCountryId,
   selectedCityId,
@@ -1632,6 +1643,27 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     configureViewer(viewer)
   }, [viewerReadyVersion])
 
+  // 性能续 c: tell the page when the map has drawn its first frame (it then loads code it will need, when idle).
+  useEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer || !onFirstFrame) return undefined
+    const first = () => {
+      viewer.scene.postRender.removeEventListener(first)
+      onFirstFrame()
+    }
+    viewer.scene.postRender.addEventListener(first)
+    return () => { if (!viewer.isDestroyed()) viewer.scene.postRender.removeEventListener(first) }
+  }, [viewerReadyVersion, onFirstFrame])
+
+  // 性能续 b: the map's entities (cities, want-to-go places and badges, routes, drone markers) are shown or hidden with
+  // the map page in one step, the entity collection's own `show` (an entity shows only when its collection does), instead
+  // of a new `show` on each of about 12 000 entity components at every page switch. Before the browser paints.
+  useLayoutEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer || viewer.isDestroyed()) return
+    viewer.entities.show = showMapContent
+  }, [showMapContent, viewerReadyVersion])
+
   useEffect(() => {
     if (!showMapContent) return undefined
 
@@ -2276,7 +2308,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
             (selectionMode !== 'city' || isCityRoute)
           const props: RouteEntityProps = {
             name: `${route.journeyId}: ${route.fromCityId} to ${route.toCityId}${route.dateMatch === 'uncertain' ? ` · ${uncertainDateLabel}` : ''}`,
-            show: showMapContent && isVisible,
+            show: isVisible,
             dashed: route.dateMatch === 'uncertain',
             isActive,
             isMuted,
@@ -2287,7 +2319,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
         })}
 
         {mappedCities.map((city) => {
-          const show = showMapContent && (visibleCityIds?.has(city.sourceId) ?? true)
+          const show = visibleCityIds?.has(city.sourceId) ?? true
           if (!city.layerIds.includes(TRAVEL_LAYER_ID)) {
             const props: WantToGoPlaceEntityProps = {
               sourceId: city.sourceId,
@@ -2343,7 +2375,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
             title: city.title,
             locale,
             wantToGoLabel,
-            show: showMapContent && (visibleCityIds?.has(city.sourceId) ?? true),
+            show: visibleCityIds?.has(city.sourceId) ?? true,
             lng: city.lng,
             lat: city.lat,
             isMuted: selectionMode !== 'overview' && !isSelected && !isCountryCity,
@@ -2362,7 +2394,6 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
             <Entity
               key={item.id}
               name={droneMarkerName(item)}
-              show={showMapContent}
               position={droneMediaPosition(item)}
               onClick={() => onSelectDroneMediaItem(item)}
               billboard={{

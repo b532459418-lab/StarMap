@@ -68,3 +68,18 @@ test('a commit\'s change set as an entry: read-model tables only', () => {
     ...LIBRARY, from: 3, to: 4, upserts: [{ table: 'entries', row: { id: 'e', revision: 1 } }], deletes: [{ table: 'viewItems', id: 'v' }],
   })
 })
+
+test('性能续 P6: a commit that keeps the revision (only the media registry) is not an entry; one with rows clears the log', () => {
+  const log = createChangeLog()
+  log.add(entry(4))
+  // A registry-only commit at revision 5, then a commit that changes rows: the changes since 5 are that one commit.
+  assert.deepEqual(log.add(entry(5, 5, 0)), entry(5, 5, 0))
+  assert.equal(log.size, 1)
+  log.add(entry(5))
+  assert.deepEqual(log.since(5, current(6)).deltas.map((delta) => [delta.from, delta.to]), [[5, 6]])
+  assert.deepEqual(log.since(4, current(6)).deltas.map((delta) => [delta.from, delta.to]), [[4, 5], [5, 6]])
+  // Rows without a new revision cannot be placed: the log starts again (the page reads the whole read model).
+  log.add(entry(6, 6, 1))
+  assert.equal(log.size, 0)
+  assert.deepEqual(log.since(5, current(6)), { gone: 'restart' })
+})

@@ -93,10 +93,6 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   // the save or the exit; without a draft the grids show the data. Saves apply only the difference from the baselines (D1).
   const cityProbe = useMemo(() => cityListProbe(country?.id), [country?.id])
   const photoProbe = useMemo(() => photoListProbe(isCityMode ? city.id : undefined), [isCityMode, city?.id])
-  const cityDraft = useDraft(cityProbe)
-  const photoDraft = useDraft(photoProbe)
-  const cityEditing = cityDraft.active
-  const photoEditing = photoDraft.active
   const [showAddCity, setShowAddCity] = useState(false)
   const [editorNotice, setEditorNotice] = useLocalizedNotice()
   const [editorBusy, setEditorBusy] = useState(false)
@@ -122,6 +118,18 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   const [baselinePhotoOrder, setBaselinePhotoOrder] = useState<readonly string[]>([])
   const [baselineHiddenPhotoIds, setBaselineHiddenPhotoIds] = useState<readonly string[]>([])
   const [draftCoverPhotoId, setDraftCoverPhotoId] = useState<string | undefined>()
+  // 性能续 P5: without local edits a draft follows new data (e.g. photos the editor's own upload imported): it starts
+  // again from them, with no notice. Local edits keep the conflict notice.
+  const cityDraft = useDraft(cityProbe, {
+    local: { order: draftCityIds, hidden: draftHiddenCityIds },
+    onFollow: () => startCityDraft(),
+  })
+  const photoDraft = useDraft(photoProbe, {
+    local: { order: draftPhotoIds, hidden: draftHiddenPhotoIds, cover: draftCoverPhotoId ?? null },
+    onFollow: () => startPhotoDraft(),
+  })
+  const cityEditing = cityDraft.active
+  const photoEditing = photoDraft.active
   const [selectedCityOption, setSelectedCityOption] = useState<CitySearchOption>()
   const [isManualCityEntry, setIsManualCityEntry] = useState(false)
   const [manualCity, setManualCity] = useState({ nameZh: '', nameEn: '', lat: '', lng: '' })
@@ -158,7 +166,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
 
   /** The city draft from the data on the page now (start, or undo). */
   const startCityDraft = () => {
-    cityDraft.begin()
+    cityDraft.begin({ order: memoryCities.map((item) => item.id), hidden: travelAtlasEditorState.hiddenCityIds })
     setDraftCityIds(memoryCities.map((item) => item.id))
     setDraftHiddenCityIds(travelAtlasEditorState.hiddenCityIds)
     setBaselineCityOrder(country ? travelAtlasEditorState.cityOrderByCountry[country.id] ?? [] : [])
@@ -175,7 +183,7 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
   }
   /** The photo draft from the data on the page now (start, or undo). */
   const startPhotoDraft = () => {
-    photoDraft.begin()
+    photoDraft.begin({ order: cityPhotos.map((photo) => photo.id), hidden: travelAtlasEditorState.hiddenMediaIds, cover: cityCoverPhoto?.id ?? null })
     setDraftPhotoIds(cityPhotos.map((photo) => photo.id))
     setDraftHiddenPhotoIds(travelAtlasEditorState.hiddenMediaIds)
     setDraftCoverPhotoId(cityCoverPhoto?.id)

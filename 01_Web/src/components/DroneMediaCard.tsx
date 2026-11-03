@@ -116,17 +116,21 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
   // 3C-5 D: the draft starts when editing starts, from the data on the page then (its baselines and revision), and ends
   // with the save or the exit; without a draft the track shows the data. Saves apply only the difference (D1).
   const droneProbe = useMemo(() => droneListProbe(city?.id), [city?.id])
-  const droneDraft = useDraft(droneProbe)
-  const editing = droneDraft.active
-  // The list changed elsewhere while the draft is open: the save waits for the user's choice (3C-5 D).
-  const droneConflictId = useId()
-  const droneConflict = droneDraft.status === 'changed' || droneDraft.status === 'deleted'
   const [showUpload, setShowUpload] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useLocalizedNotice()
   const [draggedItemId, setDraggedItemId] = useState<string>()
   const [draftItemIds, setDraftItemIds] = useState<string[]>([])
   const [draftHiddenIds, setDraftHiddenIds] = useState<string[]>([])
+  // 性能续 P5: without local edits the draft follows new data (e.g. what the editor's own upload imported), no notice.
+  const droneDraft = useDraft(droneProbe, {
+    local: { order: draftItemIds, hidden: draftHiddenIds },
+    onFollow: () => startDroneDraft(),
+  })
+  const editing = droneDraft.active
+  // The list changed elsewhere while the draft is open: the save waits for the user's choice (3C-5 D).
+  const droneConflictId = useId()
+  const droneConflict = droneDraft.status === 'changed' || droneDraft.status === 'deleted'
   const [baselineItemIds, setBaselineItemIds] = useState<readonly string[]>([])
   // The draft starts from (and resets to) the page-load snapshot; saves apply only the difference from it (D1).
   const [baselineHiddenIds, setBaselineHiddenIds] = useState<readonly string[]>([])
@@ -166,7 +170,7 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
 
   /** The draft from the data on the page now (start, or undo). */
   const startDroneDraft = () => {
-    droneDraft.begin()
+    droneDraft.begin({ order: items.map((item) => item.id), hidden: travelAtlasEditorState.hiddenDroneMediaIds })
     setDraftItemIds(items.map((item) => item.id))
     setDraftHiddenIds(travelAtlasEditorState.hiddenDroneMediaIds)
     setBaselineItemIds(travelAtlasEditorState.droneOrderByCity[city.id] ?? [])

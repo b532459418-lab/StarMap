@@ -190,8 +190,12 @@ export function computeSnapshot(
   // e.g. the sample's, which no other replaces): the same arguments always give the same object (React needs that).
   const queries = cache?.queries ?? new Map()
   const timeQueryContext = lazy(() => {
-    // It reads the editor state, the places, the travel records and the want-to-go items (not the media).
-    const inputs = [canonical.editorState, canonical.places, canonical.travel, canonical.wantToGo]
+    // It reads the places, the travel records and the want-to-go items (not the media), and of the editor state only the
+    // hidden countries and cities and the added countries (./derive/timeQueryContext.ts): 性能续 ②, a save that changes
+    // only an order, a cover or a media list keeps the context, and with it the page's queries (the reconciled
+    // sections keep the identity of what did not change).
+    const { editorState } = canonical
+    const inputs = [editorState.hiddenCountryIds, editorState.hiddenCityIds, editorState.addedCountries, canonical.places, canonical.travel, canonical.wantToGo]
     const last = cache?.timeContext
     if (last && last.inputs.every((input, index) => input === inputs[index])) return last.value
     const begun = performance.now()

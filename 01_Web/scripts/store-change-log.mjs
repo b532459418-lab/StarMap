@@ -4,6 +4,7 @@
  *
  * - Each entry is `{ libraryId, restoreMark, from, to, upserts, deletes }`: one commit of this process (`to` = `from`
  *   + 1), or the rows another process changed (`to` may be several revisions on, ./store-session.mjs checkExternal).
+ *   A commit that keeps the revision (only the media registry changed) is not an entry.
  *   Only read-model tables (src/worldgraph/readModel/types.ts).
  * - The entries form one chain: each starts where the previous one ended. An entry that does not continue the chain
  *   clears it first (whatever came before can no longer be told apart).
@@ -44,8 +45,20 @@ export function createChangeLog({ maxEntries = CHANGE_LOG_ENTRIES, maxRows = CHA
   let entries = []
   let rows = 0
   return {
-    /** Append an entry (see the file header). */
+    /**
+     * Append an entry (see the file header). An entry that does not move the revision (性能续 P6: a commit that only
+     * changed the media registry) is not kept: it changed no read-model row, and kept it would make `since` of its
+     * revision answer two entries (the media answer then carries no `delta`). One that does carry rows cannot be told
+     * apart from what came before: the log is cleared (pages read the whole read model again).
+     */
     add(entry) {
+      if (entry.from === entry.to) {
+        if (rowsOf(entry) > 0) {
+          entries = []
+          rows = 0
+        }
+        return entry
+      }
       const last = entries.at(-1)
       if (last && (last.to !== entry.from || last.libraryId !== entry.libraryId || last.restoreMark !== entry.restoreMark)) {
         entries = []
