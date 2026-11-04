@@ -158,9 +158,13 @@ export const reconstructAddedCountry = (entry: CanonicalAddedCountry, places: Pl
 }
 
 /** editor-state v2 → v1 形状（`TravelAtlasEditorState`）。键与值里的地点 id 原样，其余字段原样。 */
-export const reconstructEditorState = (state: CanonicalEditorState, places: PlaceIndex): TravelAtlasEditorState => ({
+export const reconstructEditorState = (state: CanonicalEditorState, places: PlaceIndex): TravelAtlasEditorState =>
+  reconstructEditorStateWith(state, state.addedCountries.map((entry) => reconstructAddedCountry(entry, places)))
+
+/** 同上，手动添加的国家已经重建好（③：派生把它们当作单独的一步缓存，见 ./derive.ts）。 */
+export const reconstructEditorStateWith = (state: CanonicalEditorState, addedCountries: LocalEditorCountry[]): TravelAtlasEditorState => ({
   schemaVersion: 1,
-  addedCountries: state.addedCountries.map((entry) => reconstructAddedCountry(entry, places)),
+  addedCountries,
   countryOrder: state.countryOrder,
   hiddenCountryIds: state.hiddenCountryIds,
   cityOrderByCountry: state.cityOrderByCountry,

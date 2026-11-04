@@ -182,7 +182,8 @@ const KINDS: readonly Kind[] = [
       return { source: 'want-to-go', id: item.id, startDate: '2026-03-01', tripTitle: 'G2 trip' }
     }),
   },
-  { label: 'country added', commit: write('countries', () => ({ countryCode: 'JP', visitedDate: '2024-02-12' })), keeps: ['mediaCatalog', 'droneMedia'] },
+  // A new place: every step that reads the place index runs again (its results may be equal).
+  { label: 'country added', commit: write('countries', () => ({ countryCode: 'JP', visitedDate: '2024-02-12' })), keeps: [] },
   {
     label: 'media record imported', keeps: MEDIA_KEEPS,
     commit: (s, n) => {
