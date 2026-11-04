@@ -86,7 +86,9 @@ for (const seed of [3404, 5150, 7777]) {
       } catch { /* refused: no commit */ }
       if (!changeSet) continue
       state = applyChangeSet(state, changeSet)
-      step(store, changesOfSet(changeSet), modelOf(state), `seed ${seed} step ${n} (${randomInput.label})`)
+      const label = `seed ${seed} step ${n} (${randomInput.label})`
+      const { before, after, asked } = step(store, changesOfSet(changeSet), modelOf(state), label)
+      assert.deepEqual(sharingViolations(before, after, asked), [], `${label}: the parts whose inputs it kept`)
       commits++
     }
     assert.ok(commits >= 20, `commits: ${commits}`)
@@ -254,7 +256,7 @@ test('G2: each kind of save, equal to the whole computation and sharing as today
   assertSections(step(store, { ...changesOf(from, external.upserts, external.deletes), to: state.revision }, modelOf(state), label).after, label)
 })
 
-test('G2: each kind of save keeps the parts whose inputs it did not change', { todo: 'design ③-3 and ③-4' }, () => {
+test('G2: each kind of save keeps the parts whose inputs it did not change', () => {
   let state = doubleRunStore(migratedFiles()).state
   const store = storeOf(state)
   const missing: string[] = []
@@ -290,10 +292,12 @@ for (const seed of [11, 4242]) {
       // Some drawn rows are data the App cannot derive at all (the whole computation throws too): not a step.
       try { computeSnapshot(next, { ...OPTIONS, identity: IDENTITY }) } catch { unusable++; continue }
       const before = store.getSnapshot()
+      const asked = askQueries(before)
       assert.equal(store.apply(changes), true, `step ${n}: applied`)
       const label = `seed ${seed} step ${n} (${changes.upserts[0]?.table ?? changes.deletes[0]?.table})`
       const after = store.getSnapshot()
       assertIncrementalStep(before, after, next, label)
+      assert.deepEqual(sharingViolations(before, after, asked), [], `${label}: the parts whose inputs it kept`)
       // Rows the classification does not know, and rows of places, start over; every other change computes its sections.
       const rows = [...changes.upserts.map(({ table, row }) => ({ table, row })), ...changes.deletes.map(({ table, id }) => ({ table, row: before.model[table as 'viewItems']?.find((candidate) => candidate.id === id) }))]
       const startsOver = rows.some(({ table, row }) => ['anchors', 'relations', 'sources', 'test:unknown-table'].includes(table) || JSON.stringify(row ?? {}).includes('test:unknown')

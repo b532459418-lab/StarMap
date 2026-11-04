@@ -24,12 +24,13 @@
 import { createDeriveCache, deriveAppDataFromCanonical, type AppData, type DeriveCache } from './canonical/derive.ts'
 import { reconcile } from './reconcile.ts'
 import type { CanonicalData } from './canonical/types.ts'
-import { deriveTimeQueryContext } from './derive/timeQueryContext.ts'
+import { countryVisitTimeRecords, deriveTimeQueryContext, timeQueryContextOf, travelTimeRecords, wishTimeRecords } from './derive/timeQueryContext.ts'
+import { indexPlaces } from './canonical/reconstruct.ts'
 import { WHOLE_OFFICIAL_VIEW, officialView, officialViewAfter, type OfficialView, type OfficialViewChanges } from './store/projectCanonical.ts'
 import { applyReadModelDelta } from '../worldgraph/readModel/delta.ts'
 import { READ_MODEL_TABLES, type ReadModel, type ReadModelTable } from '../worldgraph/readModel/types.ts'
 import { validateRowBase } from '../worldgraph/store/rows.ts'
-import type { LayerTimeFilters, TimeQueryContext } from '../worldgraph/timeQuery.ts'
+import type { LayerTimeFilters, TimeQueryContext, TimeQueryRecord } from '../worldgraph/timeQuery.ts'
 import { queryVisiblePlaces, type LayerQueryResult } from '../worldgraph/query.ts'
 import { queryCollection, type CollectionEntry } from '../worldgraph/collection.ts'
 import type { LanguageTag } from '../worldgraph/localizedText.ts'
@@ -132,11 +133,12 @@ export interface SnapshotCache {
   readonly derive: DeriveCache
   /** ③: the official view of the last snapshot's read model, with what the next one can keep (officialViewAfter). */
   official?: OfficialView
-  timeContext?: { readonly inputs: readonly unknown[]; readonly value: TimeQueryContext }
+  /** ③: the time query context's parts (places, travel, wishes, countryVisits) and the context itself, with their inputs. */
+  readonly timeContext: Map<string, { readonly inputs: readonly unknown[]; readonly value: unknown }>
   /** The last results of each query (a few: two consumers can ask with different arguments), most recent first. */
   readonly queries: Map<string, { readonly inputs: readonly unknown[]; readonly value: unknown }[]>
 }
-export const createSnapshotCache = (): SnapshotCache => ({ derive: createDeriveCache(), queries: new Map() })
+export const createSnapshotCache = (): SnapshotCache => ({ derive: createDeriveCache(), timeContext: new Map(), queries: new Map() })
 
 const QUERY_RESULTS_KEPT = 4
 /** The result of query `name` for `inputs` (compared with Object.is): the kept one, or `compute()` kept for next time. */
@@ -212,15 +214,36 @@ export function computeSnapshot(
     // It reads the places, the travel records and the want-to-go items (not the media), and of the editor state only the
     // hidden countries and cities and the added countries (./derive/timeQueryContext.ts): 性能续 ②, a save that changes
     // only an order, a cover or a media list keeps the context, and with it the page's queries (the reconciled
-    // sections keep the identity of what did not change).
-    const { editorState } = canonical
-    const inputs = [editorState.hiddenCountryIds, editorState.hiddenCityIds, editorState.addedCountries, canonical.places, canonical.travel, canonical.wantToGo]
-    const last = cache?.timeContext
-    if (last && last.inputs.every((input, index) => input === inputs[index])) return last.value
+    // sections keep the identity of what did not change). ③: its three parts are kept apart, each while its own inputs
+    // are; the want-to-go part computed again is reconciled with the last one, so a save whose records are equal (a note)
+    // keeps the context too.
     const begun = performance.now()
-    const context = deriveTimeQueryContext(canonical)
-    timings.timeContextMs = elapsed(begun)
-    if (cache) cache.timeContext = { inputs, value: context }
+    if (!cache) {
+      const context = deriveTimeQueryContext(canonical)
+      timings.timeContextMs = elapsed(begun)
+      return context
+    }
+    const { editorState } = canonical
+    let computed = false
+    const part = <T>(name: string, inputs: readonly unknown[], compute: (last: T | undefined) => T): T => {
+      const last = cache.timeContext.get(name)
+      if (last && last.inputs.length === inputs.length && last.inputs.every((input, index) => input === inputs[index])) return last.value as T
+      computed = true
+      const value = compute(last?.value as T | undefined)
+      cache.timeContext.set(name, { inputs, value })
+      return value
+    }
+    const places = part('places', [canonical.places], () => indexPlaces(canonical.places))
+    const travel = part('travel', [places, canonical.travel, editorState.hiddenCountryIds, editorState.hiddenCityIds],
+      () => travelTimeRecords(places, canonical.travel, editorState.hiddenCountryIds, editorState.hiddenCityIds))
+    const wishes = part('wishes', [places, canonical.wantToGo.items, canonical.travel.display], (last: TimeQueryRecord[] | undefined) => {
+      const records = wishTimeRecords(places, canonical.wantToGo.items, canonical.travel.display)
+      return last ? reconcile(last, records) : records
+    })
+    const countryVisits = part('countryVisits', [editorState.addedCountries, editorState.hiddenCountryIds],
+      () => countryVisitTimeRecords(editorState.addedCountries, editorState.hiddenCountryIds))
+    const context = part('context', [travel, wishes, countryVisits], () => timeQueryContextOf(travel, wishes, countryVisits))
+    if (computed) timings.timeContextMs = elapsed(begun)
     return context
   })
   return Object.freeze({
