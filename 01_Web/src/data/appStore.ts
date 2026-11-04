@@ -39,6 +39,12 @@ if (!usesSampleData) {
   })
 }
 
+// ③ (the browser tests only: their dev server sets VITE_STARMAP_INCREMENTAL_VERIFY=1): every snapshot moved on by a
+// commit's changed rows is compared with the whole computation of its read model, after the save (./incrementalVerify.ts).
+if (import.meta.env.DEV && import.meta.env.VITE_STARMAP_INCREMENTAL_VERIFY === '1') {
+  void import('./incrementalVerify.ts').then(({ verifyIncrementalSnapshots }) => { verifyIncrementalSnapshots(appStore, options) })
+}
+
 /** Where the hooks read the snapshots: the store, or a part of the page that is not shown (`HoldDataWhileHidden`). */
 const SnapshotSourceContext = createContext<SnapshotSource>(appStore)
 

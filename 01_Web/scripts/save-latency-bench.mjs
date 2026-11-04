@@ -87,7 +87,8 @@ console.log(`generating the ${scaleName} store root…`)
 await generateRoots(dir, scale)
 const storeRoot = path.join(dir, 'store-root')
 if (await answering()) throw new Error('Port 5173 is occupied.')
-const env = { ...process.env, STARMAP_PRIVATE_ROOT: storeRoot, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '' }
+// The author's daily configuration: no StrictMode, and not the browser tests' comparison of incremental snapshots (③).
+const env = { ...process.env, STARMAP_PRIVATE_ROOT: storeRoot, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '', VITE_STARMAP_STRICT_MODE: '', VITE_STARMAP_INCREMENTAL_VERIFY: '' }
 for (const key of ['NODE_USE_ENV_PROXY', 'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']) delete env[key]
 const vite = path.join(webRoot, 'node_modules', 'vite', 'bin', 'vite.js')
 if (!existsSync(vite)) throw new Error('vite is not installed (npm ci)')

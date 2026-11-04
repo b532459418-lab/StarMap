@@ -21,6 +21,7 @@
 import assert from 'node:assert/strict'
 import { computeSnapshot, type AppSnapshot, type ReadModelChanges } from './appStoreCore.ts'
 import { buildBaseline, stableStringify } from './derive/baseline.ts'
+import { orderedText } from './incrementalVerify.ts'
 import { reconcile } from './reconcile.ts'
 import { officialViewOf } from './store/projectCanonical.ts'
 import { VIEW_SCOPES, mapListScope } from './store/officialDefinitions.ts'
@@ -39,31 +40,8 @@ const ACTIVE: LayerTimeFilters = {
   want_to_go: { from: '2000-01-01', to: '2100-12-31', includeUncertain: true },
 }
 
-/** The value as text in insertion order (see the file header). */
-export function orderedText(value: unknown): string {
-  const path = new Set<object>()
-  const walk = (v: unknown): string => {
-    if (v === undefined) return 'undefined'
-    if (v === null || typeof v === 'boolean') return String(v)
-    if (typeof v === 'number') return Object.is(v, -0) ? '-0' : String(v)
-    if (typeof v === 'string') return JSON.stringify(v)
-    if (typeof v === 'function') return '[function]'
-    if (typeof v !== 'object') return `[${typeof v}]`
-    if (path.has(v)) throw new Error('orderedText: a cycle')
-    path.add(v)
-    try {
-      if (Array.isArray(v)) return `[${v.map(walk).join(',')}]`
-      if (v instanceof Map) return `Map{${[...v].map(([key, member]) => `${walk(key)}=>${walk(member)}`).join(',')}}`
-      if (v instanceof Set) return `Set{${[...v].map(walk).join(',')}}`
-      const proto = Object.getPrototypeOf(v)
-      const kind = proto === Object.prototype || proto === null ? '' : `${proto.constructor?.name ?? '?'}`
-      return `${kind}{${Object.keys(v).map((key) => `${JSON.stringify(key)}:${walk((v as Record<string, unknown>)[key])}`).join(',')}}`
-    } finally {
-      path.delete(v)
-    }
-  }
-  return walk(value)
-}
+/** The value as text in insertion order (the browser tests' comparison uses the same, ./incrementalVerify.ts). */
+export { orderedText }
 
 /** Every object reachable from `root`: arrays, plain objects, and the members of Maps and Sets. */
 export function objectsOf(root: unknown): Set<object> {
