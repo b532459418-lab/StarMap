@@ -8,7 +8,9 @@
  * - `snapshotAfter(snapshot, changes, options)`: the snapshot of the next revision, or undefined when the changes are
  *   not the ones that follow this snapshot (another library or restore mark, or `from` is not this revision): the
  *   caller then fetches the changes by revision. Only the changed rows are checked (the shape every row shares), not
- *   the whole model.
+ *   the whole model. ③ (scope-incremental): with the store's cache, only the sections of the official view the changed
+ *   rows can affect are computed and reconciled; the others keep their objects (./store/projectCanonical.ts
+ *   officialViewAfter, and its classification table: whatever it does not list projects the whole store).
  * - `createAppStore(initial)`: the mutable cell around the snapshots: getSnapshot / subscribe for React, `replace`,
  *   `apply` and `fail`. Listeners run after each new snapshot.
  *
@@ -22,12 +24,13 @@
 import { createDeriveCache, deriveAppDataFromCanonical, type AppData, type DeriveCache } from './canonical/derive.ts'
 import { reconcile } from './reconcile.ts'
 import type { CanonicalData } from './canonical/types.ts'
-import { deriveTimeQueryContext } from './derive/timeQueryContext.ts'
-import { officialViewOf } from './store/projectCanonical.ts'
+import { countryVisitTimeRecords, deriveTimeQueryContext, timeQueryContextOf, travelTimeRecords, wishTimeRecords } from './derive/timeQueryContext.ts'
+import { indexPlaces } from './canonical/reconstruct.ts'
+import { WHOLE_OFFICIAL_VIEW, officialView, officialViewAfter, type OfficialView, type OfficialViewChanges } from './store/projectCanonical.ts'
 import { applyReadModelDelta } from '../worldgraph/readModel/delta.ts'
 import { READ_MODEL_TABLES, type ReadModel, type ReadModelTable } from '../worldgraph/readModel/types.ts'
 import { validateRowBase } from '../worldgraph/store/rows.ts'
-import type { LayerTimeFilters, TimeQueryContext } from '../worldgraph/timeQuery.ts'
+import type { LayerTimeFilters, TimeQueryContext, TimeQueryRecord } from '../worldgraph/timeQuery.ts'
 import { queryVisiblePlaces, type LayerQueryResult } from '../worldgraph/query.ts'
 import { queryCollection, type CollectionEntry } from '../worldgraph/collection.ts'
 import type { LanguageTag } from '../worldgraph/localizedText.ts'
@@ -87,6 +90,8 @@ export interface SnapshotTimings {
   startedAt?: number
   deltaMs?: number
   officialMs: number
+  /** ③: the sections of the official view computed for this snapshot ('whole' when the whole store was projected). */
+  officialSections?: string
   /** Keeping the unchanged sections of the official view (structural sharing with the previous snapshot). */
   reconcileMs?: number
   deriveMs: number
@@ -126,11 +131,14 @@ export interface SnapshotQueries {
 /** What the store keeps between snapshots: the derivation steps, the time query context and the queries, with their inputs. */
 export interface SnapshotCache {
   readonly derive: DeriveCache
-  timeContext?: { readonly inputs: readonly unknown[]; readonly value: TimeQueryContext }
+  /** ③: the official view of the last snapshot's read model, with what the next one can keep (officialViewAfter). */
+  official?: OfficialView
+  /** ③: the time query context's parts (places, travel, wishes, countryVisits) and the context itself, with their inputs. */
+  readonly timeContext: Map<string, { readonly inputs: readonly unknown[]; readonly value: unknown }>
   /** The last results of each query (a few: two consumers can ask with different arguments), most recent first. */
   readonly queries: Map<string, { readonly inputs: readonly unknown[]; readonly value: unknown }[]>
 }
-export const createSnapshotCache = (): SnapshotCache => ({ derive: createDeriveCache(), queries: new Map() })
+export const createSnapshotCache = (): SnapshotCache => ({ derive: createDeriveCache(), timeContext: new Map(), queries: new Map() })
 
 const QUERY_RESULTS_KEPT = 4
 /** The result of query `name` for `inputs` (compared with Object.is): the kept one, or `compute()` kept for next time. */
@@ -171,10 +179,23 @@ function lazy<T>(compute: () => T): () => T {
 /** Everything the App reads, from a read model. */
 export function computeSnapshot(
   model: ReadModel,
-  options: SnapshotOptions & { readonly identity?: StoreIdentity; readonly status?: AppSnapshot['status']; readonly error?: AppDataLoadError; readonly deltaMs?: number; readonly startedAt?: number; readonly previous?: AppSnapshot },
+  options: SnapshotOptions & {
+    readonly identity?: StoreIdentity; readonly status?: AppSnapshot['status']; readonly error?: AppDataLoadError; readonly deltaMs?: number; readonly startedAt?: number
+    readonly previous?: AppSnapshot
+    /** ③: the changed rows that moved the read model of `previous` on to `model` (snapshotAfter). */
+    readonly changes?: OfficialViewChanges
+  },
 ): AppSnapshot {
   let started = performance.now()
-  const fresh = officialViewOf(model, options.source)
+  // ③: with the previous snapshot's official view kept by the store, only the sections the changed rows can affect are
+  // computed (./store/projectCanonical.ts officialViewAfter); otherwise the whole store is projected.
+  const kept = options.cache?.official
+  const followed = options.cache && options.changes && options.previous?.status === 'ready' && kept?.model === options.previous.model
+    ? officialViewAfter(kept, options.previous.canonical, model, options.changes, options.source)
+    : { view: officialView(model, options.source), sections: WHOLE_OFFICIAL_VIEW }
+  if (options.cache) options.cache.official = followed.view
+  const fresh = followed.view.canonical
+  const officialSections = followed.sections === WHOLE_OFFICIAL_VIEW ? WHOLE_OFFICIAL_VIEW : [...followed.sections].join(',')
   const officialMs = elapsed(started)
   started = performance.now()
   const previous = options.cache && options.previous?.status === 'ready' ? options.previous.canonical : undefined
@@ -183,7 +204,7 @@ export function computeSnapshot(
   started = performance.now()
   const appData = deriveAppDataFromCanonical(canonical, { now: options.now }, options.cache?.derive)
   const timings: SnapshotTimings = {
-    ...(options.startedAt !== undefined ? { startedAt: options.startedAt } : {}), ...(options.deltaMs !== undefined ? { deltaMs: options.deltaMs } : {}), officialMs, ...(reconcileMs !== undefined ? { reconcileMs } : {}), deriveMs: elapsed(started),
+    ...(options.startedAt !== undefined ? { startedAt: options.startedAt } : {}), ...(options.deltaMs !== undefined ? { deltaMs: options.deltaMs } : {}), officialMs, officialSections, ...(reconcileMs !== undefined ? { reconcileMs } : {}), deriveMs: elapsed(started),
   }
   const cache = options.cache
   // The queries' results: kept by the store across snapshots, or by this snapshot alone (one computed without the store,
@@ -193,15 +214,36 @@ export function computeSnapshot(
     // It reads the places, the travel records and the want-to-go items (not the media), and of the editor state only the
     // hidden countries and cities and the added countries (./derive/timeQueryContext.ts): 性能续 ②, a save that changes
     // only an order, a cover or a media list keeps the context, and with it the page's queries (the reconciled
-    // sections keep the identity of what did not change).
-    const { editorState } = canonical
-    const inputs = [editorState.hiddenCountryIds, editorState.hiddenCityIds, editorState.addedCountries, canonical.places, canonical.travel, canonical.wantToGo]
-    const last = cache?.timeContext
-    if (last && last.inputs.every((input, index) => input === inputs[index])) return last.value
+    // sections keep the identity of what did not change). ③: its three parts are kept apart, each while its own inputs
+    // are; the want-to-go part computed again is reconciled with the last one, so a save whose records are equal (a note)
+    // keeps the context too.
     const begun = performance.now()
-    const context = deriveTimeQueryContext(canonical)
-    timings.timeContextMs = elapsed(begun)
-    if (cache) cache.timeContext = { inputs, value: context }
+    if (!cache) {
+      const context = deriveTimeQueryContext(canonical)
+      timings.timeContextMs = elapsed(begun)
+      return context
+    }
+    const { editorState } = canonical
+    let computed = false
+    const part = <T>(name: string, inputs: readonly unknown[], compute: (last: T | undefined) => T): T => {
+      const last = cache.timeContext.get(name)
+      if (last && last.inputs.length === inputs.length && last.inputs.every((input, index) => input === inputs[index])) return last.value as T
+      computed = true
+      const value = compute(last?.value as T | undefined)
+      cache.timeContext.set(name, { inputs, value })
+      return value
+    }
+    const places = part('places', [canonical.places], () => indexPlaces(canonical.places))
+    const travel = part('travel', [places, canonical.travel, editorState.hiddenCountryIds, editorState.hiddenCityIds],
+      () => travelTimeRecords(places, canonical.travel, editorState.hiddenCountryIds, editorState.hiddenCityIds))
+    const wishes = part('wishes', [places, canonical.wantToGo.items, canonical.travel.display], (last: TimeQueryRecord[] | undefined) => {
+      const records = wishTimeRecords(places, canonical.wantToGo.items, canonical.travel.display)
+      return last ? reconcile(last, records) : records
+    })
+    const countryVisits = part('countryVisits', [editorState.addedCountries, editorState.hiddenCountryIds],
+      () => countryVisitTimeRecords(editorState.addedCountries, editorState.hiddenCountryIds))
+    const context = part('context', [travel, wishes, countryVisits], () => timeQueryContextOf(travel, wishes, countryVisits))
+    if (computed) timings.timeContextMs = elapsed(begun)
     return context
   })
   return Object.freeze({
@@ -262,7 +304,7 @@ export function snapshotAfter(snapshot: AppSnapshot, changes: ReadModelChanges, 
     deletes: changes.deletes as never,
   })
   const next = changes.to === model.revision ? model : { ...model, revision: changes.to }
-  return computeSnapshot(next, { ...options, ...(snapshot.identity ? { identity: snapshot.identity } : {}), deltaMs: elapsed(started), startedAt: Math.round(started), previous: snapshot })
+  return computeSnapshot(next, { ...options, ...(snapshot.identity ? { identity: snapshot.identity } : {}), deltaMs: elapsed(started), startedAt: Math.round(started), previous: snapshot, changes })
 }
 
 export interface AppStore {

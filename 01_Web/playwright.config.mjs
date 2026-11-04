@@ -12,7 +12,9 @@ const publicSmoke = process.env.STARMAP_BROWSER_PUBLIC_SMOKE === '1'
 // group runs *.spec.mjs against a fixture migrated into the new library.
 const migration = process.env.STARMAP_BROWSER_MIGRATION === '1'
 // 性能续 ⑦: the tests' dev server keeps React's StrictMode (the daily `dev:personal` does not; ./src/main.tsx).
-const serverEnv = { STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '', VITE_STARMAP_STRICT_MODE: '1' }
+// ③ (the author's decision of 2026-11-04): it also compares every snapshot a save moved on with the whole computation,
+// after the save (./src/data/incrementalVerify.ts); a difference is a page error, which fails the case.
+const serverEnv = { STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '', VITE_STARMAP_STRICT_MODE: '1', VITE_STARMAP_INCREMENTAL_VERIFY: '1' }
 export default defineConfig({
   testDir: './tests/browser',
   testMatch: performance ? '**/*.perf.mjs' : publicSmoke ? '**/*.smoke.mjs' : migration ? '**/*.migration.mjs' : '**/*.spec.mjs',

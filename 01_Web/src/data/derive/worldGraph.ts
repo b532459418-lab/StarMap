@@ -14,6 +14,7 @@ import { plannedRecordsToWorldGraph, type PlannedRecordInput } from '../../world
 import { travelToWorldGraph } from '../../worldgraph/adapters/travel.ts'
 import { wantToGoToWorldGraph, type WantToGoInput } from '../../worldgraph/adapters/wantToGo.ts'
 import { mergeWorldGraphSnapshots } from '../../worldgraph/snapshot.ts'
+import type { WorldGraphSnapshot } from '../../worldgraph/types.ts'
 import type { City, Country, JourneyDay, Route } from '../../types/travel.ts'
 
 /** Core 适配器的全部输入（见 `../canonical/derive.ts`）。 */
@@ -31,40 +32,45 @@ export interface WorldGraphInputs {
   plannedRecords: PlannedRecordInput[]
 }
 
-/** Core 适配器的输入 + 会话时间 → `worldGraph.ts` 今天的快照导出。 */
-export const deriveWorldGraph = (inputs: WorldGraphInputs, now: string) => {
-  const { places, countries, cities, journeyDays, routes, wantToGoItems, plannedRecords } = inputs
+/** 注册表的地点：每个地点一个实体（Core 方案 C1、C2）。地点本身不属于任何图层。 */
+export const placesWorldGraph = (places: PlaceInput[], now: string) => placesToWorldGraph(places, { now })
 
-  /** 注册表的地点：每个地点一个实体（Core 方案 C1、C2）。地点本身不属于任何图层。 */
-  const placesSnapshot = placesToWorldGraph(places, { now })
+/**
+ * Q8 方案 C：options 只传 now，不传 hiddenCountryIds / hiddenCityIds。
+ * 被 editor 隐藏的国家/城市在派生层就已经被过滤掉了，根本不在下面这四个数组里，
+ * 在足迹层也就没有成员关系——与 PR3 之前的地图行为一致。
+ */
+export const travelWorldGraph = (travel: Pick<WorldGraphInputs, 'countries' | 'cities' | 'journeyDays' | 'routes'>, now: string) =>
+  travelToWorldGraph({ countries: travel.countries, cities: travel.cities, journeyDays: travel.journeyDays, routes: travel.routes }, { now })
 
-  /**
-   * Q8 方案 C：options 只传 now，不传 hiddenCountryIds / hiddenCityIds。
-   * 被 editor 隐藏的国家/城市在派生层就已经被过滤掉了，根本不在下面这四个数组里，
-   * 在足迹层也就没有成员关系——与 PR3 之前的地图行为一致。
-   */
-  const travelSnapshot = travelToWorldGraph({ countries, cities, journeyDays, routes }, { now })
+/** 想去条目（FR-WTG-2）。隐藏条目仍在快照里，只在 membership.metadata.hidden 上打标记。 */
+export const wantToGoWorldGraph = (wantToGoItems: WantToGoInput[]) => wantToGoToWorldGraph(wantToGoItems)
 
-  /** 想去条目（FR-WTG-2）。隐藏条目仍在快照里，只在 membership.metadata.hidden 上打标记。 */
-  const wantToGoSnapshot = wantToGoToWorldGraph(wantToGoItems)
+/** status === 'planned' 的足迹记录（FR-WTG-7），只读地进入想去图层。 */
+export const plannedWorldGraph = (plannedRecords: PlannedRecordInput[]) => plannedRecordsToWorldGraph(plannedRecords)
 
-  /** status === 'planned' 的足迹记录（FR-WTG-7），只读地进入想去图层。 */
-  const plannedSnapshot = plannedRecordsToWorldGraph(plannedRecords)
+/**
+ * 地图查询用的合并快照。顺序是 places → travel → want-to-go → planned：
+ * 地点实体只在 places 里出现一次，后三者只产出成员关系（与足迹的行程日、关系），实体 id 是地点 id；
+ * 顺序决定同一地点在同一层里成员关系的先后——想去先于 planned，地图取第一条可见记录的 metadata。
+ * 地点快照不单独导出：它只有实体与锚点，已经在合并快照里；另外三份是各适配器的产出，成员关系按地点 id 引用它。
+ * ③：四份快照可以分别缓存（../canonical/derive.ts 按各自的输入），合并只在其中一份变了时重做。
+ */
+export const mergeWorldGraph = ({ placesSnapshot, travelSnapshot, wantToGoSnapshot, plannedSnapshot }: {
+  placesSnapshot: WorldGraphSnapshot; travelSnapshot: WorldGraphSnapshot; wantToGoSnapshot: WorldGraphSnapshot; plannedSnapshot: WorldGraphSnapshot
+}) => ({
+  travelSnapshot,
+  wantToGoSnapshot,
+  plannedSnapshot,
+  worldGraphSnapshot: mergeWorldGraphSnapshots(placesSnapshot, travelSnapshot, wantToGoSnapshot, plannedSnapshot),
+})
 
-  /**
-   * 地图查询用的合并快照。顺序是 places → travel → want-to-go → planned：
-   * 地点实体只在 places 里出现一次，后三者只产出成员关系（与足迹的行程日、关系），实体 id 是地点 id；
-   * 顺序决定同一地点在同一层里成员关系的先后——想去先于 planned，地图取第一条可见记录的 metadata。
-   */
-  const worldGraphSnapshot = mergeWorldGraphSnapshots(placesSnapshot, travelSnapshot, wantToGoSnapshot, plannedSnapshot)
-
-  // 地点快照不单独导出：它只有实体与锚点，已经在合并快照里；另外三份是各适配器的产出，成员关系按地点 id 引用它。
-  return {
-    travelSnapshot,
-    wantToGoSnapshot,
-    plannedSnapshot,
-    worldGraphSnapshot,
-  }
-}
+/** Core 适配器的输入 + 会话时间 → `worldGraph.ts` 今天的快照导出（上面四份快照与合并）。 */
+export const deriveWorldGraph = (inputs: WorldGraphInputs, now: string) => mergeWorldGraph({
+  placesSnapshot: placesWorldGraph(inputs.places, now),
+  travelSnapshot: travelWorldGraph(inputs, now),
+  wantToGoSnapshot: wantToGoWorldGraph(inputs.wantToGoItems),
+  plannedSnapshot: plannedWorldGraph(inputs.plannedRecords),
+})
 
 export type WorldGraphDerived = ReturnType<typeof deriveWorldGraph>

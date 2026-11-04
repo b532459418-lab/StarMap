@@ -32,6 +32,13 @@
  * need them; export-v2 does), and `freeze: false` returns the result without a deep frozen copy, so it shares row values
  * with its input and its callers must not modify it. `officialViewOf(model, source)` is that call on a read model.
  *
+ * ③ (scope-incremental): the projection is a set of sections (places, records, display, want-to-go items, added
+ * countries, media, each editor list) computed from shared inputs (the view rows grouped by scope, the place index, the
+ * entry roles). `officialView` keeps those inputs with the view; `officialViewAfter` gives the view of the read model a
+ * commit moved on, computing only the sections its changed rows can affect (`OFFICIAL_VIEW_INPUTS`, the classification
+ * table: whatever it does not list projects the whole store) and keeping every other section's object. Every path runs
+ * the same section functions, so its result equals the whole projection.
+ *
  * Constraint: Node 24 loads it directly (erasable-only TypeScript, relative
  * imports with `.ts`, `import type` for types).
  */
@@ -40,7 +47,7 @@ import type { AssetReference, Evidence, JsonValue, LayerEntry, StoreEntity } fro
 import { freezeCopy } from '../../worldgraph/store/schema.ts'
 import type { CanonicalData, CanonicalDisplay, CanonicalEditorState, CanonicalTravelMeta } from '../canonical/types.ts'
 import { formalStateOfReadModel } from '../../worldgraph/readModel/build.ts'
-import type { ReadModel } from '../../worldgraph/readModel/types.ts'
+import { READ_MODEL_TABLES, compareIds, type ReadModel, type ReadModelTable } from '../../worldgraph/readModel/types.ts'
 import { EDITOR_STATE_SCHEMA_VERSION, TRAVEL_SCHEMA_VERSION } from '../canonical/schemaVersions.ts'
 import {
   DISPLAY_SETTING_KEYS, OFFICIAL, OFFICIAL_DEFINITIONS, UNRESOLVED_KEY_PREFIX, V2_SOURCES, VIEW_SCOPES, mapListScope,
@@ -223,12 +230,19 @@ export function viewListOf(access: ViewScopeAccess, scope: string, valueOf: (ite
   return elements.map(e => e.value)
 }
 
+/** The fields of the editor state's lists, in the official view's order. */
+export const EDITOR_LIST_FIELDS = Object.freeze([
+  'countryOrder', 'hiddenCountryIds', 'cityOrderByCountry', 'hiddenCityIds', 'mediaOrderByCity', 'hiddenMediaIds', 'coverMediaByCity',
+  'droneOrderByCity', 'hiddenDroneMediaIds',
+] as const)
+export type EditorListField = typeof EDITOR_LIST_FIELDS[number]
+
 /**
- * The editor state's lists, as the projection reads them: the editor list scopes, the three map scopes (one key setting
- * per place, each key's list in its own scope) and the covers. `isPlace` and `isAsset` say which targets exist.
+ * One list of the editor state, as the projection reads it: an editor list scope, one of the three map scopes (one key
+ * setting per place, each key's list in its own scope) or the covers. `isPlace` and `isAsset` say which targets exist.
  */
-export function editorListsOf(access: ViewScopeAccess, isPlace: (id: string) => boolean, isAsset: (id: string) => boolean,
-  consume: (table: FormalTable, id: string) => void = noConsume) {
+export function editorListOf(field: EditorListField, access: ViewScopeAccess, isPlace: (id: string) => boolean, isAsset: (id: string) => boolean,
+  consume: (table: FormalTable, id: string) => void = noConsume): JsonValue {
   const placeItem = (item: ViewItem) => (item.itemTable === 'entities' && isPlace(item.itemId) ? item.itemId : undefined)
   const assetItem = (item: ViewItem) => (item.itemTable === 'assets' && isAsset(item.itemId) ? item.itemId : undefined)
   const list = (scope: string, valueOf: (item: ViewItem) => string | undefined) => viewListOf(access, scope, valueOf, consume)
@@ -242,54 +256,80 @@ export function editorListsOf(access: ViewScopeAccess, isPlace: (id: string) => 
     }
     return result
   }
-  const covers: Record<string, string> = {}
-  for (const s of access.settings(VIEW_SCOPES.coverMediaByCity)) {
-    const cover = s.ref?.table === 'assets' ? s.ref.id : typeof s.value === 'string' ? s.value : undefined
-    if (cover === undefined || !isPlace(s.key)) continue
-    covers[s.key] = cover; consume('viewSettings', s.id)
-  }
-  return {
-    countryOrder: list(VIEW_SCOPES.countryOrder, placeItem),
-    hiddenCountryIds: list(VIEW_SCOPES.hiddenCountries, placeItem),
-    cityOrderByCountry: map(VIEW_SCOPES.cityOrderByCountry, placeItem),
-    hiddenCityIds: list(VIEW_SCOPES.hiddenCities, placeItem),
-    mediaOrderByCity: map(VIEW_SCOPES.mediaOrderByCity, assetItem),
-    hiddenMediaIds: list(VIEW_SCOPES.hiddenMedia, assetItem),
-    coverMediaByCity: covers,
-    droneOrderByCity: map(VIEW_SCOPES.droneOrderByCity, assetItem),
-    hiddenDroneMediaIds: list(VIEW_SCOPES.hiddenDroneMedia, assetItem),
+  switch (field) {
+    case 'countryOrder': return list(VIEW_SCOPES.countryOrder, placeItem)
+    case 'hiddenCountryIds': return list(VIEW_SCOPES.hiddenCountries, placeItem)
+    case 'cityOrderByCountry': return map(VIEW_SCOPES.cityOrderByCountry, placeItem)
+    case 'hiddenCityIds': return list(VIEW_SCOPES.hiddenCities, placeItem)
+    case 'mediaOrderByCity': return map(VIEW_SCOPES.mediaOrderByCity, assetItem)
+    case 'hiddenMediaIds': return list(VIEW_SCOPES.hiddenMedia, assetItem)
+    case 'coverMediaByCity': {
+      const covers: Record<string, string> = {}
+      for (const s of access.settings(VIEW_SCOPES.coverMediaByCity)) {
+        const cover = s.ref?.table === 'assets' ? s.ref.id : typeof s.value === 'string' ? s.value : undefined
+        if (cover === undefined || !isPlace(s.key)) continue
+        covers[s.key] = cover; consume('viewSettings', s.id)
+      }
+      return covers
+    }
+    case 'droneOrderByCity': return map(VIEW_SCOPES.droneOrderByCity, assetItem)
+    case 'hiddenDroneMediaIds': return list(VIEW_SCOPES.hiddenDroneMedia, assetItem)
   }
 }
 
-/** Formal store -> the CanonicalData readV2 would produce, plus serializeV2's file metadata. */
-export function projectStoreToCanonical(state: FormalState, options: ProjectionOptions): Projection {
-  const track = options.track !== false
-  const used = new Set<string>()
-  const key = (table: FormalTable, id: string) => JSON.stringify([table, id])
-  const consume = track ? (table: FormalTable, id: string) => { used.add(key(table, id)) } : () => {}
-  const byId = <T extends { readonly id: string }>(rows: readonly T[]) => new Map(rows.map(r => [r.id, r] as const))
-  const group = <T, K>(rows: readonly T[], keyOf: (row: T) => K | undefined) => {
-    const groups = new Map<K, T[]>()
-    for (const row of rows) {
-      const k = keyOf(row)
-      if (k === undefined) continue
-      const list = groups.get(k)
-      if (list) list.push(row); else groups.set(k, [row])
-    }
-    // First by id, so "the first" never depends on row order.
-    for (const list of groups.values()) list.sort((a, b) => compare((a as { id: string }).id, (b as { id: string }).id))
-    return groups
+/**
+ * The editor state's lists, as the projection reads them (`editorListOf` for each field, in the official view's order).
+ */
+export function editorListsOf(access: ViewScopeAccess, isPlace: (id: string) => boolean, isAsset: (id: string) => boolean,
+  consume: (table: FormalTable, id: string) => void = noConsume): Record<EditorListField, JsonValue> {
+  const lists = {} as Record<EditorListField, JsonValue>
+  for (const field of EDITOR_LIST_FIELDS) lists[field] = editorListOf(field, access, isPlace, isAsset, consume)
+  return lists
+}
+
+// ---- The projection's inputs and sections (③: the official view can compute a few sections and keep the rest) ----
+
+type Consume = (table: FormalTable, id: string) => void
+type Scoped<T> = ReadonlyMap<string, readonly T[]>
+/** Rows grouped by key, each group in id order (so "the first" never depends on row order). */
+const group = <T extends { readonly id: string }, K>(rows: readonly T[], keyOf: (row: T) => K | undefined): Map<K, T[]> => {
+  const groups = new Map<K, T[]>()
+  for (const row of rows) {
+    const k = keyOf(row)
+    if (k === undefined) continue
+    const list = groups.get(k)
+    if (list) list.push(row); else groups.set(k, [row])
   }
-  if (track) for (const [table, id] of OFFICIAL_ROWS) if (state[table].some(r => r.id === id)) consume(table, id)
+  for (const list of groups.values()) list.sort((a, b) => compare(a.id, b.id))
+  return groups
+}
+const byId = <T extends { readonly id: string }>(rows: readonly T[]) => new Map(rows.map(r => [r.id, r] as const))
+const once = <T>(compute: () => T): (() => T) => {
+  let value: T | undefined, done = false
+  return () => {
+    if (!done) { value = compute(); done = true }
+    return value as T
+  }
+}
 
-  const header = state.sources.find(s => s.id === V2_SOURCES.import)
-  const headers = plain(header?.extensions?.v2) ? header.extensions.v2 : {}
-  const headerOf = (file: string): Json => (plain(headers[file]) ? headers[file] : {})
-  const items = group(state.viewItems, v => v.scope)
-  const settings = group(state.viewSettings, v => v.scope)
-  const entities = byId(state.entities), assets = byId(state.assets)
+/** What the sections of a projection read: the state's rows, view rows grouped by scope, the place index, and the rest on first use. */
+interface ProjectionInputs {
+  readonly state: FormalState
+  readonly consume: Consume
+  readonly items: Scoped<ViewItem>
+  readonly settings: Scoped<ViewSetting>
+  /** Place id → its Canonical value (with `partOf` and `location`). */
+  readonly places: ReadonlyMap<string, Json>
+  readonly entities: () => ReadonlyMap<string, StoreEntity>
+  readonly assets: () => ReadonlyMap<string, AssetReference>
+  /** Entry id → the role of an official entry on a place. */
+  readonly roles: () => ReadonlyMap<string, OfficialEntryRole>
+  /** The `v2:import` source's header of one V2 file. */
+  readonly headerOf: (file: string) => Json
+}
 
-  // --- Places: entity, title, fields, part-of relation, location anchor.
+/** Places: entity, title, fields, part-of relation, location anchor. */
+function placesOf(state: FormalState, consume: Consume): Map<string, Json> {
   const places = new Map<string, Json>()
   const parents = group(state.relations, r => (r.typeId === OFFICIAL.partOf ? r.fromEntityId : undefined))
   const locations = group(state.anchors, a => (a.kind === 'location' ? a.entityId : undefined))
@@ -307,42 +347,73 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
       consume('anchors', anchor.id)
     }
   }
-  const isPlace = (id: string) => places.has(id)
+  return places
+}
 
-  /** Rows of an original-order scope first, by position; the rest after them, by `after`. */
-  function ordered<T>(scope: string, itemTable: ViewItemTable, rows: readonly { readonly itemId: string; readonly value: T; readonly after: readonly [string, string] }[]): T[] {
-    const positions = new Map<string, { position: string; id: string }>()
-    for (const item of items.get(scope) ?? []) if (item.itemTable === itemTable && !positions.has(item.itemId)) positions.set(item.itemId, { position: item.position, id: item.id })
-    const keyed = rows.map(row => ({ row, at: positions.get(row.itemId) }))
-    for (const { at } of keyed) if (at) consume('viewItems', at.id)
-    keyed.sort((x, y) => {
-      if (x.at && y.at) return compare(x.at.position, y.at.position) || compare(x.at.id, y.at.id)
-      if (x.at || y.at) return x.at ? -1 : 1
-      return compare(x.row.after[0], y.row.after[0]) || compare(x.row.after[1], y.row.after[1])
-    })
-    return keyed.map(k => k.row.value)
-  }
-  /** Flag of a hidden scope for the given item, using that view row. */
-  const flags = (scope: string) => {
-    const byItem = new Map<string, ViewItem>()
-    for (const item of items.get(scope) ?? []) if (!byItem.has(item.itemId)) byItem.set(item.itemId, item)
-    return (itemId: string): boolean | undefined => {
-      const item = byItem.get(itemId)
-      if (item) consume('viewItems', item.id)
-      return item?.hidden
-    }
-  }
-
-  // --- Entries.
+function rolesOf(state: FormalState, places: ReadonlyMap<string, Json>): Map<string, OfficialEntryRole> {
   const roles = new Map<string, OfficialEntryRole>()
   const subtypeOf = (id: string) => places.get(id)?.subtype
   for (const entry of state.entries) {
     const role = officialEntryRole(entry, subtypeOf)
-    if (role !== undefined && isPlace(entry.entityId)) roles.set(entry.id, role)
+    if (role !== undefined && places.has(entry.entityId)) roles.set(entry.id, role)
   }
+  return roles
+}
+
+function headersOf(state: FormalState): (file: string) => Json {
+  const header = state.sources.find(s => s.id === V2_SOURCES.import)
+  const headers = plain(header?.extensions?.v2) ? header.extensions.v2 : {}
+  return (file: string): Json => (plain(headers[file]) ? headers[file] : {})
+}
+
+/** The inputs of a projection of `state` (every group built here). */
+function inputsOf(state: FormalState, consume: Consume): ProjectionInputs {
+  const places = placesOf(state, consume)
+  return {
+    state, consume, places, headerOf: headersOf(state),
+    items: group(state.viewItems, v => v.scope),
+    settings: group(state.viewSettings, v => v.scope),
+    entities: once(() => byId(state.entities)),
+    assets: once(() => byId(state.assets) as Map<string, AssetReference>),
+    roles: once(() => rolesOf(state, places)),
+  }
+}
+
+/** Rows of an original-order scope first, by position; the rest after them, by `after`. */
+function ordered<T>(p: ProjectionInputs, scope: string, itemTable: ViewItemTable, rows: readonly { readonly itemId: string; readonly value: T; readonly after: readonly [string, string] }[]): T[] {
+  const positions = new Map<string, { position: string; id: string }>()
+  for (const item of p.items.get(scope) ?? []) if (item.itemTable === itemTable && !positions.has(item.itemId)) positions.set(item.itemId, { position: item.position, id: item.id })
+  const keyed = rows.map(row => ({ row, at: positions.get(row.itemId) }))
+  for (const { at } of keyed) if (at) p.consume('viewItems', at.id)
+  keyed.sort((x, y) => {
+    if (x.at && y.at) return compare(x.at.position, y.at.position) || compare(x.at.id, y.at.id)
+    if (x.at || y.at) return x.at ? -1 : 1
+    return compare(x.row.after[0], y.row.after[0]) || compare(x.row.after[1], y.row.after[1])
+  })
+  return keyed.map(k => k.row.value)
+}
+/** Flag of a hidden scope for the given item, using that view row. */
+function flags(p: ProjectionInputs, scope: string) {
+  const byItem = new Map<string, ViewItem>()
+  for (const item of p.items.get(scope) ?? []) if (!byItem.has(item.itemId)) byItem.set(item.itemId, item)
+  return (itemId: string): boolean | undefined => {
+    const item = byItem.get(itemId)
+    if (item) p.consume('viewItems', item.id)
+    return item?.hidden
+  }
+}
+const accessOf = (p: ProjectionInputs): ViewScopeAccess => ({ items: (scope) => p.items.get(scope) ?? [], settings: (scope) => p.settings.get(scope) ?? [] })
+
+function placesSection(p: ProjectionInputs): JsonValue[] {
+  return ordered(p, VIEW_SCOPES.placeOrder, 'entities', [...p.places].map(([id, value]) => ({ itemId: id, value, after: ['', id] as [string, string] })))
+}
+
+/** Footprint and planned records: the entries, their journeys (the ledger's identity), home-hidden flags, the record order. */
+function recordsSection(p: ProjectionInputs): JsonValue[] {
+  const roles = p.roles()
   const journeyOf = new Map<string, string>()
-  const journeyEntities = new Map([...entities.values()].filter(e => e.typeId === OFFICIAL.journey).map(e => [e.id, e] as const))
-  for (const sequence of [...state.sequences].sort((a, b) => compare(a.id, b.id))) {
+  const journeyEntities = new Map([...p.entities().values()].filter(e => e.typeId === OFFICIAL.journey).map(e => [e.id, e] as const))
+  for (const sequence of [...p.state.sequences].sort((a, b) => compare(a.id, b.id))) {
     const journey = journeyEntities.get(sequence.entityId)
     if (!journey) continue
     // The ledger's journey identity is the entity's v2:journey source record.
@@ -352,97 +423,152 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
       if (roles.get(entryId) !== 'footprint' || journeyOf.has(entryId)) continue
       journeyOf.set(entryId, journeyId); member = true
     }
-    if (member) { consume('sequences', sequence.id); consume('entities', journey.id) }
+    if (member) { p.consume('sequences', sequence.id); p.consume('entities', journey.id) }
   }
-  const homeHidden = flags(VIEW_SCOPES.recordHiddenFromHome)
-  const wishHidden = flags(VIEW_SCOPES.wantToGoHidden)
+  const homeHidden = flags(p, VIEW_SCOPES.recordHiddenFromHome)
   const records: { itemId: string; value: Json; after: [string, string] }[] = []
-  const wishes: { itemId: string; value: Json; after: [string, string] }[] = []
-  const visits = new Map<string, LayerEntry>()
-  for (const entry of state.entries) {
+  for (const entry of p.state.entries) {
     const role = roles.get(entry.id)
-    if (role === undefined) continue
-    if (role === 'countryVisit') { visits.set(entry.entityId, laterVisit(visits.get(entry.entityId), entry)); continue }
-    consume('entries', entry.id)
-    if (role === 'wish') {
-      wishes.push({ itemId: entry.id, value: wishValueOf(entry, wishHidden(entry.id)), after: [entry.createdAt, entry.id] })
-      continue
-    }
-    const value = recordValueOf(entry, homeHidden(entry.id), journeyOf.get(entry.id), places.get(entry.entityId)!.location)
+    if (role !== 'footprint' && role !== 'planned') continue
+    p.consume('entries', entry.id)
+    const value = recordValueOf(entry, homeHidden(entry.id), journeyOf.get(entry.id), p.places.get(entry.entityId)!.location)
     records.push({ itemId: entry.id, value, after: [entry.createdAt, entry.id] })
   }
+  return ordered(p, VIEW_SCOPES.recordOrder, 'entries', records)
+}
 
-  // --- Added countries: the visit entry on each country, with the evidence it cites.
-  const evidenceById = byId(state.evidence as readonly Evidence[])
+/** Want-to-go items: the entries, their hidden flags, the want-to-go order. */
+function wishesSection(p: ProjectionInputs): JsonValue[] {
+  const roles = p.roles()
+  const wishHidden = flags(p, VIEW_SCOPES.wantToGoHidden)
+  const wishes: { itemId: string; value: Json; after: [string, string] }[] = []
+  for (const entry of p.state.entries) {
+    if (roles.get(entry.id) !== 'wish') continue
+    p.consume('entries', entry.id)
+    wishes.push({ itemId: entry.id, value: wishValueOf(entry, wishHidden(entry.id)), after: [entry.createdAt, entry.id] })
+  }
+  return ordered(p, VIEW_SCOPES.wantToGoOrder, 'entries', wishes)
+}
+
+/** Added countries: the visit entry on each country, with the evidence it cites. */
+function addedCountriesSection(p: ProjectionInputs): JsonValue[] {
+  const roles = p.roles()
+  const visits = new Map<string, LayerEntry>()
+  for (const entry of p.state.entries) if (roles.get(entry.id) === 'countryVisit') visits.set(entry.entityId, laterVisit(visits.get(entry.entityId), entry))
+  const evidenceById = byId(p.state.evidence as readonly Evidence[])
   const containers: { itemId: string; value: Json; after: [string, string] }[] = []
   for (const [placeId, visit] of visits) {
     const evidence = visit.source.evidenceIds.map(id => evidenceById.get(id)).filter((row): row is Evidence => row !== undefined)
-    consume('entries', visit.id)
-    for (const row of evidence) consume('evidence', row.id)
+    p.consume('entries', visit.id)
+    for (const row of evidence) p.consume('evidence', row.id)
     containers.push({ itemId: placeId, value: addedCountryValueOf(visit, evidence), after: ['', addedCountryTieBreak(visit)] })
   }
+  return ordered(p, VIEW_SCOPES.addedCountryOrder, 'entities', containers)
+}
 
-  // --- Media: asset metadata, the entity's place and title.
+/** Media: asset metadata, the entity's place and title. */
+function mediaSection(p: ProjectionInputs): JsonValue[] {
+  const assets = p.assets()
   const media: { itemId: string; value: Json; after: [string, string] }[] = []
   const mediaAssets = new Set<string>()
-  for (const entity of [...entities.values()].filter(e => e.typeId === OFFICIAL.media).sort((a, b) => compare(a.id, b.id)) as StoreEntity[]) {
-    const asset = typeof entity.fields.asset === 'string' ? assets.get(entity.fields.asset) as AssetReference | undefined : undefined
+  for (const entity of [...p.entities().values()].filter(e => e.typeId === OFFICIAL.media).sort((a, b) => compare(a.id, b.id)) as StoreEntity[]) {
+    const asset = typeof entity.fields.asset === 'string' ? assets.get(entity.fields.asset) : undefined
     const placeId = entity.fields.place
-    if (!asset || typeof placeId !== 'string' || !isPlace(placeId) || mediaAssets.has(asset.id)) continue
+    if (!asset || typeof placeId !== 'string' || !p.places.has(placeId) || mediaAssets.has(asset.id)) continue
     mediaAssets.add(asset.id)
     media.push({ itemId: asset.id, value: mediaValueOf(entity, asset), after: ['', entity.id] })
-    consume('entities', entity.id); consume('assets', asset.id)
+    p.consume('entities', entity.id); p.consume('assets', asset.id)
   }
+  return ordered(p, VIEW_SCOPES.mediaOrder, 'assets', media)
+}
 
-  // --- Lists of the editor state and the display.
-  const access: ViewScopeAccess = { items: (scope) => items.get(scope) ?? [], settings: (scope) => settings.get(scope) ?? [] }
-  const placeItem = (item: ViewItem) => (item.itemTable === 'entities' && isPlace(item.itemId) ? item.itemId : undefined)
-  const list = (scope: string, valueOf: (item: ViewItem) => string | undefined): JsonValue[] => viewListOf(access, scope, valueOf, consume)
-  const setting = (scope: string, settingKey: string): ViewSetting | undefined => settings.get(scope)?.find(s => s.key === settingKey)
+/** The display rules: the display list scopes and the display settings. */
+function displaySection(p: ProjectionInputs): CanonicalDisplay {
+  const placeItem = (item: ViewItem) => (item.itemTable === 'entities' && p.places.has(item.itemId) ? item.itemId : undefined)
+  const list = (scope: string): JsonValue[] => viewListOf(accessOf(p), scope, placeItem, p.consume)
   const displaySetting = (settingKey: string) => {
-    const s = setting(VIEW_SCOPES.display, settingKey)
-    if (s && Object.hasOwn(s, 'value')) consume('viewSettings', s.id)
+    const s = p.settings.get(VIEW_SCOPES.display)?.find(row => row.key === settingKey)
+    if (s && Object.hasOwn(s, 'value')) p.consume('viewSettings', s.id)
     return s?.value
   }
   const overviewTarget = displaySetting(DISPLAY_SETTING_KEYS.overviewTarget)
   const regionIncludes = displaySetting(DISPLAY_SETTING_KEYS.regionIncludes)
-  const display = {
+  return {
     ...(overviewTarget !== undefined ? { overviewTarget } : {}),
-    homeHiddenCountryIds: list(VIEW_SCOPES.homeHiddenCountries, placeItem),
-    originCountryIds: list(VIEW_SCOPES.originCountries, placeItem),
-    regionCountryIds: list(VIEW_SCOPES.regionCountries, placeItem),
+    homeHiddenCountryIds: list(VIEW_SCOPES.homeHiddenCountries),
+    originCountryIds: list(VIEW_SCOPES.originCountries),
+    regionCountryIds: list(VIEW_SCOPES.regionCountries),
     regionIncludes: Array.isArray(regionIncludes) ? regionIncludes : [],
-    navigationHiddenCityIds: list(VIEW_SCOPES.navigationHiddenCities, placeItem),
+    navigationHiddenCityIds: list(VIEW_SCOPES.navigationHiddenCities),
   } as unknown as CanonicalDisplay
-  const editorState = {
-    schemaVersion: EDITOR_STATE_SCHEMA_VERSION,
-    ...headerOf('editorState'),
-    addedCountries: ordered(VIEW_SCOPES.addedCountryOrder, 'entities', containers),
-    ...editorListsOf(access, isPlace, (id) => assets.has(id), consume),
-  } as unknown as CanonicalEditorState
+}
 
-  // --- File-level metadata (v2:import).
-  const travelHeader = headerOf('travel'), placesHeader = headerOf('places')
-  const meta = {
+function editorListSection(p: ProjectionInputs, field: EditorListField): JsonValue {
+  return editorListOf(field, accessOf(p), (id) => p.places.has(id), (id) => p.assets().has(id), p.consume)
+}
+
+/** File-level metadata of the travel file (v2:import). */
+function metaOf(p: ProjectionInputs): CanonicalTravelMeta {
+  const travelHeader = p.headerOf('travel')
+  return {
     schemaVersion: travelHeader.schema_version ?? TRAVEL_SCHEMA_VERSION,
     ...(travelHeader.generated_at !== undefined ? { generatedAt: travelHeader.generated_at } : {}),
     ...(travelHeader.privacy_level !== undefined ? { privacyLevel: travelHeader.privacy_level } : {}),
     ...(travelHeader.intended_use !== undefined ? { intendedUse: travelHeader.intended_use } : {}),
     ...(travelHeader.safety_notes !== undefined ? { safetyNotes: travelHeader.safety_notes } : {}),
   } as unknown as CanonicalTravelMeta
+}
+
+/** The sections of a Canonical, each computed or given. */
+interface Sections {
+  readonly places: JsonValue[]
+  readonly meta: CanonicalTravelMeta
+  readonly display: CanonicalDisplay
+  readonly records: JsonValue[]
+  readonly wishes: JsonValue[]
+  readonly addedCountries: JsonValue[]
+  readonly lists: Record<EditorListField, JsonValue>
+  readonly media: JsonValue[]
+}
+/** Every section of a projection of `p`. */
+const sectionsOf = (p: ProjectionInputs): Sections => ({
+  places: placesSection(p), records: recordsSection(p), wishes: wishesSection(p), addedCountries: addedCountriesSection(p), media: mediaSection(p),
+  display: displaySection(p), lists: Object.fromEntries(EDITOR_LIST_FIELDS.map(field => [field, editorListSection(p, field)])) as Record<EditorListField, JsonValue>,
+  meta: metaOf(p),
+})
+const editorStateOf = (p: ProjectionInputs, s: Sections) => ({
+  schemaVersion: EDITOR_STATE_SCHEMA_VERSION,
+  ...p.headerOf('editorState'),
+  addedCountries: s.addedCountries,
+  ...s.lists,
+} as unknown as CanonicalEditorState)
+/** The Canonical of the sections (the shape and the key order every projection gives). */
+const canonicalOf = (p: ProjectionInputs, source: 'local' | 'sample', s: Sections): CanonicalData => ({
+  places: s.places,
+  travel: { source, meta: s.meta, display: s.display, records: s.records },
+  wantToGo: { source, items: s.wishes, problems: [] },
+  editorState: editorStateOf(p, s),
+  media: { items: s.media, problems: [] },
+} as unknown as CanonicalData)
+
+/** Formal store -> the CanonicalData readV2 would produce, plus serializeV2's file metadata. */
+export function projectStoreToCanonical(state: FormalState, options: ProjectionOptions): Projection {
+  const track = options.track !== false
+  const used = new Set<string>()
+  const key = (table: FormalTable, id: string) => JSON.stringify([table, id])
+  const consume = track ? (table: FormalTable, id: string) => { used.add(key(table, id)) } : noConsume
+  if (track) for (const [table, id] of OFFICIAL_ROWS) if (state[table].some(r => r.id === id)) consume(table, id)
+
+  const inputs = inputsOf(state, consume)
+  const canonical = canonicalOf(inputs, options.source, sectionsOf(inputs))
+
+  // --- File-level metadata (v2:import).
+  const placesHeader = inputs.headerOf('places')
   const v2Meta: V2FileMeta = {
     placesGeneratedAt: typeof placesHeader.generated_at === 'string' ? placesHeader.generated_at : NO_GENERATION_TIME,
-    wantToGo: headerOf('wantToGo'),
-    media: headerOf('media'),
+    wantToGo: inputs.headerOf('wantToGo'),
+    media: inputs.headerOf('media'),
   }
-
-  const canonical = {
-    places: ordered(VIEW_SCOPES.placeOrder, 'entities', [...places].map(([id, value]) => ({ itemId: id, value, after: ['', id] as [string, string] }))),
-    travel: { source: options.source, meta, display, records: ordered(VIEW_SCOPES.recordOrder, 'entries', records) },
-    wantToGo: { source: options.source, items: ordered(VIEW_SCOPES.wantToGoOrder, 'entries', wishes), problems: [] },
-    editorState,
-    media: { items: ordered(VIEW_SCOPES.mediaOrder, 'assets', media), problems: [] },
-  } as unknown as CanonicalData
 
   const skipped: SkippedRow[] = []
   if (track) {
@@ -454,7 +580,210 @@ export function projectStoreToCanonical(state: FormalState, options: ProjectionO
   return options.freeze === false ? projection : freezeCopy(projection)
 }
 
+// ---- ③ (scope-incremental): which sections of the official view a changed row can affect ----
+
+/** A section of the official view that a projection can compute alone, keeping the others. */
+export type OfficialViewSection = 'places' | 'records' | 'display' | 'wishes' | 'addedCountries' | 'media' | `editor:${EditorListField}`
+/** The projection of the whole store: what a row the table below does not list, or lists as such, needs. */
+export const WHOLE_OFFICIAL_VIEW = 'whole'
+type Affects = readonly OfficialViewSection[] | typeof WHOLE_OFFICIAL_VIEW
+const MEDIA_LISTS: readonly OfficialViewSection[] = ['editor:mediaOrderByCity', 'editor:hiddenMediaIds', 'editor:coverMediaByCity', 'editor:droneOrderByCity', 'editor:hiddenDroneMediaIds']
+
+/**
+ * The classification table of the official view's inputs (scope-incremental design §4.1, review §7 item 2): which sections a
+ * changed row can affect, by its table and its scope, layer, type or kind. Whatever this table does not list projects the
+ * whole store: a scope, layer, entity type, relation type, anchor kind or table it does not know. It stays next to the
+ * projection on purpose: a section that reads another scope or type must be listed here, and appStoreIncremental.test.ts
+ * checks that every scope, layer and type the projection names is.
+ *
+ * - View items and settings by scope; a `map` scope also holds each key's list in `<scope>/<key>`.
+ * - Entries by layer: on the travel layer the role (footprint or country visit) depends on the place's subtype, so both
+ *   sections; on the want-to-go layer it depends on the source only (`wantToGoSources`: planned records or wishes).
+ * - Entities by type: a place changes which ids are places, their subtypes and locations, which every section reads.
+ * - Relations and anchors: part-of and locations belong to the places (any other is not known: the whole store too).
+ */
+export const OFFICIAL_VIEW_INPUTS = Object.freeze({
+  scopes: Object.freeze([
+    { scope: VIEW_SCOPES.placeOrder, affects: ['places'] },
+    { scope: VIEW_SCOPES.recordOrder, affects: ['records'] },
+    { scope: VIEW_SCOPES.recordHiddenFromHome, affects: ['records'] },
+    { scope: VIEW_SCOPES.wantToGoOrder, affects: ['wishes'] },
+    { scope: VIEW_SCOPES.wantToGoHidden, affects: ['wishes'] },
+    { scope: VIEW_SCOPES.mediaOrder, affects: ['media'] },
+    { scope: VIEW_SCOPES.addedCountryOrder, affects: ['addedCountries'] },
+    { scope: VIEW_SCOPES.countryOrder, affects: ['editor:countryOrder'] },
+    { scope: VIEW_SCOPES.hiddenCountries, affects: ['editor:hiddenCountryIds'] },
+    { scope: VIEW_SCOPES.cityOrderByCountry, map: true, affects: ['editor:cityOrderByCountry'] },
+    { scope: VIEW_SCOPES.hiddenCities, affects: ['editor:hiddenCityIds'] },
+    { scope: VIEW_SCOPES.mediaOrderByCity, map: true, affects: ['editor:mediaOrderByCity'] },
+    { scope: VIEW_SCOPES.hiddenMedia, affects: ['editor:hiddenMediaIds'] },
+    { scope: VIEW_SCOPES.coverMediaByCity, affects: ['editor:coverMediaByCity'] },
+    { scope: VIEW_SCOPES.droneOrderByCity, map: true, affects: ['editor:droneOrderByCity'] },
+    { scope: VIEW_SCOPES.hiddenDroneMedia, affects: ['editor:hiddenDroneMediaIds'] },
+    { scope: VIEW_SCOPES.homeHiddenCountries, affects: ['display'] },
+    { scope: VIEW_SCOPES.originCountries, affects: ['display'] },
+    { scope: VIEW_SCOPES.regionCountries, affects: ['display'] },
+    { scope: VIEW_SCOPES.navigationHiddenCities, affects: ['display'] },
+    { scope: VIEW_SCOPES.display, affects: ['display'] },
+  ] as readonly { readonly scope: string; readonly map?: true; readonly affects: Affects }[]),
+  layers: Object.freeze({ [OFFICIAL.travel]: ['records', 'addedCountries'], [OFFICIAL.wantToGo]: 'bySource' } as Readonly<Record<string, Affects | 'bySource'>>),
+  /** Entries of the want-to-go layer, by source (officialEntryRole). */
+  wantToGoSources: Object.freeze({ [V2_SOURCES.planned]: ['records'], [V2_SOURCES.wantToGo]: ['wishes'], [OFFICIAL.user]: ['wishes'] } as Readonly<Record<string, Affects>>),
+  entityTypes: Object.freeze({ [OFFICIAL.place]: WHOLE_OFFICIAL_VIEW, [OFFICIAL.journey]: ['records'], [OFFICIAL.media]: ['media'] } as Readonly<Record<string, Affects>>),
+  relationTypes: Object.freeze({ [OFFICIAL.partOf]: WHOLE_OFFICIAL_VIEW } as Readonly<Record<string, Affects>>),
+  anchorKinds: Object.freeze({ location: WHOLE_OFFICIAL_VIEW } as Readonly<Record<string, Affects>>),
+  /** Tables whose every row affects the same sections. */
+  tables: Object.freeze({
+    evidence: ['addedCountries'], sequences: ['records'], assets: ['media', ...MEDIA_LISTS],
+    sources: WHOLE_OFFICIAL_VIEW, entityTypes: WHOLE_OFFICIAL_VIEW, layers: WHOLE_OFFICIAL_VIEW, relationTypes: WHOLE_OFFICIAL_VIEW,
+  } as Readonly<Record<string, Affects>>),
+})
+
+const listed = (table: Readonly<Record<string, Affects>>, key: unknown): Affects => (typeof key === 'string' && Object.hasOwn(table, key) ? table[key] : WHOLE_OFFICIAL_VIEW)
+/** The sections a view row of `scope` can affect. */
+export function scopeAffects(scope: string): Affects {
+  for (const entry of OFFICIAL_VIEW_INPUTS.scopes) if (entry.scope === scope || (entry.map && scope.startsWith(`${entry.scope}/`))) return entry.affects
+  return WHOLE_OFFICIAL_VIEW
+}
+/** The sections a row of `table` can affect (see OFFICIAL_VIEW_INPUTS). */
+export function rowAffects(table: string, row: unknown): Affects {
+  if (!plain(row)) return WHOLE_OFFICIAL_VIEW
+  switch (table) {
+    case 'viewItems': case 'viewSettings': return typeof row.scope === 'string' ? scopeAffects(row.scope) : WHOLE_OFFICIAL_VIEW
+    case 'entries': {
+      const layer = typeof row.layerId === 'string' && Object.hasOwn(OFFICIAL_VIEW_INPUTS.layers, row.layerId) ? OFFICIAL_VIEW_INPUTS.layers[row.layerId] : WHOLE_OFFICIAL_VIEW
+      return layer === 'bySource' ? listed(OFFICIAL_VIEW_INPUTS.wantToGoSources, plain(row.source) ? row.source.sourceId : undefined) : layer
+    }
+    case 'entities': return listed(OFFICIAL_VIEW_INPUTS.entityTypes, row.typeId)
+    case 'relations': return listed(OFFICIAL_VIEW_INPUTS.relationTypes, row.typeId)
+    case 'anchors': return listed(OFFICIAL_VIEW_INPUTS.anchorKinds, row.kind)
+    default: return listed(OFFICIAL_VIEW_INPUTS.tables, table)
+  }
+}
+
+const isReadModelTable = (table: string): table is ReadModelTable => (READ_MODEL_TABLES as readonly string[]).includes(table)
+/** The row `id` of a table of `model` (tables are in id order: a binary search). */
+function rowOf(model: ReadModel, table: ReadModelTable, id: string): unknown {
+  const rows = model[table] as readonly { readonly id: string }[]
+  let low = 0, high = rows.length - 1
+  while (low <= high) {
+    const middle = (low + high) >> 1
+    const order = compareIds(rows[middle].id, id)
+    if (order === 0) return rows[middle]
+    if (order < 0) low = middle + 1; else high = middle - 1
+  }
+  return undefined
+}
+
+/** The changed rows of one or more commits, as the page receives them. */
+export interface OfficialViewChanges {
+  readonly upserts: readonly { readonly table: string; readonly row: unknown }[]
+  readonly deletes: readonly { readonly table: string; readonly id: string }[]
+}
+
+/**
+ * The sections of the official view that `changes` (after `model`) can affect, or 'whole'. Each row counts with its new
+ * value and with the row of the same id in `model` (a row that moves to another scope, layer or type affects both).
+ */
+export function officialViewChanges(model: ReadModel, changes: OfficialViewChanges): ReadonlySet<OfficialViewSection> | typeof WHOLE_OFFICIAL_VIEW {
+  const sections = new Set<OfficialViewSection>()
+  const add = (table: string, row: unknown): boolean => {
+    const affects = rowAffects(table, row)
+    if (affects === WHOLE_OFFICIAL_VIEW) return false
+    for (const section of affects) sections.add(section)
+    return true
+  }
+  for (const { table, row } of changes.upserts) {
+    if (!isReadModelTable(table) || !plain(row) || typeof row.id !== 'string' || !add(table, row)) return WHOLE_OFFICIAL_VIEW
+    const old = rowOf(model, table, row.id)
+    if (old !== undefined && !add(table, old)) return WHOLE_OFFICIAL_VIEW
+  }
+  for (const { table, id } of changes.deletes) {
+    if (!isReadModelTable(table)) return WHOLE_OFFICIAL_VIEW
+    const old = rowOf(model, table, id)
+    if (old === undefined || !add(table, old)) return WHOLE_OFFICIAL_VIEW
+  }
+  return sections
+}
+
+/**
+ * The official view of a read model with what a projection of a later read model can keep (③): the view rows grouped by
+ * scope, the place index, the header, and the entities, assets and entry roles once they were needed.
+ */
+export interface OfficialView {
+  readonly model: ReadModel
+  readonly canonical: CanonicalData
+  /** Internal to this module (officialViewAfter). */
+  readonly kept: unknown
+}
+
 /** The official view of a read model (3C-5B): Canonical for the App's derivation, without skipped rows or a frozen copy. */
+export function officialView(model: ReadModel, source: 'local' | 'sample'): OfficialView {
+  const inputs = inputsOf(formalStateOfReadModel(model), noConsume)
+  return { model, canonical: canonicalOf(inputs, source, sectionsOf(inputs)), kept: inputs }
+}
 export function officialViewOf(model: ReadModel, source: 'local' | 'sample'): CanonicalData {
-  return projectStoreToCanonical(formalStateOfReadModel(model), { source, track: false, freeze: false }).canonical
+  return officialView(model, source).canonical
+}
+
+/**
+ * ③ (scope-incremental design §4.2): the official view of `model`, the read model `previous.model` moved on by `changes`.
+ * Only the sections the changes can affect (officialViewChanges) are computed, with the projection's own section
+ * functions; every other one is the object `canonical` (the page's official view of `previous.model`, which may share
+ * objects with even earlier ones) has, and so is every container whose sections are all kept. What the sections read is
+ * kept from `previous` where its rows did not change: the place index (no place row changed), the view rows grouped by
+ * scope (only the scopes of changed view rows are grouped again), the entities, assets and entry roles (when their tables
+ * are the same arrays). When the changes affect the whole view, the whole store is projected (`sections: 'whole'`).
+ */
+export function officialViewAfter(previous: OfficialView, canonical: CanonicalData, model: ReadModel, changes: OfficialViewChanges, source: 'local' | 'sample'):
+  { readonly view: OfficialView; readonly sections: ReadonlySet<OfficialViewSection> | typeof WHOLE_OFFICIAL_VIEW } {
+  const sections = officialViewChanges(previous.model, changes)
+  if (sections === WHOLE_OFFICIAL_VIEW) return { view: officialView(model, source), sections }
+  const kept = previous.kept as ProjectionInputs
+  const before = previous.model
+  const state = formalStateOfReadModel(model)
+  /** The groups of a view table: kept, with the scopes of its changed rows grouped again from `model`. */
+  const regroup = <T extends { readonly id: string; readonly scope: string }>(table: 'viewItems' | 'viewSettings', groups: Scoped<T>): Scoped<T> => {
+    if (model[table] === before[table]) return groups
+    const scopes = new Set<string>()
+    for (const { table: changed, row } of changes.upserts) if (changed === table && plain(row) && typeof row.scope === 'string') scopes.add(row.scope)
+    const rowsOf = (id: string) => rowOf(before, table, id) as T | undefined
+    for (const { table: changed, row } of changes.upserts) if (changed === table && plain(row) && typeof row.id === 'string') { const old = rowsOf(row.id); if (old) scopes.add(old.scope) }
+    for (const { table: changed, id } of changes.deletes) if (changed === table) { const old = rowsOf(id); if (old) scopes.add(old.scope) }
+    const next = new Map(groups)
+    for (const scope of scopes) next.delete(scope)
+    for (const [scope, rows] of group((model[table] as unknown as readonly T[]).filter(row => scopes.has(row.scope)), row => row.scope)) next.set(scope, rows)
+    return next
+  }
+  const inputs: ProjectionInputs = {
+    state, consume: noConsume, places: kept.places, headerOf: kept.headerOf,
+    items: regroup('viewItems', kept.items),
+    settings: regroup('viewSettings', kept.settings),
+    entities: model.entities === before.entities ? kept.entities : once(() => byId(state.entities)),
+    assets: model.assets === before.assets ? kept.assets : once(() => byId(state.assets) as Map<string, AssetReference>),
+    roles: model.entries === before.entries ? kept.roles : once(() => rolesOf(state, kept.places)),
+  }
+  const c = canonical as unknown as {
+    places: JsonValue[]; travel: { meta: CanonicalTravelMeta; display: CanonicalDisplay; records: JsonValue[] }; wantToGo: { items: JsonValue[] }
+    editorState: Record<string, JsonValue>; media: { items: JsonValue[] }
+  }
+  const want = (section: OfficialViewSection) => sections.has(section)
+  const s: Sections = {
+    places: want('places') ? placesSection(inputs) : c.places,
+    meta: c.travel.meta,
+    display: want('display') ? displaySection(inputs) : c.travel.display,
+    records: want('records') ? recordsSection(inputs) : c.travel.records,
+    wishes: want('wishes') ? wishesSection(inputs) : c.wantToGo.items,
+    addedCountries: want('addedCountries') ? addedCountriesSection(inputs) : c.editorState.addedCountries as JsonValue[],
+    lists: Object.fromEntries(EDITOR_LIST_FIELDS.map(field => [field, want(`editor:${field}`) ? editorListSection(inputs, field) : c.editorState[field]])) as Record<EditorListField, JsonValue>,
+    media: want('media') ? mediaSection(inputs) : c.media.items,
+  }
+  // The containers whose sections are all kept are kept too (and the whole view when every one is).
+  const travel = s.display === c.travel.display && s.records === c.travel.records ? c.travel : { source, meta: s.meta, display: s.display, records: s.records }
+  const wantToGo = s.wishes === c.wantToGo.items ? c.wantToGo : { source, items: s.wishes, problems: [] }
+  const editorState = s.addedCountries === c.editorState.addedCountries && EDITOR_LIST_FIELDS.every(field => s.lists[field] === c.editorState[field]) ? c.editorState : editorStateOf(inputs, s)
+  const media = s.media === c.media.items ? c.media : { items: s.media, problems: [] }
+  const same = s.places === c.places && travel === c.travel && wantToGo === c.wantToGo && editorState === c.editorState && media === c.media
+  const next = same ? canonical : { places: s.places, travel, wantToGo, editorState, media } as unknown as CanonicalData
+  return { view: { model, canonical: next, kept: inputs }, sections }
 }
