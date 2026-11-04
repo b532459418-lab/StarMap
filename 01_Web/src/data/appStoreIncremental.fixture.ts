@@ -23,6 +23,7 @@ import { computeSnapshot, type AppSnapshot, type ReadModelChanges } from './appS
 import { buildBaseline, stableStringify } from './derive/baseline.ts'
 import { reconcile } from './reconcile.ts'
 import { officialViewOf } from './store/projectCanonical.ts'
+import { VIEW_SCOPES, mapListScope } from './store/officialDefinitions.ts'
 import type { CanonicalData } from './canonical/types.ts'
 import { applyReadModelDelta } from '../worldgraph/readModel/delta.ts'
 import type { ReadModel, ReadModelTable } from '../worldgraph/readModel/types.ts'
@@ -199,6 +200,11 @@ export function randomRowChange(rng: Random, model: ReadModel, n: number): ReadM
   const upsert = (table: ReadModelTable, row: Row) => changesOf(model.revision, [{ table, row }], [])
   const remove = (table: ReadModelTable, row: Row | undefined) => (row ? changesOf(model.revision, [], [{ table, id: row.id }]) : undefined)
   const pick = <T,>(rows: readonly T[]) => rng.pick(rows)
+  if (rng.chance(0.06)) { // a media list gets an asset (so that a later change of that asset reaches the list)
+    const asset = pick(tableOf(model, 'assets')); if (!asset) return undefined
+    const scope = rng.pick([VIEW_SCOPES.hiddenMedia, VIEW_SCOPES.hiddenDroneMedia, mapListScope(VIEW_SCOPES.mediaOrderByCity, String(pick(tableOf(model, 'entities').filter((e) => e.typeId === 'starmap:place'))?.id))])!
+    return upsert('viewItems', { id: `${scope}#0000fuzz-${String(n).padStart(4, '0')}`, revision: 0, scope, itemTable: 'assets', itemId: asset.id, position: `a${n}`, hidden: false })
+  }
   switch (rng.int(16)) {
     case 0: { // a view item moves
       const row = pick(items); if (!row) return undefined

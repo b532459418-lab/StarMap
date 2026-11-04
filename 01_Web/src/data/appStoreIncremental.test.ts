@@ -11,6 +11,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { readModelOf } from '../worldgraph/readModel/build.ts'
 import { liveReadModelIndex } from '../worldgraph/readModel/liveIndex.ts'
 import { readModelChangesBetween } from '../worldgraph/readModel/delta.ts'
@@ -22,7 +23,8 @@ import { computeSnapshot, createAppStore, type AppSnapshot } from './appStoreCor
 import { doubleRunStore, random, randomStep, stepContext } from './editor/doubleRun.fixture.ts'
 import { NATIVE_WRITES } from './editor/native/routes.ts'
 import { viewOf } from './store/v2Store.fixture.ts'
-import { OFFICIAL_POLICY } from './store/officialDefinitions.ts'
+import { OFFICIAL, OFFICIAL_POLICY, V2_SOURCES, VIEW_SCOPES, mapListScope } from './store/officialDefinitions.ts'
+import { OFFICIAL_VIEW_INPUTS, WHOLE_OFFICIAL_VIEW, rowAffects, scopeAffects } from './store/projectCanonical.ts'
 import { officialReader } from './store/officialReader.ts'
 import { createMediaRecordCommands, removeMediaRecordCommands, rereadMediaRecordCommands } from './store/mediaRecords.ts'
 import { memoryScopeReader } from './store/scopeReader.ts'
@@ -210,27 +212,45 @@ function commitKind(kind: Kind, state: FormalState, n: number): ChangeSet {
   try { return kind.commit(state, n) } catch (error) { throw new Error(`${kind.label}: ${(error as Error).message}`, { cause: error }) }
 }
 
-test('G2: each kind of save, equal to the whole computation and sharing as today', () => {
+/** The sections of the official view each kind of save computes (③-1: 'whole' when it projects the whole store). */
+const MEDIA_SECTIONS = 'media,editor:mediaOrderByCity,editor:hiddenMediaIds,editor:coverMediaByCity,editor:droneOrderByCity,editor:hiddenDroneMediaIds'
+const SECTIONS: Readonly<Record<string, string>> = {
+  'country order': 'editor:countryOrder', 'city order': 'editor:cityOrderByCountry', 'hide a country': 'editor:hiddenCountryIds',
+  'show the hidden cities': 'editor:hiddenCityIds', 'hide a city': 'editor:hiddenCityIds', cover: 'editor:coverMediaByCity', 'photo order': 'editor:mediaOrderByCity',
+  'hide a photo': 'editor:hiddenMediaIds', 'drone order and hide': 'editor:droneOrderByCity,editor:hiddenDroneMediaIds',
+  'want-to-go note': 'wishes', 'want-to-go hide (hide, maphide)': 'wishes', 'want-to-go show': 'wishes', 'want-to-go added on an existing place': 'wishes',
+  // A new city, a want-to-go item whose place goes with it, a new country: place rows, the whole store.
+  'want-to-go added on a new city': 'whole', 'want-to-go deleted (hidden)': 'whole', 'footprint on a new city': 'whole', 'country added': 'whole',
+  'footprint on an existing city': 'records,addedCountries,editor:countryOrder', 'planned record marked visited': 'records,addedCountries,editor:countryOrder',
+  'want-to-go marked visited': 'records,addedCountries,wishes',
+  'media record imported': MEDIA_SECTIONS, 'media record re-read': MEDIA_SECTIONS, 'media record deleted': MEDIA_SECTIONS,
+  'hide the added country': 'editor:hiddenCountryIds', 'country deleted': 'whole', 'an external writer (two commits)': 'editor:hiddenCountryIds,editor:hiddenCityIds',
+}
+const sorted = (sections: string | undefined) => (sections ?? '').split(',').sort().join(',')
+const assertSections = (after: AppSnapshot, label: string) => assert.equal(sorted(after.timings.officialSections), sorted(SECTIONS[label]), `${label}: the sections computed`)
+
+test('G2: each kind of save, equal to the whole computation and sharing as today, computing only its sections', () => {
   let state = doubleRunStore(migratedFiles()).state
   const store = storeOf(state)
   KINDS.forEach((kind, index) => {
     const changeSet = commitKind(kind, state, 100 + index)
     state = applyChangeSet(state, changeSet)
-    step(store, changesOfSet(changeSet), modelOf(state), kind.label)
+    assertSections(step(store, changesOfSet(changeSet), modelOf(state), kind.label).after, kind.label)
   })
   // A country deleted (hidden first, as the page does), and an external writer's commits in one change (several revisions).
   const country = viewOf(state).places.places.find((place) => place.subtype === 'country' && place.externalIds?.iso3166Alpha2 === 'JP')!
   for (const [label, route, input] of [['hide the added country', 'view', { operations: [{ op: 'hide', scope: 'countries', add: [country.id], remove: [] }] }], ['country deleted', 'countries/delete', { ids: [country.id] }]] as const) {
     const changeSet = commitWrite(state, route, input, 200)!
     state = applyChangeSet(state, changeSet)
-    step(store, changesOfSet(changeSet), modelOf(state), label)
+    assertSections(step(store, changesOfSet(changeSet), modelOf(state), label).after, label)
   }
   const from = state.revision, model = modelOf(state)
   for (const [n, operations] of [[201, [{ op: 'hide', scope: 'countries', add: [placeIdsOf(state, 'country')[1]], remove: [] }]], [202, [{ op: 'hide', scope: 'cities', add: [placeIdsOf(state, 'city')[1]], remove: [] }]]] as const) {
     state = applyChangeSet(state, commitWrite(state, 'view', { operations }, n)!)
   }
   const external = readModelChangesBetween(model, modelOf(state))
-  step(store, { ...changesOf(from, external.upserts, external.deletes), to: state.revision }, modelOf(state), 'an external writer (two commits)')
+  const label = 'an external writer (two commits)'
+  assertSections(step(store, { ...changesOf(from, external.upserts, external.deletes), to: state.revision }, modelOf(state), label).after, label)
 })
 
 test('G2: each kind of save keeps the parts whose inputs it did not change', { todo: 'design ③-3 and ③-4' }, () => {
@@ -261,7 +281,7 @@ for (const seed of [11, 4242]) {
     let model = modelOf(doubleRunStore(migratedFiles()).state)
     const store = createAppStore(computeSnapshot(model, { ...OPTIONS, identity: IDENTITY }), OPTIONS)
     store.replace(model, IDENTITY)
-    let applied = 0, unusable = 0
+    let applied = 0, unusable = 0, sectioned = 0
     for (let n = 1; applied < 150 && n < 600; n++) {
       const changes = randomRowChange(rng, model, n)
       if (!changes) continue
@@ -270,10 +290,60 @@ for (const seed of [11, 4242]) {
       try { computeSnapshot(next, { ...OPTIONS, identity: IDENTITY }) } catch { unusable++; continue }
       const before = store.getSnapshot()
       assert.equal(store.apply(changes), true, `step ${n}: applied`)
-      assertIncrementalStep(before, store.getSnapshot(), next, `seed ${seed} step ${n} (${changes.upserts[0]?.table ?? changes.deletes[0]?.table})`)
+      const label = `seed ${seed} step ${n} (${changes.upserts[0]?.table ?? changes.deletes[0]?.table})`
+      const after = store.getSnapshot()
+      assertIncrementalStep(before, after, next, label)
+      // Rows the classification does not know, and rows of places, start over; every other change computes its sections.
+      const rows = [...changes.upserts.map(({ table, row }) => ({ table, row })), ...changes.deletes.map(({ table, id }) => ({ table, row: before.model[table as 'viewItems']?.find((candidate) => candidate.id === id) }))]
+      const startsOver = rows.some(({ table, row }) => ['anchors', 'relations', 'sources', 'test:unknown-table'].includes(table) || JSON.stringify(row ?? {}).includes('test:unknown')
+        || (table === 'entities' && (row as { typeId?: string })?.typeId === 'starmap:place'))
+      if (startsOver) assert.equal(after.timings.officialSections, 'whole', `${label}: starts over`)
+      if (after.timings.officialSections !== 'whole') sectioned++
       model = next
       applied++
     }
     assert.equal(applied, 150, `applied ${applied}, unusable ${unusable}`)
+    assert.ok(sectioned >= 75, `computed by sections: ${sectioned} of ${applied}`)
   })
 }
+
+// ---- The classification table covers what the projection reads (review §7 item 2) ----
+
+test('the classification table lists every scope, layer, source, type and kind the projection reads', () => {
+  const source = readFileSync(new URL('./store/projectCanonical.ts', import.meta.url), 'utf8')
+  const marker = source.indexOf('// ---- ③ (scope-incremental): which sections')
+  assert.ok(marker > 0, 'the table follows the projection')
+  const projection = source.slice(0, marker)
+  const names = (prefix: string) => [...new Set([...projection.matchAll(new RegExp(`\\b${prefix}\\.(\\w+)`, 'g'))].map((match) => match[1]))]
+  // Scopes: only through VIEW_SCOPES (no scope written as a literal), and every one of them listed.
+  assert.deepEqual([...projection.matchAll(/'starmap:[^']*'/g)].map((match) => match[0]), [], 'no scope literal in the projection')
+  const scopes = names('VIEW_SCOPES')
+  assert.ok(scopes.length >= 20, `scopes read: ${scopes.length}`)
+  for (const name of scopes) {
+    const scope = VIEW_SCOPES[name as keyof typeof VIEW_SCOPES]
+    assert.notEqual(scopeAffects(scope), WHOLE_OFFICIAL_VIEW, `VIEW_SCOPES.${name} is listed`)
+  }
+  for (const name of ['cityOrderByCountry', 'mediaOrderByCity', 'droneOrderByCity'] as const) {
+    assert.notEqual(scopeAffects(mapListScope(VIEW_SCOPES[name], 'some-key')), WHOLE_OFFICIAL_VIEW, `the key lists of VIEW_SCOPES.${name} are listed`)
+  }
+  // Layers, entity types, relation types and the want-to-go sources the roles read.
+  const known = new Set([...Object.keys(OFFICIAL_VIEW_INPUTS.layers), ...Object.keys(OFFICIAL_VIEW_INPUTS.entityTypes), ...Object.keys(OFFICIAL_VIEW_INPUTS.relationTypes), ...Object.keys(OFFICIAL_VIEW_INPUTS.wantToGoSources)])
+  for (const name of names('OFFICIAL')) assert.ok(known.has(OFFICIAL[name as keyof typeof OFFICIAL]), `OFFICIAL.${name} is listed`)
+  // V2 sources the projection names for other rows than entries: their rows are classified by their own tables.
+  const byTable: Readonly<Record<string, string>> = {
+    import: 'sources (the whole store)', journey: 'entities of the journey type (records)', media: 'assets (media)', travel: 'entries of the travel layer (every source)',
+  }
+  for (const name of names('V2_SOURCES')) {
+    const id = V2_SOURCES[name as keyof typeof V2_SOURCES]
+    assert.ok(Object.hasOwn(OFFICIAL_VIEW_INPUTS.wantToGoSources, id) || Object.hasOwn(byTable, name), `V2_SOURCES.${name} is listed`)
+  }
+  for (const [, kind] of projection.matchAll(/kind === '(\w+)'/g)) assert.ok(Object.hasOwn(OFFICIAL_VIEW_INPUTS.anchorKinds, kind), `anchor kind ${kind} is listed`)
+  // Every view row of a migrated library is in a listed scope: no save of today projects the whole store for its scope.
+  const model = modelOf(doubleRunStore(migratedFiles()).state)
+  for (const row of [...model.viewItems, ...model.viewSettings]) assert.notEqual(scopeAffects(row.scope), WHOLE_OFFICIAL_VIEW, row.scope)
+  // What the table does not know projects the whole store.
+  for (const [table, row] of [
+    ['viewItems', { scope: 'test:other' }], ['entries', { layerId: 'test:layer' }], ['entries', { layerId: OFFICIAL.wantToGo, source: { sourceId: 'test:source' } }],
+    ['entities', { typeId: 'test:type' }], ['relations', { typeId: 'test:relation' }], ['anchors', { kind: 'test:kind' }], ['test:table', {}],
+  ] as const) assert.equal(rowAffects(table, row), WHOLE_OFFICIAL_VIEW, `${table} ${JSON.stringify(row)}`)
+})

@@ -8,7 +8,9 @@
  * - `snapshotAfter(snapshot, changes, options)`: the snapshot of the next revision, or undefined when the changes are
  *   not the ones that follow this snapshot (another library or restore mark, or `from` is not this revision): the
  *   caller then fetches the changes by revision. Only the changed rows are checked (the shape every row shares), not
- *   the whole model.
+ *   the whole model. ③ (scope-incremental): with the store's cache, only the sections of the official view the changed
+ *   rows can affect are computed and reconciled; the others keep their objects (./store/projectCanonical.ts
+ *   officialViewAfter, and its classification table: whatever it does not list projects the whole store).
  * - `createAppStore(initial)`: the mutable cell around the snapshots: getSnapshot / subscribe for React, `replace`,
  *   `apply` and `fail`. Listeners run after each new snapshot.
  *
@@ -23,7 +25,7 @@ import { createDeriveCache, deriveAppDataFromCanonical, type AppData, type Deriv
 import { reconcile } from './reconcile.ts'
 import type { CanonicalData } from './canonical/types.ts'
 import { deriveTimeQueryContext } from './derive/timeQueryContext.ts'
-import { officialViewOf } from './store/projectCanonical.ts'
+import { WHOLE_OFFICIAL_VIEW, officialView, officialViewAfter, type OfficialView, type OfficialViewChanges } from './store/projectCanonical.ts'
 import { applyReadModelDelta } from '../worldgraph/readModel/delta.ts'
 import { READ_MODEL_TABLES, type ReadModel, type ReadModelTable } from '../worldgraph/readModel/types.ts'
 import { validateRowBase } from '../worldgraph/store/rows.ts'
@@ -87,6 +89,8 @@ export interface SnapshotTimings {
   startedAt?: number
   deltaMs?: number
   officialMs: number
+  /** ③: the sections of the official view computed for this snapshot ('whole' when the whole store was projected). */
+  officialSections?: string
   /** Keeping the unchanged sections of the official view (structural sharing with the previous snapshot). */
   reconcileMs?: number
   deriveMs: number
@@ -126,6 +130,8 @@ export interface SnapshotQueries {
 /** What the store keeps between snapshots: the derivation steps, the time query context and the queries, with their inputs. */
 export interface SnapshotCache {
   readonly derive: DeriveCache
+  /** ③: the official view of the last snapshot's read model, with what the next one can keep (officialViewAfter). */
+  official?: OfficialView
   timeContext?: { readonly inputs: readonly unknown[]; readonly value: TimeQueryContext }
   /** The last results of each query (a few: two consumers can ask with different arguments), most recent first. */
   readonly queries: Map<string, { readonly inputs: readonly unknown[]; readonly value: unknown }[]>
@@ -171,10 +177,23 @@ function lazy<T>(compute: () => T): () => T {
 /** Everything the App reads, from a read model. */
 export function computeSnapshot(
   model: ReadModel,
-  options: SnapshotOptions & { readonly identity?: StoreIdentity; readonly status?: AppSnapshot['status']; readonly error?: AppDataLoadError; readonly deltaMs?: number; readonly startedAt?: number; readonly previous?: AppSnapshot },
+  options: SnapshotOptions & {
+    readonly identity?: StoreIdentity; readonly status?: AppSnapshot['status']; readonly error?: AppDataLoadError; readonly deltaMs?: number; readonly startedAt?: number
+    readonly previous?: AppSnapshot
+    /** ③: the changed rows that moved the read model of `previous` on to `model` (snapshotAfter). */
+    readonly changes?: OfficialViewChanges
+  },
 ): AppSnapshot {
   let started = performance.now()
-  const fresh = officialViewOf(model, options.source)
+  // ③: with the previous snapshot's official view kept by the store, only the sections the changed rows can affect are
+  // computed (./store/projectCanonical.ts officialViewAfter); otherwise the whole store is projected.
+  const kept = options.cache?.official
+  const followed = options.cache && options.changes && options.previous?.status === 'ready' && kept?.model === options.previous.model
+    ? officialViewAfter(kept, options.previous.canonical, model, options.changes, options.source)
+    : { view: officialView(model, options.source), sections: WHOLE_OFFICIAL_VIEW }
+  if (options.cache) options.cache.official = followed.view
+  const fresh = followed.view.canonical
+  const officialSections = followed.sections === WHOLE_OFFICIAL_VIEW ? WHOLE_OFFICIAL_VIEW : [...followed.sections].join(',')
   const officialMs = elapsed(started)
   started = performance.now()
   const previous = options.cache && options.previous?.status === 'ready' ? options.previous.canonical : undefined
@@ -183,7 +202,7 @@ export function computeSnapshot(
   started = performance.now()
   const appData = deriveAppDataFromCanonical(canonical, { now: options.now }, options.cache?.derive)
   const timings: SnapshotTimings = {
-    ...(options.startedAt !== undefined ? { startedAt: options.startedAt } : {}), ...(options.deltaMs !== undefined ? { deltaMs: options.deltaMs } : {}), officialMs, ...(reconcileMs !== undefined ? { reconcileMs } : {}), deriveMs: elapsed(started),
+    ...(options.startedAt !== undefined ? { startedAt: options.startedAt } : {}), ...(options.deltaMs !== undefined ? { deltaMs: options.deltaMs } : {}), officialMs, officialSections, ...(reconcileMs !== undefined ? { reconcileMs } : {}), deriveMs: elapsed(started),
   }
   const cache = options.cache
   // The queries' results: kept by the store across snapshots, or by this snapshot alone (one computed without the store,
@@ -262,7 +281,7 @@ export function snapshotAfter(snapshot: AppSnapshot, changes: ReadModelChanges, 
     deletes: changes.deletes as never,
   })
   const next = changes.to === model.revision ? model : { ...model, revision: changes.to }
-  return computeSnapshot(next, { ...options, ...(snapshot.identity ? { identity: snapshot.identity } : {}), deltaMs: elapsed(started), startedAt: Math.round(started), previous: snapshot })
+  return computeSnapshot(next, { ...options, ...(snapshot.identity ? { identity: snapshot.identity } : {}), deltaMs: elapsed(started), startedAt: Math.round(started), previous: snapshot, changes })
 }
 
 export interface AppStore {
