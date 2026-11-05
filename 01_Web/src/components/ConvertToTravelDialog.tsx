@@ -206,10 +206,10 @@ function ConvertToTravelDialogContent({
       if (candidates) setJourneyChoice(journeyChoiceStateOf(currentJourneyKey, candidates))
       // 例如城市已在足迹里时服务端返回「这个城市已经在足迹里了……」，不写任何文件（规格 §2 第 3 条）。
       setNotice(editorErrorNotice(error, 'editor:convertFailed'))
-      // 部分写入或响应结果无法确认时，先刷新核对，避免重复写入。
+      // 响应结果无法确认时，先刷新核对，避免重复写入。
       if (requiresEditorReload(error, { afterWrite: true })) requireLocalEditorReload()
       setNoticeExplainsReload(error instanceof LocalEditorError
-        && (error.code === 'E_PARTIAL_WRITE' || error.code === 'E_EDITOR_RESPONSE_INVALID'))
+        && error.code === 'E_EDITOR_RESPONSE_INVALID')
       setBusy(false)
     }
   }

@@ -133,12 +133,10 @@ test('known import refusals retain paths for retry; partial or unknown results l
     editorError('E_MEDIA_IMPORT_FAILED', { stage: 'apply', reason: 'raw failure' }),
     editorError('E_MEDIA_IMPORT_BLOCKED'), editorError('E_MEDIA_IMPORT_PATH_INVALID'), editorError('E_REQUIRED'),
     editorError('E_LEGACY_UNMIGRATED'), editorError('E_EDITOR_WRITE_FORBIDDEN'),
-    editorError('E_WRITE_FAILED', { written: [] }),
   ]
   const unsafeErrors = [
-    editorError('E_PARTIAL_WRITE'), editorError('E_EDITOR_RESPONSE_INVALID'),
-    editorError('E_WRITE_FAILED', { written: ['media'] }), editorError('E_WRITE_FAILED'),
-    editorError('E_WRITE_FAILED', { written: null }), editorError('E_UNEXPECTED'), editorError('E_LOCAL_EDITOR_FAILED'),
+    editorError('E_EDITOR_RESPONSE_INVALID'), editorError('E_OUTCOME_UNKNOWN'),
+    editorError('E_UNEXPECTED'), editorError('E_LOCAL_EDITOR_FAILED'),
     editorError('E_FUTURE'), editorError('E_MEDIA_UPLOAD_REJECTED'), new TypeError('Failed to fetch'),
     new DOMException('Aborted', 'AbortError'), { diagnostic: 'unknown error' },
   ]
@@ -315,7 +313,7 @@ test('owner import retries retain the same permit and paths without upload, and 
 })
 
 test('unknown or partial import results preserve ownership, original errors and paths without requests or reload', async () => {
-  for (const error of [editorError('E_PARTIAL_WRITE'), editorError('E_EDITOR_RESPONSE_INVALID'), new TypeError('network failure')]) {
+  for (const error of [editorError('E_OUTCOME_UNKNOWN'), editorError('E_EDITOR_RESPONSE_INVALID'), new TypeError('network failure')]) {
     const coordination = createLocalEditorCoordination()
     const session = createMediaImportSession<string>({ coordination, target: 'city-a-photos' })
     await session.upload(['a'], async () => ({ sourcePath: 'a' }))

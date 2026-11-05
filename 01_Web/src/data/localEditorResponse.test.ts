@@ -29,7 +29,7 @@ test('Only an HTTP success with the literal boolean ok=true returns the unchange
 
 test('Conflicting success and failure fields are rejected even when the failure value is empty', async () => {
   const conflicts = [
-    { error: '足迹已创建，但想去条目没有移除。', code: 'E_PARTIAL_WRITE', params: { written: ['travel'] } },
+    { error: '无法确认这次修改有没有保存。', code: 'E_OUTCOME_UNKNOWN', params: { requestId: 'neutral' } },
     { error: '' }, { code: '' }, { params: {} }, { details: '' },
   ]
   for (const status of [200, 201]) {
@@ -46,7 +46,7 @@ test('Conflicting success and failure fields are rejected even when the failure 
 })
 
 test('Flat JSON failures preserve legacy text, known/unknown codes, params and diagnostic details', async () => {
-  const body = { ok: false, error: '足迹已创建，但想去条目没有移除。', code: 'E_PARTIAL_WRITE', params: { written: ['travelMap'], failed: 'wantToGo', message: 'original recovery message' }, details: 'neutral diagnostic' }
+  const body = { ok: false, error: '无法确认这次修改有没有保存。', code: 'E_OUTCOME_UNKNOWN', params: { requestId: 'neutral', attempt: 2 }, details: 'neutral diagnostic' }
   const error = await rejection(jsonResponse(body, 400))
   assert.equal(error.message, `${body.error}\n${body.details}`)
   assert.equal(error.code, body.code)
