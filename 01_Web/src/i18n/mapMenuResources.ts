@@ -39,6 +39,8 @@ export const mapMenuResources = {
     mapStopped: '地图停止了绘制。可以只重新加载地图，页面上的其他内容都会保留。',
     reloadMap: '重新加载地图',
     mapCrashed: '地图出错了，没能显示。可以只重新加载地图，页面上的其他内容都会保留。',
+    noWebgl: '这个浏览器现在不能显示 3D 地图：WebGL 不可用（可能关闭了硬件加速，或者浏览器停用了显卡）。旅程、收藏和编辑都可以照常使用。',
+    tryAgain: '再试一次',
   },
   en: {
     sources: 'Map imagery',
@@ -82,5 +84,7 @@ export const mapMenuResources = {
     mapStopped: 'The map stopped drawing. You can reload just the map; everything else on the page stays as it is.',
     reloadMap: 'Reload map',
     mapCrashed: 'The map ran into a problem. You can reload just the map; everything else on the page stays as it is.',
+    noWebgl: "This browser can't show the 3D map right now: WebGL isn't available (hardware acceleration may be off, or the browser has turned off the graphics card). Journey, Collection and editing still work.",
+    tryAgain: 'Try again',
   },
 }

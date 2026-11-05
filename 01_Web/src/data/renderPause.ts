@@ -9,6 +9,8 @@
  * - `RENDER_PAUSE_LIMIT_MS` (the watchdog: whatever the save does),
  * - the page is hidden, another page is shown, or the globe unmounts (`resumeRendering`).
  * The loop starts again before the page waits for its next frame (it never waits for a paused loop).
+ * With no renderer bound (no WebGL, so no viewer; the globe replaced by its error notice; between two viewers) there is
+ * nothing to pause: a save's pause ends at once (`'no-renderer'`, 0 ms; robustness batch).
  *
  * - `pauseRendering()`: one save's pause; returns its release (idempotent). Pauses overlap (two saves): the loop starts
  *   again when the last one is released, or when the episode is ended by force (then the older releases do nothing).
@@ -25,7 +27,7 @@
 export const RENDER_PAUSE_LIMIT_MS = 1500
 
 /** What ended a pause. */
-export type RenderPauseEnd = 'applied' | 'failed' | 'released' | 'limit' | 'hidden' | 'page' | 'unmount'
+export type RenderPauseEnd = 'applied' | 'failed' | 'released' | 'limit' | 'hidden' | 'page' | 'unmount' | 'no-renderer'
 
 export interface RenderPauseEpisode {
   readonly pausedMs: number
@@ -64,13 +66,19 @@ let pausedSince: number | undefined
 let watchdog: unknown
 const listeners = new Set<(paused: boolean) => void>()
 const episodes: RenderPauseEpisode[] = []
+/** Renderers bound now (`bindRenderLoop`). */
+let renderers = 0
+
+function record(episodeRecord: RenderPauseEpisode) {
+  episodes.push(episodeRecord)
+  if (episodes.length > EPISODES_KEPT) episodes.splice(0, episodes.length - EPISODES_KEPT)
+}
 
 function end(endedBy: RenderPauseEnd) {
   if (pausedSince === undefined) return
   clock.clearTimeout(watchdog)
   watchdog = undefined
-  episodes.push({ pausedMs: Math.round((clock.now() - pausedSince) * 10) / 10, endedBy })
-  if (episodes.length > EPISODES_KEPT) episodes.splice(0, episodes.length - EPISODES_KEPT)
+  record({ pausedMs: Math.round((clock.now() - pausedSince) * 10) / 10, endedBy })
   pausedSince = undefined
   count = 0
   episode++
@@ -79,6 +87,11 @@ function end(endedBy: RenderPauseEnd) {
 
 /** One save's pause of the globe's render loop; the returned release (idempotent) ends it. */
 export function pauseRendering(): (endedBy?: RenderPauseEnd) => void {
+  // Nothing renders: there is nothing to pause, and the pause ends at once.
+  if (renderers === 0) {
+    record({ pausedMs: 0, endedBy: 'no-renderer' })
+    return () => undefined
+  }
   if (count === 0) {
     pausedSince = clock.now()
     watchdog = clock.setTimeout(() => end('limit'), RENDER_PAUSE_LIMIT_MS)
@@ -110,6 +123,8 @@ export function subscribeRenderPause(listener: (paused: boolean) => void): () =>
 
 /** A renderer follows the pauses (see the module comment); the returned unbind gives it back its loop. */
 export function bindRenderLoop(target: RenderLoopTarget): () => void {
+  renderers++
+  let bound = true
   let before: boolean | undefined
   const follow = (paused: boolean) => {
     if (target.isDestroyed()) return
@@ -124,6 +139,7 @@ export function bindRenderLoop(target: RenderLoopTarget): () => void {
   }
   const unsubscribe = subscribeRenderPause(follow)
   return () => {
+    if (bound) { bound = false; renderers-- }
     unsubscribe()
     follow(false)
   }
@@ -139,4 +155,5 @@ export function resetRenderPauseForTests(testClock: Clock = realClock): void {
   clock = testClock
   episodes.length = 0
   listeners.clear()
+  renderers = 0
 }

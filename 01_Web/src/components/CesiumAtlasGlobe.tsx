@@ -48,6 +48,8 @@ import { useStableCallback } from './useStableCallback'
 import { useElementCache } from './useElementCache'
 import { bindRenderLoop, renderPauseState, resumeRendering, subscribeRenderPause } from '../data/renderPause'
 import { createMapRecovery, guardRenderLoop, type MapFailure } from '../data/mapRecovery'
+import { browserWebGLEnvironment, firstWebGLProbe, probeWebGL } from '../data/webglSupport'
+import { reportToBrowserTests } from '../data/browserTestReport'
 import { droneMarkerName } from './droneMediaLabels.ts'
 import { createCameraCommandObserver } from './cameraCommandObservation'
 import type { CameraCommandObservation, CameraCommandState } from './cameraCommandObservation'
@@ -499,7 +501,8 @@ type TravelAtlasDebugCamera = {
 type TravelAtlasDebugRenderLoop = {
   /** The pauses (./renderPause.ts), the frames this viewer rendered, and the frame count when the last pause ended. */
   state: () => ReturnType<typeof renderPauseState> & {
-    viewer: number
+    /** Undefined while the map has no viewer (no WebGL). */
+    viewer: number | undefined
     frames: number
     framesAtResume: number
     useDefaultRenderLoop: boolean | undefined
@@ -1295,6 +1298,10 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
   // the camera where it was; everything else on the page stays.
   const [recovery] = useState(createMapRecovery)
   const [mapFailure, setMapFailure] = useState<MapFailure>()
+  // Robustness batch (../data/webglSupport.ts): without WebGL Cesium cannot construct a viewer, and its error is out of
+  // React's reach (resium constructs it asynchronously). So the map probes first: the first answer of the page (kept),
+  // and again before a viewer is rebuilt or when the notice's button asks. Without WebGL there is no <Viewer> at all.
+  const [webgl, setWebgl] = useState<'available' | 'unavailable'>(() => firstWebGLProbe() ? 'available' : 'unavailable')
   const savedCameraRef = useRef<{ position: Cartesian3; direction: Cartesian3; up: Cartesian3 }>(undefined)
   const rebuildViewer = useCallback(() => {
     const viewer = viewerRef.current?.cesiumElement
@@ -1303,8 +1310,32 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
       savedCameraRef.current = { position: Cartesian3.clone(positionWC), direction: Cartesian3.clone(directionWC), up: Cartesian3.clone(upWC) }
     }
     setMapFailure(undefined)
+    // After repeated GPU resets the browser may refuse WebGL: the new viewer would fail to construct (a blank map).
+    setWebgl(probeWebGL(browserWebGLEnvironment()) ? 'available' : 'unavailable')
     setViewerKey((key) => key + 1)
   }, [])
+  // The no-WebGL notice's 「再试一次」: probe again; with WebGL the viewer is created, otherwise the notice stays.
+  const retryWebGL = useCallback(() => {
+    if (!probeWebGL(browserWebGLEnvironment())) return
+    setWebgl('available')
+    globeShellRef.current?.focus()
+  }, [])
+  useEffect(() => {
+    if (webgl !== 'unavailable') return undefined
+    // Nothing to draw: the code the page loads after the map's first frame is loaded now (App's prefetch).
+    onFirstFrame?.()
+    // The browser tests' environment has WebGL: a map without it must not pass a case quietly (../data/caughtErrorReport.ts).
+    reportToBrowserTests?.('map:no-webgl', new Error('WebGL is not available; the map shows its notice'))
+    if (!import.meta.env.DEV) return undefined
+    // Development only: the pauses of the saves, for the browser tests (no viewer, no frames).
+    const debug: TravelAtlasDebugRenderLoop = {
+      state: () => ({ ...renderPauseState(), viewer: undefined, frames: 0, framesAtResume: 0, useDefaultRenderLoop: undefined, diagnostics: undefined }),
+      entityShowing: () => ({ place: false, badge: false }),
+      replaceViewer: () => undefined,
+    }
+    window.__travelAtlasDebugRenderLoop = debug
+    return () => { if (window.__travelAtlasDebugRenderLoop === debug) delete window.__travelAtlasDebugRenderLoop }
+  }, [webgl, onFirstFrame])
   const reloadMap = useCallback(() => {
     recovery.reload()
     rebuildViewer()
@@ -2223,7 +2254,9 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
       data-active-route-pairs={activeRoutePairs}
       data-map-source={mapSource}
       data-map-failure={mapFailure}
+      data-map-webgl={webgl === 'unavailable' ? 'unavailable' : undefined}
     >
+      {webgl === 'available' ? (
       <Viewer
         key={viewerKey}
         ref={captureViewer}
@@ -2430,6 +2463,7 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
           )
         })}
       </Viewer>
+      ) : null}
       <div
         ref={cursorGlowRef}
         aria-hidden="true"
@@ -2445,6 +2479,13 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
         <div className="atlas-map-recovery glass-panel" role="alert">
           <p>{t('mapMenu:mapStopped')}</p>
           <button type="button" onClick={reloadMap}>{t('mapMenu:reloadMap')}</button>
+        </div>
+      ) : null}
+      {/* No WebGL: why there is no map, and a new probe (not 「重新加载地图」: there is no map to reload). */}
+      {webgl === 'unavailable' && showMapContent ? (
+        <div className="atlas-map-recovery glass-panel" role="alert">
+          <p>{t('mapMenu:noWebgl')}</p>
+          <button type="button" onClick={retryWebGL}>{t('mapMenu:tryAgain')}</button>
         </div>
       ) : null}
 
