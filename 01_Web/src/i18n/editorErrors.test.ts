@@ -19,9 +19,9 @@ test('Every server write code has a translation; error notices follow language w
   await i18n.changeLanguage(DEFAULT_UI_LOCALE)
   assert.equal(formatEditorError(error, i18n.t), '请填写城市中文名。')
   assert.equal(error.message, '请填写城市中文名。')
-  const partial = new LocalEditorError({ error: '足迹已创建，但想去记录未更新。', code: 'E_PARTIAL_WRITE', params: { message: '足迹已创建，但想去记录未更新。' }, details: 'diagnostic' })
-  assert.ok(partial.message.startsWith('足迹已创建，但'))
-  assert.ok(formatEditorError(partial, i18n.t).includes('diagnostic'))
+  const failed = new LocalEditorError({ error: '媒体导入失败。', code: 'E_MEDIA_IMPORT_FAILED', params: { stage: 'apply', reason: '媒体导入失败。' }, details: 'diagnostic' })
+  assert.equal(failed.message, '媒体导入失败。\ndiagnostic')
+  assert.ok(formatEditorError(failed, i18n.t).includes('diagnostic'))
   assert.equal(formatEditorError(new LocalEditorError({ error: 'legacy error', code: 'E_FUTURE', details: 'raw details' }), i18n.t), 'legacy error\nraw details')
   assert.equal(formatEditorError(new Error('network diagnostic'), i18n.t), 'network diagnostic')
   assert.deepEqual(editorErrorNotice(null, 'editor:saveFailed'), { key: 'editor:saveFailed' })
@@ -100,24 +100,22 @@ test('Unmigrated-data refusals and empty response errors translate without chang
 })
 
 test('Recovery follows structured codes and written files, preserving raw messages and params', () => {
-  const params = { written: ['places'], failed: 'travelMap', reason: 'neutral disk failure' }
-  const partial = new LocalEditorError({ error: 'Partial save without Chinese prefix', code: 'E_PARTIAL_WRITE', params })
-  assert.ok(requiresEditorReload(partial))
-  assert.equal(partial.message, 'Partial save without Chinese prefix')
-  assert.equal(partial.params, params)
-  assert.ok(requiresEditorReload(new LocalEditorError({ code: 'E_WRITE_FAILED', params })))
-  assert.ok(requiresEditorReload(new LocalEditorError({ code: 'E_EDITOR_RESPONSE_INVALID', params: { status: 503 } })))
-  for (const written of [[], undefined, null, 'places']) {
-    assert.equal(requiresEditorReload(new LocalEditorError({ error: '足迹已创建，但来自错误原因的普通文字。', code: 'E_WRITE_FAILED', params: { written } })), false)
-  }
-  assert.equal(requiresEditorReload(new LocalEditorError({ error: '足迹已创建，但这是普通拒绝消息。', code: 'E_REQUIRED' })), false)
-  assert.equal(requiresEditorReload(new LocalEditorError({ error: '足迹已创建，但这是普通拒绝消息。', code: 'E_LEGACY_UNMIGRATED' })), false)
-  assert.ok(requiresEditorReload(new Error('足迹已创建，但想去条目没有移除。')))
-  assert.ok(requiresEditorReload(new LocalEditorError({ error: '足迹已创建，但想去条目没有移除。', code: 'E_FUTURE' })))
+  const params = { status: 503 }
+  const unconfirmed = new LocalEditorError({ error: 'Unconfirmed write', code: 'E_EDITOR_RESPONSE_INVALID', params })
+  assert.ok(requiresEditorReload(unconfirmed))
+  assert.equal(unconfirmed.message, 'Unconfirmed write')
+  assert.equal(unconfirmed.params, params)
+  assert.ok(requiresEditorReload(new LocalEditorError({ code: 'E_EDITOR_RELOAD_REQUIRED' })))
+  assert.ok(requiresEditorReload(new LocalEditorError({ code: 'E_OUTCOME_UNKNOWN' })))
+  assert.equal(requiresEditorReload(new LocalEditorError({ error: 'Ordinary refusal', code: 'E_REQUIRED' })), false)
+  assert.equal(requiresEditorReload(new LocalEditorError({ error: 'Ordinary refusal', code: 'E_LEGACY_UNMIGRATED' })), false)
+  // A message is never read for recovery (robustness batch: the prefix check of the removed V2 partial writes is gone).
+  assert.equal(requiresEditorReload(new Error('足迹已创建，但想去条目没有移除。')), false)
+  assert.equal(requiresEditorReload(new LocalEditorError({ error: '足迹已创建，但想去条目没有移除。', code: 'E_FUTURE' })), false)
   assert.equal(requiresEditorReload(new LocalEditorError({ error: 'future refusal', code: 'E_FUTURE' })), false)
   assert.equal(requiresEditorReload(new Error('ordinary failure')), false)
   assert.equal(requiresEditorReload(null), false)
-  assert.deepEqual(params, { written: ['places'], failed: 'travelMap', reason: 'neutral disk failure' })
+  assert.deepEqual(params, { status: 503 })
 })
 
 test('Unknown write outcomes require reload without changing ordinary error handling or original errors', () => {
@@ -141,8 +139,6 @@ test('Unknown write outcomes require reload without changing ordinary error hand
   for (const code of ['E_REQUIRED', 'E_LEGACY_UNMIGRATED', 'E_LOCAL_EDITOR_FAILED']) {
     assert.equal(requiresEditorReload(new LocalEditorError({ error: 'Ordinary refusal', code }), { afterWrite: true }), false)
   }
-  assert.equal(requiresEditorReload(new LocalEditorError({ code: 'E_WRITE_FAILED', params: { written: [] } }), { afterWrite: true }), false)
-  assert.equal(requiresEditorReload(new LocalEditorError({ code: 'E_WRITE_FAILED', params: { written: ['travel'] } }), { afterWrite: true }), true)
 })
 
 test('Unknown write result guidance follows the current language beside the unchanged transport diagnostic', async () => {

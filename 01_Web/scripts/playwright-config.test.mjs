@@ -57,6 +57,15 @@ test('the performance baseline keeps its own files and the dev server', async ()
   assert.equal(config.globalSetup, undefined, 'the baseline keeps measuring an unwarmed first load')
 })
 
+test('every dev-server group reports the errors an error boundary caught, so a case fails on them (robustness batch)', async () => {
+  for (const env of [{}, { STARMAP_BROWSER_MIGRATION: '1' }, { STARMAP_BROWSER_PERFORMANCE: '1' }]) {
+    const config = await configWith(env)
+    assert.equal(config.webServer.command, 'npm run dev:personal')
+    assert.equal(config.webServer.env.VITE_STARMAP_REPORT_CAUGHT_ERRORS, '1', JSON.stringify(env))
+    assert.equal(config.webServer.env.VITE_STARMAP_INCREMENTAL_VERIFY, '1', JSON.stringify(env))
+  }
+})
+
 test('a committed test.only fails only under CI', async () => {
   assert.equal((await configWith({})).forbidOnly, false)
   assert.equal((await configWith({ CI: 'true' })).forbidOnly, true)

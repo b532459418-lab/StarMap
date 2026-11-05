@@ -46,7 +46,6 @@ const isSafeUploadFailure = (error: unknown) => error instanceof LocalEditorErro
 
 const isSafeImportFailure = (error: unknown) => {
   if (!(error instanceof LocalEditorError) || !error.code) return false
-  if (error.code === 'E_WRITE_FAILED') return Array.isArray(error.params.written) && error.params.written.length === 0
   return safeImportCodes.has(error.code)
 }
 

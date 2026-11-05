@@ -15,14 +15,12 @@ test('known errors keep codes, parameters, diagnostics and recovery messages unc
   assert.equal(normalizeLocalEditorError(error).params, params)
   assert.equal(error.message, '请填写城市名称。')
 
-  const message = '足迹已创建，但想去条目没有移除（磁盘已满）。可以在想去列表里隐藏或彻底删除它。'
-  const partial = new V2WriteError('E_PARTIAL_WRITE', {
-    message, written: ['places', 'travel'], failed: 'wantToGo', reason: '磁盘已满。',
-  })
-  const body = normalizeLocalEditorError(partial)
-  assert.equal(body.error, message)
-  assert.ok(body.error.startsWith('足迹已创建，但'))
-  assert.deepEqual(body.params, partial.params)
+  // A code whose message is a parameter keeps it as the response's error.
+  const reason = '导入器退出码 1：预检有需要处理的问题。'
+  const failed = new V2WriteError('E_MEDIA_IMPORT_FAILED', { stage: 'apply', reason })
+  const body = normalizeLocalEditorError(failed)
+  assert.equal(body.error, reason)
+  assert.deepEqual(body.params, failed.params)
 
   const reloadedModuleError = { name: 'V2WriteError', message: 'raw future diagnostic', code: 'E_FUTURE', params: { id: 'neutral' }, details: 'details' }
   assert.deepEqual(normalizeLocalEditorError(reloadedModuleError), {

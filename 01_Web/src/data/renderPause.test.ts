@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bindRenderLoop, pauseRendering, RENDER_PAUSE_LIMIT_MS, renderPauseState, resetRenderPauseForTests, resumeRendering } from './renderPause.ts'
+import { bindRenderLoop, pauseRendering, RENDER_PAUSE_LIMIT_MS, renderPauseState, resetRenderPauseForTests, resumeRendering, subscribeRenderPause } from './renderPause.ts'
 import { setLocalEditorStoreSync, updateLocalWantToGo, type LocalEditorStoreSync } from './localEditorApi.ts'
 
 /** A clock whose time and timers the test moves. */
@@ -47,6 +47,39 @@ beforeEach(() => { clock = fakeClock(); resetRenderPauseForTests(clock) })
 afterEach(() => resetRenderPauseForTests())
 
 const lastEpisode = () => renderPauseState().episodes.at(-1)
+
+test('no renderer bound (no WebGL, the globe replaced by its notice): a save\'s pause ends at once, nobody is told', () => {
+  const heard: boolean[] = []
+  subscribeRenderPause((paused) => { heard.push(paused) })
+  heard.length = 0
+  const release = pauseRendering()
+  assert.equal(renderPauseState().paused, false)
+  assert.deepEqual(lastEpisode(), { pausedMs: 0, endedBy: 'no-renderer' })
+  assert.deepEqual(heard, [], 'no listener hears a pause')
+  clock.advance(RENDER_PAUSE_LIMIT_MS + 1)
+  release('applied')
+  assert.equal(renderPauseState().episodes.length, 1, 'neither the watchdog nor the release adds an episode')
+})
+
+test('a renderer bound, then unbound: pauses work while it is bound and end at once after', () => {
+  const map = renderer()
+  const unbind = bindRenderLoop(map)
+  const release = pauseRendering()
+  assert.equal(map.useDefaultRenderLoop, false)
+  release('applied')
+  assert.equal(lastEpisode()?.endedBy, 'applied')
+  unbind()
+  unbind()
+  pauseRendering()
+  assert.deepEqual(lastEpisode(), { pausedMs: 0, endedBy: 'no-renderer' })
+  // Bound again (a rebuilt viewer): paused again.
+  const next = renderer()
+  bindRenderLoop(next)
+  const again = pauseRendering()
+  assert.equal(next.useDefaultRenderLoop, false)
+  again()
+  assert.equal(next.useDefaultRenderLoop, true)
+})
 
 test('a save pauses the loop until its changes are applied; then the frames go on (the release is idempotent)', () => {
   const map = renderer()

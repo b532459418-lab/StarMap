@@ -14,7 +14,9 @@ const migration = process.env.STARMAP_BROWSER_MIGRATION === '1'
 // 性能续 ⑦: the tests' dev server keeps React's StrictMode (the daily `dev:personal` does not; ./src/main.tsx).
 // ③ (the author's decision of 2026-11-04): it also compares every snapshot a save moved on with the whole computation,
 // after the save (./src/data/incrementalVerify.ts); a difference is a page error, which fails the case.
-const serverEnv = { STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '', VITE_STARMAP_STRICT_MODE: '1', VITE_STARMAP_INCREMENTAL_VERIFY: '1' }
+// Robustness batch: an error an error boundary caught is reported as a page error too, so a case that shows a
+// boundary's notice fails unless it expects that error (./src/data/caughtErrorReport.ts, tests/browser/helpers.mjs).
+const serverEnv = { STARMAP_PRIVATE_ROOT: root, VITE_MAP_SOURCE: 'local', VITE_CESIUM_ION_TOKEN: '', VITE_TIANDITU_TOKEN: '', VITE_TRAVEL_ATLAS_DATA_MODE: '', VITE_STARMAP_STRICT_MODE: '1', VITE_STARMAP_INCREMENTAL_VERIFY: '1', VITE_STARMAP_REPORT_CAUGHT_ERRORS: '1' }
 export default defineConfig({
   testDir: './tests/browser',
   testMatch: performance ? '**/*.perf.mjs' : publicSmoke ? '**/*.smoke.mjs' : migration ? '**/*.migration.mjs' : '**/*.spec.mjs',

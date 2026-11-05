@@ -12,6 +12,7 @@ import { editorResources } from './editorResources.ts'
 import { detailsResources } from './detailsResources.ts'
 import { journeyResources } from './journeyResources.ts'
 import { timeFilterResources } from './timeFilterResources.ts'
+import { appCrashResources } from './appCrashResources.ts'
 import { DEFAULT_UI_LOCALE, EN_UI_LOCALE } from '../data/uiLocale.ts'
 
 export const resources = {
@@ -20,6 +21,7 @@ export const resources = {
     layer: layerResources.zh,
     auxiliary: auxiliaryResources.zh,
     appShell: appShellResources.zh,
+    appCrash: appCrashResources.zh,
     domainError: domainErrorResources.zh,
     mapMenu: mapMenuResources.zh,
     droneEditor: droneEditorResources.zh,
@@ -58,6 +60,7 @@ export const resources = {
     layer: layerResources.en,
     auxiliary: auxiliaryResources.en,
     appShell: appShellResources.en,
+    appCrash: appCrashResources.en,
     domainError: domainErrorResources.en,
     mapMenu: mapMenuResources.en,
     droneEditor: droneEditorResources.en,

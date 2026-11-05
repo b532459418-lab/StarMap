@@ -291,8 +291,14 @@ export const test = base.extend({
       mediaPhase(media, 'fixture page ready')
       context.on('close', () => mediaPhase(media, 'fixture context closed'))
     }
+    // Uncaught errors of this page and of every other page the case opens in its context (another tab), and the errors
+    // an error boundary caught, which the dev server reports as uncaught ones (src/data/caughtErrorReport.ts).
     const errors = []
-    page.on('pageerror', (error) => errors.push(error.message))
+    const expected = []
+    const watchErrors = (target) => target.on('pageerror', (error) => errors.push(error.message))
+    watchErrors(page)
+    context.on('page', watchErrors)
+    pageErrorStates.set(page, { errors, expected })
     const diagnostic = diagnosticFiles.has(path.basename(testInfo.file))
     if (diagnostic) {
       const state = { events: [], droppedEvents: 0, pending: new Set(), retained: false }
@@ -321,7 +327,9 @@ export const test = base.extend({
     await page.addInitScript(() => localStorage.setItem('starmap.uiLocale', 'en'))
     try {
       await use(page)
-      expect(errors, 'No uncaught application error').toEqual([])
+      const unexpected = errors.filter((message) => !expected.some((pattern) => pageErrorMatches(pattern, message)))
+      expect(unexpected, 'No uncaught application error').toEqual([])
+      for (const pattern of expected) expect(errors.some((message) => pageErrorMatches(pattern, message)), `The expected page error ${pattern} occurred`).toBe(true)
     } finally {
       if (diagnostic) {
         try {
@@ -337,6 +345,25 @@ export const test = base.extend({
   },
 })
 export { expect }
+
+const pageErrorStates = new WeakMap()
+const pageErrorMatches = (pattern, message) => pattern instanceof RegExp ? pattern.test(message) : message.includes(pattern)
+/**
+ * A case expects this page error (a RegExp, or text the message contains): it does not fail the case, and it must occur
+ * at least once (the fixture checks both after the case). An error an error boundary caught is reported as
+ * `starmap:caught-error [<boundary>] <message>` (src/data/caughtErrorReport.ts).
+ */
+export function expectPageError(page, pattern) {
+  const state = pageErrorStates.get(page)
+  if (!state) throw new Error('expectPageError needs the fixture page')
+  state.expected.push(pattern)
+}
+/** The page errors seen so far on the fixture page and the other pages of its context (a copy). */
+export function pageErrors(page) {
+  const state = pageErrorStates.get(page)
+  if (!state) throw new Error('pageErrors needs the fixture page')
+  return [...state.errors]
+}
 
 /** One of the fixture's five values as the App reads it: the store's projection (3C-4d), or a V2 file of a 'v2' root. */
 export const readFixture = async (key) => (await readFixtureFiles(process.env.STARMAP_BROWSER_TEST_ROOT))[key]

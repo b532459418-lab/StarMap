@@ -1,7 +1,7 @@
 // The globe after a failure (src/data/mapRecovery.ts; D follow-up, the author's decision of 2026-10-29). A lost WebGL
 // context is triggered deterministically with WEBGL_lose_context, the way a GPU reset or a GPU process crash loses it.
 // Part of the --critical-flows group (scripts/browser-test-options.mjs).
-import { test, expect, openMap, selectReykjavik } from './helpers.mjs'
+import { test, expect, expectPageError, openMap, openCollection, saveAndWaitForRevision, selectReykjavik } from './helpers.mjs'
 import { createBrowserFixture } from '../../scripts/browser-fixture.mjs'
 
 const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
@@ -156,4 +156,76 @@ test('keyboard: the notice\'s button is reached with Tab and rebuilds the map; t
   await expect.poll(async () => (await loop(page))?.viewer, { timeout: 20000 }).not.toBe(viewer)
   await expect(page.getByRole('region', { name: '地图', exact: true })).toBeFocused()
   await expect(button).toHaveCount(0)
+})
+
+// Robustness batch (design §4, §6.2 case 4): a browser without WebGL. Cesium could not construct a viewer, and its error
+// is out of React's reach (design §1.4), so the map probes first. The init script makes the three WebGL context types
+// unavailable until the case gives them back (`window.__starmapWebGLBack`), the way a browser with WebGL turned off does.
+const withoutWebGL = () => {
+  const original = HTMLCanvasElement.prototype.getContext
+  HTMLCanvasElement.prototype.getContext = function getContext(type, ...rest) {
+    if (!window.__starmapWebGLBack && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) return null
+    return original.call(this, type, ...rest)
+  }
+}
+const noWebGLNotice = (page) => page.getByRole('alert').filter({ hasText: 'This browser can\'t show the 3D map right now' })
+
+test('no WebGL: the map says why instead of a blank canvas; Collection opens, a save works and its pause ends at once; Try again probes again', async ({ page }) => {
+  expectPageError(page, 'starmap:caught-error [map:no-webgl]')
+  await page.addInitScript(withoutWebGL)
+  await page.goto('/')
+  await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
+  const shell = page.getByRole('region', { name: 'Map', exact: true })
+  await expect(shell).toHaveAttribute('data-map-webgl', 'unavailable')
+  const notice = noWebGLNotice(page)
+  await expect(notice).toBeVisible()
+  // No viewer at all: no half-built Cesium DOM, no Cesium panel, no rebuild button.
+  await expect(page.locator('.cesium-widget')).toHaveCount(0)
+  await expect(page.locator('.cesium-widget-errorPanel')).toHaveCount(0)
+  await expect(notice.getByRole('button', { name: 'Reload map', exact: true })).toHaveCount(0)
+  // The rest of the page: Collection, Journey, the map's panels and the editor.
+  await openCollection(page)
+  await page.getByRole('navigation').getByRole('button', { name: 'Journey', exact: true }).click()
+  await expect(page.locator('.atlas-experience')).toHaveAttribute('data-page', 'journey')
+  await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
+  await expect(notice).toBeVisible()
+  await selectReykjavik(page)
+  const before = (await loop(page)).episodes.length
+  await saveAndWaitForRevision(page, () => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click())
+  await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
+  // The save's map pause ended at once: there is no renderer to pause (not 'applied' after the whole save).
+  const state = await loop(page)
+  expect(state.paused).toBe(false)
+  expect(state.episodes.slice(before)).toEqual([{ pausedMs: 0, endedBy: 'no-renderer' }])
+  // Try again, still without WebGL: the notice stays.
+  const tryAgain = notice.getByRole('button', { name: 'Try again', exact: true })
+  await tryAgain.click()
+  await expect(notice).toBeVisible()
+  await expect(page.locator('.cesium-widget')).toHaveCount(0)
+  // WebGL is back: Try again creates the map, which renders. The click is dispatched from a task of the page: creating
+  // the viewer keeps the main thread busy for seconds with software rendering, longer than an input action may wait.
+  await page.evaluate(() => { window.__starmapWebGLBack = true })
+  await tryAgain.evaluate((button) => { setTimeout(() => button.click(), 0) })
+  await expect(notice).toHaveCount(0, { timeout: 30000 })
+  await expect(page.locator('.cesium-widget canvas')).toBeVisible({ timeout: 30000 })
+  await expect.poll(async () => (await loop(page))?.frames ?? 0, { timeout: 20000 }).toBeGreaterThan(1)
+  await expect(shell).not.toHaveAttribute('data-map-webgl', 'unavailable')
+  await expect(page.locator('.cesium-widget-errorPanel')).toHaveCount(0)
+})
+
+test('no WebGL (Chinese): the notice and its button are in Chinese and the button is reached with Tab', async ({ page }) => {
+  expectPageError(page, 'starmap:caught-error [map:no-webgl]')
+  await page.addInitScript(withoutWebGL)
+  await page.addInitScript(() => localStorage.setItem('starmap.uiLocale', 'zh-Hans'))
+  await page.goto('/')
+  const notice = page.getByRole('alert').filter({ hasText: '这个浏览器现在不能显示 3D 地图' })
+  await expect(notice).toBeVisible()
+  const button = notice.getByRole('button', { name: '再试一次', exact: true })
+  await page.evaluate(() => document.activeElement?.blur())
+  let reached = false
+  for (let presses = 0; presses < 80 && !reached; presses++) {
+    await page.keyboard.press('Tab')
+    reached = await button.evaluate((element) => element === document.activeElement)
+  }
+  expect(reached, 'Tab reaches the button').toBe(true)
 })

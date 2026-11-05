@@ -115,15 +115,9 @@ export const V2_WRITE_MESSAGES = {
   /** 导入器运行失败（例如预检有「需要处理」时退出码为 1）：原因原样。 */
   E_MEDIA_IMPORT_FAILED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '媒体导入失败。'),
   E_MEDIA_IMPORT_NO_RECORD: () => '文件已经接收，但导入结果没有对应媒体记录。请保留当前页面并查看导入详情。',
-  E_MEDIA_INDEX_MISMATCH: () => '导入索引与媒体目录不一致，已停止刷新页面。',
   E_MEDIA_DELETE_EMPTY: () => '没有可删除的隐藏媒体。',
   E_MEDIA_DELETE_NOT_HIDDEN: () => '只能彻底删除当前城市中已经隐藏的照片或无人机影像。',
-  E_MEDIA_SOURCE_MISSING: (params: V2ErrorParams) => `找不到媒体 ${String(params.id ?? '')} 对应的投递箱原图，已停止删除。`,
-  E_MEDIA_SOURCE_OUTSIDE_INBOX: () => '媒体源文件路径超出投递箱范围，已停止删除。',
   E_MEDIA_PATH_INVALID: () => '影像生成路径格式无效，已停止删除。',
-  E_MEDIA_GENERATED_OUTSIDE: () => '生成文件路径超出用户媒体目录，已停止删除。',
-  /** 新（第 1 批 D5）：彻底删除之前的投递箱预检有阻断，什么都没有删。 */
-  E_MEDIA_DELETE_BLOCKED: () => '投递箱预检发现需要处理的问题，没有删除任何文件。请先处理诊断详情里列出的问题，再彻底删除。',
 
   // ---- 新：V2 才有的情形 ----
   E_PLACE_AMBIGUOUS: () => '找到多个可能的地点，请选择要使用的地点，或新建一个独立地点。本次尚未保存。',
@@ -141,8 +135,6 @@ export const V2_WRITE_MESSAGES = {
   E_JOURNEY_CHOICE_REQUIRED: () => '已有同名的行程，请选择加入已有行程，或新建一个行程。本次尚未保存。',
   /** 新（第 2C 批）：要加入的行程不是同标题的已有行程（或选择的写法不对）。 */
   E_UNKNOWN_JOURNEY: () => '要加入的行程不是同名的已有行程，未保存。请重新选择。',
-  E_WRITE_FAILED: (params: V2ErrorParams) => (typeof params.reason === 'string' && params.reason ? params.reason : '写入 V2 数据文件失败。'),
-  E_PARTIAL_WRITE: (params: V2ErrorParams) => (typeof params.message === 'string' ? params.message : '部分 V2 数据文件已写入，其余没有写入。'),
   /**
    * 新（PR3b-3；第 2D 批改文案）：上传时候选的收件箱文件夹（显示名、带地点 id 后缀的名字、再加数字的名字）都已存在，
    * 而且都不能用：没有 place.json 的手放文件夹（上传不认领），或 place.json 指向别的地点、内容无效。

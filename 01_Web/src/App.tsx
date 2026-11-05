@@ -5,6 +5,9 @@ import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from '
 import { AtlasHeader } from './components/AtlasHeader'
 import type { AtlasPage } from './components/AtlasHeader'
 import { CesiumAtlasGlobe } from './components/CesiumAtlasGlobe'
+import { ErrorBoundary, type ErrorFallbackProps } from './components/ErrorBoundary'
+import { ErrorNotice } from './components/ErrorNotice'
+import { codeOf } from './components/codeLoad'
 import { CountrySelector } from './components/CountrySelector'
 import { PrivateDataNotice } from './components/PrivateDataNotice'
 import { CompassButton } from './components/CompassButton'
@@ -59,8 +62,10 @@ import { PLANNED_SOURCE } from './worldgraph/adapters/plannedRecords'
 import type { EntityId, LayerId } from './worldgraph/types'
 import type { CityId, CountryId, JourneyDay, SelectionMode } from './types/travel'
 
+// Robustness batch: each code of the page that loads on demand marks its load failure (./components/codeLoad.ts): the
+// notice of the error boundary around it then offers a page reload, the only way to load it again (design §2.4).
 const DronePanoramaModal = lazy(() =>
-  import('./components/DronePanoramaModal').then((module) => ({
+  codeOf(import('./components/DronePanoramaModal')).then((module) => ({
     default: module.DronePanoramaModal,
   })),
 )
@@ -71,7 +76,7 @@ const DronePanoramaModal = lazy(() =>
 // 性能续 c (the author's decision of 2026-10-30): Collection's code is loaded ahead, after the map has drawn its first
 // frame, when the browser is idle (code only: nothing renders). Opened after that, the page renders at once.
 let collectionPageModule: typeof import('./components/CollectionPage') | undefined
-const loadCollectionPage = () => import('./components/CollectionPage').then((module) => {
+const loadCollectionPage = () => codeOf(import('./components/CollectionPage')).then((module) => {
   collectionPageModule = module
   return module
 })
@@ -110,27 +115,27 @@ function CollectionPage(props: ComponentProps<typeof CollectionPageComponent>) {
   if (code.status === 'failed') throw code.error
   return code.status === 'ready' ? <code.Page {...props} /> : null
 }
-const ReleaseUpdatePage = lazy(() => import('./components/UpdateChecker').then((module) => ({ default: module.ReleaseUpdatePage })))
-const CityPhotoGalleryModal = lazy(() => import('./components/CityPhotoGalleryModal').then((module) => ({ default: module.CityPhotoGalleryModal })))
+const ReleaseUpdatePage = lazy(() => codeOf(import('./components/UpdateChecker')).then((module) => ({ default: module.ReleaseUpdatePage })))
+const CityPhotoGalleryModal = lazy(() => codeOf(import('./components/CityPhotoGalleryModal')).then((module) => ({ default: module.CityPhotoGalleryModal })))
 
 // 只在本地编辑时出现的组件（第 5B 批）：按需加载，而且只在 `import.meta.env.DEV && localEditorAvailable` 时才定义。
 // 构建时前半句是字面量 false，Rolldown 在打包阶段就删掉这些 import()，任何构建产物里都没有它们的 chunk；
 // 只写 localEditorAvailable 不够，原因见 ./data/localEditorClient.ts。对话框只在打开时渲染，第一次打开时才加载。
 const MediaRecoveryCenter = import.meta.env.DEV && localEditorAvailable
-  ? lazy(() => import('./components/MediaRecoveryCenter').then((module) => ({ default: module.MediaRecoveryCenter })))
+  ? lazy(() => codeOf(import('./components/MediaRecoveryCenter')).then((module) => ({ default: module.MediaRecoveryCenter })))
   : undefined
 // 3C-5 F: re-reading descriptions and re-importing deleted photos (opened from the city and drone cards).
 const MediaRereadDialog = import.meta.env.DEV && localEditorAvailable
-  ? lazy(() => import('./components/MediaRereadDialog').then((module) => ({ default: module.MediaRereadDialog })))
+  ? lazy(() => codeOf(import('./components/MediaRereadDialog')).then((module) => ({ default: module.MediaRereadDialog })))
   : undefined
 const MediaReimportDialog = import.meta.env.DEV && localEditorAvailable
-  ? lazy(() => import('./components/MediaReimportDialog').then((module) => ({ default: module.MediaReimportDialog })))
+  ? lazy(() => codeOf(import('./components/MediaReimportDialog')).then((module) => ({ default: module.MediaReimportDialog })))
   : undefined
 const WantToGoAddDialog = import.meta.env.DEV && localEditorAvailable
-  ? lazy(() => import('./components/WantToGoAddDialog').then((module) => ({ default: module.WantToGoAddDialog })))
+  ? lazy(() => codeOf(import('./components/WantToGoAddDialog')).then((module) => ({ default: module.WantToGoAddDialog })))
   : undefined
 const ConvertToTravelDialog = import.meta.env.DEV && localEditorAvailable
-  ? lazy(() => import('./components/ConvertToTravelDialog').then((module) => ({ default: module.ConvertToTravelDialog })))
+  ? lazy(() => codeOf(import('./components/ConvertToTravelDialog')).then((module) => ({ default: module.ConvertToTravelDialog })))
   : undefined
 
 const overviewDistance = 3.25
@@ -766,6 +771,22 @@ function App() {
   const mapLayerData = useHeldWhileHidden(layerData, activePage === 'map')
   const [overviewLat, overviewLng] = [overviewTarget.lat, overviewTarget.lng]
   const overviewTargetStable = useMemo(() => ({ lat: overviewLat, lng: overviewLng }), [overviewLat, overviewLng])
+  // Robustness batch: what an error boundary shows instead of the part that failed (./components/ErrorNotice.tsx). The
+  // retry mounts the part again; the notice leaves it out for code that did not load (only a page reload loads it).
+  const backToMap = useStableCallback(() => changePrimaryPage('map'))
+  const returnFromUpdates = useStableCallback(() => toggleUpdatePage())
+  const pageNotice = (part: string, exits: { onBackToMap?: () => void; onReturnPrevious?: () => void }) => ({ name, error, reset }: ErrorFallbackProps) => (
+    <ErrorNotice name={name} error={error} part={part} variant="page" onRetry={reset} {...exits} />
+  )
+  const panelNotice = (part: string) => ({ name, error, reset }: ErrorFallbackProps) => (
+    <ErrorNotice name={name} error={error} part={part} variant="panel" onRetry={reset} />
+  )
+  const dialogNotice = (part: string, onClose: () => void) => ({ name, error, reset }: ErrorFallbackProps) => (
+    <ErrorNotice name={name} error={error} part={part} variant="dialog" onRetry={reset} onClose={onClose} />
+  )
+  const cornerNotice = (part: string, slot: number) => ({ name, error, reset }: ErrorFallbackProps) => (
+    <ErrorNotice name={name} error={error} part={part} variant="corner" slot={slot} onRetry={reset} />
+  )
 
   return (
     <main className="theme-night relative h-[100dvh] overflow-clip bg-[#010409] text-slate-950">
@@ -803,6 +824,15 @@ function App() {
             ? <p className="atlas-time-map-empty" role="status">{t('timeFilter:noMapResults')}</p> : null}
           <div className="absolute inset-0 z-0">
             <HoldDataWhileHidden visible={activePage === 'map'}>
+            {/* The map's own failures (a lost context, a render error, no WebGL) have their own notices; this catches the
+                errors React sees in the globe's components. Its button mounts the globe again. */}
+            <ErrorBoundary name="map:globe" fallback={({ name, error, reset }) => (
+              <div className="cesium-atlas-shell absolute inset-0 h-full w-full bg-[#020817]" role="region" aria-label={t('mapMenu:mapRegion')}>
+                {activePage === 'map' ? (
+                  <ErrorNotice name={name} error={error} part={t('mapMenu:mapRegion')} variant="map" message={t('mapMenu:mapCrashed')} onRetry={reset} retryLabel={t('mapMenu:reloadMap')} />
+                ) : null}
+              </div>
+            )}>
             <CesiumAtlasGlobe
               hoveredCountryId={hoveredCountryId}
               imageryBrightness={imageryTuning.brightness}
@@ -830,6 +860,7 @@ function App() {
               onSelectDroneMediaItem={selectDroneMediaItemStable}
               focusPlace={mapFocusPlace}
             />
+            </ErrorBoundary>
             </HoldDataWhileHidden>
           </div>
 
@@ -858,6 +889,7 @@ function App() {
               </div>
               <div id="atlas-country-panel" className="atlas-country-stack" ref={countryPanelRef} aria-hidden={countriesHidden} inert={countriesHidden}>
                 <PausedWhileHidden visible={activePage === 'map'}>
+                <ErrorBoundary name="map:countries" fallback={panelNotice(t('appShell:errorPartCountries'))}>
                 <CountrySelector
                 browse={travelBrowse}
                 selectedCountryId={selectedCountryId}
@@ -878,6 +910,7 @@ function App() {
                 onDistanceChange={changeGlobeDistance}
                 onResetView={resetOverview}
               />
+                </ErrorBoundary>
                 </PausedWhileHidden>
               </div>
 
@@ -891,6 +924,7 @@ function App() {
                 }`}
               >
                 <PausedWhileHidden visible={activePage === 'map'}>
+                <ErrorBoundary name="map:details" fallback={panelNotice(t('appShell:errorPartDetails'))}>
                 {selectedWantToGoEntityId ? (
                   <WantToGoCard
                     key={`want-to-go-${selectedWantToGoEntityId}`}
@@ -927,6 +961,7 @@ function App() {
                 ) : null}
 
                 <MouseControlGuide />
+                </ErrorBoundary>
                 </PausedWhileHidden>
               </div>
 
@@ -1005,6 +1040,7 @@ function App() {
           >
             {/* 3C-5 D: not shown, the page does not render again after every save (PausedWhileHidden); its scroll position stays. */}
             <PausedWhileHidden visible={activePage === 'journey'}>
+            <ErrorBoundary name="page:journey" fallback={pageNotice(t('appShell:errorPartJourney'), { onBackToMap: backToMap })}>
             <div className="atlas-journey-scroll selector-scrollbar h-full overflow-y-auto overscroll-contain">
               <div className="atlas-journey-shell mx-auto w-full max-w-7xl px-5 pb-20 sm:px-8">
                 <section className="journey-command-panel">
@@ -1052,6 +1088,7 @@ function App() {
                 )}
               </div>
             </div>
+            </ErrorBoundary>
             </PausedWhileHidden>
           </div>
 
@@ -1063,6 +1100,7 @@ function App() {
             {/* 舞台本身常驻（切页的淡入淡出在舞台上）；页面加载期间舞台为空，淡入过程中出现。 */}
             <PausedWhileHidden visible={activePage === 'collection'}>
             {visitedPages.has('collection') ? (
+              <ErrorBoundary name="page:collection" fallback={pageNotice(t('appShell:errorPartCollection'), { onBackToMap: backToMap })}>
               <Suspense fallback={null}>
                 <CollectionPage
                   entries={collectionEntries}
@@ -1071,6 +1109,7 @@ function App() {
                   onConvertToTravel={setConvertTarget}
                 />
               </Suspense>
+              </ErrorBoundary>
             ) : null}
             </PausedWhileHidden>
           </div>
@@ -1081,34 +1120,41 @@ function App() {
             aria-hidden={activePage !== 'about'}
           >
             {visitedPages.has('about') ? (
+              <ErrorBoundary name="page:about" fallback={pageNotice(t('appShell:errorPartAbout'), { onReturnPrevious: returnFromUpdates })}>
               <Suspense fallback={null}>
                 <ReleaseUpdatePage state={releaseUpdates} />
               </Suspense>
+              </ErrorBoundary>
             ) : null}
           </div>
       </section>
 
       {panoramaModalItem ? (
+        <ErrorBoundary name="dialog:panorama" fallback={dialogNotice(t('appShell:errorPartPanorama'), () => setPanoramaModalItem(undefined))}>
         <Suspense fallback={null}>
           <DronePanoramaModal
             item={panoramaModalItem}
             onClose={() => setPanoramaModalItem(undefined)}
           />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
 
       {cityPhotoGallery ? (
+        <ErrorBoundary name="dialog:city-photos" fallback={dialogNotice(t('appShell:errorPartCityPhotos'), () => setCityPhotoGallery(undefined))}>
         <Suspense fallback={null}>
           <CityPhotoGalleryModal
             {...cityPhotoGallery}
             onClose={() => setCityPhotoGallery(undefined)}
           />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
 
       {/* FR-PUB-2 / AC-10：公开构建不挂载添加对话框与转换对话框，构建产物里也没有它们（见文件开头的按需加载）。
           加载期间的占位为空：对话框与恢复中心都是浮层，不占文档流；对话框挂载时焦点照常进入。 */}
       {MediaRecoveryCenter ? (
+        <ErrorBoundary name="editor:media-recovery" fallback={cornerNotice(t('appShell:errorPartMediaRecovery'), 0)}>
         <Suspense fallback={null}>
           <MediaRecoveryCenter onOpenTarget={(_countryId, cityId) => {
             const city = cityById[cityId]
@@ -1125,26 +1171,34 @@ function App() {
             setGlobeDistance(cityDistance)
           }} />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
       {MediaRereadDialog ? (
+        <ErrorBoundary name="editor:media-reread" fallback={cornerNotice(t('appShell:errorPartMediaReread'), 1)}>
         <Suspense fallback={null}>
           <MediaRereadDialog />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
       {MediaReimportDialog ? (
+        <ErrorBoundary name="editor:media-reimport" fallback={cornerNotice(t('appShell:errorPartMediaReimport'), 2)}>
         <Suspense fallback={null}>
           <MediaReimportDialog />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
       {WantToGoAddDialog && isAddWantToGoOpen ? (
+        <ErrorBoundary name="dialog:want-to-go-add" fallback={dialogNotice(t('appShell:errorPartWantToGoAdd'), () => setIsAddWantToGoOpen(false))}>
         <Suspense fallback={null}>
           <WantToGoAddDialog
             open
             onClose={() => setIsAddWantToGoOpen(false)}
           />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
       {ConvertToTravelDialog && convertTarget ? (
+        <ErrorBoundary name="dialog:convert" fallback={dialogNotice(t('appShell:errorPartConvert'), () => setConvertTarget(undefined))}>
         <Suspense fallback={null}>
           <ConvertToTravelDialog
             target={convertTarget}
@@ -1152,6 +1206,7 @@ function App() {
             onConverted={showConvertedPlace}
           />
         </Suspense>
+        </ErrorBoundary>
       ) : null}
     </main>
   )

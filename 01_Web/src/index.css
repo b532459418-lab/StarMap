@@ -7516,3 +7516,110 @@ ol.atlas-media-recovery-sources { list-style: decimal; }
 .atlas-draft-conflict-actions button:disabled {
   opacity: 0.55;
 }
+
+/* Robustness batch: the notice an error boundary shows in the place of the part that failed (ErrorNotice). */
+.atlas-error-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(34rem, calc(100vw - 32px));
+  padding: 16px 18px;
+  border-radius: 20px;
+  font-size: 0.875rem;
+  pointer-events: auto;
+}
+
+.atlas-error-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.atlas-error-notice-actions button,
+.update-release-plain button {
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 999px;
+  padding: 5px 14px;
+  background: rgba(148, 163, 184, 0.16);
+  color: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.atlas-error-notice-actions button:hover,
+.update-release-plain button:hover {
+  background: rgba(148, 163, 184, 0.28);
+}
+
+.atlas-error-notice-actions button:focus-visible,
+.update-release-plain button:focus-visible,
+.atlas-error-notice-details summary:focus-visible {
+  outline: 2px solid #67e8f9;
+  outline-offset: 2px;
+}
+
+.atlas-error-notice-details summary {
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.atlas-error-notice-details p {
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+  opacity: 0.8;
+}
+
+/* A page's stage: the notice in the middle, below the header. */
+.atlas-error-page {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 96px 20px 32px;
+}
+
+/* A map side panel: in the panel's column, like a card. */
+.atlas-error-notice-panel {
+  margin-bottom: 12px;
+}
+
+/* A dialog's place: modal, above the page like the dialogs. */
+.atlas-error-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(1, 4, 9, 0.62);
+}
+
+.atlas-error-dialog:focus {
+  outline: none;
+}
+
+/* A part that is always mounted (the local editor's media tools): a corner, the map stays usable. */
+.atlas-error-notice-corner {
+  position: fixed;
+  left: 16px;
+  bottom: 20px;
+  z-index: 55;
+}
+
+.atlas-error-notice-corner[data-slot='1'] {
+  bottom: 150px;
+}
+
+.atlas-error-notice-corner[data-slot='2'] {
+  bottom: 280px;
+}
+
+/* The release notes that could not be formatted: their text as it is. */
+.update-release-plain pre {
+  margin: 8px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
