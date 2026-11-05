@@ -153,10 +153,12 @@ jobs:
       # map pause's test API) belong to the development-only incremental refresh of 3C-5 D: no build may contain them.
       # VITE_STARMAP_INCREMENTAL_VERIFY turns on the browser tests' comparison of each incremental snapshot with the whole
       # computation (scope-incremental ③): only their dev server sets it, and no build may name it.
+      # VITE_STARMAP_REPORT_CAUGHT_ERRORS turns on the browser tests' report of the errors an error boundary caught, and
+      # starmap:caught-error is the prefix of that report (robustness batch): both exist only behind import.meta.env.DEV.
       - name: Refuse server-only and local editor code in the public bundle
         run: |
           found=0
-          for marker in STARMAP_PRIVATE_ROOT 06_private operations/media-import /__travelatlas/editor flagcdn.com starmapRevision starmap:revision __travelAtlasDebugRenderLoop VITE_STARMAP_INCREMENTAL_VERIFY; do
+          for marker in STARMAP_PRIVATE_ROOT 06_private operations/media-import /__travelatlas/editor flagcdn.com starmapRevision starmap:revision __travelAtlasDebugRenderLoop VITE_STARMAP_INCREMENTAL_VERIFY VITE_STARMAP_REPORT_CAUGHT_ERRORS starmap:caught-error; do
             if grep -rlF --include='*.js' -e "$marker" dist; then
               echo "::error::The public bundle contains the forbidden marker $marker"
               found=1

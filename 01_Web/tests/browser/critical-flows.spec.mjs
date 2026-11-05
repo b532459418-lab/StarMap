@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture, renderedRevision, saveAndWaitForRevision, waitForRenderedRevision } from './helpers.mjs'
+import { test, expect, expectPageError, openMap, selectReykjavik, openCollection, readFixture, renderedRevision, saveAndWaitForRevision, waitForRenderedRevision } from './helpers.mjs'
 import {
   PRIVATE_MODULE_PATH, createBrowserFixture, enterDamagedStoreMode, fixtureFileNames, fixtureIds, importInboxMedia, readFixtureFiles, setStoreAside,
   storeRevisionOf, waitForServedRevision,
@@ -246,7 +246,9 @@ test.describe("Collection's code", () => {
   })
 
   test('a failed load reaches the same place as a failed lazy component: an uncaught error, the page is removed', async ({ page }) => {
-    // Another page of the context: this one ends in an uncaught error on purpose (the fixture's page fails on any).
+    // Another page of the context: this one ends in an uncaught error on purpose. The fixture watches every page of the
+    // context, so the case declares it.
+    expectPageError(page, /dynamically imported module|Importing a module script failed/)
     const other = await page.context().newPage()
     try {
       const errors = []
