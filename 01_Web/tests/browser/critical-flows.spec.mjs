@@ -284,6 +284,9 @@ test.describe("Collection's code", () => {
 // Robustness batch (design §2–§3, §6.2): a part that fails shows its own notice and the rest of the page stays; every
 // error a boundary catches is reported to the page fixture, which fails the case unless the case expects the error.
 test.describe('Error boundaries', () => {
+  // Each case starts from the fixture's own content: the rows open dialogs on items an earlier case may have changed
+  // (the Collection conversion leaves Nuuk visited, so its Mark as visited button is disabled).
+  test.beforeEach(async () => { await createBrowserFixture(process.env.STARMAP_BROWSER_TEST_ROOT) })
   const at = (file) => (url) => new URL(url).pathname === `/src/components/${file}`
   const boundary = (page, name) => page.locator(`[data-error-boundary="${name}"]`)
   /** A module of the dev server replaced by one whose exports throw while rendering (no product hook needed). */
