@@ -202,11 +202,12 @@ test('no WebGL: the map says why instead of a blank canvas; Collection opens, a 
   await tryAgain.click()
   await expect(notice).toBeVisible()
   await expect(page.locator('.cesium-widget')).toHaveCount(0)
-  // WebGL is back: Try again creates the map, which renders.
+  // WebGL is back: Try again creates the map, which renders. The click is dispatched from a task of the page: creating
+  // the viewer keeps the main thread busy for seconds with software rendering, longer than an input action may wait.
   await page.evaluate(() => { window.__starmapWebGLBack = true })
-  await tryAgain.click()
-  await expect(notice).toHaveCount(0)
-  await expect(page.locator('.cesium-widget canvas')).toBeVisible()
+  await tryAgain.evaluate((button) => { setTimeout(() => button.click(), 0) })
+  await expect(notice).toHaveCount(0, { timeout: 30000 })
+  await expect(page.locator('.cesium-widget canvas')).toBeVisible({ timeout: 30000 })
   await expect.poll(async () => (await loop(page))?.frames ?? 0, { timeout: 20000 }).toBeGreaterThan(1)
   await expect(shell).not.toHaveAttribute('data-map-webgl', 'unavailable')
   await expect(page.locator('.cesium-widget-errorPanel')).toHaveCount(0)
