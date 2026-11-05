@@ -38,6 +38,7 @@ export const mapMenuResources = {
     mapRegion: '地图',
     mapStopped: '地图停止了绘制。可以只重新加载地图，页面上的其他内容都会保留。',
     reloadMap: '重新加载地图',
+    mapCrashed: '地图出错了，没能显示。可以只重新加载地图，页面上的其他内容都会保留。',
   },
   en: {
     sources: 'Map imagery',
@@ -80,5 +81,6 @@ export const mapMenuResources = {
     mapRegion: 'Map',
     mapStopped: 'The map stopped drawing. You can reload just the map; everything else on the page stays as it is.',
     reloadMap: 'Reload map',
+    mapCrashed: 'The map ran into a problem. You can reload just the map; everything else on the page stays as it is.',
   },
 }

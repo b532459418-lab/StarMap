@@ -3,8 +3,10 @@ import { ArrowUpRight, Check, Copy, RefreshCw, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ReleaseUpdateState } from '../data/releaseUpdates'
 import { useUiLocale } from '../i18n/useUiLocale'
+import { CodeLoadError, codeOf } from './codeLoad'
+import { ErrorBoundary } from './ErrorBoundary'
 
-const ReleaseMarkdown = lazy(() => import('./ReleaseMarkdown'))
+const ReleaseMarkdown = lazy(() => codeOf(import('./ReleaseMarkdown')))
 
 // The dock button is in ./ReleaseUpdateButton.tsx; App loads this page only when it is first opened (batch 5B).
 type ReleaseUpdatePageProps = {
@@ -96,9 +98,26 @@ export function ReleaseUpdatePage({ state }: ReleaseUpdatePageProps) {
             <p className="update-card-kicker">{t('announcement')}</p>
             <h3>{t('announcement')}</h3>
             <div className="update-release-copy">
-              <Suspense fallback={<p className="update-release-loading">{t('formatting')}</p>}>
-                <ReleaseMarkdown source={announcement} />
-              </Suspense>
+              {/* Robustness batch: release notes that cannot be formatted show as their text; the page stays. */}
+              <ErrorBoundary name="about:release-notes" fallback={({ name, error, reset }) => (
+                <div className="update-release-plain" role="status" data-error-boundary={name}>
+                  <p>{t('releaseNotesPlain')}</p>
+                  <pre>{announcement}</pre>
+                  {error instanceof Error && error.message ? (
+                    <details className="atlas-error-notice-details">
+                      <summary>{t('errorDetails')}</summary>
+                      <p>{error.message}</p>
+                    </details>
+                  ) : null}
+                  {error instanceof CodeLoadError
+                    ? <button type="button" onClick={() => window.location.reload()}>{t('errorReloadPage')}</button>
+                    : <button type="button" onClick={reset}>{t('errorRetry')}</button>}
+                </div>
+              )}>
+                <Suspense fallback={<p className="update-release-loading">{t('formatting')}</p>}>
+                  <ReleaseMarkdown source={announcement} />
+                </Suspense>
+              </ErrorBoundary>
             </div>
             {state.release ? (
               <a className="update-release-link" href={state.release.html_url} target="_blank" rel="noreferrer">

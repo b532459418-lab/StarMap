@@ -1,4 +1,4 @@
-import { test, expect, expectPageError, openMap, selectReykjavik, openCollection, readFixture, renderedRevision, saveAndWaitForRevision, waitForRenderedRevision } from './helpers.mjs'
+import { test, expect, expectPageError, pageErrors, openMap, selectReykjavik, openCollection, readFixture, renderedRevision, saveAndWaitForRevision, waitForRenderedRevision } from './helpers.mjs'
 import {
   PRIVATE_MODULE_PATH, createBrowserFixture, enterDamagedStoreMode, fixtureFileNames, fixtureIds, importInboxMedia, readFixtureFiles, setStoreAside,
   storeRevisionOf, waitForServedRevision,
@@ -245,24 +245,200 @@ test.describe("Collection's code", () => {
     await expect(page.getByRole('button', { name: 'Edit note for Nuuk', exact: true })).toBeEnabled()
   })
 
-  test('a failed load reaches the same place as a failed lazy component: an uncaught error, the page is removed', async ({ page }) => {
-    // Another page of the context: this one ends in an uncaught error on purpose. The fixture watches every page of the
-    // context, so the case declares it.
-    expectPageError(page, /dynamically imported module|Importing a module script failed/)
-    const other = await page.context().newPage()
-    try {
-      const errors = []
-      other.on('pageerror', (error) => errors.push(error.message))
-      await other.addInitScript(() => localStorage.setItem('starmap.uiLocale', 'en'))
-      await other.route(collectionModule, (route) => route.abort())
-      await openMap(other)
-      expect(errors, 'the prefetch fails quietly').toEqual([])
-      await other.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).click()
-      await expect.poll(() => errors.length).toBeGreaterThan(0)
-      expect(errors.join('\n')).toMatch(/dynamically imported module|Importing a module script failed/)
-      // No error boundary above the page: React removes the whole tree, as it did for the lazy component.
-      await expect(other.locator('#root > *')).toHaveCount(0)
-    } finally { await other.close() }
+  // Robustness batch (design §6.2, case 2; this case used to lock in the uncaught error that removed the whole page).
+  test('a failed load shows the page\'s notice, the map stays, Back to map works; the browser does not load it again, a page reload does', async ({ page }) => {
+    test.setTimeout(120_000)
+    expectPageError(page, 'starmap:caught-error [page:collection] Failed to fetch dynamically imported module')
+    let requests = 0
+    let fail = true
+    await page.route(collectionModule, (route) => { requests++; return fail ? route.abort() : route.continue() })
+    await openMap(page)
+    // The prefetch after the map's first frame fails quietly.
+    await expect.poll(() => requests).toBe(1)
+    await page.waitForTimeout(300)
+    expect(pageErrors(page), 'the prefetch fails quietly').toEqual([])
+    const nav = page.getByRole('navigation', { name: 'Primary navigation' })
+    await nav.getByRole('button', { name: 'Collection', exact: true }).click()
+    const notice = page.locator('[data-error-boundary="page:collection"]')
+    await expect(notice).toBeVisible()
+    await expect(notice).toHaveAttribute('role', 'alert')
+    await expect(notice).toHaveAttribute('data-error-kind', 'code')
+    await expect(notice).toContainText('The code for the Collection page could not be loaded.')
+    await expect(notice.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0)
+    expect(requests, 'a failed dynamic import is not requested again in this page (design §1.6)').toBe(1)
+    // Only this part shows a notice; the rest of the page stays.
+    await expect(page.locator('[data-error-boundary]')).toHaveCount(1)
+    await notice.getByRole('button', { name: 'Back to map', exact: true }).click()
+    await expect(page.locator('.atlas-experience')).toHaveAttribute('data-page', 'map')
+    await selectReykjavik(page)
+    // A page reload loads it (the view state restores Collection).
+    fail = false
+    await nav.getByRole('button', { name: 'Collection', exact: true }).click()
+    await expect(notice).toBeVisible()
+    await Promise.all([page.waitForEvent('load'), notice.getByRole('button', { name: 'Reload page', exact: true }).click()])
+    await expect(page.getByRole('heading', { name: 'Places you want to go', exact: true })).toBeVisible()
+    await expect(page.locator('[data-error-boundary]')).toHaveCount(0)
+  })
+})
+
+// Robustness batch (design §2–§3, §6.2): a part that fails shows its own notice and the rest of the page stays; every
+// error a boundary catches is reported to the page fixture, which fails the case unless the case expects the error.
+test.describe('Error boundaries', () => {
+  const at = (file) => (url) => new URL(url).pathname === `/src/components/${file}`
+  const boundary = (page, name) => page.locator(`[data-error-boundary="${name}"]`)
+  /** A module of the dev server replaced by one whose exports throw while rendering (no product hook needed). */
+  const throwingModule = (names, message) => names.map((name) => name === 'default'
+    ? `export default function Thrown() { throw new Error(${JSON.stringify(message)}) }`
+    : `export function ${name}() { throw new Error(${JSON.stringify(message)}) }`).join('\n') + '\n'
+  // no-store: the browser must not keep the replacement for the next load of the page (the next row).
+  const serve = (body) => (route) => route.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'cache-control': 'no-store' }, body })
+  const nav = (page, name) => page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name, exact: true }).click()
+
+  test('a dialog whose code does not load shows a notice in its place; Close and the page work; a page reload loads it', async ({ page }) => {
+    test.setTimeout(120_000)
+    expectPageError(page, 'starmap:caught-error [dialog:want-to-go-add] Failed to fetch dynamically imported module')
+    let fail = true
+    await page.route(at('WantToGoAddDialog.tsx'), (route) => fail ? route.abort() : route.continue())
+    await openMap(page)
+    await openCollection(page)
+    const add = page.getByRole('button', { name: 'Add a place to visit', exact: true })
+    await add.click()
+    const notice = boundary(page, 'dialog:want-to-go-add')
+    await expect(notice).toBeVisible()
+    await expect(notice).toHaveAttribute('role', 'alert')
+    await expect(notice).toContainText('The code for the “Add a place to visit” dialog could not be loaded.')
+    await expect(notice.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0)
+    // In a dialog's place: modal, the focus inside; Close gives it back.
+    await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"][aria-modal="true"]')))).toBe(true)
+    await notice.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(notice).toHaveCount(0)
+    await expect(add).toBeFocused()
+    // The rest of the page stays: Collection, the map.
+    await expect(page.getByRole('heading', { name: 'Places you want to go', exact: true })).toBeVisible()
+    await nav(page, 'Map')
+    await selectReykjavik(page)
+    // A page reload loads the code.
+    await nav(page, 'Collection')
+    await add.click()
+    await expect(notice).toBeVisible()
+    fail = false
+    await Promise.all([page.waitForEvent('load'), notice.getByRole('button', { name: 'Reload page', exact: true }).click()])
+    await expect(page.getByRole('heading', { name: 'Places you want to go', exact: true })).toBeVisible()
+    await add.click()
+    const dialog = page.locator('.atlas-wtg-dialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('combobox').first().fill('Norway')
+    await expect(dialog.getByRole('combobox').first()).toHaveValue('Norway')
+    await expect(page.locator('[data-error-boundary]')).toHaveCount(0)
+  })
+
+  test('a page that throws while rendering shows its notice, the case receives the report it fails on, and Try again mounts it again', async ({ page }) => {
+    test.setTimeout(120_000)
+    const message = 'injected render error in CollectionPage'
+    await page.route(at('CollectionPage.tsx'), serve(`export function CollectionPage() {\n  if (!window.__starmapCollectionMayRender) throw new Error(${JSON.stringify(message)})\n  return 'Stub collection page'\n}\n`))
+    await openMap(page)
+    await nav(page, 'Collection')
+    const notice = boundary(page, 'page:collection')
+    await expect(notice).toBeVisible()
+    await expect(notice).toHaveAttribute('data-error-kind', 'render')
+    await expect(notice).toContainText('Something went wrong in the Collection page, so it could not be shown.')
+    // The message is folded away under the technical details; never the stack.
+    await notice.locator('summary').click()
+    await expect(notice.locator('details p')).toHaveText(message)
+    // The report (design §3): one uncaught page error naming the boundary, which would fail an undeclared case.
+    await expect.poll(() => pageErrors(page).filter((error) => error === `starmap:caught-error [page:collection] ${message}`).length).toBeGreaterThan(0)
+    expectPageError(page, `starmap:caught-error [page:collection] ${message}`)
+    // The rest stays.
+    await expect(page.locator('[data-error-boundary]')).toHaveCount(1)
+    await nav(page, 'Map')
+    await selectReykjavik(page)
+    await nav(page, 'Collection')
+    await page.evaluate(() => { window.__starmapCollectionMayRender = true })
+    await notice.getByRole('button', { name: 'Try again', exact: true }).click()
+    await expect(notice).toHaveCount(0)
+    await expect(page.locator('.atlas-collection-stage')).toContainText('Stub collection page')
+  })
+
+  // Each boundary catches what fails inside it, and only that (design §2.2; the mutation check for every boundary).
+  // [name, module, its exports, how to show the part, the part that must stay]
+  const rows = [
+    ['root', 'AtlasHeader.tsx', ['AtlasHeader'], async () => {}, null],
+    ['map:globe', 'CesiumAtlasGlobe.tsx', ['CesiumAtlasGlobe'], async () => {}, 'nav'],
+    ['map:countries', 'CountrySelector.tsx', ['CountrySelector'], async () => {}, 'nav'],
+    ['map:details', 'InfoCard.tsx', ['InfoCard'], async () => {}, 'nav'],
+    ['page:journey', 'Timeline.tsx', ['Timeline'], async (page) => nav(page, 'Journey'), 'nav'],
+    ['page:collection', 'CollectionPage.tsx', ['CollectionPage'], async (page) => nav(page, 'Collection'), 'nav'],
+    ['page:about', 'UpdateChecker.tsx', ['ReleaseUpdatePage'], async (page) => page.getByRole('button', { name: 'Version updates', exact: true }).click(), 'nav'],
+    ['about:release-notes', 'ReleaseMarkdown.tsx', ['default'], async (page) => page.getByRole('button', { name: 'Version updates', exact: true }).click(), 'updates'],
+    ['dialog:want-to-go-add', 'WantToGoAddDialog.tsx', ['WantToGoAddDialog'], async (page) => { await nav(page, 'Collection'); await page.getByRole('button', { name: 'Add a place to visit', exact: true }).click() }, 'nav'],
+    ['dialog:convert', 'ConvertToTravelDialog.tsx', ['ConvertToTravelDialog'], async (page) => { await nav(page, 'Collection'); await page.getByRole('button', { name: 'Mark as visited: Nuuk', exact: true }).click() }, 'nav'],
+    ['editor:media-recovery', 'MediaRecoveryCenter.tsx', ['MediaRecoveryCenter'], async () => {}, 'nav'],
+    ['editor:media-reread', 'MediaRereadDialog.tsx', ['MediaRereadDialog'], async () => {}, 'nav'],
+    ['editor:media-reimport', 'MediaReimportDialog.tsx', ['MediaReimportDialog'], async () => {}, 'nav'],
+  ]
+  test('each boundary catches what fails inside it, and only that', async ({ page }) => {
+    test.setTimeout(300_000)
+    // One route for the whole case (no unroute between rows, which races requests in flight); a row sets `current`.
+    let current
+    await page.route('**/src/components/**', (route) => current && new URL(route.request().url()).pathname === `/src/components/${current.file}`
+      ? serve(current.body)(route) : route.fallback())
+    // Soft assertions: every row is checked even when one fails (the mutation checks remove boundaries in bulk).
+    for (const [name, file, exports, show, stays] of rows) {
+      await test.step(name, async () => {
+        const message = `injected render error for ${name}`
+        const report = `starmap:caught-error [${name}] ${message}`
+        expectPageError(page, report)
+        current = { file, body: throwingModule(exports, message) }
+        try {
+          await page.goto('/')
+          if (stays) await expect.soft(page.getByRole('navigation', { name: 'Primary navigation' }), `${name}: the navigation stays`).toBeVisible()
+          await show(page).catch((error) => expect.soft(String(error), `${name}: the part can be shown`).toBe(''))
+          await expect.soft(boundary(page, name), `${name}: its notice`).toBeVisible()
+          await expect.soft(page.locator('[data-error-boundary]'), `${name}: only this boundary shows a notice`).toHaveCount(1)
+          if (stays === 'updates') await expect.soft(page.locator('.atlas-update-stage').getByText('Release center', { exact: true }), `${name}: the page stays`).toBeVisible()
+          await expect.soft.poll(() => pageErrors(page).includes(report), { message: `${name}: reported with its name`, timeout: 5000 }).toBe(true)
+        } finally {
+          current = undefined
+          await page.evaluate(() => sessionStorage.clear()).catch(() => undefined)
+        }
+      })
+    }
+  })
+
+  test('the dialogs of the media cards catch what fails inside them (panorama, city photos)', async ({ page }) => {
+    test.setTimeout(120_000)
+    await seedSampleMedia()
+    let current
+    await page.route('**/src/components/**', (route) => current && new URL(route.request().url()).pathname === `/src/components/${current.file}`
+      ? serve(current.body)(route) : route.fallback())
+    for (const [name, file, exports, show] of [
+      ['dialog:panorama', 'DronePanoramaModal.tsx', ['DronePanoramaModal'], async () => {
+        await page.getByRole('button', { name: 'Faroe Islands', exact: true }).click()
+        await page.getByRole('button', { name: 'Torshavn Drone media available', exact: true }).click()
+        await page.getByRole('button', { name: 'View Torshavn drone media 01', exact: true }).click()
+      }],
+      ['dialog:city-photos', 'CityPhotoGalleryModal.tsx', ['CityPhotoGalleryModal'], async () => {
+        await selectReykjavik(page)
+        await page.getByRole('button', { name: 'Open photo 1 of Reykjavik', exact: true }).click()
+      }],
+    ]) {
+      await test.step(name, async () => {
+        const message = `injected render error for ${name}`
+        expectPageError(page, `starmap:caught-error [${name}] ${message}`)
+        current = { file, body: throwingModule(exports, message) }
+        await page.goto('/')
+        await expect(page.locator('.cesium-widget canvas')).toBeVisible()
+        await show()
+        const notice = boundary(page, name)
+        await expect(notice).toBeVisible()
+        await expect(notice.getByRole('button', { name: 'Try again', exact: true })).toBeVisible()
+        await notice.getByRole('button', { name: 'Close', exact: true }).click()
+        await expect(page.locator('[data-error-boundary]')).toHaveCount(0)
+        await expect(page.locator('.atlas-info-panel h2')).toBeVisible()
+        current = undefined
+        await page.evaluate(() => sessionStorage.clear())
+      })
+    }
   })
 })
 
