@@ -1283,15 +1283,77 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     if (final?.diagnostics) expectNoRenderError(final, 'at the end of the case')
   })
 
-  /** The want-to-go write of the info card, answered after `ms` (or as `fulfil` says). */
-  const holdWrite = (page, { ms = 0, fulfil } = {}) => page.route('**/__travelatlas/editor/wanttogo', async (route) => {
-    if (route.request().method() !== 'POST') return route.continue()
-    if (ms) await new Promise((resolve) => setTimeout(resolve, ms))
-    return fulfil ? route.fulfill(fulfil) : route.continue()
-  })
+  /**
+   * The want-to-go write of the info card, answered `ms` after the save's click (or as `fulfil` says). Test stability
+   * F2-1: the wait counts from the click as the page saw it (its event time on the wall clock), not from this handler:
+   * Playwright calls a route handler only once the page has reported the request, which a main thread waiting on the GPU
+   * delays (CI, software GL: 0.98 and 1.38 s after the save's click, 2026-11-03/05), and a fixed wait from here added
+   * that delay to the save. (The request's own `timing().startTime` is 0 until its response.) Without a recorded click
+   * the wait counts from the handler, as before.
+   */
+  const holdWrite = async (page, { ms = 0, fulfil } = {}) => {
+    if (ms) await page.evaluate(() => {
+      delete window.__starmapSaveClickedAt
+      document.addEventListener('click', (event) => {
+        if (event.target.closest?.('.atlas-city-wtg-button')) window.__starmapSaveClickedAt = performance.timeOrigin + event.timeStamp
+      }, { capture: true })
+    })
+    return page.route('**/__travelatlas/editor/wanttogo', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue()
+      if (ms) {
+        const clickedAt = await diagnosticDeadline(page.evaluate(() => window.__starmapSaveClickedAt)).catch(() => undefined)
+        const handlerAfterClickMs = Number.isFinite(clickedAt) ? Math.round(Date.now() - clickedAt) : undefined
+        const waitMs = handlerAfterClickMs === undefined ? ms : Math.max(0, ms - handlerAfterClickMs)
+        try { test.info().annotations.push({ type: 'held write', description: JSON.stringify({ ms, handlerAfterClickMs, waitMs }) }) } catch { /* After the case. */ }
+        console.info('A′ held write', JSON.stringify({ ms, handlerAfterClickMs, waitMs }))
+        await new Promise((resolve) => setTimeout(resolve, waitMs))
+      }
+      return fulfil ? route.fulfill(fulfil) : route.continue()
+    })
+  }
+  /**
+   * Test stability F2-2: a save is clicked on a settled map. The pause stops the frames after the click, not the GPU work
+   * the frames before it left; on CI's software GL that work made the main thread wait 0.9 and 1.4 s after the click
+   * when the click came during the shader compiling and tile uploads that follow selecting a city. Settled: no main-thread
+   * task of `longTaskMs` or more in the last `quietMs`, and the last `frames` frames each within `frameIntervalMs` of the
+   * one before, the latest no older than that (the globe keeps its pace). Initial values from the CI evidence of
+   * 2026-11-03/05 (this case's render-recovery.cpuprofile): steady frames every 0.25–0.7 s with 10–30 ms of main-thread
+   * work; before the click, shader compiling blocked the main thread 0.27–1.4 s at a time. Bounded: a map that does not
+   * settle within `timeoutMs` fails here with what it saw. The wait and the last observation are recorded.
+   */
+  const SETTLED_MAP = Object.freeze({ quietMs: 2000, longTaskMs: 200, frames: 3, frameIntervalMs: 1000, timeoutMs: 20000 })
+  async function waitForSettledMap(page) {
+    const started = Date.now()
+    let observed
+    try {
+      await expect.poll(async () => {
+        observed = await page.evaluate(({ quietMs, longTaskMs, frames, frameIntervalMs }) => {
+          const diagnostics = window.__travelAtlasDebugRenderLoop?.state().diagnostics
+          if (!diagnostics) return { settled: false, reason: 'no render loop diagnostics' }
+          const now = performance.now()
+          const longTasks = diagnostics.longTasks.filter((task) => task.durationMs >= longTaskMs && task.at + task.durationMs > now - quietMs)
+            .map((task) => Math.round(task.durationMs))
+          const recent = diagnostics.frameTimings.slice(-frames)
+          const intervals = recent.map((frame) => (frame.intervalMs === undefined ? null : Math.round(frame.intervalMs)))
+          const sinceLastFrameMs = recent.length ? Math.round(now - recent.at(-1).at) : null
+          const steady = recent.length === frames && intervals.every((interval) => interval !== null && interval <= frameIntervalMs)
+            && sinceLastFrameMs <= frameIntervalMs
+          return { settled: diagnostics.longTaskSupported && longTasks.length === 0 && steady, longTasks, intervals, sinceLastFrameMs,
+            renderCpuMs: recent.map((frame) => (frame.renderCpuMs === undefined ? null : Math.round(frame.renderCpuMs))) }
+        }, SETTLED_MAP)
+        return observed.settled
+      }, { message: 'the map settles before a save is clicked (the settled map annotation has what it saw)', timeout: SETTLED_MAP.timeoutMs, intervals: [100, 250] }).toBe(true)
+    } finally {
+      const record = { waitedMs: Date.now() - started, ...observed }
+      test.info().annotations.push({ type: 'settled map', description: JSON.stringify(record) })
+      console.info('A′ settled map', JSON.stringify({ test: test.info().title.slice(0, 40), ...record }))
+    }
+  }
   const markReykjavik = async (page, { observePause = false } = {}) => {
     await finishRenderSchedulerTrace(page)
     await finishRenderCpuProfile(page)
+    // D3: the evidence is armed before the map settles, so that its own start (Profiler.start took 0.48 s on CI) is over
+    // before the click.
     if (observePause) await armRenderSchedulerTrace(page)
     let session
     try {
@@ -1307,6 +1369,7 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       renderCpuProfiles.set(page, { setupFailure: error.name })
       if (session) await diagnosticDeadline(session.detach()).catch(() => {})
     }
+    await waitForSettledMap(page)
     const action = () => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
     if (observePause) await observePauseDuring(page, action)
     else await action()
