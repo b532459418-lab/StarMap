@@ -271,12 +271,13 @@ async function verifyLiveScene(page, returnFromCollection = false, sample = asyn
 }
 
 test('lost responses, storage loss, partial resume, whole Inbox consent and cross-tab stale plans preserve durable facts', async ({ page, testBrowser }, testInfo) => {
-  // Temporary (2026-10-14, batch 4 E1): raised from 360000. Recent runs of this case took 3.5 to 5.7 minutes,
-  // up to 95% of the old budget. Lower it again once the cause of the slow development-server page loads is fixed.
+  // 480 s (raised from 360 s on 2026-10-14), kept by measurement: eight CI runs of this case alone (test stability,
+  // 2026-11-06, runs 42187578007 and 42192357428) took 224.7 to 370.5 s, so 480 s leaves 1.3 times the longest; the
+  // server's editor requests took at most 1.4 s and the library lease was held at most 0.5 s at a time.
   test.setTimeout(480000)
   page.setDefaultTimeout(15000)
   page.setDefaultNavigationTimeout(45000)
-  recordMediaPhase(page, 'lifecycle body started / temporary 480-second budget (was 360)')
+  recordMediaPhase(page, 'lifecycle body started / 480-second budget')
   const graphics = []
   const samples = []
   const errorSamples = new Set()
