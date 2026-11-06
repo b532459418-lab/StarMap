@@ -145,6 +145,13 @@ export const diagnosticDeadline = (request) => new Promise((resolve, reject) => 
   request.then((value) => { clearTimeout(timer); resolve(value) }, (error) => { clearTimeout(timer); reject(error) })
 })
 const schedulerTraces = new WeakMap()
+/**
+ * The trace's ring buffer. 3 MB since the A′ trace is armed before the settled-map wait (D3): at 1 MB a failed case kept
+ * only its last ~9 s of events (CI, 2026-11-06, run 42187578007: 2.9 MB of JSON, 14 640 events), which no longer reached
+ * back to the save's click, 11 s before the end. 3 MB keeps about three times that and stays under the caps below
+ * (16 MB of JSON, 60 000 events).
+ */
+const SCHEDULER_TRACE_BUFFER_KB = 3072
 const schedulerCategories = ['gpu', 'cc', 'viz', 'renderer.scheduler', 'devtools.timeline', 'disabled-by-default-devtools.timeline.frame']
 /**
  * A bounded Chromium trace of the scheduler, GPU and compositor (gpu, cc, viz, frames), armed before an action and kept
@@ -161,7 +168,7 @@ export async function armSchedulerTrace(page) {
     schedulerTraces.set(page, entry)
     entry.armedBefore = { monotonicMs: performance.now(), wallMs: Date.now() }
     await session.send('Tracing.start', { transferMode: 'ReturnAsStream', streamFormat: 'json',
-      traceConfig: { recordMode: 'recordContinuously', traceBufferSizeInKb: 1024, enableSampling: false,
+      traceConfig: { recordMode: 'recordContinuously', traceBufferSizeInKb: SCHEDULER_TRACE_BUFFER_KB, enableSampling: false,
         enableSystrace: false, enableArgumentFilter: true, includedCategories: schedulerCategories } })
     entry.armedAfter = { monotonicMs: performance.now(), wallMs: Date.now() }
   } catch (error) {
@@ -235,7 +242,7 @@ export async function finishSchedulerTrace(page, info, {
           lastEventUs = lastEventUs === undefined ? event.ts : Math.max(lastEventUs, event.ts)
         }
         return { format: 'starmap.render-scheduler-trace', traceEvents: clean, armedBefore: entry.armedBefore,
-          armedAfter: entry.armedAfter, categories: schedulerCategories, nativeBufferKb: 1024, rawBytes: bytes,
+          armedAfter: entry.armedAfter, categories: schedulerCategories, nativeBufferKb: SCHEDULER_TRACE_BUFFER_KB, rawBytes: bytes,
           stoppingAt, completedAt, firstEventUs, lastEventUs, dataLossOccurred,
           timingAlignmentHasProtocolUncertainty: true, diagnosticOnly: true }
       } finally { await entry.session.send('IO.close', { handle: stream }).catch(() => {}) }
