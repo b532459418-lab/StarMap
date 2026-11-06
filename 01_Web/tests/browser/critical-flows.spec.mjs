@@ -1202,48 +1202,39 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     })
   }
   /**
-   * Test stability F2-2: a save is clicked on a settled map. The pause stops the frames after the click, not the GPU work
-   * the frames before it left; on CI's software GL that work made the main thread wait 0.9 and 1.4 s after the click
-   * when the click came during the shader compiling and tile uploads that follow selecting a city. Settled: no main-thread
-   * task of `longTaskMs` or more in the last `quietMs`, and the last `frames` frames each within `frameIntervalMs` of the
-   * one before, the latest no older than that (the globe keeps its pace). Initial values from the CI evidence of
-   * 2026-11-03/05 (this case's render-recovery.cpuprofile): steady frames every 0.25–0.7 s with 10–30 ms of main-thread
-   * work; before the click, shader compiling blocked the main thread 0.27–1.4 s at a time. Bounded: a map that does not
-   * settle within `timeoutMs` fails here with what it saw. The wait and the last observation are recorded.
+   * The first case's save, clicked in the page (test stability F2, design §11). On CI's software rendering the task of a
+   * real (Playwright) click waited on a compositor commit: of 80 real clicks in the runs of 2026-11-06 (42187578007,
+   * 42192357428), 6 failed, each with the click's own task taking 0.6-1.5 s and another long task after it, so that the
+   * 1.5 s watchdog ended the pause before the change could be applied; of 40 clicks made in the page, none had a long task
+   * at the click and every save's pause ended by its applying. So the button is first checked as the user finds it
+   * (visible, enabled), then clicked in the page, and in that same task, right after the click, the save's pause must have
+   * started (read from the render loop's state in the same evaluate). The real click on this button stays covered by the
+   * other A′ cases (a refused save, an unknown outcome or applying that throws; another page, a hidden page or the
+   * watchdog), by "a Want to Go item added on the map is still there after a reload", "a save keeps the camera, ...",
+   * "pages that are not shown keep their scroll position, ..." and by two cases of map-recovery.spec.mjs (a lost
+   * context; no WebGL).
    */
-  const SETTLED_MAP = Object.freeze({ quietMs: 2000, longTaskMs: 200, frames: 3, frameIntervalMs: 1000, timeoutMs: 20000 })
-  async function waitForSettledMap(page) {
-    const started = Date.now()
-    let observed
-    try {
-      await expect.poll(async () => {
-        observed = await page.evaluate(({ quietMs, longTaskMs, frames, frameIntervalMs }) => {
-          const diagnostics = window.__travelAtlasDebugRenderLoop?.state().diagnostics
-          if (!diagnostics) return { settled: false, reason: 'no render loop diagnostics' }
-          const now = performance.now()
-          const longTasks = diagnostics.longTasks.filter((task) => task.durationMs >= longTaskMs && task.at + task.durationMs > now - quietMs)
-            .map((task) => Math.round(task.durationMs))
-          const recent = diagnostics.frameTimings.slice(-frames)
-          const intervals = recent.map((frame) => (frame.intervalMs === undefined ? null : Math.round(frame.intervalMs)))
-          const sinceLastFrameMs = recent.length ? Math.round(now - recent.at(-1).at) : null
-          const steady = recent.length === frames && intervals.every((interval) => interval !== null && interval <= frameIntervalMs)
-            && sinceLastFrameMs <= frameIntervalMs
-          return { settled: diagnostics.longTaskSupported && longTasks.length === 0 && steady, longTasks, intervals, sinceLastFrameMs,
-            renderCpuMs: recent.map((frame) => (frame.renderCpuMs === undefined ? null : Math.round(frame.renderCpuMs))) }
-        }, SETTLED_MAP)
-        return observed.settled
-      }, { message: 'the map settles before a save is clicked (the settled map annotation has what it saw)', timeout: SETTLED_MAP.timeoutMs, intervals: [100, 250] }).toBe(true)
-    } finally {
-      const record = { waitedMs: Date.now() - started, ...observed }
-      test.info().annotations.push({ type: 'settled map', description: JSON.stringify(record) })
-      console.info('A′ settled map', JSON.stringify({ test: test.info().title.slice(0, 40), ...record }))
-    }
+  async function clickSaveInPage(page) {
+    const button = page.getByRole('button', { name: 'Mark as Want to Go', exact: true })
+    await expect(button).toBeVisible()
+    await expect(button).toBeEnabled()
+    const sent = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === '/__travelatlas/editor/wanttogo')
+    const started = await button.evaluate((element) => {
+      const loop = window.__travelAtlasDebugRenderLoop
+      const before = loop.state()
+      element.click()
+      const after = loop.state()
+      return { pausedBefore: before.paused, pausedAfter: after.paused, countAfter: after.count, episodesEnded: after.episodes.length - before.episodes.length }
+    })
+    test.info().annotations.push({ type: 'save clicked in the page', description: JSON.stringify(started) })
+    expect(started, `the save's pause started in the click's task: ${JSON.stringify(started)}`)
+      .toEqual({ pausedBefore: false, pausedAfter: true, countAfter: 1, episodesEnded: 0 })
+    await sent
   }
   const markReykjavik = async (page, { observePause = false } = {}) => {
     await finishSchedulerTrace(page)
     await finishRenderCpuProfile(page)
-    // D3: the evidence is armed before the map settles, so that its own start (Profiler.start took 0.48 s on CI) is over
-    // before the click.
+    // D3: the evidence is armed first, so that its own start (Profiler.start took 0.48 s on CI) is over before the click.
     if (observePause) await armSchedulerTrace(page)
     let session
     try {
@@ -1259,9 +1250,8 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       renderCpuProfiles.set(page, { setupFailure: error.name })
       if (session) await diagnosticDeadline(session.detach()).catch(() => {})
     }
-    await waitForSettledMap(page)
     const action = () => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
-    if (observePause) await observePauseDuring(page, action)
+    if (observePause) await observePauseDuring(page, () => clickSaveInPage(page))
     else await action()
   }
   /**
