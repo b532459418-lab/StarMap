@@ -1,4 +1,7 @@
-import { test, expect, expectPageError, pageErrors, openMap, selectReykjavik, openCollection, readFixture, renderedRevision, saveAndWaitForRevision, waitForRenderedRevision } from './helpers.mjs'
+import {
+  test, expect, expectPageError, pageErrors, openMap, selectReykjavik, openCollection, readFixture, renderedRevision, saveAndWaitForRevision,
+  waitForRenderedRevision, armSchedulerTrace, diagnosticDeadline, finishSchedulerTrace,
+} from './helpers.mjs'
 import {
   PRIVATE_MODULE_PATH, createBrowserFixture, enterDamagedStoreMode, fixtureFileNames, fixtureIds, importInboxMedia, readFixtureFiles, setStoreAside,
   storeRevisionOf, waitForServedRevision,
@@ -1126,10 +1129,6 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
   }
   // Diagnostic-only proposal: browser CPU sampling is armed before the real save action, never inside its frame gate.
   const renderCpuProfiles = new WeakMap()
-  const diagnosticDeadline = (request) => new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Render profile diagnostic deadline')), 1500)
-    request.then((value) => { clearTimeout(timer); resolve(value) }, (error) => { clearTimeout(timer); reject(error) })
-  })
   async function finishRenderCpuProfile(page, info) {
     const entry = renderCpuProfiles.get(page)
     if (!entry) return
@@ -1165,118 +1164,9 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       if (entry.session) await diagnosticDeadline(entry.session.detach()).catch(() => {})
     }
   }
-  const renderSchedulerTraces = new WeakMap()
-  const schedulerCategories = ['gpu', 'cc', 'viz', 'renderer.scheduler', 'devtools.timeline', 'disabled-by-default-devtools.timeline.frame']
-  async function armRenderSchedulerTrace(page) {
-    let session
-    try {
-      session = await page.context().browser().newBrowserCDPSession()
-      const entry = { session, active: true }
-      entry.complete = new Promise((resolve) => { entry.completed = resolve })
-      session.once('Tracing.tracingComplete', entry.completed)
-      renderSchedulerTraces.set(page, entry)
-      entry.armedBefore = { monotonicMs: performance.now(), wallMs: Date.now() }
-      await session.send('Tracing.start', { transferMode: 'ReturnAsStream', streamFormat: 'json',
-        traceConfig: { recordMode: 'recordContinuously', traceBufferSizeInKb: 1024, enableSampling: false,
-          enableSystrace: false, enableArgumentFilter: true, includedCategories: schedulerCategories } })
-      entry.armedAfter = { monotonicMs: performance.now(), wallMs: Date.now() }
-    } catch (error) {
-      const entry = renderSchedulerTraces.get(page)
-      if (entry?.completed) session?.off('Tracing.tracingComplete', entry.completed)
-      if (entry) entry.active = false
-      renderSchedulerTraces.set(page, { session, setupFailure: error.name })
-    }
-  }
-  async function finishRenderSchedulerTrace(page, info) {
-    const entry = renderSchedulerTraces.get(page)
-    if (!entry) return
-    renderSchedulerTraces.delete(page)
-    const retain = info && info.status !== info.expectedStatus
-    try {
-      entry.stage = 'setup'
-      if (entry.setupFailure) throw Object.assign(new Error('Render scheduler trace unavailable'), { name: entry.setupFailure })
-      const collect = async () => {
-        const stoppingAt = { monotonicMs: performance.now(), wallMs: Date.now() }
-        entry.collectionStartedMs = stoppingAt.monotonicMs
-        entry.stage = 'stop'
-        await entry.session.send('Tracing.end')
-        entry.stage = 'completion'
-        const { stream, dataLossOccurred } = await entry.complete
-        const completedAt = { monotonicMs: performance.now(), wallMs: Date.now() }
-        try {
-          if (!retain || !entry.active) return undefined
-          let bytes = 0
-          const chunks = []
-          entry.stage = 'read'
-          for (;;) {
-            const part = await entry.session.send('IO.read', { handle: stream, size: 262144 })
-            if (!entry.active) return undefined
-            const buffer = Buffer.from(part.data, part.base64Encoded ? 'base64' : 'utf8')
-            bytes += buffer.length
-            entry.receivedBytes = bytes
-            if (bytes > 16000000) throw new Error('Render scheduler trace exceeds16MB')
-            chunks.push(buffer)
-            if (part.eof) break
-          }
-          entry.stage = 'parse'
-          const { traceEvents } = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-          if (!Array.isArray(traceEvents) || traceEvents.length > 60000) throw new Error('Render scheduler event cap exceeded')
-          entry.stage = 'sanitize'
-          const clean = traceEvents.map((event) => {
-            // Keep event timing/flow identities, never arbitrary trace arguments, source, URLs or machine metadata.
-            const result = {}
-            for (const key of ['pid', 'tid', 'ts', 'dur', 'tts', 'tdur']) if (Number.isFinite(event[key])) result[key] = event[key]
-            for (const key of ['ph', 'name', 'cat', 's', 'bp']) if (typeof event[key] === 'string') {
-              result[key] = event[key].replace(/https?:\/\/[^\s]+|[A-Za-z]:[\\/][^\s]+|\/(?:Users|home|tmp|private|var)\/[^\s]+/g, '[path]').slice(0, 240)
-            }
-            for (const key of ['id', 'bind_id']) if (typeof event[key] === 'number'
-              || (typeof event[key] === 'string' && /^[a-z0-9x]{1,80}$/i.test(event[key]))) result[key] = event[key]
-            if (event.id2 && typeof event.id2 === 'object') {
-              result.id2 = Object.fromEntries(Object.entries(event.id2).filter(([key, value]) => ['local', 'global'].includes(key)
-                && (typeof value === 'number' || (typeof value === 'string' && /^[a-z0-9x]{1,80}$/i.test(value)))))
-            }
-            if (event.ph === 'M' && ['process_name', 'thread_name'].includes(event.name) && typeof event.args?.name === 'string') {
-              result.args = { name: event.args.name.replace(/[^a-zA-Z0-9_ :.-]/g, '_').slice(0, 120) }
-            }
-            return result
-          })
-          let firstEventUs, lastEventUs
-          for (const event of clean) if (event.ph !== 'M' && Number.isFinite(event.ts) && event.ts > 0) {
-            firstEventUs = firstEventUs === undefined ? event.ts : Math.min(firstEventUs, event.ts)
-            lastEventUs = lastEventUs === undefined ? event.ts : Math.max(lastEventUs, event.ts)
-          }
-          return { format: 'starmap.render-scheduler-trace', traceEvents: clean, armedBefore: entry.armedBefore,
-            armedAfter: entry.armedAfter, categories: schedulerCategories, nativeBufferKb: 1024, rawBytes: bytes,
-            stoppingAt, completedAt, firstEventUs, lastEventUs, dataLossOccurred,
-            timingAlignmentHasProtocolUncertainty: true, diagnosticOnly: true }
-        } finally { await entry.session.send('IO.close', { handle: stream }).catch(() => {}) }
-      }
-      const trace = await diagnosticDeadline(collect())
-      if (!trace || !retain) return
-      const text = JSON.stringify(trace)
-      if (Buffer.byteLength(text) > 16000000) throw new Error('Sanitized render scheduler trace exceeds16MB')
-      const destination = info.outputPath('render-recovery-scheduler.json')
-      entry.stage = 'retain'
-      await writeFile(destination, text)
-      await info.attach('Render recovery scheduler trace', { path: destination, contentType: 'application/json' })
-    } catch (error) {
-      if (retain) await writeFile(info.outputPath('render-recovery-scheduler-unavailable.json'), JSON.stringify({
-        format: 'starmap.render-scheduler-unavailable', errorName: error.name,
-        stage: entry.stage, receivedBytes: entry.receivedBytes,
-        elapsedCollectionMs: entry.collectionStartedMs === undefined ? undefined : performance.now() - entry.collectionStartedMs,
-        reason: error.message === 'Render profile diagnostic deadline' ? 'diagnostic-response-deadline'
-          : ['Render scheduler trace exceeds16MB', 'Render scheduler event cap exceeded', 'Sanitized render scheduler trace exceeds16MB'].includes(error.message)
-            ? 'bounded-cap' : 'protocol-or-parse-unavailable',
-        diagnosticDeadlineMs: 1500, deadlineDoesNotCancelRpc: true })).catch(() => {})
-    } finally {
-      entry.active = false
-      if (entry.completed) entry.session?.off('Tracing.tracingComplete', entry.completed)
-      if (entry.session) await diagnosticDeadline(entry.session.detach()).catch(() => {})
-    }
-  }
   test.afterEach(async ({ page }, info) => {
     // These share Chromium instrumentation: finish the trace while the CPU sampler is still attached.
-    await finishRenderSchedulerTrace(page, info)
+    await finishSchedulerTrace(page, info)
     await finishRenderCpuProfile(page, info)
     // Checked last, so a failure here never skips the evidence above. A closed page has no state to check.
     const final = await loop(page).catch(() => undefined)
@@ -1350,11 +1240,11 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     }
   }
   const markReykjavik = async (page, { observePause = false } = {}) => {
-    await finishRenderSchedulerTrace(page)
+    await finishSchedulerTrace(page)
     await finishRenderCpuProfile(page)
     // D3: the evidence is armed before the map settles, so that its own start (Profiler.start took 0.48 s on CI) is over
     // before the click.
-    if (observePause) await armRenderSchedulerTrace(page)
+    if (observePause) await armSchedulerTrace(page)
     let session
     try {
       session = await page.context().newCDPSession(page)
