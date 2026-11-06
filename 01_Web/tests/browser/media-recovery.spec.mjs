@@ -142,6 +142,17 @@ async function checkTasks(page) {
   return response.json()
 }
 
+/**
+ * Test stability F4: a task read while another operation holds the library lease lists no task (`status` 'processing',
+ * or 'needs_review', and `jobs: []`; scripts/media-job-service.mjs handleMediaJobRead); the center then keeps the tasks it
+ * knew and says the library is busy (src/data/mediaJobs.ts, MediaRecoveryCenter.tsx). A poll on a task tells that apart
+ * from a task missing from the list: `library processing`, `library needs_review` or `missing` instead of undefined.
+ */
+const libraryState = (read) => (read.status ? `library ${read.status}` : undefined)
+const taskStatus = (read, id) => libraryState(read) ?? read.jobs.find(job => job.jobId === id)?.status ?? 'missing'
+const taskFileStatuses = (read, id) => libraryState(read) ?? read.jobs.find(job => job.jobId === id)?.files.map(file => file.status) ?? 'missing'
+const taskPaused = (read, id) => libraryState(read) ?? read.jobs.find(job => job.jobId === id)?.paused ?? 'missing'
+
 async function review(page, id) {
   const response = page.waitForResponse(response => response.url().endsWith(`${jobsUrl}/${id}/preview`))
   await exactCard(page, id).getByRole('button', { name: 'Review import scope', exact: true }).click()
@@ -175,7 +186,7 @@ async function seedHiddenAndRemovedMedia(page, first) {
   const baseline = { ...first, name: 'old-hidden-photo.png' }
   const id = await receivePhotos(page, [removed, baseline])
   recordMediaPhase(page, 'baseline files received')
-  await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.files.map(file => file.status), { timeout: 30000 }).toEqual(['pending', 'pending'])
+  await expect.poll(async () => taskFileStatuses(await checkTasks(page), id), { timeout: 30000 }).toEqual(['pending', 'pending'])
   await expect(exactCard(page, id).getByRole('button', { name: 'Review import scope', exact: true })).toBeEnabled()
   await review(page, id)
   recordMediaPhase(page, 'baseline import preview complete')
@@ -184,7 +195,7 @@ async function seedHiddenAndRemovedMedia(page, first) {
   await expect(exactCard(page, id).locator('header strong')).toHaveText('Completed', { timeout: 30000 })
   recordMediaPhase(page, 'baseline import completed')
   await exactCard(page, id).getByRole('button', { name: 'Close completed task', exact: true }).click()
-  await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.status).toBe('closed')
+  await expect.poll(async () => taskStatus(await checkTasks(page), id)).toBe('closed')
   recordMediaPhase(page, 'baseline task closed')
   await center(page).getByRole('button', { name: 'Close panel', exact: true }).click()
   await page.reload({ waitUntil: 'domcontentloaded' })
@@ -320,7 +331,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     } else await route.continue()
   })
   const id = await receivePhotos(page, [first, second], true)
-  await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.files.map(file => file.status)).toEqual(['pending', 'not_received'])
+  await expect.poll(async () => taskFileStatuses(await checkTasks(page), id)).toEqual(['pending', 'not_received'])
   expect(receives).toBe(1)
   expect(imports).toBe(0)
   const initialSources = await sourceSnapshot()
@@ -337,7 +348,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
   recordMediaPhase(page, 'lost reception and storage-clear discovery complete')
 
   await exactCard(page, id).getByRole('button', { name: 'Pause for now', exact: true }).click()
-  await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.paused).toBe(true)
+  await expect.poll(async () => taskPaused(await checkTasks(page), id)).toBe(true)
   await center(page).getByRole('button', { name: 'Close panel', exact: true }).click()
   await openCollection(page)
   await page.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
@@ -380,7 +391,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     await expect(other.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
     await expect(other.locator('.cesium-widget canvas')).toBeVisible()
     await openTasks(other)
-    expect((await checkTasks(other)).jobs.find(job => job.jobId === id)?.files.map(file => file.status)).toEqual(['pending', 'not_received'])
+    expect(taskFileStatuses(await checkTasks(other), id)).toEqual(['pending', 'not_received'])
     const stale = await review(other, id)
     console.info('MR lifecycle: fresh browser context found partial task and previewed scope')
     recordMediaPhase(page, 'secondary context / partial discovery / stale preview complete')
@@ -415,7 +426,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     const receivedBody = await receivedResult.json()
     console.info('MR lifecycle: resumed reception response', JSON.stringify({ status: receivedResult.status(), code: receivedBody.code, files: receivedBody.job?.files.map(file => file.status) }))
     expect(receivedResult.ok()).toBe(true)
-    await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.files.map(file => file.status), { timeout: 30000 }).toEqual(['pending', 'pending'])
+    await expect.poll(async () => taskFileStatuses(await checkTasks(page), id), { timeout: 30000 }).toEqual(['pending', 'pending'])
     expect(receives).toBe(2)
     console.info('MR lifecycle: wrong name and size made no writes; original unsent file received once')
     recordMediaPhase(page, 'correct unsent reception complete')
@@ -493,7 +504,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     })
     await exactCard(other, id).getByRole('checkbox', { name: confirmScope, exact: true }).check()
     await exactCard(other, id).getByRole('button', { name: 'Import confirmed files', exact: true }).click()
-    await expect.poll(async () => (await checkTasks(other)).jobs.find(job => job.jobId === id)?.status).toBe('completed')
+    await expect.poll(async () => taskStatus(await checkTasks(other), id)).toBe('completed')
     console.info('MR lifecycle: lost import response recovered sealed completion without retry')
     recordMediaPhase(page, 'lost import response / sealed completion discovered')
     expect(imports).toBe(1)
@@ -549,7 +560,7 @@ test('lost responses, storage loss, partial resume, whole Inbox consent and cros
     recordMediaPhase(page, 'final Close UI action started')
     await exactCard(other, id).getByRole('button', { name: 'Close completed task', exact: true }).click()
     recordMediaPhase(page, 'final Close UI action finished / Check tasks poll started')
-    await expect.poll(async () => (await checkTasks(other)).jobs.find(job => job.jobId === id)?.status).toBe('closed')
+    await expect.poll(async () => taskStatus(await checkTasks(other), id)).toBe('closed')
     recordMediaPhase(page, 'final Check tasks closed fact verified')
     expect(await sourceSnapshot()).toEqual(beforeImport)
     expect(errors).toEqual([])
@@ -589,7 +600,7 @@ test('mobile recovery keeps scope consent as a user action and fits a narrow tra
   await exactCard(page, id).getByRole('button', { name: 'Import confirmed files', exact: true }).click()
   await expect(exactCard(page, id).locator('header strong')).toHaveText('Completed', { timeout: 30000 })
   await exactCard(page, id).getByRole('button', { name: 'Close completed task', exact: true }).click()
-  await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.status).toBe('closed')
+  await expect.poll(async () => taskStatus(await checkTasks(page), id)).toBe('closed')
 })
 
 test('drone reception fixes the chosen type and required date without inventing missing coordinates', async ({ page }) => {
@@ -631,7 +642,7 @@ test('drone reception fixes the chosen type and required date without inventing 
   expect(item.position).toBeUndefined()
   expect(imports).toBe(1)
   await exactCard(page, id).getByRole('button', { name: 'Close completed task', exact: true }).click()
-  await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.status).toBe('closed')
+  await expect.poll(async () => taskStatus(await checkTasks(page), id)).toBe('closed')
   await page.reload()
   await expect(page.locator('.atlas-info-panel h2')).toHaveText('Reykjavik')
   await expect(page.getByRole('button', { name: 'Select Reykjavik drone media 01', exact: true })).toBeVisible()
@@ -656,7 +667,7 @@ test('a real failed reception keeps an uncertain task across reload and never re
   page.on('request', request => { if (isReceive(request)) receives++; if (isImport(request)) imports++ })
   const before = await sourceSnapshot()
   const id = await receivePhotos(page, { name: 'invalid-neutral.png', mimeType: 'image/png', buffer: Buffer.from('Synthetic invalid image bytes; no original photograph') })
-  await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.status).toBe('needs_review')
+  await expect.poll(async () => taskStatus(await checkTasks(page), id)).toBe('needs_review')
   const recordPath = path.join(syntheticRoot(), 'operations', 'media-import', 'v1', 'jobs', `${id}.json`)
   const preserved = await readFile(recordPath)
   expect(JSON.parse(preserved).files[0].phase).toBe('needs_review')
@@ -667,7 +678,7 @@ test('a real failed reception keeps an uncertain task across reload and never re
   expect(imports).toBe(0)
   await page.reload()
   await openTasks(page)
-  expect((await checkTasks(page)).jobs.find(job => job.jobId === id)?.status).toBe('needs_review')
+  expect(taskStatus(await checkTasks(page), id)).toBe('needs_review')
   expect(await readFile(recordPath)).toEqual(preserved)
   expect(await sourceSnapshot()).toEqual(before)
   expect(receives).toBe(1)
@@ -692,7 +703,7 @@ test.describe('new-library mode: media', () => {
   async function importTask(page, files, { matches = false } = {}) {
     await expect.poll(() => servedRevision(page)).not.toBe('undefined')
     const id = await receivePhotos(page, files)
-    await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.files.map(file => file.status), { timeout: 30000 }).toEqual(files.map(() => 'pending'))
+    await expect.poll(async () => taskFileStatuses(await checkTasks(page), id), { timeout: 30000 }).toEqual(files.map(() => 'pending'))
     const preview = await review(page, id)
     const card = exactCard(page, id)
     await card.getByRole('checkbox', { name: confirmScope, exact: true }).check()
@@ -706,7 +717,7 @@ test.describe('new-library mode: media', () => {
     expect((await imported).status()).toBe(200)
     await expect(card.locator('header strong')).toHaveText('Completed', { timeout: 30000 })
     await card.getByRole('button', { name: 'Close completed task', exact: true }).click()
-    await expect.poll(async () => (await checkTasks(page)).jobs.find(job => job.jobId === id)?.status).toBe('closed')
+    await expect.poll(async () => taskStatus(await checkTasks(page), id)).toBe('closed')
     await center(page).getByRole('button', { name: 'Close panel', exact: true }).click()
     return preview
   }
