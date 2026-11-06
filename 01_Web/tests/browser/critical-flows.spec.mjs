@@ -1208,7 +1208,9 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
    * 1.5 s watchdog ended the pause before the change could be applied; of 40 clicks made in the page, none had a long task
    * at the click and every save's pause ended by its applying. So the button is first checked as the user finds it
    * (visible, enabled), then clicked in the page, and in that same task, right after the click, the save's pause must have
-   * started (read from the render loop's state in the same evaluate). The real click on this button stays covered by the
+   * started (read from the render loop's state in the same evaluate). The same read records what the pause starts from
+   * (the frame count, the viewer, the pauses ended so far): `expectNoFrameWhilePaused` checks the whole pause against it
+   * once the pause is over. The real click on this button stays covered by the
    * other A′ cases (a refused save, an unknown outcome or applying that throws; another page, a hidden page or the
    * watchdog), by "a Want to Go item added on the map is still there after a reload", "a save keeps the camera, ...",
    * "pages that are not shown keep their scroll position, ..." and by two cases of map-recovery.spec.mjs (a lost
@@ -1224,12 +1226,29 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       const before = loop.state()
       element.click()
       const after = loop.state()
-      return { pausedBefore: before.paused, pausedAfter: after.paused, countAfter: after.count, episodesEnded: after.episodes.length - before.episodes.length }
+      return { pausedBefore: before.paused, pausedAfter: after.paused, countAfter: after.count, episodesEnded: after.episodes.length - before.episodes.length,
+        framesAtStart: after.frames, viewer: after.viewer, episodesAtStart: after.episodes.length }
     })
     test.info().annotations.push({ type: 'save clicked in the page', description: JSON.stringify(started) })
-    expect(started, `the save's pause started in the click's task: ${JSON.stringify(started)}`)
+    const { framesAtStart, viewer, episodesAtStart, ...seen } = started
+    expect(seen, `the save's pause started in the click's task: ${JSON.stringify(started)}`)
       .toEqual({ pausedBefore: false, pausedAfter: true, countAfter: 1, episodesEnded: 0 })
     await sent
+    return { framesAtStart, viewer, episodesAtStart }
+  }
+  /**
+   * No frame was drawn while the save's pause lasted, from its start to its resume, on the same viewer. Proven from the
+   * page's own records, so the case need not read the page before the pause ends (on CI a read 0.6 s after the click can
+   * come too late, run 42199897309): the frame count recorded in the click's task (`clickSaveInPage`) equals the frame
+   * count the page recorded at the resume (`framesAtResume`), and this pause is the only one ended since the click. This
+   * covers the whole pause; the live check of `expectPaused` covers a 250 ms window of it (or the part of it after
+   * `before`), so it is at least as strict.
+   */
+  function expectNoFrameWhilePaused(state, started) {
+    const evidence = `no frame while paused: ${JSON.stringify({ started, viewer: state.viewer, frames: state.frames, framesAtResume: state.framesAtResume, episodes: state.episodes.slice(started.episodesAtStart) })}`
+    expect(state.viewer, evidence).toBe(started.viewer)
+    expect(state.episodes.length - started.episodesAtStart, evidence).toBe(1)
+    expect(state.framesAtResume, evidence).toBe(started.framesAtStart)
   }
   const markReykjavik = async (page, { observePause = false } = {}) => {
     await finishSchedulerTrace(page)
@@ -1251,8 +1270,8 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       if (session) await diagnosticDeadline(session.detach()).catch(() => {})
     }
     const action = () => page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
-    if (observePause) await observePauseDuring(page, () => clickSaveInPage(page))
-    else await action()
+    if (observePause) return clickSaveInPage(page)
+    await action()
   }
   /**
    * The next click on the Want to Go button shows the page `name` as soon as the save's pause has started: in the page,
@@ -1290,9 +1309,10 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await expectRendering(page)
     await holdWrite(page, { ms: 600 })
     await armPauseProbe(page, '.atlas-city-wtg-button')
-    await markReykjavik(page, { observePause: true })
+    const started = await markReykjavik(page, { observePause: true })
     await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
     const state = await expectRendering(page, 'applied')
+    expectNoFrameWhilePaused(state, started)
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThan(500)
     // Within the limit (性能续 P7: by the probe, not a duration).
     await expectEndedByTheLimit(page)
