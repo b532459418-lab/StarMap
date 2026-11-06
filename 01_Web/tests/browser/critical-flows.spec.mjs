@@ -1,6 +1,6 @@
 import {
   test, expect, expectPageError, pageErrors, openMap, selectReykjavik, openCollection, readFixture, renderedRevision, saveAndWaitForRevision,
-  waitForRenderedRevision, armSchedulerTrace, diagnosticDeadline, finishSchedulerTrace,
+  waitForRenderedRevision, armSchedulerTrace, diagnosticDeadline, finishSchedulerTrace, expectPauseStarted, armAtSaveClick, pauseStartedAtClick,
 } from './helpers.mjs'
 import {
   PRIVATE_MODULE_PATH, createBrowserFixture, enterDamagedStoreMode, fixtureFileNames, fixtureIds, importInboxMedia, readFixtureFiles, setStoreAside,
@@ -1002,27 +1002,6 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       .toEqual({ renderErrorCount: 0, contextLostCount: 0 })
   }
   /**
-   * Paused now: the loop is off and no frame is drawn while it is. 性能续 P7: a pause may end normally within the
-   * window (on a busy runner the window and the page calls take longer than a short save); then no frame was drawn
-   * from `before` until the resume (`framesAtResume`), and the frames after the resume are the loop running again.
-   */
-  async function expectPaused(page) {
-    await expect.poll(async () => (await loop(page))?.paused, { timeout: 5000, intervals: [25, 50] }).toBe(true)
-    const before = await loop(page)
-    await page.waitForTimeout(250)
-    const after = await loop(page)
-    const evidence = `no frame while paused: ${JSON.stringify([before, after])}`
-    expect(after.viewer, evidence).toBe(before.viewer)
-    // The same pause: still paused, and no episode ended since `before` (the last one recorded is the same).
-    const lastEnded = (state) => JSON.stringify(state.episodes.at(-1) ?? null)
-    if (after.paused && lastEnded(after) === lastEnded(before)) expect(after.frames, evidence).toBe(before.frames)
-    else {
-      // The pause ended in the window: its episode is recorded, and the resume came with no frame drawn since `before`.
-      expect(lastEnded(after), evidence).not.toBe(lastEnded(before))
-      expect(after.framesAtResume, evidence).toBe(before.frames)
-    }
-  }
-  /**
    * 性能续 P7: the pause of the next click on `selector` is bounded by the watchdog without a duration budget. In the
    * page, right after the app's own click handler (as showPageAtPause), a timer of the watchdog's limit is set once the
    * pause has started; the watchdog's timer was set earlier with the same delay, so it runs first however late the main
@@ -1065,37 +1044,13 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       .toMatchObject({ armed: true, paused: false, ended: true })
     return probe
   }
-  /** Observe the actual pending-write phase, not the input driver's later post-action settling. */
-  async function observePauseDuring(page, action, whilePaused) {
-    let actionFailed = false
-    let requested = false
-    let resolveWrite, rejectWrite
-    const writeStarted = new Promise((resolve, reject) => { resolveWrite = resolve; rejectWrite = reject })
-    const request = (sent) => {
-      const url = new URL(sent.url())
-      if (sent.method() !== 'POST' || url.origin !== 'http://127.0.0.1:5173'
-        || !['/__travelatlas/editor/wanttogo', '/__travelatlas/editor/wanttogo/update'].includes(url.pathname)) return
-      requested = true
-      resolveWrite()
-    }
-    page.on('request', request)
-    const performed = Promise.resolve().then(action).then((value) => {
-      if (!requested) throw new Error('The real save action finished without its editor write request')
-      return value
-    }).catch((error) => { actionFailed = true; rejectWrite(error); throw error })
-    const observed = (async () => {
-      // The original input action keeps its own actionability budget; the pause gate begins at the actual write.
-      await writeStarted
-      await expectPaused(page)
-      if (!actionFailed && whilePaused) await whilePaused()
-    })()
-    // Settle both before cleanup; a failed input keeps its original error and cannot dispatch a later phase action.
-    try {
-      const [actionResult, observationResult] = await Promise.allSettled([performed, observed])
-      if (actionResult.status === 'rejected') throw actionResult.reason
-      if (observationResult.status === 'rejected') throw observationResult.reason
-    } finally { page.off('request', request) }
-  }
+  /**
+   * The save's editor write, as the page sends it (a Want to Go item added, or one updated). Test stability F2 (design
+   * §14): the A′ cases no longer read the pause from outside while it lasts; what they do during it, and the start it is
+   * checked against, come from the page (`clickSaveInPage`, `armAtSaveClick`).
+   */
+  const writeSent = (page) => page.waitForRequest((sent) => sent.method() === 'POST'
+    && ['/__travelatlas/editor/wanttogo', '/__travelatlas/editor/wanttogo/update'].includes(new URL(sent.url()).pathname))
   /**
    * Resumed (by `endedBy` when given) and rendering: the loop is on, no render error and no lost context, and at least
    * two new frames within 5 s (a stopped loop draws none; software GL on CI can draw a frame only every second or so).
@@ -1202,19 +1157,25 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     })
   }
   /**
-   * The first case's save, clicked in the page (test stability F2, design §11). On CI's software rendering the task of a
-   * real (Playwright) click waited on a compositor commit: of 80 real clicks in the runs of 2026-11-06 (42187578007,
-   * 42192357428), 6 failed, each with the click's own task taking 0.6-1.5 s and another long task after it, so that the
-   * 1.5 s watchdog ended the pause before the change could be applied; of 40 clicks made in the page, none had a long task
-   * at the click and every save's pause ended by its applying. So the button is first checked as the user finds it
-   * (visible, enabled), then clicked in the page, and in that same task, right after the click, the save's pause must have
-   * started (read from the render loop's state in the same evaluate). The same read records what the pause starts from
-   * (the frame count, the viewer, the pauses ended so far): `expectNoFrameWhilePaused` checks the whole pause against it
-   * once the pause is over. The real click on this button stays covered by the
-   * other A′ cases (a refused save, an unknown outcome or applying that throws; another page, a hidden page or the
-   * watchdog), by "a Want to Go item added on the map is still there after a reload", "a save keeps the camera, ...",
-   * "pages that are not shown keep their scroll position, ..." and by two cases of map-recovery.spec.mjs (a lost
-   * context; no WebGL).
+   * A save clicked in the page (test stability F2, design §11 and §14), for the A′ cases whose save must be answered and
+   * applied (or refused) before the 1.5 s watchdog ends its pause: the first case, and a refused save, an unknown outcome
+   * or applying that throws. On CI's software rendering the task of a real (Playwright) click waited on a compositor
+   * commit after the app's click handler: of 80 real clicks in the runs of 2026-11-06 (42187578007, 42192357428), 6
+   * failed, each with the click's own task taking 0.6-1.5 s and another long task after it, so that the watchdog ended the
+   * pause before the change could be applied. The whole-group run 42222477775 (2026-11-06) failed the same way, in the
+   * refused save's first click (then critical-flows.spec.mjs:1321; `failed` expected, `limit` received): the page sent the
+   * write at 13:23:20.001, so the watchdog was due at 21.501; the click's task was busy 1.33 s, mostly native code after
+   * the app's handler, then another task 0.45 s; Playwright saw the request at 21.614 and answered it at 21.634, after
+   * the watchdog. Of 120 clicks made in the page, every save's pause ended by its applying. So the button is first
+   * checked as the user finds it (visible, enabled), then clicked in the page, and in that same task, right after the
+   * click, the save's pause must have started (read from the render loop's state in the same evaluate). The same read
+   * records what the pause starts from (the frame count, the viewer, the pauses ended so far): `expectNoFrameWhilePaused`
+   * checks the whole pause against it once the pause is over. The real click on this button stays covered: in the A′
+   * cases by the save of another page (the page is switched from the page itself, `showPageAtPause`) and by
+   * map-recovery.spec.mjs's lost context (`armAtSaveClick`); elsewhere by "a Want to Go item added on the map is still
+   * there after a reload", "a save keeps the camera, ...", "pages that are not shown keep their scroll position, ..." and
+   * map-recovery.spec.mjs's case without WebGL. The A′ cases' other buttons (a note's save, Hide, Restore) are clicked for
+   * real, with `armAtSaveClick`.
    */
   async function clickSaveInPage(page) {
     const button = page.getByRole('button', { name: 'Mark as Want to Go', exact: true })
@@ -1230,19 +1191,17 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
         framesAtStart: after.frames, viewer: after.viewer, episodesAtStart: after.episodes.length }
     })
     test.info().annotations.push({ type: 'save clicked in the page', description: JSON.stringify(started) })
-    const { framesAtStart, viewer, episodesAtStart, ...seen } = started
-    expect(seen, `the save's pause started in the click's task: ${JSON.stringify(started)}`)
-      .toEqual({ pausedBefore: false, pausedAfter: true, countAfter: 1, episodesEnded: 0 })
+    expectPauseStarted(started)
     await sent
-    return { framesAtStart, viewer, episodesAtStart }
+    return started
   }
   /**
    * No frame was drawn while the save's pause lasted, from its start to its resume, on the same viewer. Proven from the
    * page's own records, so the case need not read the page before the pause ends (on CI a read 0.6 s after the click can
-   * come too late, run 42199897309): the frame count recorded in the click's task (`clickSaveInPage`) equals the frame
-   * count the page recorded at the resume (`framesAtResume`), and this pause is the only one ended since the click. This
-   * covers the whole pause; the live check of `expectPaused` covers a 250 ms window of it (or the part of it after
-   * `before`), so it is at least as strict.
+   * come too late, run 42199897309): the frame count recorded in the click's task (`clickSaveInPage`, `armAtSaveClick`)
+   * equals the frame count the page recorded at the resume (`framesAtResume`), and this pause is the only one ended since
+   * the click. This covers the whole pause, where the live check it replaced (a page read, 250 ms, another read) covered a
+   * 250 ms window of it.
    */
   function expectNoFrameWhilePaused(state, started) {
     const evidence = `no frame while paused: ${JSON.stringify({ started, viewer: state.viewer, frames: state.frames, framesAtResume: state.framesAtResume, episodes: state.episodes.slice(started.episodesAtStart) })}`
@@ -1321,10 +1280,12 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
   test('a refused save, an unknown outcome, or applying that throws: the map renders again at once', async ({ page }) => {
     await openMap(page)
     await selectReykjavik(page)
+    // Each save is clicked in the page (`clickSaveInPage`): its pause must end by its answer, before the watchdog (a real
+    // click here failed in run 42222477775, design §14).
     // Refused by the server.
     await holdWrite(page, { fulfil: { status: 400, contentType: 'application/json', body: JSON.stringify({ ok: false, code: 'E_INVALID_INPUT', error: 'refused' }) } })
-    await markReykjavik(page)
-    await expectRendering(page, 'failed')
+    let started = await markReykjavik(page, { observePause: true })
+    expectNoFrameWhilePaused(await expectRendering(page, 'failed'), started)
     await page.unroute('**/__travelatlas/editor/wanttogo')
     // (A failed add asks for a reload before the next one.)
     await page.reload()
@@ -1336,16 +1297,16 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       // (A replayed answer: the parser takes it without an item; the rows are what fails.)
       ok: true, duplicate: true, revision: revision + 1, delta: { from: revision, to: revision + 1, upserts: [{ table: 'entries', row: { id: 7 } }], deletes: [] },
     }) } })
-    await markReykjavik(page)
-    await expectRendering(page, 'released')
+    started = await markReykjavik(page, { observePause: true })
+    expectNoFrameWhilePaused(await expectRendering(page, 'released'), started)
     await page.unroute('**/__travelatlas/editor/wanttogo')
     await page.unroute('**/__travelatlas/editor/read-model/changes**')
     await page.reload()
     await reykjavikAgain(page)
     // The outcome stays unknown (an unreadable answer every time): resumed at the first failed try.
     await holdWrite(page, { fulfil: { status: 502, contentType: 'text/html', body: '<p>Bad gateway</p>' } })
-    await markReykjavik(page)
-    await expectRendering(page, 'failed')
+    started = await markReykjavik(page, { observePause: true })
+    expectNoFrameWhilePaused(await expectRendering(page, 'failed'), started)
     await expect(page.getByText(/Nothing more can be saved until you reload|may have saved data/).first()).toBeVisible()
   })
 
@@ -1375,19 +1336,25 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await openCollection(page)
     await page.getByRole('button', { name: 'Edit note for Akureyri', exact: true }).click()
     await page.locator('.collection-card textarea').fill('Synthetic note while the page hides')
-    await observePauseDuring(page,
-      () => page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click(),
-      () => page.evaluate(() => {
-      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
-      document.dispatchEvent(new Event('visibilitychange'))
-      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
-      }))
+    // Hidden from the page, in the save click's task once its pause has started (as the page switch above; design §14).
+    await armAtSaveClick(page, 'button[aria-label="Save note for Akureyri"]', 'hide')
+    let sent = writeSent(page)
+    await page.getByRole('button', { name: 'Save note for Akureyri', exact: true }).click()
+    await sent
+    const hidden = await pauseStartedAtClick(page)
+    expect(hidden.afterAct, `the hidden page ended the save's pause at once: ${JSON.stringify(hidden)}`)
+      .toEqual({ paused: false, episodes: hidden.episodesAtStart + 1, endedBy: 'hidden' })
     await expectRendering(page, 'hidden')
     await expect(page.locator('.collection-card textarea')).toHaveCount(0, { timeout: 10000 })
-    // The watchdog: a save whose answer takes longer than the limit.
+    // The watchdog: a save whose answer takes longer than the limit. No frame while it lasts, from the page's records.
     await armPauseProbe(page, 'button[aria-label="Hide: Nuuk"]')
-    await observePauseDuring(page, () => page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click())
+    await armAtSaveClick(page, 'button[aria-label="Hide: Nuuk"]')
+    sent = writeSent(page)
+    await page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click()
+    await sent
+    const started = await pauseStartedAtClick(page)
     const state = await expectRendering(page, 'limit')
+    expectNoFrameWhilePaused(state, started)
     expect(state.episodes.at(-1).pausedMs).toBeGreaterThanOrEqual(1500)
     // Ended by the watchdog when its time came (性能续 P7: the probe instead of a 1.7 s budget).
     await expectEndedByTheLimit(page)
@@ -1404,18 +1371,25 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       await new Promise((resolve) => setTimeout(resolve, restoring || held++ === 0 ? 1000 : 100))
       await route.continue()
     })
-    // Two saves in flight together: one pause, ended when the last one is applied.
-    const episodes = (await loop(page)).episodes.length
-    // Both clicked in one task (a click through the test driver can wait until the first save is done).
-    await page.evaluate(() => {
+    // Two saves in flight together: one pause, ended when the last one is applied. Both clicked in one task (a click
+    // through the test driver can wait until the first save is done); in that task the pause has started with both saves
+    // in it, and what it starts from is recorded for the check of the frames at its end (as the first case).
+    const started = await page.evaluate(() => {
+      const loop = window.__travelAtlasDebugRenderLoop
+      const before = loop.state()
       for (const label of ['Hide: Akureyri', 'Hide: Nuuk']) document.querySelector(`button[aria-label="${label}"]`).click()
+      const after = loop.state()
+      return { pausedBefore: before.paused, pausedAfter: after.paused, countAfter: after.count, episodesEnded: after.episodes.length - before.episodes.length,
+        framesAtStart: after.frames, viewer: after.viewer, episodesAtStart: after.episodes.length }
     })
-    await expectPaused(page)
+    test.info().annotations.push({ type: 'saves clicked in the page', description: JSON.stringify(started) })
+    expectPauseStarted(started, 2)
     await expect(page.getByRole('button', { name: 'Restore: Akureyri', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Restore: Nuuk', exact: true })).toBeVisible()
-    // One pause for both (the later write may meet E_STALE and be sent again: its first try then ends its part).
+    // One pause for both (the later write may meet E_STALE and be sent again: its first try then ends its part), with no
+    // frame while it lasted.
     const after = await expectRendering(page)
-    expect(after.episodes.length).toBe(episodes + 1)
+    expectNoFrameWhilePaused(after, started)
     // The viewer is replaced (destroyed and made again) during a pause: the new one renders once the save is applied.
     const viewer = after.viewer
     // The main thread's long tasks from here on (making the new viewer is one; with software rendering, seconds).
@@ -1428,9 +1402,13 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       return performance.now()
     })
     await armPauseProbe(page, 'button[aria-label="Restore: Akureyri"]')
-    await observePauseDuring(page,
-      () => page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click(),
-      () => page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer()))
+    // Replaced from the page, in the restore click's task once its pause has started (design §14).
+    await armAtSaveClick(page, 'button[aria-label="Restore: Akureyri"]', 'replaceViewer')
+    const sent = writeSent(page)
+    await page.getByRole('button', { name: 'Restore: Akureyri', exact: true }).click()
+    await sent
+    const restoring = await pauseStartedAtClick(page)
+    expect(restoring.viewer, 'the restore started on the viewer that was replaced').toBe(viewer)
     await expect.poll(async () => (await loop(page))?.viewer, { timeout: 10000 }).not.toBe(viewer)
     await expect(page.getByRole('button', { name: 'Hide: Akureyri', exact: true })).toBeVisible()
     // Ended by the applying, or by the watchdog. 性能续 P7: the watchdog's timer runs only when the main thread lets it

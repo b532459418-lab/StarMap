@@ -557,3 +557,76 @@ export async function openCollection(page) {
   await page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Places you want to go', exact: true })).toBeVisible()
 }
+
+/**
+ * A save's pause started in the task of its click (recorded in that task): not paused before the click, paused after it
+ * with `count` saves in it, and no pause ended in between. `started` is a record of `clickSaveInPage`
+ * (critical-flows.spec.mjs), of a click made in the page, or of `armAtSaveClick`.
+ */
+export function expectPauseStarted(started, count = 1) {
+  const { pausedBefore, pausedAfter, countAfter, episodesEnded } = started
+  expect({ pausedBefore, pausedAfter, countAfter, episodesEnded }, `the save's pause started in the click's task: ${JSON.stringify(started)}`)
+    .toEqual({ pausedBefore: false, pausedAfter: true, countAfter: count, episodesEnded: 0 })
+}
+/**
+ * Test stability F2 (design §14): what an A′ case does during a save's pause is done in the page, in the task of the
+ * save's (real) click, right after the app's own click handler (React listens on its root; this listener is on document,
+ * later on the bubble path), the way the cases show another page at a pause. On CI's software rendering the task of a
+ * real click can wait on a compositor commit for over a second after the app's handler (in run 42222477775 the task of a
+ * save's click was busy 1.33 s, then another 0.45 s, and Playwright saw the save's request 1.61 s after the page sent
+ * it), and a case that waited to see the pause from outside (a read of the page, the request's event) could see the
+ * 1.5 s watchdog end it first. So the click stays real (a note's save, Hide and Restore in critical-flows.spec.mjs; Mark
+ * as Want to Go in map-recovery.spec.mjs), and the case does not wait. The next click on `selector` records the render
+ * loop's state before the app's handler (a capture listener on window) and right after it; if the save's pause has
+ * started then, `act` is done there: 'hide' (the page hidden, as when another tab comes in front), 'replaceViewer' (the
+ * globe's viewer destroyed and made again) or 'loseContext' (the globe's WebGL context lost, the way a GPU reset loses
+ * it; the extension is kept as `window.__starmapLoseContext`). `pauseStartedAtClick` reads and checks the record. A save
+ * whose pause must end by its answer before the watchdog cannot be clicked for real so: the answer can only be handled
+ * after the click's task (critical-flows.spec.mjs `clickSaveInPage`).
+ */
+export const armAtSaveClick = (page, selector, act) => page.evaluate(({ selector, act }) => {
+  delete window.__starmapAtSaveClick
+  let before
+  const pressed = (event) => {
+    if (!event.target.closest?.(selector)) return
+    window.removeEventListener('click', pressed, { capture: true })
+    before = window.__travelAtlasDebugRenderLoop.state()
+  }
+  const clicked = (event) => {
+    if (!event.target.closest?.(selector)) return
+    document.removeEventListener('click', clicked)
+    // The debug object of this moment: a replaced viewer makes a new one.
+    const debug = window.__travelAtlasDebugRenderLoop
+    const at = debug.state()
+    if (at.paused && act === 'hide') {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    } else if (at.paused && act === 'replaceViewer') debug.replaceViewer()
+    else if (at.paused && act === 'loseContext') {
+      const canvas = document.querySelector('.cesium-widget canvas')
+      const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl')
+      window.__starmapLoseContext = gl.getExtension('WEBGL_lose_context')
+      window.__starmapLoseContext.loseContext()
+    }
+    const after = debug.state()
+    window.__starmapAtSaveClick = { pausedBefore: before?.paused, pausedAfter: at.paused, countAfter: at.count,
+      episodesEnded: before && at.episodes.length - before.episodes.length,
+      framesAtStart: at.frames, viewer: at.viewer, episodesAtStart: at.episodes.length, act: at.paused ? act : undefined,
+      afterAct: { paused: after.paused, episodes: after.episodes.length, endedBy: after.episodes.at(-1)?.endedBy } }
+  }
+  window.addEventListener('click', pressed, { capture: true })
+  document.addEventListener('click', clicked)
+}, { selector, act })
+/**
+ * The record of `armAtSaveClick`, once the click is over: the save's pause started in the click's task (and the act, if
+ * any, was done in it). Returns what the pause started from (`framesAtStart`, `viewer`, `episodesAtStart`) for a check of
+ * the frames at its end, and the state right after the act (`afterAct`).
+ */
+export async function pauseStartedAtClick(page) {
+  await expect.poll(() => page.evaluate(() => window.__starmapAtSaveClick !== undefined), { timeout: 10000 }).toBe(true)
+  const started = await page.evaluate(() => window.__starmapAtSaveClick)
+  test.info().annotations.push({ type: 'save clicked', description: JSON.stringify(started) })
+  expectPauseStarted(started)
+  return started
+}
