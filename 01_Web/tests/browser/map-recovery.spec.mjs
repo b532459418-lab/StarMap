@@ -173,12 +173,21 @@ const withoutWebGL = () => {
 }
 const noWebGLNotice = (page) => page.getByRole('alert').filter({ hasText: 'This browser can\'t show the 3D map right now' })
 
+/**
+ * Test stability follow-ups D-G7 (design §14): how long the no-WebGL case waits for the viewer Try again builds once
+ * WebGL is back, the page's first viewer, at Reykjavik's city view. With CI's software rendering the page is blocked
+ * until that viewer has drawn (no frame, no answer to the test's queries): from the click to the notice gone, 6.0-56.3 s
+ * on CI in 56 runs (median 36.7 s, p95 50.5 s), before and after the follow-ups' changes. A step's own timeout still
+ * counts while the page is blocked: at 30 s, 4 of 20 runs failed waiting for a viewer built 33.6-45.5 s after the click
+ * (run 42361931932), and run 42356247728 timed out at 60 s for the case with the page blocked 55.5 s. 90 s is 1.6 times
+ * the longest build seen. The canvas and the first frames come with the viewer (at most 0.6 s after the notice went).
+ */
+const VIEWER_BUILT_MS = 90_000
+
 test('no WebGL: the map says why instead of a blank canvas; Collection opens, a save works and its pause ends at once; Try again probes again', async ({ page }) => {
-  // Test stability follow-ups D-G7 (design §12.1): 120 s instead of the default 60 s. When WebGL is back, Try again
-  // builds the page's first viewer, at Reykjavik's city view, and with CI's software rendering the page is blocked until
-  // it has drawn: from the click to the notice gone took 25-56 s on CI before and after the follow-ups' changes (15
-  // runs), the whole case up to 58.0 s, and run 42356247728 timed out with the page blocked for 55.5 s. The rest of the
-  // case takes about 11 s. No assertion changes, nor the steps' own timeouts (a step waits until the page answers).
+  // Test stability follow-ups D-G7 (design §12.1, §14): 120 s instead of the default 60 s, and VIEWER_BUILT_MS for the
+  // steps that wait for the viewer Try again builds. The rest of the case took 4.9-14.0 s on CI (51 runs), so 120 s holds
+  // it with a whole VIEWER_BUILT_MS wait and 16 s to spare.
   test.setTimeout(120_000)
   expectPageError(page, 'starmap:caught-error [map:no-webgl]')
   await page.addInitScript(withoutWebGL)
@@ -213,11 +222,12 @@ test('no WebGL: the map says why instead of a blank canvas; Collection opens, a 
   await expect(page.locator('.cesium-widget')).toHaveCount(0)
   // WebGL is back: Try again creates the map, which renders. The click is dispatched from a task of the page: creating
   // the viewer keeps the main thread busy for seconds with software rendering, longer than an input action may wait.
+  // The notice goes, the canvas is there and the viewer draws, each within VIEWER_BUILT_MS.
   await page.evaluate(() => { window.__starmapWebGLBack = true })
   await tryAgain.evaluate((button) => { setTimeout(() => button.click(), 0) })
-  await expect(notice).toHaveCount(0, { timeout: 30000 })
-  await expect(page.locator('.cesium-widget canvas')).toBeVisible({ timeout: 30000 })
-  await expect.poll(async () => (await loop(page))?.frames ?? 0, { timeout: 20000 }).toBeGreaterThan(1)
+  await expect(notice).toHaveCount(0, { timeout: VIEWER_BUILT_MS })
+  await expect(page.locator('.cesium-widget canvas')).toBeVisible({ timeout: VIEWER_BUILT_MS })
+  await expect.poll(async () => (await loop(page))?.frames ?? 0, { timeout: VIEWER_BUILT_MS }).toBeGreaterThan(1)
   await expect(shell).not.toHaveAttribute('data-map-webgl', 'unavailable')
   await expect(page.locator('.cesium-widget-errorPanel')).toHaveCount(0)
 })

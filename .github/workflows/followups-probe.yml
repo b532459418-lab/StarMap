@@ -1,6 +1,6 @@
 name: Follow-ups probe (temporary)
 
-# Temporary (test stability follow-ups, rounds 1 to 3; design artifacts/followups-20261107/design.md §10 to §13). Runs on
+# Temporary (test stability follow-ups, rounds 1 to 4; design artifacts/followups-20261107/design.md §10 to §14). Runs on
 # pushes to test/followups only, and is removed with its commit before the pull request. Each entry runs one experiment
 # on its own runner, with the browser environment of ci.yml's browser checks (Node 24, the locked dependencies,
 # Playwright's Chromium, the project's playwright.config.mjs with --use-angle=swiftshader), and uploads its records
@@ -25,22 +25,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Round 3 (design §12.6): the no-WebGL case of map-recovery.spec.mjs with its 120 s (D-G7), 20 times on each of
-          # two runners, with the teardown records; then the critical group whole as ci.yml runs it, without the probe's hooks.
+          # Round 4 (design §14): the no-WebGL case of map-recovery.spec.mjs with its viewer-build limit (90 s for the steps
+          # that wait for the viewer, 120 s for the case; D-G7), 20 times on each of two runners, with the teardown records.
           - name: nowebgl-a-x20
             runner: probe
             args: tests/browser/map-recovery.spec.mjs --grep "the map says why instead of a blank canvas" --repeat-each=20
             params: '{}'
-            timeout: 40
+            timeout: 50
           - name: nowebgl-b-x20
             runner: probe
             args: tests/browser/map-recovery.spec.mjs --grep "the map says why instead of a blank canvas" --repeat-each=20
             params: '{}'
-            timeout: 40
-          - name: critical-whole
-            runner: group
-            params: '{}'
-            timeout: 45
+            timeout: 50
     defaults:
       run:
         working-directory: 01_Web
