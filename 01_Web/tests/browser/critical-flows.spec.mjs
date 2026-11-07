@@ -1278,14 +1278,25 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
   })
 
   test('a refused save, an unknown outcome, or applying that throws: the map renders again at once', async ({ page }) => {
+    // Each save is clicked in the page (`clickSaveInPage`): its pause must end by its answer, before the watchdog (a real
+    // click here failed in run 42222477775, design §14). Test stability follow-ups G5 (design §5, §10.2): each answer
+    // comes 600 ms after the save's click, as in the first case, so that the pause lasts long enough for the globe to draw
+    // frames were it not paused; with immediate answers the pauses lasted 0.1-0.3 s, and a pause that does not stop the
+    // loop passed the check of the recorded frames. Before each save the map has drawn its frames after the selection,
+    // as in the first case: right after a selection it still compiles the new view's shaders, and the frames after the
+    // resume waited for them (run 42348286017: 1 of 40, no frame within 5 s).
+    const save = async (fulfil, endedBy) => {
+      await expectRendering(page)
+      await holdWrite(page, { ms: 600, fulfil })
+      const started = await markReykjavik(page, { observePause: true })
+      const state = await expectRendering(page, endedBy)
+      expectNoFrameWhilePaused(state, started)
+      expect(state.episodes.at(-1).pausedMs).toBeGreaterThan(500)
+    }
     await openMap(page)
     await selectReykjavik(page)
-    // Each save is clicked in the page (`clickSaveInPage`): its pause must end by its answer, before the watchdog (a real
-    // click here failed in run 42222477775, design §14).
     // Refused by the server.
-    await holdWrite(page, { fulfil: { status: 400, contentType: 'application/json', body: JSON.stringify({ ok: false, code: 'E_INVALID_INPUT', error: 'refused' }) } })
-    let started = await markReykjavik(page, { observePause: true })
-    expectNoFrameWhilePaused(await expectRendering(page, 'failed'), started)
+    await save({ status: 400, contentType: 'application/json', body: JSON.stringify({ ok: false, code: 'E_INVALID_INPUT', error: 'refused' }) }, 'failed')
     await page.unroute('**/__travelatlas/editor/wanttogo')
     // (A failed add asks for a reload before the next one.)
     await page.reload()
@@ -1293,20 +1304,16 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     // Applying the answer throws: rows that do not fit, and the changes that would replace them cannot be read.
     const revision = Number(await renderedRevision(page))
     await page.route('**/__travelatlas/editor/read-model/changes**', (route) => route.fulfill({ status: 500, body: 'unavailable' }))
-    await holdWrite(page, { fulfil: { status: 201, contentType: 'application/json', body: JSON.stringify({
+    await save({ status: 201, contentType: 'application/json', body: JSON.stringify({
       // (A replayed answer: the parser takes it without an item; the rows are what fails.)
       ok: true, duplicate: true, revision: revision + 1, delta: { from: revision, to: revision + 1, upserts: [{ table: 'entries', row: { id: 7 } }], deletes: [] },
-    }) } })
-    started = await markReykjavik(page, { observePause: true })
-    expectNoFrameWhilePaused(await expectRendering(page, 'released'), started)
+    }) }, 'released')
     await page.unroute('**/__travelatlas/editor/wanttogo')
     await page.unroute('**/__travelatlas/editor/read-model/changes**')
     await page.reload()
     await reykjavikAgain(page)
     // The outcome stays unknown (an unreadable answer every time): resumed at the first failed try.
-    await holdWrite(page, { fulfil: { status: 502, contentType: 'text/html', body: '<p>Bad gateway</p>' } })
-    started = await markReykjavik(page, { observePause: true })
-    expectNoFrameWhilePaused(await expectRendering(page, 'failed'), started)
+    await save({ status: 502, contentType: 'text/html', body: '<p>Bad gateway</p>' }, 'failed')
     await expect(page.getByText(/Nothing more can be saved until you reload|may have saved data/).first()).toBeVisible()
   })
 
