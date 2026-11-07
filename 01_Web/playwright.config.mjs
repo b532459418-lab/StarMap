@@ -29,7 +29,11 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   timeout: performance ? 180000 : 60000,
-  globalTimeout: 1500000,
+  // 35 min for a whole run (test stability D13, design §14.7, 2026-11-07): the critical group takes about 16 min on a
+  // fast CI runner and 23.1-23.6 min on a slow one (runs 42075599848 and 42222477775), too close to the 25 min it had.
+  // A case that hangs is still stopped by its own timeout (above, or the one a case sets), not by this one.
+  // ../.github/workflows/ci.yml gives the browser jobs 45 min.
+  globalTimeout: 2100000,
   expect: { timeout: 15000 },
   outputDir: performance ? './test-results/performance' : './test-results/browser',
   reporter: [['list'], ['html', { outputFolder: performance ? 'playwright-report/performance' : 'playwright-report/browser', open: 'never' }]],
