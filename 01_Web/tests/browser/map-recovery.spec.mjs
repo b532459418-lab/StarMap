@@ -1,7 +1,9 @@
 // The globe after a failure (src/data/mapRecovery.ts; D follow-up, the author's decision of 2026-10-29). A lost WebGL
 // context is triggered deterministically with WEBGL_lose_context, the way a GPU reset or a GPU process crash loses it.
 // Part of the --critical-flows group (scripts/browser-test-options.mjs).
-import { test, expect, expectPageError, openMap, openCollection, saveAndWaitForRevision, selectReykjavik } from './helpers.mjs'
+import {
+  test, expect, expectPageError, openMap, openCollection, saveAndWaitForRevision, selectReykjavik, armAtSaveClick, pauseStartedAtClick,
+} from './helpers.mjs'
 import { createBrowserFixture } from '../../scripts/browser-fixture.mjs'
 
 const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
@@ -120,17 +122,18 @@ test('the end of a save\'s pause does not turn the loop of a lost context back o
   await openMap(page)
   await selectReykjavik(page)
   const { viewer } = await expectRenders(page, undefined)
-  // The want-to-go write answers after 1 s; the context is lost during the pause it starts (3C-5 D, A′).
+  // The want-to-go write answers after 1 s; the context is lost during the pause it starts (3C-5 D, A′): from the page,
+  // in the save click's task once the pause has started (test stability, design §14: on CI a real click's task can wait
+  // on a compositor commit for over a second, and the pause could be over before the case saw it from outside).
   await page.route('**/__travelatlas/editor/wanttogo', async (route) => {
     if (route.request().method() !== 'POST') return route.continue()
     await new Promise((resolve) => setTimeout(resolve, 1000))
     return route.continue()
   })
-  const episodes = (await loop(page)).episodes.length
+  await armAtSaveClick(page, '.atlas-city-wtg-button', 'loseContext')
   await page.getByRole('button', { name: 'Mark as Want to Go', exact: true }).click()
-  await expect.poll(async () => (await loop(page)).paused, { timeout: 5000, intervals: [25, 50] }).toBe(true)
-  await loseContext(page)
-  await expect.poll(async () => (await loop(page)).episodes.length, { timeout: 10000 }).toBe(episodes + 1)
+  const started = await pauseStartedAtClick(page)
+  await expect.poll(async () => (await loop(page)).episodes.length, { timeout: 10000 }).toBe(started.episodesAtStart + 1)
   await expect(page.getByRole('button', { name: 'Already on your Want to Go list', exact: true })).toBeDisabled()
   await expectStopped(page, viewer)
   await reloadButton(page).click()

@@ -80,19 +80,195 @@ export async function screenshotWithObservations(page, testInfo, options) {
     state = { startedAt: performance.now(), events: [], droppedEvents: 0, pending: new Set(), suppressSnapshots: false }
     screenshotObservations.set(page, state)
   }
+  const filename = typeof options?.path === 'string' ? path.basename(options.path) : null
+  // Test stability F5-1: capture once the page keeps up (its frames come at their usual pace again).
+  const keptUp = await pageKeepsUp(page)
+  screenshotEvent(state, { phase: 'page keeps up', ...keptUp })
+  // F5-2: a bounded scheduler trace of the capture, kept only when it fails.
+  await armSchedulerTrace(page)
+  let failed = false
   const started = performance.now()
-  screenshotEvent(state, { phase: 'capture started', filename: typeof options?.path === 'string' ? path.basename(options.path) : null,
+  screenshotEvent(state, { phase: 'capture started', filename,
     explicitTimeoutMs: options?.timeout ?? null, configuredActionTimeoutMs: testInfo.project.use.actionTimeout ?? null })
   try {
     const buffer = await page.screenshot(options)
-    screenshotEvent(state, { phase: 'capture returned', durationMs: performance.now() - started, bytes: buffer.length })
+    const durationMs = performance.now() - started
+    screenshotEvent(state, { phase: 'capture returned', durationMs, bytes: buffer.length })
+    // F5-2: the capture's duration in every run's log, so that CI shows its usual range.
+    console.info('Screenshot', JSON.stringify({ filename, durationMs: Math.round(durationMs), waitedForPageMs: keptUp.waitedMs, keptUp: keptUp.keptUp }))
     return buffer
   } catch (error) {
+    failed = true
     screenshotEvent(state, { phase: 'capture rejected', durationMs: performance.now() - started, error: safeMessage(error.message) })
     try { screenshotEvent(state, { phase: 'failure-only readonly snapshot', snapshot: await screenshotFailureState(page, state) }) }
     catch (diagnosticError) { screenshotEvent(state, { phase: 'snapshot unavailable', error: safeMessage(diagnosticError.message) }) }
     throw error
-  } finally { await saveScreenshotObservations(state, testInfo) }
+  } finally {
+    await finishSchedulerTrace(page, testInfo, { retain: failed, name: 'screenshot-scheduler', label: 'Screenshot scheduler trace' })
+    await saveScreenshotObservations(state, testInfo)
+  }
+}
+/**
+ * Test stability F5-1: before the evidence screenshot, wait until `frames` animation frames in a row each came within
+ * `frameIntervalMs` of the one before (at most `timeoutMs`; the capture follows either way, with the wait recorded). The
+ * capture that timed out on CI (2026-11-05, time 2/3) started while the page drew a frame only every 2.4-5.4 s (its
+ * trace's screencast frames); before and after that, frames came every 0.3-0.8 s, as the globe's frames do on CI's
+ * software GL (the A′ cases' CPU profiles: every 0.25-0.7 s).
+ */
+const PAGE_KEEPS_UP = Object.freeze({ frames: 3, frameIntervalMs: 1000, timeoutMs: 15000 })
+async function pageKeepsUp(page) {
+  const started = performance.now()
+  const seen = await page.evaluate(({ frames, frameIntervalMs, timeoutMs }) => new Promise((resolve) => {
+    const intervals = []
+    let previous
+    let done = false
+    const finish = (keptUp) => {
+      if (done) return
+      done = true
+      resolve({ keptUp, intervals: intervals.slice(-8).map((interval) => Math.round(interval)) })
+    }
+    setTimeout(() => finish(false), timeoutMs)
+    const frame = (at) => {
+      if (done) return
+      if (previous !== undefined) intervals.push(at - previous)
+      previous = at
+      if (intervals.length >= frames && intervals.slice(-frames).every((interval) => interval <= frameIntervalMs)) finish(true)
+      else requestAnimationFrame(frame)
+    }
+    requestAnimationFrame(frame)
+  }), PAGE_KEEPS_UP).catch((error) => ({ keptUp: false, error: safeMessage(error.message) }))
+  return { ...seen, waitedMs: Math.round(performance.now() - started) }
+}
+/** A diagnostic RPC's answer within 1.5 s, or a rejection; the deadline discards a late answer, it does not cancel the RPC. */
+export const diagnosticDeadline = (request) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('Render profile diagnostic deadline')), 1500)
+  request.then((value) => { clearTimeout(timer); resolve(value) }, (error) => { clearTimeout(timer); reject(error) })
+})
+const schedulerTraces = new WeakMap()
+/**
+ * The trace's ring buffer. 3 MB since the A′ trace is armed before the settled-map wait (D3): at 1 MB a failed case kept
+ * only its last ~9 s of events (CI, 2026-11-06, run 42187578007: 2.9 MB of JSON, 14 640 events), which no longer reached
+ * back to the save's click, 11 s before the end. 3 MB keeps about three times that and stays under the caps below
+ * (16 MB of JSON, 60 000 events).
+ */
+const SCHEDULER_TRACE_BUFFER_KB = 3072
+const schedulerCategories = ['gpu', 'cc', 'viz', 'renderer.scheduler', 'devtools.timeline', 'disabled-by-default-devtools.timeline.frame']
+/**
+ * A bounded Chromium trace of the scheduler, GPU and compositor (gpu, cc, viz, frames), armed before an action and kept
+ * only when it is wanted (diagnostic only: no trace arguments, sources, URLs or machine data are kept). First used by the
+ * A′ cases (critical-flows.spec.mjs); test stability F5-2 uses it around the Journey evidence screenshot.
+ */
+export async function armSchedulerTrace(page) {
+  let session
+  try {
+    session = await page.context().browser().newBrowserCDPSession()
+    const entry = { session, active: true }
+    entry.complete = new Promise((resolve) => { entry.completed = resolve })
+    session.once('Tracing.tracingComplete', entry.completed)
+    schedulerTraces.set(page, entry)
+    entry.armedBefore = { monotonicMs: performance.now(), wallMs: Date.now() }
+    await session.send('Tracing.start', { transferMode: 'ReturnAsStream', streamFormat: 'json',
+      traceConfig: { recordMode: 'recordContinuously', traceBufferSizeInKb: SCHEDULER_TRACE_BUFFER_KB, enableSampling: false,
+        enableSystrace: false, enableArgumentFilter: true, includedCategories: schedulerCategories } })
+    entry.armedAfter = { monotonicMs: performance.now(), wallMs: Date.now() }
+  } catch (error) {
+    const entry = schedulerTraces.get(page)
+    if (entry?.completed) session?.off('Tracing.tracingComplete', entry.completed)
+    if (entry) entry.active = false
+    schedulerTraces.set(page, { session, setupFailure: error.name })
+  }
+}
+/**
+ * Ends the trace of `armSchedulerTrace`. `retain` (by default: the case failed) keeps it as `<name>.json`, attached as
+ * `label`; otherwise it is discarded. A wanted trace that cannot be had leaves `<name>-unavailable.json`.
+ */
+export async function finishSchedulerTrace(page, info, {
+  retain = info && info.status !== info.expectedStatus, name = 'render-recovery-scheduler', label = 'Render recovery scheduler trace',
+} = {}) {
+  const entry = schedulerTraces.get(page)
+  if (!entry) return
+  schedulerTraces.delete(page)
+  try {
+    entry.stage = 'setup'
+    if (entry.setupFailure) throw Object.assign(new Error('Render scheduler trace unavailable'), { name: entry.setupFailure })
+    const collect = async () => {
+      const stoppingAt = { monotonicMs: performance.now(), wallMs: Date.now() }
+      entry.collectionStartedMs = stoppingAt.monotonicMs
+      entry.stage = 'stop'
+      await entry.session.send('Tracing.end')
+      entry.stage = 'completion'
+      const { stream, dataLossOccurred } = await entry.complete
+      const completedAt = { monotonicMs: performance.now(), wallMs: Date.now() }
+      try {
+        if (!retain || !entry.active) return undefined
+        let bytes = 0
+        const chunks = []
+        entry.stage = 'read'
+        for (;;) {
+          const part = await entry.session.send('IO.read', { handle: stream, size: 262144 })
+          if (!entry.active) return undefined
+          const buffer = Buffer.from(part.data, part.base64Encoded ? 'base64' : 'utf8')
+          bytes += buffer.length
+          entry.receivedBytes = bytes
+          if (bytes > 16000000) throw new Error('Render scheduler trace exceeds16MB')
+          chunks.push(buffer)
+          if (part.eof) break
+        }
+        entry.stage = 'parse'
+        const { traceEvents } = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        if (!Array.isArray(traceEvents) || traceEvents.length > 60000) throw new Error('Render scheduler event cap exceeded')
+        entry.stage = 'sanitize'
+        const clean = traceEvents.map((event) => {
+          // Keep event timing/flow identities, never arbitrary trace arguments, source, URLs or machine metadata.
+          const result = {}
+          for (const key of ['pid', 'tid', 'ts', 'dur', 'tts', 'tdur']) if (Number.isFinite(event[key])) result[key] = event[key]
+          for (const key of ['ph', 'name', 'cat', 's', 'bp']) if (typeof event[key] === 'string') {
+            result[key] = event[key].replace(/https?:\/\/[^\s]+|[A-Za-z]:[\\/][^\s]+|\/(?:Users|home|tmp|private|var)\/[^\s]+/g, '[path]').slice(0, 240)
+          }
+          for (const key of ['id', 'bind_id']) if (typeof event[key] === 'number'
+            || (typeof event[key] === 'string' && /^[a-z0-9x]{1,80}$/i.test(event[key]))) result[key] = event[key]
+          if (event.id2 && typeof event.id2 === 'object') {
+            result.id2 = Object.fromEntries(Object.entries(event.id2).filter(([key, value]) => ['local', 'global'].includes(key)
+              && (typeof value === 'number' || (typeof value === 'string' && /^[a-z0-9x]{1,80}$/i.test(value)))))
+          }
+          if (event.ph === 'M' && ['process_name', 'thread_name'].includes(event.name) && typeof event.args?.name === 'string') {
+            result.args = { name: event.args.name.replace(/[^a-zA-Z0-9_ :.-]/g, '_').slice(0, 120) }
+          }
+          return result
+        })
+        let firstEventUs, lastEventUs
+        for (const event of clean) if (event.ph !== 'M' && Number.isFinite(event.ts) && event.ts > 0) {
+          firstEventUs = firstEventUs === undefined ? event.ts : Math.min(firstEventUs, event.ts)
+          lastEventUs = lastEventUs === undefined ? event.ts : Math.max(lastEventUs, event.ts)
+        }
+        return { format: 'starmap.render-scheduler-trace', traceEvents: clean, armedBefore: entry.armedBefore,
+          armedAfter: entry.armedAfter, categories: schedulerCategories, nativeBufferKb: SCHEDULER_TRACE_BUFFER_KB, rawBytes: bytes,
+          stoppingAt, completedAt, firstEventUs, lastEventUs, dataLossOccurred,
+          timingAlignmentHasProtocolUncertainty: true, diagnosticOnly: true }
+      } finally { await entry.session.send('IO.close', { handle: stream }).catch(() => {}) }
+    }
+    const trace = await diagnosticDeadline(collect())
+    if (!trace || !retain) return
+    const text = JSON.stringify(trace)
+    if (Buffer.byteLength(text) > 16000000) throw new Error('Sanitized render scheduler trace exceeds16MB')
+    const destination = info.outputPath(`${name}.json`)
+    entry.stage = 'retain'
+    await writeFile(destination, text)
+    await info.attach(label, { path: destination, contentType: 'application/json' })
+  } catch (error) {
+    if (retain) await writeFile(info.outputPath(`${name}-unavailable.json`), JSON.stringify({
+      format: 'starmap.render-scheduler-unavailable', errorName: error.name,
+      stage: entry.stage, receivedBytes: entry.receivedBytes,
+      elapsedCollectionMs: entry.collectionStartedMs === undefined ? undefined : performance.now() - entry.collectionStartedMs,
+      reason: error.message === 'Render profile diagnostic deadline' ? 'diagnostic-response-deadline'
+        : ['Render scheduler trace exceeds16MB', 'Render scheduler event cap exceeded', 'Sanitized render scheduler trace exceeds16MB'].includes(error.message)
+          ? 'bounded-cap' : 'protocol-or-parse-unavailable',
+      diagnosticDeadlineMs: 1500, deadlineDoesNotCancelRpc: true })).catch(() => {})
+  } finally {
+    entry.active = false
+    if (entry.completed) entry.session?.off('Tracing.tracingComplete', entry.completed)
+    if (entry.session) await diagnosticDeadline(entry.session.detach()).catch(() => {})
+  }
 }
 export async function retainScreenshotObservations(page, testInfo) {
   const state = screenshotObservations.get(page)
@@ -380,4 +556,77 @@ export async function selectReykjavik(page) {
 export async function openCollection(page) {
   await page.getByRole('navigation').getByRole('button', { name: 'Collection', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Places you want to go', exact: true })).toBeVisible()
+}
+
+/**
+ * A save's pause started in the task of its click (recorded in that task): not paused before the click, paused after it
+ * with `count` saves in it, and no pause ended in between. `started` is a record of `clickSaveInPage`
+ * (critical-flows.spec.mjs), of a click made in the page, or of `armAtSaveClick`.
+ */
+export function expectPauseStarted(started, count = 1) {
+  const { pausedBefore, pausedAfter, countAfter, episodesEnded } = started
+  expect({ pausedBefore, pausedAfter, countAfter, episodesEnded }, `the save's pause started in the click's task: ${JSON.stringify(started)}`)
+    .toEqual({ pausedBefore: false, pausedAfter: true, countAfter: count, episodesEnded: 0 })
+}
+/**
+ * Test stability F2 (design §14): what an A′ case does during a save's pause is done in the page, in the task of the
+ * save's (real) click, right after the app's own click handler (React listens on its root; this listener is on document,
+ * later on the bubble path), the way the cases show another page at a pause. On CI's software rendering the task of a
+ * real click can wait on a compositor commit for over a second after the app's handler (in run 42222477775 the task of a
+ * save's click was busy 1.33 s, then another 0.45 s, and Playwright saw the save's request 1.61 s after the page sent
+ * it), and a case that waited to see the pause from outside (a read of the page, the request's event) could see the
+ * 1.5 s watchdog end it first. So the click stays real (a note's save, Hide and Restore in critical-flows.spec.mjs; Mark
+ * as Want to Go in map-recovery.spec.mjs), and the case does not wait. The next click on `selector` records the render
+ * loop's state before the app's handler (a capture listener on window) and right after it; if the save's pause has
+ * started then, `act` is done there: 'hide' (the page hidden, as when another tab comes in front), 'replaceViewer' (the
+ * globe's viewer destroyed and made again) or 'loseContext' (the globe's WebGL context lost, the way a GPU reset loses
+ * it; the extension is kept as `window.__starmapLoseContext`). `pauseStartedAtClick` reads and checks the record. A save
+ * whose pause must end by its answer before the watchdog cannot be clicked for real so: the answer can only be handled
+ * after the click's task (critical-flows.spec.mjs `clickSaveInPage`).
+ */
+export const armAtSaveClick = (page, selector, act) => page.evaluate(({ selector, act }) => {
+  delete window.__starmapAtSaveClick
+  let before
+  const pressed = (event) => {
+    if (!event.target.closest?.(selector)) return
+    window.removeEventListener('click', pressed, { capture: true })
+    before = window.__travelAtlasDebugRenderLoop.state()
+  }
+  const clicked = (event) => {
+    if (!event.target.closest?.(selector)) return
+    document.removeEventListener('click', clicked)
+    // The debug object of this moment: a replaced viewer makes a new one.
+    const debug = window.__travelAtlasDebugRenderLoop
+    const at = debug.state()
+    if (at.paused && act === 'hide') {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    } else if (at.paused && act === 'replaceViewer') debug.replaceViewer()
+    else if (at.paused && act === 'loseContext') {
+      const canvas = document.querySelector('.cesium-widget canvas')
+      const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl')
+      window.__starmapLoseContext = gl.getExtension('WEBGL_lose_context')
+      window.__starmapLoseContext.loseContext()
+    }
+    const after = debug.state()
+    window.__starmapAtSaveClick = { pausedBefore: before?.paused, pausedAfter: at.paused, countAfter: at.count,
+      episodesEnded: before && at.episodes.length - before.episodes.length,
+      framesAtStart: at.frames, viewer: at.viewer, episodesAtStart: at.episodes.length, act: at.paused ? act : undefined,
+      afterAct: { paused: after.paused, episodes: after.episodes.length, endedBy: after.episodes.at(-1)?.endedBy } }
+  }
+  window.addEventListener('click', pressed, { capture: true })
+  document.addEventListener('click', clicked)
+}, { selector, act })
+/**
+ * The record of `armAtSaveClick`, once the click is over: the save's pause started in the click's task (and the act, if
+ * any, was done in it). Returns what the pause started from (`framesAtStart`, `viewer`, `episodesAtStart`) for a check of
+ * the frames at its end, and the state right after the act (`afterAct`).
+ */
+export async function pauseStartedAtClick(page) {
+  await expect.poll(() => page.evaluate(() => window.__starmapAtSaveClick !== undefined), { timeout: 10000 }).toBe(true)
+  const started = await page.evaluate(() => window.__starmapAtSaveClick)
+  test.info().annotations.push({ type: 'save clicked', description: JSON.stringify(started) })
+  expectPauseStarted(started)
+  return started
 }
