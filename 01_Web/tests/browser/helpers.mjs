@@ -411,6 +411,27 @@ export async function saveAndWaitForRevision(page, save, options = {}) {
   }
 }
 
+/**
+ * Test stability follow-ups G1 (design §10.1): the screenshots of a failed case. Playwright's own `only-on-failure`
+ * capture also took a temporary screenshot of every page whenever a context was closed before the case was over (the
+ * page fixture closes its own context), and threw it away when the case passed: with CI's software rendering that took
+ * 2.7-5 s of every passing case (its 5 s timeout; run 42348286017). The config turns Playwright's capture off; the page
+ * fixture, and an afterEach that closes the page first, take the same screenshots only for a failed case (or a failed
+ * check of the fixture, `failed`): `test-failed-<n>.png`, attached as `screenshot`, with Playwright's options.
+ */
+export async function retainFailureScreenshots(pages, testInfo, failed = false) {
+  if (!failed && testInfo.status === testInfo.expectedStatus) return
+  let index = testInfo.attachments.filter((attachment) => attachment.name === 'screenshot').length
+  for (const page of pages) {
+    if (page.isClosed()) continue
+    const target = testInfo.outputPath(`test-failed-${++index}.png`)
+    try {
+      await page.screenshot({ path: target, timeout: 5000, caret: 'initial' })
+      await testInfo.attach('screenshot', { path: target, contentType: 'image/png' })
+    } catch { /* As with Playwright's capture: a screenshot that cannot be had leaves the failure as it is. */ }
+  }
+}
+
 export async function retainReloadFailure(page, testInfo) {
   const state = reloadObservations.get(page)
   if (!state || state.retained || testInfo.status === testInfo.expectedStatus) return
@@ -501,12 +522,17 @@ export const test = base.extend({
         : route.continue()
     })
     await page.addInitScript(() => localStorage.setItem('starmap.uiLocale', 'en'))
+    let checkFailed = false
     try {
       await use(page)
       const unexpected = errors.filter((message) => !expected.some((pattern) => pageErrorMatches(pattern, message)))
-      expect(unexpected, 'No uncaught application error').toEqual([])
-      for (const pattern of expected) expect(errors.some((message) => pageErrorMatches(pattern, message)), `The expected page error ${pattern} occurred`).toBe(true)
+      try {
+        expect(unexpected, 'No uncaught application error').toEqual([])
+        for (const pattern of expected) expect(errors.some((message) => pageErrorMatches(pattern, message)), `The expected page error ${pattern} occurred`).toBe(true)
+      } catch (error) { checkFailed = true; throw error }
     } finally {
+      // Test stability follow-ups G1: the failure screenshots, before the context closes (retainFailureScreenshots).
+      await retainFailureScreenshots(context.pages(), testInfo, checkFailed)
       if (diagnostic) {
         try {
           await retainReloadFailure(page, testInfo)

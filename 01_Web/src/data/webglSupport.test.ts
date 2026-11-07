@@ -1,11 +1,11 @@
 /// <reference types="node" />
 /**
  * The map's WebGL probe (robustness batch; ./webglSupport.ts): Cesium's rule, the context given back, the first
- * answer of a page kept.
+ * answer of a mount of the globe kept, and forgotten when it unmounts.
  */
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { CESIUM_CONTEXT_ATTRIBUTES, firstWebGLProbe, probeWebGL, resetFirstWebGLProbeForTests } from './webglSupport.ts'
+import { CESIUM_CONTEXT_ATTRIBUTES, firstWebGLProbe, forgetFirstWebGLProbe, probeWebGL } from './webglSupport.ts'
 
 /** A browser whose canvases answer `contexts[type]` (a context that can be given back, null, or a throw). */
 function browser({ hasWebGL = true, hasWebGL2 = true, contexts = {} as Record<string, 'ok' | 'null' | 'throw'> } = {}) {
@@ -26,7 +26,7 @@ function browser({ hasWebGL = true, hasWebGL2 = true, contexts = {} as Record<st
   return { environment, requests, lost: () => lost }
 }
 
-afterEach(() => resetFirstWebGLProbeForTests())
+afterEach(() => forgetFirstWebGLProbe())
 
 test('no WebGLRenderingContext: no WebGL, nothing is asked', () => {
   const { environment, requests } = browser({ hasWebGL: false, hasWebGL2: false, contexts: { webgl: 'ok', webgl2: 'ok' } })
@@ -67,4 +67,17 @@ test('the first probe of a page is kept: StrictMode\'s second initializer call d
   assert.equal(firstWebGLProbe(probe), false)
   assert.equal(firstWebGLProbe(probe), false)
   assert.equal(probes, 1)
+})
+
+test('a later mount probes again: once the first probe is forgotten (the globe unmounted), WebGL may be gone', () => {
+  let probes = 0
+  let answer = true
+  const probe = () => { probes++; return answer }
+  assert.equal(firstWebGLProbe(probe), true)
+  // The map:globe error boundary unmounts the globe; WebGL goes away (a GPU reset, say) before its Reload map.
+  forgetFirstWebGLProbe()
+  answer = false
+  assert.equal(firstWebGLProbe(probe), false)
+  assert.equal(firstWebGLProbe(probe), false)
+  assert.equal(probes, 2)
 })

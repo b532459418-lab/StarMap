@@ -48,7 +48,7 @@ import { useStableCallback } from './useStableCallback'
 import { useElementCache } from './useElementCache'
 import { bindRenderLoop, renderPauseState, resumeRendering, subscribeRenderPause } from '../data/renderPause'
 import { createMapRecovery, guardRenderLoop, type MapFailure } from '../data/mapRecovery'
-import { browserWebGLEnvironment, firstWebGLProbe, probeWebGL } from '../data/webglSupport'
+import { browserWebGLEnvironment, firstWebGLProbe, forgetFirstWebGLProbe, probeWebGL } from '../data/webglSupport'
 import { reportToBrowserTests } from '../data/browserTestReport'
 import { droneMarkerName } from './droneMediaLabels.ts'
 import { createCameraCommandObserver } from './cameraCommandObservation'
@@ -1299,9 +1299,14 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
   const [recovery] = useState(createMapRecovery)
   const [mapFailure, setMapFailure] = useState<MapFailure>()
   // Robustness batch (../data/webglSupport.ts): without WebGL Cesium cannot construct a viewer, and its error is out of
-  // React's reach (resium constructs it asynchronously). So the map probes first: the first answer of the page (kept),
+  // React's reach (resium constructs it asynchronously). So the map probes first: the first answer of this mount (kept),
   // and again before a viewer is rebuilt or when the notice's button asks. Without WebGL there is no <Viewer> at all.
   const [webgl, setWebgl] = useState<'available' | 'unavailable'>(() => firstWebGLProbe() ? 'available' : 'unavailable')
+  // Test stability follow-ups G6: the first answer belongs to this mount. When the globe unmounts (an error the map:globe
+  // boundary caught), it is forgotten, so the mount of the boundary's Reload map probes again instead of building a
+  // viewer without WebGL (a blank map). StrictMode's second call of the initializer above still finds it: its simulated
+  // unmount runs this cleanup only after the initializer, and does not run the initializer again.
+  useEffect(() => () => forgetFirstWebGLProbe(), [])
   const savedCameraRef = useRef<{ position: Cartesian3; direction: Cartesian3; up: Cartesian3 }>(undefined)
   const rebuildViewer = useCallback(() => {
     const viewer = viewerRef.current?.cesiumElement

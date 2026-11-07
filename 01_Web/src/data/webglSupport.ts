@@ -9,8 +9,10 @@
  * gets is given back at once (WEBGL_lose_context), so it does not count against the browser's live contexts.
  *
  * - `probeWebGL(environment)`: one probe.
- * - `firstWebGLProbe(probe)`: the first viewer's answer, probed once per page (StrictMode calls a state initializer
- *   twice; the review's decision). A rebuilt viewer and the notice's 「再试一次」 probe again (`probeWebGL`).
+ * - `firstWebGLProbe(probe)`: the first viewer's answer, probed once per mount of the globe (StrictMode calls a state
+ *   initializer twice; the review's decision). `forgetFirstWebGLProbe()`: the globe forgets it when it unmounts, so a
+ *   later mount (after the map:globe error boundary's Reload map) probes again: WebGL may be gone by then (test
+ *   stability follow-ups G6). A rebuilt viewer and the notice's 「再试一次」 probe again (`probeWebGL`).
  *
  * Constraint: Node 24 loads it directly (no DOM, no `import.meta`); the browser is passed in.
  */
@@ -52,13 +54,13 @@ export function browserWebGLEnvironment(): WebGLEnvironment {
 
 let first: boolean | undefined
 
-/** The first probe of the page, kept (later calls return it without probing). */
+/** The first probe of this mount of the globe, kept (later calls return it without probing). */
 export function firstWebGLProbe(probe: () => boolean = () => probeWebGL(browserWebGLEnvironment())): boolean {
   first ??= probe()
   return first
 }
 
-/** Tests: forget the first probe. */
-export function resetFirstWebGLProbeForTests(): void {
+/** Forget the first probe: the next `firstWebGLProbe` probes again (the globe unmounted; tests). */
+export function forgetFirstWebGLProbe(): void {
   first = undefined
 }

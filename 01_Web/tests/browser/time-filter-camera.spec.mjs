@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure, saveAndWaitForRevision } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, recordReloadCheckpoint, retainFailureScreenshots, retainReloadFailure, saveAndWaitForRevision } from './helpers.mjs'
 import { createBrowserFixture, fixtureIds } from '../../scripts/browser-fixture.mjs'
 import path from 'node:path'
 import os from 'node:os'
@@ -17,6 +17,8 @@ test.describe.configure({ mode: 'parallel' })
 test.beforeEach(async () => { await createBrowserFixture(root) })
 test.afterEach(async ({ page }, testInfo) => {
   await retainReloadFailure(page, testInfo)
+  // The screenshots of a failed case, before the page closes (G1: the fixture would find it closed).
+  await retainFailureScreenshots([page], testInfo)
   await page.close()
   await createBrowserFixture(root)
 })

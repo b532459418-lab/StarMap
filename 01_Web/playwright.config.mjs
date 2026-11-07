@@ -45,7 +45,10 @@ export default defineConfig({
     serviceWorkers: 'block',
     actionTimeout: 15000,
     navigationTimeout: 30000,
-    screenshot: 'only-on-failure',
+    // Test stability follow-ups G1: the screenshots of a failed case are taken by the page fixture
+    // (tests/browser/helpers.mjs retainFailureScreenshots); Playwright's own capture took and threw away a temporary
+    // screenshot of every page of every passing case.
+    screenshot: 'off',
     trace: performance ? 'off' : 'retain-on-failure',
     launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
   },

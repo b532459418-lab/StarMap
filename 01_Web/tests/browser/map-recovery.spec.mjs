@@ -2,7 +2,7 @@
 // context is triggered deterministically with WEBGL_lose_context, the way a GPU reset or a GPU process crash loses it.
 // Part of the --critical-flows group (scripts/browser-test-options.mjs).
 import {
-  test, expect, expectPageError, openMap, openCollection, saveAndWaitForRevision, selectReykjavik, armAtSaveClick, pauseStartedAtClick,
+  test, expect, expectPageError, openMap, openCollection, pageErrors, saveAndWaitForRevision, selectReykjavik, armAtSaveClick, pauseStartedAtClick,
 } from './helpers.mjs'
 import { createBrowserFixture } from '../../scripts/browser-fixture.mjs'
 
@@ -173,7 +173,22 @@ const withoutWebGL = () => {
 }
 const noWebGLNotice = (page) => page.getByRole('alert').filter({ hasText: 'This browser can\'t show the 3D map right now' })
 
+/**
+ * Test stability follow-ups D-G7 (design §14): how long the no-WebGL case waits for the viewer Try again builds once
+ * WebGL is back, the page's first viewer, at Reykjavik's city view. With CI's software rendering the page is blocked
+ * until that viewer has drawn (no frame, no answer to the test's queries): from the click to the notice gone, 6.0-56.3 s
+ * on CI in 96 runs (median 42.2 s, p95 50.5 s), before and after the follow-ups' changes. A step's own timeout still
+ * counts while the page is blocked: at 30 s, 4 of 20 runs failed waiting for a viewer built 33.6-45.5 s after the click
+ * (run 42361931932), and run 42356247728 timed out at 60 s for the case with the page blocked 55.5 s. 90 s is 1.6 times
+ * the longest build seen. The canvas and the first frames come with the viewer (at most 0.7 s after the notice went).
+ */
+const VIEWER_BUILT_MS = 90_000
+
 test('no WebGL: the map says why instead of a blank canvas; Collection opens, a save works and its pause ends at once; Try again probes again', async ({ page }) => {
+  // Test stability follow-ups D-G7 (design §12.1, §14): 120 s instead of the default 60 s, and VIEWER_BUILT_MS for the
+  // steps that wait for the viewer Try again builds. The rest of the case took 4.9-16.1 s on CI (91 runs), so 120 s holds
+  // it with a whole VIEWER_BUILT_MS wait and 14 s to spare.
+  test.setTimeout(120_000)
   expectPageError(page, 'starmap:caught-error [map:no-webgl]')
   await page.addInitScript(withoutWebGL)
   await page.goto('/')
@@ -207,11 +222,12 @@ test('no WebGL: the map says why instead of a blank canvas; Collection opens, a 
   await expect(page.locator('.cesium-widget')).toHaveCount(0)
   // WebGL is back: Try again creates the map, which renders. The click is dispatched from a task of the page: creating
   // the viewer keeps the main thread busy for seconds with software rendering, longer than an input action may wait.
+  // The notice goes, the canvas is there and the viewer draws, each within VIEWER_BUILT_MS.
   await page.evaluate(() => { window.__starmapWebGLBack = true })
   await tryAgain.evaluate((button) => { setTimeout(() => button.click(), 0) })
-  await expect(notice).toHaveCount(0, { timeout: 30000 })
-  await expect(page.locator('.cesium-widget canvas')).toBeVisible({ timeout: 30000 })
-  await expect.poll(async () => (await loop(page))?.frames ?? 0, { timeout: 20000 }).toBeGreaterThan(1)
+  await expect(notice).toHaveCount(0, { timeout: VIEWER_BUILT_MS })
+  await expect(page.locator('.cesium-widget canvas')).toBeVisible({ timeout: VIEWER_BUILT_MS })
+  await expect.poll(async () => (await loop(page))?.frames ?? 0, { timeout: VIEWER_BUILT_MS }).toBeGreaterThan(1)
   await expect(shell).not.toHaveAttribute('data-map-webgl', 'unavailable')
   await expect(page.locator('.cesium-widget-errorPanel')).toHaveCount(0)
 })
@@ -231,4 +247,54 @@ test('no WebGL (Chinese): the notice and its button are in Chinese and the butto
     reached = await button.evaluate((element) => element === document.activeElement)
   }
   expect(reached, 'Tab reaches the button').toBe(true)
+})
+
+// Test stability follow-ups G6 (src/data/webglSupport.ts): the map:globe error boundary's Reload map mounts the globe
+// again, and that mount probes WebGL again. Here the globe throws while rendering, WebGL goes away (as after a GPU reset)
+// and the user reloads the map: the no-WebGL notice, not a viewer built without a context (a blank map, which the first
+// probe of the page, kept, gave before). No product hook: the dev server's own module of the globe, fetched through the
+// route, gets one line that throws while `window.__starmapGlobeThrows` is set, before its first hook. The anchor must be
+// found exactly once, so a change of the component's first line fails here loudly instead of passing without the throw.
+const webglCanGo = () => {
+  const original = HTMLCanvasElement.prototype.getContext
+  HTMLCanvasElement.prototype.getContext = function getContext(type, ...rest) {
+    if (window.__starmapWebGLGone && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) return null
+    return original.call(this, type, ...rest)
+  }
+}
+const GLOBE_FIRST_HOOK = /const \{\s*locale,\s*t\s*\} = useUiLocale\(\);?/g
+
+test('the globe failed while rendering and WebGL went away: Reload map probes again and shows the no-WebGL notice', async ({ page }) => {
+  test.setTimeout(120_000)
+  const message = 'injected render error for map:globe'
+  const report = `starmap:caught-error [map:globe] ${message}`
+  expectPageError(page, report)
+  expectPageError(page, 'starmap:caught-error [map:no-webgl]')
+  await page.addInitScript(webglCanGo)
+  const anchors = []
+  await page.route((url) => new URL(url).pathname === '/src/components/CesiumAtlasGlobe.tsx', async (route) => {
+    const response = await route.fetch()
+    const body = await response.text()
+    const found = (body.match(GLOBE_FIRST_HOOK) ?? []).length
+    anchors.push(found)
+    if (found !== 1) return route.fulfill({ response, body })
+    return route.fulfill({ response, headers: { ...response.headers(), 'cache-control': 'no-store' },
+      body: body.replace(GLOBE_FIRST_HOOK, (hook) => `if (window.__starmapGlobeThrows) throw new Error(${JSON.stringify(message)});` + String.fromCharCode(10) + hook) })
+  })
+  await openMap(page)
+  expect(anchors, 'the globe module, served once, has its first hook once').toEqual([1])
+  await expectRenders(page, undefined)
+  // The globe throws on its next render: a selection gives it new props.
+  await page.evaluate(() => { window.__starmapGlobeThrows = true })
+  await selectReykjavik(page)
+  const failed = page.locator('[data-error-boundary="map:globe"]')
+  await expect(failed).toBeVisible()
+  await expect.poll(() => pageErrors(page).includes(report)).toBe(true)
+  // WebGL goes away (a GPU reset, say), then the user reloads the map.
+  await page.evaluate(() => { window.__starmapGlobeThrows = false; window.__starmapWebGLGone = true })
+  await failed.getByRole('button', { name: 'Reload map', exact: true }).click()
+  await expect(failed).toHaveCount(0)
+  await expect(noWebGLNotice(page)).toBeVisible({ timeout: 20000 })
+  await expect(page.getByRole('region', { name: 'Map', exact: true })).toHaveAttribute('data-map-webgl', 'unavailable')
+  await expect(page.locator('.cesium-widget')).toHaveCount(0)
 })

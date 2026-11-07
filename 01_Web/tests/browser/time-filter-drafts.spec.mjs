@@ -1,4 +1,4 @@
-import { test, expect, openMap, selectReykjavik, openCollection, readFixture } from './helpers.mjs'
+import { test, expect, openMap, selectReykjavik, openCollection, readFixture, retainFailureScreenshots } from './helpers.mjs'
 import { createBrowserFixture, fixtureHashes, fixtureIds, importInboxMedia, patchFixture as patchStoreFixture } from '../../scripts/browser-fixture.mjs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -16,7 +16,9 @@ const panel = (page) => page.locator('#atlas-time-query-panel')
 // shard this group by case (batch 4, E2). Workers stay at 1, so a shard still runs its cases one at a time.
 test.describe.configure({ mode: 'parallel' })
 test.beforeEach(async () => { await createBrowserFixture(root) })
-test.afterEach(async ({ page }) => {
+test.afterEach(async ({ page }, testInfo) => {
+  // The screenshots of a failed case, before the page closes (G1: the fixture would find it closed).
+  await retainFailureScreenshots([page], testInfo)
   await page.close()
   await createBrowserFixture(root)
 })
