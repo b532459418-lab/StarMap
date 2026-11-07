@@ -2,7 +2,7 @@
 // context is triggered deterministically with WEBGL_lose_context, the way a GPU reset or a GPU process crash loses it.
 // Part of the --critical-flows group (scripts/browser-test-options.mjs).
 import {
-  test, expect, expectPageError, openMap, openCollection, saveAndWaitForRevision, selectReykjavik, armAtSaveClick, pauseStartedAtClick,
+  test, expect, expectPageError, openMap, openCollection, pageErrors, saveAndWaitForRevision, selectReykjavik, armAtSaveClick, pauseStartedAtClick,
 } from './helpers.mjs'
 import { createBrowserFixture } from '../../scripts/browser-fixture.mjs'
 
@@ -231,4 +231,54 @@ test('no WebGL (Chinese): the notice and its button are in Chinese and the butto
     reached = await button.evaluate((element) => element === document.activeElement)
   }
   expect(reached, 'Tab reaches the button').toBe(true)
+})
+
+// Test stability follow-ups G6 (src/data/webglSupport.ts): the map:globe error boundary's Reload map mounts the globe
+// again, and that mount probes WebGL again. Here the globe throws while rendering, WebGL goes away (as after a GPU reset)
+// and the user reloads the map: the no-WebGL notice, not a viewer built without a context (a blank map, which the first
+// probe of the page, kept, gave before). No product hook: the dev server's own module of the globe, fetched through the
+// route, gets one line that throws while `window.__starmapGlobeThrows` is set, before its first hook. The anchor must be
+// found exactly once, so a change of the component's first line fails here loudly instead of passing without the throw.
+const webglCanGo = () => {
+  const original = HTMLCanvasElement.prototype.getContext
+  HTMLCanvasElement.prototype.getContext = function getContext(type, ...rest) {
+    if (window.__starmapWebGLGone && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) return null
+    return original.call(this, type, ...rest)
+  }
+}
+const GLOBE_FIRST_HOOK = /const \{\s*locale,\s*t\s*\} = useUiLocale\(\);?/g
+
+test('the globe failed while rendering and WebGL went away: Reload map probes again and shows the no-WebGL notice', async ({ page }) => {
+  test.setTimeout(120_000)
+  const message = 'injected render error for map:globe'
+  const report = `starmap:caught-error [map:globe] ${message}`
+  expectPageError(page, report)
+  expectPageError(page, 'starmap:caught-error [map:no-webgl]')
+  await page.addInitScript(webglCanGo)
+  const anchors = []
+  await page.route((url) => new URL(url).pathname === '/src/components/CesiumAtlasGlobe.tsx', async (route) => {
+    const response = await route.fetch()
+    const body = await response.text()
+    const found = (body.match(GLOBE_FIRST_HOOK) ?? []).length
+    anchors.push(found)
+    if (found !== 1) return route.fulfill({ response, body })
+    return route.fulfill({ response, headers: { ...response.headers(), 'cache-control': 'no-store' },
+      body: body.replace(GLOBE_FIRST_HOOK, (hook) => `if (window.__starmapGlobeThrows) throw new Error(${JSON.stringify(message)});` + String.fromCharCode(10) + hook) })
+  })
+  await openMap(page)
+  expect(anchors, 'the globe module, served once, has its first hook once').toEqual([1])
+  await expectRenders(page, undefined)
+  // The globe throws on its next render: a selection gives it new props.
+  await page.evaluate(() => { window.__starmapGlobeThrows = true })
+  await selectReykjavik(page)
+  const failed = page.locator('[data-error-boundary="map:globe"]')
+  await expect(failed).toBeVisible()
+  await expect.poll(() => pageErrors(page).includes(report)).toBe(true)
+  // WebGL goes away (a GPU reset, say), then the user reloads the map.
+  await page.evaluate(() => { window.__starmapGlobeThrows = false; window.__starmapWebGLGone = true })
+  await failed.getByRole('button', { name: 'Reload map', exact: true }).click()
+  await expect(failed).toHaveCount(0)
+  await expect(noWebGLNotice(page)).toBeVisible({ timeout: 20000 })
+  await expect(page.getByRole('region', { name: 'Map', exact: true })).toHaveAttribute('data-map-webgl', 'unavailable')
+  await expect(page.locator('.cesium-widget')).toHaveCount(0)
 })
