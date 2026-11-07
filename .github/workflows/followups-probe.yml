@@ -1,10 +1,10 @@
 name: Follow-ups probe (temporary)
 
-# Temporary (test stability follow-ups, round 1; design artifacts/followups-20261107/design.md §1.3, §3, §5, §6). Runs
-# on pushes to test/followups only, and is removed with its commit before the pull request. Each entry runs one
-# experiment on its own runner, with the browser environment of ci.yml's browser checks (Node 24, the locked
-# dependencies, Playwright's Chromium, the project's playwright.config.mjs with --use-angle=swiftshader), and uploads its
-# records whatever the outcome.
+# Temporary (test stability follow-ups, rounds 1 and 2; design artifacts/followups-20261107/design.md §10). Runs on
+# pushes to test/followups only, and is removed with its commit before the pull request. Each entry runs one experiment
+# on its own runner, with the browser environment of ci.yml's browser checks (Node 24, the locked dependencies,
+# Playwright's Chromium, the project's playwright.config.mjs with --use-angle=swiftshader), and uploads its records
+# whatever the outcome.
 on:
   push:
     branches: [test/followups]
@@ -25,85 +25,87 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # G1 (design §1.3): map-recovery.spec.mjs twice, with the teardown records (patch-teardown.mjs) and Playwright's
-          # api and browser debug log; then the same without the trace, with a trace without screenshots, without disk caches.
-          - name: g1-base
-            args: tests/browser/map-recovery.spec.mjs --repeat-each=2
-            params: '{}'
-            debug: pw:api,pw:browser
-            timeout: 25
-          - name: g1-trace-off
-            args: tests/browser/map-recovery.spec.mjs --repeat-each=2 --trace off
-            params: '{}'
-            debug: pw:api,pw:browser
-            timeout: 25
-          - name: g1-trace-noshots
-            args: tests/browser/map-recovery.spec.mjs --repeat-each=2
-            variants: g1-trace-noshots
-            params: '{}'
-            debug: pw:api,pw:browser
-            timeout: 25
-          - name: g1-no-cache
-            args: tests/browser/map-recovery.spec.mjs --repeat-each=2
-            variants: g1-no-cache
-            params: '{}'
-            debug: pw:api,pw:browser
-            timeout: 25
-          # G3 (design §3): the evidence screenshot case five times, a GPU process load (a worker's OffscreenCanvas WebGL
-          # drawing) started as the screenshot starts, for 10 s; two strengths, with and without F5-1 (f5-off).
-          - name: g3-k1-off
-            args: tests/browser/time-filters.spec.mjs --grep "a cross-year visit belongs to both years" --repeat-each=5
-            variants: g3-trigger f5-off
-            params: '{"gpuLoad":{"ms":10000,"size":2048,"iterations":60}}'
-            timeout: 25
-          - name: g3-k1-on
-            args: tests/browser/time-filters.spec.mjs --grep "a cross-year visit belongs to both years" --repeat-each=5
-            variants: g3-trigger
-            params: '{"gpuLoad":{"ms":10000,"size":2048,"iterations":60}}'
-            timeout: 25
-          - name: g3-k2-off
-            args: tests/browser/time-filters.spec.mjs --grep "a cross-year visit belongs to both years" --repeat-each=5
-            variants: g3-trigger f5-off
-            params: '{"gpuLoad":{"ms":10000,"size":2048,"iterations":400}}'
-            timeout: 25
-          - name: g3-k2-on
-            args: tests/browser/time-filters.spec.mjs --grep "a cross-year visit belongs to both years" --repeat-each=5
-            variants: g3-trigger
-            params: '{"gpuLoad":{"ms":10000,"size":2048,"iterations":400}}'
-            timeout: 25
-          # G5 (design §5): the refused-save case with its answers held 600 ms from the click (g5-hold), 20 times on each of
-          # two runners; with a pause that does not turn the loop off, and with no pause on the save path, each must fail.
+          # G5 (design §10.2): the refused-save case as committed (answers held 600 ms, the map drawn before each save),
+          # 20 times on each of two runners; with a pause that does not turn the loop off, and with no pause on the save path.
           - name: g5-a-x20
+            runner: probe
             args: tests/browser/critical-flows.spec.mjs --grep "a refused save, an unknown outcome" --repeat-each=20
-            variants: g5-hold
             params: '{}'
-            timeout: 35
+            timeout: 40
           - name: g5-b-x20
+            runner: probe
             args: tests/browser/critical-flows.spec.mjs --grep "a refused save, an unknown outcome" --repeat-each=20
-            variants: g5-hold
             params: '{}'
-            timeout: 35
+            timeout: 40
           - name: g5-mutation-loop
+            runner: probe
             args: tests/browser/critical-flows.spec.mjs --grep "a refused save, an unknown outcome" --repeat-each=5
-            variants: g5-hold mutation-loop
+            variants: mutation-loop
             params: '{}'
             timeout: 25
           - name: g5-mutation
+            runner: probe
             args: tests/browser/critical-flows.spec.mjs --grep "a refused save, an unknown outcome" --repeat-each=5
-            variants: g5-hold mutation
+            variants: mutation
             params: '{}'
             timeout: 25
-          # G6 (design §6.3): the globe throws while rendering, WebGL goes away, Reload map: before the fix it must fail
-          # (a blank map), with the fix (g6-fix) it must show the no-WebGL notice.
-          - name: g6-before
-            args: tests/browser/g6-globe-reprobe.spec.mjs --repeat-each=3
+          # G1 (design §10.1): map-recovery.spec.mjs twice as committed (no temporary screenshot of a passing case), with the
+          # teardown records; then the same with the pages taken to about:blank before the context closes.
+          - name: g1-base
+            runner: probe
+            args: tests/browser/map-recovery.spec.mjs --repeat-each=2
             params: '{}'
-            timeout: 20
-          - name: g6-after
-            args: tests/browser/g6-globe-reprobe.spec.mjs --repeat-each=3
-            variants: g6-fix
+            debug: pw:api,pw:browser
+            timeout: 25
+          - name: g1-blank
+            runner: probe
+            args: tests/browser/map-recovery.spec.mjs --repeat-each=2
+            variants: g1-blank
             params: '{}'
-            timeout: 20
+            debug: pw:api,pw:browser
+            timeout: 25
+          # G3 (design §10.3): the evidence screenshot case ten times with a 12 s GPU process load from the screenshot's start
+          # (K1), without and with F5-1; the load's batches and the frame intervals are logged right after the capture.
+          - name: g3-k1-off
+            runner: probe
+            args: tests/browser/time-filters.spec.mjs --grep "a cross-year visit belongs to both years" --repeat-each=10
+            variants: g3-trigger f5-off
+            params: '{"gpuLoad":{"ms":12000,"size":2048,"iterations":60}}'
+            timeout: 30
+          - name: g3-k1-on
+            runner: probe
+            args: tests/browser/time-filters.spec.mjs --grep "a cross-year visit belongs to both years" --repeat-each=10
+            variants: g3-trigger
+            params: '{"gpuLoad":{"ms":12000,"size":2048,"iterations":60}}'
+            timeout: 30
+          # G2 (design §10.5): every case of the critical group alone, one Playwright run per case (run-alone.mjs), dealt out
+          # to four runners.
+          - name: g2-alone-1of4
+            runner: alone
+            args: 1/4 tests/browser/critical-flows.spec.mjs tests/browser/map-recovery.spec.mjs
+            params: '{}'
+            timeout: 40
+          - name: g2-alone-2of4
+            runner: alone
+            args: 2/4 tests/browser/critical-flows.spec.mjs tests/browser/map-recovery.spec.mjs
+            params: '{}'
+            timeout: 40
+          - name: g2-alone-3of4
+            runner: alone
+            args: 3/4 tests/browser/critical-flows.spec.mjs tests/browser/map-recovery.spec.mjs
+            params: '{}'
+            timeout: 40
+          - name: g2-alone-4of4
+            runner: alone
+            args: 4/4 tests/browser/critical-flows.spec.mjs tests/browser/map-recovery.spec.mjs
+            params: '{}'
+            timeout: 40
+          # The critical group whole, as ci.yml runs it (npm run test:browser -- --critical-flows), without the probe's
+          # hooks: its duration with G1 and G2.
+          - name: critical-whole
+            runner: group
+            params: '{}'
+            timeout: 45
     defaults:
       run:
         working-directory: 01_Web
@@ -128,11 +130,11 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Add the probe's hooks and the G6 case (this checkout only)
+      - name: Add the probe's hooks (this checkout only)
+        if: ${{ matrix.runner != 'group' }}
         run: |
           node ../followups-probe/patch-helpers.mjs tests/browser/helpers.mjs
           node ../followups-probe/patch-teardown.mjs tests/browser/helpers.mjs
-          cp ../followups-probe/g6-globe-reprobe.spec.mjs tests/browser/
 
       - name: Apply the variants (this checkout only)
         if: ${{ matrix.variants }}
@@ -140,12 +142,16 @@ jobs:
 
       - name: Run the experiment
         env:
-          STARMAP_PROBE_INIT: ${{ github.workspace }}/followups-probe/probe-init.js
+          STARMAP_PROBE_INIT: ${{ matrix.runner != 'group' && format('{0}/followups-probe/probe-init.js', github.workspace) || '' }}
           STARMAP_PROBE_PARAMS: ${{ matrix.params }}
           DEBUG: ${{ matrix.debug }}
         run: |
           mkdir -p "$STARMAP_PROBE_OUT"
-          node ../followups-probe/run.mjs -- ${{ matrix.args }} > "$STARMAP_PROBE_OUT/run.log" 2>&1 || status=$?
+          case "${{ matrix.runner }}" in
+            probe) node ../followups-probe/run.mjs -- ${{ matrix.args }} > "$STARMAP_PROBE_OUT/run.log" 2>&1 || status=$? ;;
+            alone) node ../followups-probe/run-alone.mjs ${{ matrix.args }} > "$STARMAP_PROBE_OUT/run.log" 2>&1 || status=$? ;;
+            group) npm run test:browser -- --critical-flows > "$STARMAP_PROBE_OUT/run.log" 2>&1 || status=$? ;;
+          esac
           { grep -Ev '(^| )pw:(api|browser) ' "$STARMAP_PROBE_OUT/run.log" || true; } | tail -n 200
           exit "${status:-0}"
 

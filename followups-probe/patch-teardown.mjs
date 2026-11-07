@@ -1,4 +1,4 @@
-// Temporary (test stability follow-ups, round 1, G1; design §1.3): adds timing records of each case's teardown to
+// Temporary (test stability follow-ups, rounds 1-2, G1; design §1.3, §10.1): adds timing records of each case's teardown to
 // tests/browser/helpers.mjs in the runner's checkout only. Nothing is committed. Run after patch-helpers.mjs.
 // For each case, one line in STARMAP_PROBE_OUT/teardown.jsonl per phase:
 //   page fixture: from the end of the case's body (use) to the start of context.close(), and context.close() itself;
