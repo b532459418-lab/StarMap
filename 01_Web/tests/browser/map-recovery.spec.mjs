@@ -174,6 +174,12 @@ const withoutWebGL = () => {
 const noWebGLNotice = (page) => page.getByRole('alert').filter({ hasText: 'This browser can\'t show the 3D map right now' })
 
 test('no WebGL: the map says why instead of a blank canvas; Collection opens, a save works and its pause ends at once; Try again probes again', async ({ page }) => {
+  // Test stability follow-ups D-G7 (design §12.1): 120 s instead of the default 60 s. When WebGL is back, Try again
+  // builds the page's first viewer, at Reykjavik's city view, and with CI's software rendering the page is blocked until
+  // it has drawn: from the click to the notice gone took 25-56 s on CI before and after the follow-ups' changes (15
+  // runs), the whole case up to 58.0 s, and run 42356247728 timed out with the page blocked for 55.5 s. The rest of the
+  // case takes about 11 s. No assertion changes, nor the steps' own timeouts (a step waits until the page answers).
+  test.setTimeout(120_000)
   expectPageError(page, 'starmap:caught-error [map:no-webgl]')
   await page.addInitScript(withoutWebGL)
   await page.goto('/')

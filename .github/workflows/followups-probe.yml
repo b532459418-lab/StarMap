@@ -1,6 +1,6 @@
 name: Follow-ups probe (temporary)
 
-# Temporary (test stability follow-ups, rounds 1 and 2; design artifacts/followups-20261107/design.md §10). Runs on
+# Temporary (test stability follow-ups, rounds 1 to 3; design artifacts/followups-20261107/design.md §10 to §13). Runs on
 # pushes to test/followups only, and is removed with its commit before the pull request. Each entry runs one experiment
 # on its own runner, with the browser environment of ci.yml's browser checks (Node 24, the locked dependencies,
 # Playwright's Chromium, the project's playwright.config.mjs with --use-angle=swiftshader), and uploads its records
@@ -25,83 +25,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # G5 (design §10.2): the refused-save case as committed (answers held 600 ms, the map drawn before each save),
-          # 20 times on each of two runners; with a pause that does not turn the loop off, and with no pause on the save path.
-          - name: g5-a-x20
+          # Round 3 (design §12.6): the no-WebGL case of map-recovery.spec.mjs with its 120 s (D-G7), 20 times on each of
+          # two runners, with the teardown records; then the critical group whole as ci.yml runs it, without the probe's hooks.
+          - name: nowebgl-a-x20
             runner: probe
-            args: tests/browser/critical-flows.spec.mjs --grep "a refused save, an unknown outcome" --repeat-each=20
+            args: tests/browser/map-recovery.spec.mjs --grep "the map says why instead of a blank canvas" --repeat-each=20
             params: '{}'
             timeout: 40
-          - name: g5-b-x20
+          - name: nowebgl-b-x20
             runner: probe
-            args: tests/browser/critical-flows.spec.mjs --grep "a refused save, an unknown outcome" --repeat-each=20
+            args: tests/browser/map-recovery.spec.mjs --grep "the map says why instead of a blank canvas" --repeat-each=20
             params: '{}'
             timeout: 40
-          - name: g5-mutation-loop
-            runner: probe
-            args: tests/browser/critical-flows.spec.mjs --grep "a refused save, an unknown outcome" --repeat-each=5
-            variants: mutation-loop
-            params: '{}'
-            timeout: 25
-          - name: g5-mutation
-            runner: probe
-            args: tests/browser/critical-flows.spec.mjs --grep "a refused save, an unknown outcome" --repeat-each=5
-            variants: mutation
-            params: '{}'
-            timeout: 25
-          # G1 (design §10.1): map-recovery.spec.mjs twice as committed (no temporary screenshot of a passing case), with the
-          # teardown records; then the same with the pages taken to about:blank before the context closes.
-          - name: g1-base
-            runner: probe
-            args: tests/browser/map-recovery.spec.mjs --repeat-each=2
-            params: '{}'
-            debug: pw:api,pw:browser
-            timeout: 25
-          - name: g1-blank
-            runner: probe
-            args: tests/browser/map-recovery.spec.mjs --repeat-each=2
-            variants: g1-blank
-            params: '{}'
-            debug: pw:api,pw:browser
-            timeout: 25
-          # G3 (design §10.3): the evidence screenshot case ten times with a 12 s GPU process load from the screenshot's start
-          # (K1), without and with F5-1; the load's batches and the frame intervals are logged right after the capture.
-          - name: g3-k1-off
-            runner: probe
-            args: tests/browser/time-filters.spec.mjs --grep "a cross-year visit belongs to both years" --repeat-each=10
-            variants: g3-trigger f5-off
-            params: '{"gpuLoad":{"ms":12000,"size":2048,"iterations":60}}'
-            timeout: 30
-          - name: g3-k1-on
-            runner: probe
-            args: tests/browser/time-filters.spec.mjs --grep "a cross-year visit belongs to both years" --repeat-each=10
-            variants: g3-trigger
-            params: '{"gpuLoad":{"ms":12000,"size":2048,"iterations":60}}'
-            timeout: 30
-          # G2 (design §10.5): every case of the critical group alone, one Playwright run per case (run-alone.mjs), dealt out
-          # to four runners.
-          - name: g2-alone-1of4
-            runner: alone
-            args: 1/4 tests/browser/critical-flows.spec.mjs tests/browser/map-recovery.spec.mjs
-            params: '{}'
-            timeout: 40
-          - name: g2-alone-2of4
-            runner: alone
-            args: 2/4 tests/browser/critical-flows.spec.mjs tests/browser/map-recovery.spec.mjs
-            params: '{}'
-            timeout: 40
-          - name: g2-alone-3of4
-            runner: alone
-            args: 3/4 tests/browser/critical-flows.spec.mjs tests/browser/map-recovery.spec.mjs
-            params: '{}'
-            timeout: 40
-          - name: g2-alone-4of4
-            runner: alone
-            args: 4/4 tests/browser/critical-flows.spec.mjs tests/browser/map-recovery.spec.mjs
-            params: '{}'
-            timeout: 40
-          # The critical group whole, as ci.yml runs it (npm run test:browser -- --critical-flows), without the probe's
-          # hooks: its duration with G1 and G2.
           - name: critical-whole
             runner: group
             params: '{}'
