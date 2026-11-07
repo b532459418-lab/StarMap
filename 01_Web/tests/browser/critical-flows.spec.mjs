@@ -12,16 +12,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 
-// 3C-4d: the fixture is a new library from the start. Cases that seed sample media reset the shared fixture after
-// closing their page (resetFixture: everything but the media items, which stay; review §7-1).
-let restoreFixture
-test.afterEach(async ({ page }) => {
-  if (!restoreFixture) return
-  const restore = restoreFixture
-  restoreFixture = undefined
-  await page.close()
-  await restore()
-})
+// 3C-4d: the fixture is a new library from the start. Test stability follow-ups G2 (design §2.1): every case of this
+// file starts from the fixture's own content (resetFixture, a commit: everything but the media items, which stay; review
+// §7-1), so no case depends on what an earlier one wrote, and each runs alone or in any order. A case that needs media
+// imports them itself (seedSampleMedia; importing the same files again adds nothing).
+test.beforeEach(async () => { await createBrowserFixture(process.env.STARMAP_BROWSER_TEST_ROOT) })
 /**
  * Two Reykjavik photos (the one named cover-… is the city's cover photo by the import rule) and a Torshavn aerial photo:
  * real Inbox files imported into the store through the media service (media items are store-native since 3C-4c).
@@ -45,7 +40,6 @@ async function seedSampleMedia() {
     'drone/drone-1.jpg': { kind: 'aerialPhoto', date: '2025-06-06', resolution: '64 × 32', captureType: 'Aerial Photo', lat: 62.01, lng: -6.77 },
   }))
   await importInboxMedia(root)
-  restoreFixture = () => createBrowserFixture(root)
   return (await readFixtureFiles(root)).media.items
 }
 const focusInDialog = (page) => page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"][aria-modal="true"]')))
@@ -287,9 +281,8 @@ test.describe("Collection's code", () => {
 // Robustness batch (design §2–§3, §6.2): a part that fails shows its own notice and the rest of the page stays; every
 // error a boundary catches is reported to the page fixture, which fails the case unless the case expects the error.
 test.describe('Error boundaries', () => {
-  // Each case starts from the fixture's own content: the rows open dialogs on items an earlier case may have changed
-  // (the Collection conversion leaves Nuuk visited, so its Mark as visited button is disabled).
-  test.beforeEach(async () => { await createBrowserFixture(process.env.STARMAP_BROWSER_TEST_ROOT) })
+  // Like every case of this file, each starts from the fixture's own content: the rows open dialogs on items an earlier
+  // case may have changed (the Collection conversion leaves Nuuk visited, so its Mark as visited button is disabled).
   const at = (file) => (url) => new URL(url).pathname === `/src/components/${file}`
   const boundary = (page, name) => page.locator(`[data-error-boundary="${name}"]`)
   /** A module of the dev server replaced by one whose exports throw while rendering (no product hook needed). */
@@ -598,10 +591,11 @@ test('keyboard hiding the current cover photo clears the draft cover, and hiding
   await expect(info.getByRole('button', { name: 'Hide Reykjavik', exact: true })).toBeVisible()
 })
 
-// 3C-3, 3C-4a: the editor writes of the new library (the only write path since 3C-4d), with the request protocol. These
-// cases first reset the shared fixture to its own content (scripts/browser-fixture.mjs resetFixture: a commit) and run
-// in order on the same store: a note, a new Want to Go item, a conversion with a journey choice and a city order. Media
-// in the new library (3C-4c) are in the media group (media-recovery.spec.mjs).
+// 3C-3, 3C-4a: the editor writes of the new library (the only write path since 3C-4d), with the request protocol: a note,
+// a new Want to Go item, a conversion with a journey choice and a city order. Each starts from the fixture's own content
+// (the file's beforeEach; until G2 of the test stability follow-ups they shared one reset and ran in order) and checks
+// its revisions against the store's revision when it starts. Media in the new library (3C-4c) are in the media group
+// (media-recovery.spec.mjs).
 test.describe('the new library: editor writes', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
   /** The revision the dev server's virtual module carries ('undefined' without a store). */
@@ -611,7 +605,6 @@ test.describe('the new library: editor writes', () => {
   /** The store's V2 view, read in this process through a read-only connection (what a new dev server would serve). */
   const storedFiles = () => readFixtureFiles(root())
   const v2Bytes = async () => Promise.all(Object.values(fixtureFileNames).map((name) => readFile(path.join(root(), 'data', 'v2', name), 'utf8')))
-  test.beforeAll(async () => { await createBrowserFixture(root()) })
 
   test('new-library mode: a Want to Go note edited in Collection is still there after a reload', async ({ page }) => {
     const v2Before = await v2Bytes()
@@ -740,10 +733,11 @@ test.describe('the new library: editor writes', () => {
 
 // 3C-4b: a damaged new library (design 3B §5). The store is damaged before the dev server ever sees it
 // (scripts/browser-fixture.mjs enterDamagedStoreMode): its open check fails, and the App shows the data read-only with a
-// persistent notice; a write is refused with E_STORE_READ_ONLY. It runs last: the fixture's store is first moved aside
-// (setStoreAside) and the module loaded without a store, which closes the store the cases above used, so the damaged one
-// is opened afresh; afterwards the damaged store is removed and the fixture's store put back. Windows refuses to move the
-// store the dev server holds open, so there the case skips itself (CI runs it with the group on Linux).
+// persistent notice; a write is refused with E_STORE_READ_ONLY. The fixture's store is first moved aside (setStoreAside)
+// and the module loaded without a store, which closes the store the dev server had open, so the damaged one is opened
+// afresh; afterwards (afterAll) the damaged store is removed and the fixture's store put back and served again, so the
+// case can run anywhere in the file, or alone: the next case starts from the fixture as every case does. Windows refuses
+// to move the store the dev server holds open, so there the case skips itself (CI runs it with the group on Linux).
 test.describe('the new library: a damaged store', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
   const served = async (page, name) => new RegExp(`${name} = ([A-Za-z0-9_]+)`).exec(await (await page.request.get(PRIVATE_MODULE_PATH)).text())?.[1]
@@ -792,10 +786,9 @@ test.describe('the new library: a damaged store', () => {
 
 // 3C-5 D: saves without reloads. A save keeps what the page was doing; two tabs of one library follow each other; an
 // edit of the same record in another tab is a conflict the user resolves; another writer (a command-line import) shows
-// up without a reload. Each case starts from the fixture's own content.
+// up without a reload. Each case starts from the fixture's own content (the file's beforeEach).
 test.describe('incremental refresh (3C-5 D)', () => {
   const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
-  test.beforeEach(async () => { await createBrowserFixture(root()) })
   const cameraPose = (page) => page.evaluate(() => ({ pose: window.__travelAtlasDebugCamera?.getCameraPose(), command: window.__travelAtlasDebugCamera?.getCameraCommandState() }))
   /** The camera's pose once its last command has completed and two samples agree. */
   async function settledPose(page) {
@@ -992,8 +985,6 @@ test.describe('incremental refresh (3C-5 D)', () => {
 })
 
 test.describe('the map pauses during a save (3C-5 D, A′)', () => {
-  const root = () => process.env.STARMAP_BROWSER_TEST_ROOT
-  test.beforeEach(async () => { await createBrowserFixture(root()) })
   const loop = (page) => page.evaluate(() => window.__travelAtlasDebugRenderLoop?.state())
   /** The invariant of these cases: Cesium never stopped with an error (its scene.renderError), and no WebGL context was lost. */
   const expectNoRenderError = (state, when) => {
