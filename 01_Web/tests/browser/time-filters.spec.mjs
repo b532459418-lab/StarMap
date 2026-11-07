@@ -1,5 +1,5 @@
 import { test, expect, openMap, openCollection, readFixture, recordReloadCheckpoint, retainReloadFailure,
-  screenshotWithObservations, retainScreenshotObservations, settleScreenshotObservations } from './helpers.mjs'
+  screenshotWithObservations, retainFailureScreenshots, retainScreenshotObservations, settleScreenshotObservations } from './helpers.mjs'
 import { createBrowserFixture, fixtureHashes, fixtureIds, patchFixture as patchStoreFixture } from '../../scripts/browser-fixture.mjs'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
@@ -22,6 +22,8 @@ test.beforeEach(async () => { await createBrowserFixture(root) })
 test.afterEach(async ({ page }, testInfo) => {
   await retainScreenshotObservations(page, testInfo)
   await retainReloadFailure(page, testInfo)
+  // The screenshots of a failed case, before the page closes (G1: the fixture would find it closed).
+  await retainFailureScreenshots([page], testInfo)
   await page.close()
   await settleScreenshotObservations(page, testInfo)
   await createBrowserFixture(root)
