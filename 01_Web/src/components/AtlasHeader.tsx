@@ -22,8 +22,7 @@ export function AtlasHeader({ activePage, onPageChange, scrolled, scrollbarWidth
   const { t } = useUiLocale()
   return (
     <header
-      className="atlas-app-header cesium-lab-title hero-glass-layer absolute left-[50vw] top-4 z-50 w-[min(760px,calc(100vw-32px))] -translate-x-1/2 px-6 py-4 text-center sm:px-8"
-      data-page="map"
+      className="atlas-app-header atlas-header-map cesium-lab-title hero-glass-layer absolute left-[50vw] top-4 z-50 w-[min(760px,calc(100vw-32px))] -translate-x-1/2 px-6 py-4 text-center sm:px-8"
       data-active-page={activePage}
       data-scrolled={scrolled ? 'true' : 'false'}
       style={{ '--atlas-page-scrollbar': `${scrollbarWidth}px` } as React.CSSProperties}
