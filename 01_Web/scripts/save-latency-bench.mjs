@@ -34,7 +34,10 @@
  *   says), each a frame more; then the map and Collection again (the second opening). The module requests of an
  *   opening (the lazy code) are kept too. 收藏页首开: a run ends on the map, so every reload starts there and the first
  *   opening is a click from the map (the page keeps its view state in sessionStorage: a reload on Collection restores
- *   Collection, and a click on it then changes nothing).
+ *   Collection, and a click on it then changes nothing). 收藏页余量: each opening waits until the map has drawn more
+ *   than 10 frames and Collection's code (loaded ahead after the map's first frame) has arrived. At 81d1598 the earlier
+ *   check let the click come before the map was there, with the code loaded after the click: openings measured that
+ *   way are not openings from the map.
  * - 收藏页首开: `collectionRestore`: the page reloaded while on Collection (it restores Collection); from the start of
  *   the navigation until the first card has an enabled control (`shownMs`), all cards are mounted (`allMs`) and a frame
  *   more (`totalMs`), measured in the new document from its first frame on; `dataMs` is when the data were rendered.
@@ -107,6 +110,9 @@ try {
   const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
   // 性能续: long animation frames (≥ 50 ms, with script attribution) for every run; React commits when asked.
   await context.addInitScript(({ react }) => {
+    // 收藏页余量: development loads hundreds of modules; the default buffer (250 entries) dropped the later ones, among
+    // them Collection's code, which settle() looks for.
+    performance.setResourceTimingBufferSize?.(20000)
     window.__benchLoaf = []
     try {
       new PerformanceObserver((list) => {
@@ -360,9 +366,18 @@ try {
     const longFrames = await longFramesSince(Number(await page.evaluate(() => sessionStorage.getItem('starmapBenchStart'))), answer.totalMs)
     return { ...answer, totalMs: Math.round(answer.totalMs * 10) / 10, browser, longFrames }
   }
-  /** 性能续: the page has its data and the map has drawn frames; then a second of quiet. */
+  /**
+   * 性能续: the page has its data and the map has drawn frames; then a second of quiet. 收藏页余量: the map must be there
+   * (its debug object, development only, and more than 10 frames: at 81d1598 the globe appears 4-5 s after the data, and
+   * the earlier check let the click come before it, when Collection's code, loaded ahead after the map's first frame, was
+   * not there yet), and Collection's code has arrived (its request ended, or Collection is already mounted).
+   */
   async function settle() {
-    await page.waitForFunction(() => document.documentElement.dataset.starmapRevision !== undefined && (!window.__travelAtlasDebugRenderLoop || window.__travelAtlasDebugRenderLoop.state().frames > 10), undefined, { timeout: 170_000 })
+    await page.waitForFunction(() => document.documentElement.dataset.starmapRevision !== undefined
+      && window.__travelAtlasDebugRenderLoop !== undefined && window.__travelAtlasDebugRenderLoop.state().frames > 10
+      && (document.querySelector('.collection-card') !== null
+        || performance.getEntriesByType('resource').some((entry) => entry.name.includes('/src/components/CollectionPage.tsx') && entry.responseEnd > 0)),
+    undefined, { timeout: 170_000 })
     await delay(1000)
   }
   const goTo = async (name) => {
