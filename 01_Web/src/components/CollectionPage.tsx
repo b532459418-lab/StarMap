@@ -2,7 +2,8 @@ import { editorErrorNotice, localizedConversionReason } from '../i18n/editorErro
 import { useLocalizedNoticeWith } from '../i18n/useLocalizedNotice'
 import { memo, useCallback, useId, useMemo, useState } from 'react'
 import { Heart, Plus, Search } from 'lucide-react'
-// 收藏页首开 (I-1): the cards' icons, one element each shared by all cards (the markup lucide renders).
+// 收藏页首开 (I-1): the cards' icons, one element each shared by all cards (lucide's markup; 收藏页余量 A2′: its shapes in
+// fewer elements where no pixel changes). An action's label is the button's own text, without a wrapper element.
 import { cardIcons } from './staticIcons'
 import { collectionCardText, regionName, type CollectionCardText } from './collectionCardText'
 import { localEditorAvailable } from '../data/editorState'
@@ -453,7 +454,7 @@ const CollectionCard = memo(function CollectionCard({
               onClick={() => onViewOnMap(entry)}
             >
               {cardIcons.locateFixed}
-              <span>{text.view}</span>
+              {text.view}
             </button>
           ) : null}
 
@@ -469,7 +470,7 @@ const CollectionCard = memo(function CollectionCard({
               onClick={() => onConvertToTravel?.({ source: convertSource, recordId: convertRecordId })}
             >
               {cardIcons.footprints}
-              <span>{text.visited}</span>
+              {text.visited}
             </button>
           ) : null}
 
@@ -483,7 +484,7 @@ const CollectionCard = memo(function CollectionCard({
                 onClick={startEditingNote}
               >
                 {cardIcons.pencilLine}
-                <span>{text.editNote}</span>
+                {text.editNote}
               </button>
               {entry.hidden ? (
                 <>
@@ -495,7 +496,7 @@ const CollectionCard = memo(function CollectionCard({
                     onClick={restoreEntry}
                   >
                     {cardIcons.eye}
-                    <span>{text.restore}</span>
+                    {text.restore}
                   </button>
                   <button
                     type="button"
@@ -505,7 +506,7 @@ const CollectionCard = memo(function CollectionCard({
                     onClick={deleteEntry}
                   >
                     {cardIcons.trash2}
-                    <span>{text.delete}</span>
+                    {text.delete}
                   </button>
                 </>
               ) : (
@@ -517,7 +518,7 @@ const CollectionCard = memo(function CollectionCard({
                   onClick={hideEntry}
                 >
                   {cardIcons.eyeOff}
-                  <span>{text.hide}</span>
+                  {text.hide}
                 </button>
               )}
             </>

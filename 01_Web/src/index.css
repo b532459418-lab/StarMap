@@ -1028,7 +1028,12 @@ button {
 }
 
 /* Map workspace: flatter instrument-panel treatment based on the approved direction. */
-.atlas-app-header[data-page='map'] {
+/* 收藏页余量 C: the header's map styling hangs on its own class (`atlas-header-map`, always on: AtlasHeader.tsx), not on
+   a `data-page` attribute. Chrome merges style invalidation by attribute name: with `[data-page='map'] > *` (a subject
+   without a class) here, every change of `data-page` on .atlas-experience and .atlas-overlay-frame (each page switch)
+   restyled their whole subtrees, about 157 000 elements, ~1 s. Rules that use `data-page` keep a class, id or
+   pseudo-element in their subject (./pageSwitchStyle.test.ts). */
+.atlas-app-header.atlas-header-map {
   top: 0;
   left: 0;
   width: 100vw;
@@ -1046,11 +1051,11 @@ button {
   backdrop-filter: blur(26px) saturate(1.14);
 }
 
-.atlas-app-header[data-page='map']::after {
+.atlas-app-header.atlas-header-map::after {
   display: none;
 }
 
-.atlas-app-header[data-page='map'] h1 {
+.atlas-app-header.atlas-header-map h1 {
   color: #f8fafc;
   font-size: clamp(2rem, 2.6vw, 2.4rem);
   font-weight: 560;
@@ -1058,7 +1063,7 @@ button {
   text-shadow: 0 2px 24px rgba(2, 6, 23, 0.58);
 }
 
-.atlas-app-header[data-page='map'] p {
+.atlas-app-header.atlas-header-map p {
   margin-top: 4px;
   color: rgba(226, 232, 240, 0.74);
   font-size: 13px;
@@ -1066,7 +1071,7 @@ button {
   text-shadow: 0 1px 14px rgba(2, 6, 23, 0.72);
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs {
+.atlas-app-header.atlas-header-map .atlas-tabs {
   height: 36px;
   margin-top: 7px;
   border-color: rgba(148, 163, 184, 0.34);
@@ -1079,22 +1084,22 @@ button {
   backdrop-filter: blur(18px) saturate(1.08);
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs button {
+.atlas-app-header.atlas-header-map .atlas-tabs button {
   color: rgba(203, 213, 225, 0.76);
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs button[aria-current='page'] {
+.atlas-app-header.atlas-header-map .atlas-tabs button[aria-current='page'] {
   background: #7dd3fc;
   color: #020617;
   box-shadow: 0 8px 22px rgba(56, 189, 248, 0.24);
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs button:not([aria-current='page']):hover {
+.atlas-app-header.atlas-header-map .atlas-tabs button:not([aria-current='page']):hover {
   background: rgba(255, 255, 255, 0.07);
   color: #f8fafc;
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs button {
+.atlas-app-header.atlas-header-map .atlas-tabs button {
   min-width: 86px;
   border-radius: 4px;
   padding: 7px 14px;
@@ -1105,21 +1110,21 @@ button {
     transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs button:active {
+.atlas-app-header.atlas-header-map .atlas-tabs button:active {
   transform: scale(0.97);
 }
 
-.theme-night .atlas-app-header[data-page='map'] h1 {
+.theme-night .atlas-app-header.atlas-header-map h1 {
   color: #f8fafc;
   text-shadow: 0 2px 28px rgba(125, 211, 252, 0.16);
 }
 
-.theme-night .atlas-app-header[data-page='map'] p {
+.theme-night .atlas-app-header.atlas-header-map p {
   color: rgba(203, 213, 225, 0.7);
   text-shadow: none;
 }
 
-.theme-night .atlas-app-header[data-page='map'] .atlas-tabs {
+.theme-night .atlas-app-header.atlas-header-map .atlas-tabs {
   border-color: rgba(148, 163, 184, 0.34);
   background: rgba(5, 14, 26, 0.78);
   box-shadow:
@@ -1127,7 +1132,7 @@ button {
     0 14px 34px rgba(0, 0, 0, 0.3);
 }
 
-.theme-night .atlas-app-header[data-page='map'] {
+.theme-night .atlas-app-header.atlas-header-map {
   border-color: rgba(148, 163, 184, 0.28);
   background: rgba(3, 9, 18, 0.84);
 }
@@ -1750,22 +1755,22 @@ button {
 }
 
 @media (max-width: 767px) {
-  .atlas-app-header[data-page='map'] {
+  .atlas-app-header.atlas-header-map {
     top: 0;
     left: 0;
     width: 100vw;
     padding: 8px 12px 9px;
   }
 
-  .atlas-app-header[data-page='map'] h1 {
+  .atlas-app-header.atlas-header-map h1 {
     font-size: 2rem;
   }
 
-  .atlas-app-header[data-page='map'] p {
+  .atlas-app-header.atlas-header-map p {
     font-size: 11px;
   }
 
-  .atlas-app-header[data-page='map'] .atlas-tabs button {
+  .atlas-app-header.atlas-header-map .atlas-tabs button {
     min-width: 74px;
     padding-right: 11px;
     padding-left: 11px;
@@ -1804,7 +1809,7 @@ button {
 }
 
 @media (max-width: 420px) {
-  .atlas-app-header[data-page='map'] .atlas-tabs button {
+  .atlas-app-header.atlas-header-map .atlas-tabs button {
     min-width: 68px;
     padding-right: 8px;
     padding-left: 8px;
@@ -1875,7 +1880,7 @@ button {
 }
 
 /* Frontier map chrome: cinematic canvas, precision surfaces, restrained ice-blue focus. */
-.atlas-app-header[data-page='map'] {
+.atlas-app-header.atlas-header-map {
   border-bottom-color: rgba(255, 255, 255, 0.1);
   background: rgba(4, 7, 12, 0.91);
   box-shadow: inset 0 -1px 0 rgba(125, 211, 252, 0.08);
@@ -1884,7 +1889,7 @@ button {
   font-feature-settings: 'calt', 'kern', 'liga', 'ss03';
 }
 
-.atlas-app-header[data-page='map']::after {
+.atlas-app-header.atlas-header-map::after {
   position: absolute;
   right: 0;
   bottom: -1px;
@@ -1896,47 +1901,47 @@ button {
   content: '';
 }
 
-.atlas-app-header[data-page='map'] h1,
-.theme-night .atlas-app-header[data-page='map'] h1 {
+.atlas-app-header.atlas-header-map h1,
+.theme-night .atlas-app-header.atlas-header-map h1 {
   color: #f4f7fa;
   font-weight: 580;
   letter-spacing: -0.045em;
   text-shadow: none;
 }
 
-.atlas-app-header[data-page='map'] p,
-.theme-night .atlas-app-header[data-page='map'] p {
+.atlas-app-header.atlas-header-map p,
+.theme-night .atlas-app-header.atlas-header-map p {
   color: rgba(205, 213, 222, 0.68);
   letter-spacing: 0.015em;
   text-shadow: none;
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs,
-.theme-night .atlas-app-header[data-page='map'] .atlas-tabs {
+.atlas-app-header.atlas-header-map .atlas-tabs,
+.theme-night .atlas-app-header.atlas-header-map .atlas-tabs {
   border-color: rgba(255, 255, 255, 0.1);
   background: #0b0f15;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs button {
+.atlas-app-header.atlas-header-map .atlas-tabs button {
   color: #8f99a7;
   font-size: 12px;
   font-weight: 550;
   letter-spacing: 0.025em;
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs button[aria-current='page'] {
+.atlas-app-header.atlas-header-map .atlas-tabs button[aria-current='page'] {
   background: #f4f7fa;
   color: #070a0f;
   box-shadow: none;
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs button:not([aria-current='page']):hover {
+.atlas-app-header.atlas-header-map .atlas-tabs button:not([aria-current='page']):hover {
   background: #141a22;
   color: #f4f7fa;
 }
 
-.theme-night .atlas-app-header[data-page='map'] {
+.theme-night .atlas-app-header.atlas-header-map {
   border-bottom-color: rgba(255, 255, 255, 0.1);
   background: rgba(3, 5, 9, 0.94);
 }
@@ -1952,8 +1957,8 @@ button {
    leaves the page's classic scrollbar uncovered (0 for overlay scrollbars).
    The spread equals the blur so the shadow falls only downward and never
    dims the scrollbar. */
-.atlas-app-header[data-page='map'][data-scrolled]::before,
-.theme-night .atlas-app-header[data-page='map'][data-scrolled]::before {
+.atlas-app-header.atlas-header-map[data-scrolled]::before,
+.theme-night .atlas-app-header.atlas-header-map[data-scrolled]::before {
   position: absolute;
   top: -24px;
   right: var(--atlas-page-scrollbar, 0px);
@@ -1975,8 +1980,8 @@ button {
     visibility 0s linear 220ms;
 }
 
-.atlas-app-header[data-page='map'][data-scrolled='true']::before,
-.theme-night .atlas-app-header[data-page='map'][data-scrolled='true']::before {
+.atlas-app-header.atlas-header-map[data-scrolled='true']::before,
+.theme-night .atlas-app-header.atlas-header-map[data-scrolled='true']::before {
   opacity: 1;
   visibility: visible;
   transition:
@@ -1985,8 +1990,8 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .atlas-app-header[data-page='map'][data-scrolled]::before,
-  .theme-night .atlas-app-header[data-page='map'][data-scrolled]::before {
+  .atlas-app-header.atlas-header-map[data-scrolled]::before,
+  .theme-night .atlas-app-header.atlas-header-map[data-scrolled]::before {
     transition: none;
   }
 }
@@ -2437,7 +2442,7 @@ button {
 
 /* Celestial glass trial: preserve the docked geometry while allowing the
    moving sky to remain visible through a controlled hierarchy of frost. */
-.theme-night .atlas-app-header[data-page='map'] {
+.theme-night .atlas-app-header.atlas-header-map {
   isolation: isolate;
   overflow: hidden;
   border-bottom-color: transparent;
@@ -2451,7 +2456,7 @@ button {
   backdrop-filter: blur(34px) saturate(1.5) brightness(0.9);
 }
 
-.theme-night .atlas-app-header[data-page='map']::before {
+.theme-night .atlas-app-header.atlas-header-map::before {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -2462,16 +2467,16 @@ button {
   pointer-events: none;
 }
 
-.theme-night .atlas-app-header[data-page='map']::after {
+.theme-night .atlas-app-header.atlas-header-map::after {
   display: none;
 }
 
-.theme-night .atlas-app-header[data-page='map'] > * {
+.theme-night .atlas-app-header.atlas-header-map > * {
   position: relative;
   z-index: 1;
 }
 
-.theme-night .atlas-app-header[data-page='map'] .atlas-tabs {
+.theme-night .atlas-app-header.atlas-header-map .atlas-tabs {
   border-color: rgba(226, 232, 240, 0.18);
   background: rgba(3, 9, 18, 0.42);
   box-shadow:
@@ -2567,8 +2572,8 @@ button {
 
 /* Header without a container: keep only the title, supporting copy, and tabs
    above the continuous Cesium sky. */
-.atlas-app-header[data-page='map'],
-.theme-night .atlas-app-header[data-page='map'] {
+.atlas-app-header.atlas-header-map,
+.theme-night .atlas-app-header.atlas-header-map {
   overflow: visible;
   translate: 0 24px;
   border-color: transparent;
@@ -2578,10 +2583,10 @@ button {
   backdrop-filter: none;
 }
 
-.atlas-app-header[data-page='map']::before,
-.atlas-app-header[data-page='map']::after,
-.theme-night .atlas-app-header[data-page='map']::before,
-.theme-night .atlas-app-header[data-page='map']::after {
+.atlas-app-header.atlas-header-map::before,
+.atlas-app-header.atlas-header-map::after,
+.theme-night .atlas-app-header.atlas-header-map::before,
+.theme-night .atlas-app-header.atlas-header-map::after {
   display: none;
 }
 
@@ -6672,11 +6677,11 @@ button {
 
 /* Map / Journey remain the only top tabs, but they read as primary page
    choices instead of the previous small utility labels. */
-.atlas-app-header[data-page='map'] .atlas-tabs {
+.atlas-app-header.atlas-header-map .atlas-tabs {
   height: 40px;
 }
 
-.atlas-app-header[data-page='map'] .atlas-tabs button {
+.atlas-app-header.atlas-header-map .atlas-tabs button {
   min-width: 96px;
   padding: 8px 17px;
   font-size: 14px;
@@ -7128,7 +7133,7 @@ button {
     padding: 15px;
   }
 
-  .atlas-app-header[data-page='map'] .atlas-tabs button {
+  .atlas-app-header.atlas-header-map .atlas-tabs button {
     min-width: 82px;
     font-size: 13px;
   }
@@ -7164,7 +7169,7 @@ button {
 .atlas-media-import-recovery p + p {
   margin-top: 8px;
 }
-.atlas-app-header[data-page='map'] .atlas-header-controls .atlas-tabs { margin: 0; }
+.atlas-app-header.atlas-header-map .atlas-header-controls .atlas-tabs { margin: 0; }
 .atlas-language-selector {
   width: 96px;
   height: 36px;
@@ -7179,7 +7184,7 @@ button {
 .atlas-language-selector:focus-visible { outline: 2px solid #8dcaff; outline-offset: 3px; }
 @media (max-width: 560px) {
   .atlas-header-controls { gap: 6px; }
-  .atlas-app-header[data-page='map'] .atlas-header-controls .atlas-tabs button {
+  .atlas-app-header.atlas-header-map .atlas-header-controls .atlas-tabs button {
     min-width: 62px;
     padding: 7px 6px;
     font-size: 12px;
@@ -7215,7 +7220,7 @@ button {
 @media (width < 768px) {
   .cesium-lab-page { --atlas-overlay-top: 284px; }
 
-  .atlas-app-header[data-page='map'] p {
+  .atlas-app-header.atlas-header-map p {
     min-height: 2.8em;
   }
 
