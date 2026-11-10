@@ -37,7 +37,8 @@
  *   Collection, and a click on it then changes nothing). 收藏页余量: each opening waits until the map has drawn more
  *   than 10 frames and Collection's code (loaded ahead after the map's first frame) has arrived. At 81d1598 the earlier
  *   check let the click come before the map was there, with the code loaded after the click: openings measured that
- *   way are not openings from the map.
+ *   way are not openings from the map. `collectionBack`: after the second opening, back to the map, from the click on
+ *   Map until the globe has drawn a frame (`shownMs`) and a frame more (`totalMs`).
  * - 收藏页首开: `collectionRestore`: the page reloaded while on Collection (it restores Collection); from the start of
  *   the navigation until the first card has an enabled control (`shownMs`), all cards are mounted (`allMs`) and a frame
  *   more (`totalMs`), measured in the new document from its first frame on; `dataMs` is when the data were rendered.
@@ -367,6 +368,37 @@ try {
     return { ...answer, totalMs: Math.round(answer.totalMs * 10) / 10, browser, longFrames }
   }
   /**
+   * 收藏页余量: from Collection back to the map, from the click on Map until the globe has drawn a frame since (its frame
+   * counter, development only: `shownMs`, also `allMs`) and a frame more (`totalMs`).
+   */
+  async function backToMap() {
+    const before = await browserMetrics()
+    const answer = await page.evaluate(() => new Promise((resolve) => {
+      const nav = [...document.querySelectorAll('nav button')].find((button) => button.textContent?.trim() === 'Map')
+      const frames = () => window.__travelAtlasDebugRenderLoop?.state().frames
+      if (!nav || frames() === undefined) { resolve(undefined); return }
+      const framesBefore = frames()
+      sessionStorage.setItem('starmapBenchStart', String(performance.timeOrigin + performance.now()))
+      const start = performance.now()
+      nav.click()
+      const frame = () => {
+        if (frames() > framesBefore) {
+          const drawnMs = performance.now() - start
+          requestAnimationFrame(() => resolve({ totalMs: performance.now() - start, shownMs: Math.round(drawnMs), allMs: Math.round(drawnMs) }))
+          return
+        }
+        if (performance.now() - start > 60_000) resolve(undefined)
+        else requestAnimationFrame(frame)
+      }
+      requestAnimationFrame(frame)
+    }))
+    if (!answer) throw new Error('the map did not draw after Collection')
+    const after = await browserMetrics()
+    const browser = Object.fromEntries(['ScriptDuration', 'RecalcStyleDuration', 'LayoutDuration', 'TaskDuration'].map((key) => [key.replace('Duration', 'Ms'), Math.round((after[key] - before[key]) * 1000)]))
+    const longFrames = await longFramesSince(Number(await page.evaluate(() => sessionStorage.getItem('starmapBenchStart'))), answer.totalMs)
+    return { ...answer, totalMs: Math.round(answer.totalMs * 10) / 10, browser, longFrames }
+  }
+  /**
    * 性能续: the page has its data and the map has drawn frames; then a second of quiet. 收藏页余量: the map must be there
    * (its debug object, development only, and more than 10 frames: at 81d1598 the globe appears 4-5 s after the data, and
    * the earlier check let the click come before it, when Collection's code, loaded ahead after the map's first frame, was
@@ -409,8 +441,8 @@ try {
       await settle()
       record('collectionSecond', await profiling('collectionSecond', () => openCollection()))
       // 收藏页首开: back on the map (its view state is what the next reload restores), so that the next first opening is
-      // a click from the map too.
-      await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
+      // a click from the map too. 收藏页余量: that way back is measured (`collectionBack`).
+      record('collectionBack', await profiling('collectionBack', () => backToMap()))
       await page.waitForFunction(() => document.querySelector('.atlas-experience')?.getAttribute('data-page') === 'map')
       await delay(500)
     }
