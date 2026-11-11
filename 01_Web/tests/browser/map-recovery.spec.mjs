@@ -161,6 +161,46 @@ test('keyboard: the notice\'s button is reached with Tab and rebuilds the map; t
   await expect(button).toHaveCount(0)
 })
 
+// 地球被盖住时 (B2): another page covers the map, the globe draws at most 10 frames a second behind it
+// (src/data/renderPause.ts). A context lost there: the notice waits for the map; given back there, the map is rebuilt and
+// the new viewer is capped too; a context lost there and kept lost: the notice and Reload map on the map.
+test('a lost context on a covered map: rebuilt there when given back, capped; kept lost, the notice shows on the map and Reload map works', async ({ page }) => {
+  const COVERED_FRAME_RATE = 10 // ../../src/data/renderPause.ts
+  const nav = (name) => page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name, exact: true }).click()
+  await openMap(page)
+  const first = await expectRenders(page, undefined)
+  await openCollection(page)
+  await expect.poll(async () => (await loop(page))?.covered, { timeout: 5000 }).toBe(true)
+  expect((await loop(page)).diagnostics.targetFrameRate).toBe(COVERED_FRAME_RATE)
+  await loseContext(page)
+  await expect.poll(async () => (await loop(page))?.diagnostics?.contextLostCount, { timeout: 5000 }).toBe(1)
+  expect((await loop(page)).useDefaultRenderLoop).toBe(false)
+  await expect(notice(page), 'the notice is shown on the map, not on Collection').toHaveCount(0)
+  // Given back while covered: rebuilt at once, the new viewer follows the cover.
+  await restoreContext(page)
+  await expect.poll(async () => {
+    const state = await loop(page)
+    return Boolean(state && state.viewer !== first.viewer && state.useDefaultRenderLoop && state.frames >= 2)
+  }, { timeout: 20000, intervals: [200, 400] }).toBe(true)
+  const rebuilt = await loop(page)
+  expect({ covered: rebuilt.covered, cap: rebuilt.diagnostics.targetFrameRate, contextLostCount: rebuilt.diagnostics.contextLostCount })
+    .toEqual({ covered: true, cap: COVERED_FRAME_RATE, contextLostCount: 0 })
+  await nav('Map')
+  const shown = await expectRenders(page, first.viewer)
+  expect(shown.diagnostics.targetFrameRate, 'no cap on the map').toBeUndefined()
+  // Lost on Collection and kept lost: the notice and its button wait for the map.
+  await openCollection(page)
+  await expect.poll(async () => (await loop(page))?.covered, { timeout: 5000 }).toBe(true)
+  await loseContext(page)
+  await expect.poll(async () => (await loop(page))?.diagnostics?.contextLostCount, { timeout: 5000 }).toBe(1)
+  await expect(notice(page)).toHaveCount(0)
+  await nav('Map')
+  await expectStopped(page, shown.viewer)
+  await reloadButton(page).click()
+  const reloaded = await expectRenders(page, shown.viewer)
+  expect(reloaded.diagnostics.targetFrameRate, 'no cap on the map').toBeUndefined()
+})
+
 // Robustness batch (design §4, §6.2 case 4): a browser without WebGL. Cesium could not construct a viewer, and its error
 // is out of React's reach (design §1.4), so the map probes first. The init script makes the three WebGL context types
 // unavailable until the case gives them back (`window.__starmapWebGLBack`), the way a browser with WebGL turned off does.

@@ -46,7 +46,7 @@ import { useUiLocale } from '../i18n/useUiLocale'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
 import { useStableCallback } from './useStableCallback'
 import { useElementCache } from './useElementCache'
-import { bindRenderLoop, renderPauseState, resumeRendering, subscribeRenderPause } from '../data/renderPause'
+import { bindRenderLoop, coverRendering, renderPauseState, resumeRendering, subscribeRenderPause } from '../data/renderPause'
 import { createMapRecovery, guardRenderLoop, type MapFailure } from '../data/mapRecovery'
 import { browserWebGLEnvironment, firstWebGLProbe, forgetFirstWebGLProbe, probeWebGL } from '../data/webglSupport'
 import { reportToBrowserTests } from '../data/browserTestReport'
@@ -1699,6 +1699,16 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     if (!viewer || viewer.isDestroyed()) return
     viewer.entities.show = showMapContent
   }, [showMapContent, viewerReadyVersion])
+
+  // 地球被盖住时 (B2): while another page covers the map, the globe draws the sky behind the page's glass at most
+  // COVERED_FRAME_RATE frames a second (../data/renderPause.ts, the second reason beside a save's pause); the sky keeps
+  // moving in real time. Set in the commit of the page switch, so the first frame back on the map is not capped. A
+  // viewer bound later (rebuilt after a lost context) follows the cover at once.
+  useLayoutEffect(() => {
+    if (showMapContent) return undefined
+    coverRendering(true)
+    return () => coverRendering(false)
+  }, [showMapContent])
 
   useEffect(() => {
     if (!showMapContent) return undefined
