@@ -3,12 +3,15 @@
  * The map's pause during a save (3C-5 D, A′; ./renderPause.ts): a renderer's loop is off from the click until the
  * changes are applied, a failure, the watchdog or a forced end, and it then renders again (its frames go on); a loop
  * Cesium had stopped stays stopped; overlapping saves, a replaced or destroyed renderer. And the write path
- * (./localEditorApi.ts) ends the pause in every outcome.
+ * (./localEditorApi.ts) ends the pause in every outcome. The second reason, a map covered by another page (地球被盖住时,
+ * B2): the frame cap, in every order with a save's pause, on a renderer bound before or during it, and on a failed
+ * viewer's guarded target (./mapRecovery.ts).
  */
 import { afterEach, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bindRenderLoop, pauseRendering, RENDER_PAUSE_LIMIT_MS, renderPauseState, resetRenderPauseForTests, resumeRendering, subscribeRenderPause } from './renderPause.ts'
+import { bindRenderLoop, COVERED_FRAME_RATE, coverRendering, pauseRendering, RENDER_PAUSE_LIMIT_MS, renderPauseState, resetRenderPauseForTests, resumeRendering, subscribeRenderPause } from './renderPause.ts'
 import { setLocalEditorStoreSync, updateLocalWantToGo, type LocalEditorStoreSync } from './localEditorApi.ts'
+import { guardRenderLoop } from './mapRecovery.ts'
 
 /** A clock whose time and timers the test moves. */
 function fakeClock() {
@@ -30,10 +33,11 @@ function fakeClock() {
 }
 
 /** A renderer with a default loop: each tick renders a frame while the loop is on (like Cesium's widget). */
-function renderer(loop = true) {
+function renderer(loop = true, targetFrameRate: number | undefined = undefined) {
   let destroyed = false
   const target = {
     useDefaultRenderLoop: loop,
+    targetFrameRate,
     frames: 0,
     isDestroyed: () => destroyed,
     destroy() { destroyed = true },
@@ -173,6 +177,97 @@ test('a renderer bound during a pause is paused at once; replaced or destroyed d
   unbindSecond()
   assert.equal(second.useDefaultRenderLoop, true)
   again('applied')
+})
+
+test('another page covers the map: at most COVERED_FRAME_RATE frames a second, the loop stays on; then the cap it had', () => {
+  assert.equal(COVERED_FRAME_RATE, 10)
+  const map = renderer()
+  const capped = renderer(true, 30)
+  bindRenderLoop(map)
+  bindRenderLoop(capped)
+  assert.equal(renderPauseState().covered, false)
+  coverRendering(true)
+  coverRendering(true)
+  assert.equal(renderPauseState().covered, true)
+  for (const target of [map, capped]) {
+    assert.equal(target.targetFrameRate, COVERED_FRAME_RATE)
+    assert.equal(target.useDefaultRenderLoop, true, 'the sky goes on moving')
+  }
+  coverRendering(false)
+  assert.equal(renderPauseState().covered, false)
+  assert.equal(map.targetFrameRate, undefined, 'no cap again')
+  assert.equal(capped.targetFrameRate, 30, 'the cap it had')
+  assert.equal(renderPauseState().episodes.length, 0, 'a cover is not a pause')
+})
+
+test('a renderer bound on a covered map is capped at once; unbound or destroyed, it is left as it was', () => {
+  coverRendering(true)
+  const map = renderer()
+  const unbind = bindRenderLoop(map)
+  assert.equal(map.targetFrameRate, COVERED_FRAME_RATE)
+  unbind()
+  assert.equal(map.targetFrameRate, undefined, 'unbound (a viewer replaced): its cap back')
+  const next = renderer()
+  const unbindNext = bindRenderLoop(next)
+  next.destroy()
+  unbindNext()
+  coverRendering(false)
+  assert.equal(next.targetFrameRate, COVERED_FRAME_RATE, 'a destroyed viewer is not touched')
+})
+
+test('a save on a covered map, in every order: the pause turns the loop off and back, the cover only caps; neither undoes the other', () => {
+  type Step = 'cover' | 'uncover' | 'pause' | 'release' | 'page'
+  const orders: Step[][] = [
+    ['cover', 'pause', 'release', 'uncover'],
+    ['cover', 'pause', 'uncover', 'release'],
+    ['pause', 'cover', 'release', 'uncover'],
+    ['pause', 'cover', 'uncover', 'release'],
+    // A page switch: the page ends the pause and changes the cover in one commit, in either order.
+    ['cover', 'pause', 'page', 'uncover'],
+    ['cover', 'pause', 'uncover', 'page'],
+    ['pause', 'page', 'cover', 'uncover'],
+    ['pause', 'cover', 'page', 'uncover'],
+  ]
+  for (const order of orders) {
+    resetRenderPauseForTests(clock)
+    const map = renderer()
+    bindRenderLoop(map)
+    let release: ReturnType<typeof pauseRendering> | undefined
+    let paused = false
+    let isCovered = false
+    for (const step of order) {
+      if (step === 'cover') { coverRendering(true); isCovered = true }
+      if (step === 'uncover') { coverRendering(false); isCovered = false }
+      if (step === 'pause') { release = pauseRendering(); paused = true }
+      if (step === 'release') { release?.('applied'); paused = false }
+      if (step === 'page') { resumeRendering('page'); paused = false }
+      const at = `${order.join(' → ')}, after ${step}`
+      assert.equal(map.useDefaultRenderLoop, !paused, `the loop: ${at}`)
+      assert.equal(map.targetFrameRate, isCovered ? COVERED_FRAME_RATE : undefined, `the cap: ${at}`)
+      const before = map.frames
+      map.tick()
+      assert.equal(map.frames > before, !paused, `frames only when not paused: ${at}`)
+    }
+  }
+})
+
+test('a covered map with a loop Cesium had stopped, or a failed viewer (guarded): capped, and the loop stays off', () => {
+  coverRendering(true)
+  const stopped = renderer(false)
+  bindRenderLoop(stopped)
+  const failed = renderer()
+  let renders = true
+  bindRenderLoop(guardRenderLoop(failed, () => renders))
+  assert.equal(failed.targetFrameRate, COVERED_FRAME_RATE, 'the cap passes through the guard')
+  // The viewer fails (its context lost): its loop is turned off, as mapRecovery does.
+  renders = false
+  failed.useDefaultRenderLoop = false
+  const release = pauseRendering()
+  release('applied')
+  coverRendering(false)
+  assert.equal(stopped.useDefaultRenderLoop, false)
+  assert.equal(failed.useDefaultRenderLoop, false, 'neither the end of the pause nor the cover turns a failed loop on')
+  assert.equal(failed.targetFrameRate, undefined)
 })
 
 function stubSync(applySaved: LocalEditorStoreSync['applySaved']): LocalEditorStoreSync {
