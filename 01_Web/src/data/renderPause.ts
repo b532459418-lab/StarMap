@@ -19,12 +19,25 @@
  *   Turning the default loop off stops the automatic rendering, the canvas size updates and the clock: all start again
  *   with the loop. Unbinding (a viewer replaced or destroyed) gives the target back its loop.
  * - `renderPauseState()`: whether paused, and the last episodes (how long, what ended them), for the tests and the
- *   save-to-usable measurement.
+ *   save-to-usable measurement; and whether the map is covered.
+ *
+ * A second reason, 地球被盖住时 (B2; the author's decision of 2026-11-11, spec §7): while another page covers the map
+ * (Journey, Collection, the update page: the map's content hidden), the globe still draws the sky behind the page's
+ * glass, but at most `COVERED_FRAME_RATE` frames a second (Cesium's `targetFrameRate`; the sky keeps moving, in real
+ * time, so nothing jumps when the map comes back). At 60 frames a second the covered globe took most of the main thread
+ * and about half of the GPU for a blurred sky.
+ * - `coverRendering(covered)`: the globe's page says whether another page covers the map.
+ * - A bound renderer follows both reasons, each on its own property: a save's pause turns `useDefaultRenderLoop` off
+ *   and back, the cover sets `targetFrameRate` and puts back what was there. Neither touches what the other one
+ *   changed, so they never undo each other in any order (a pause on a covered map, a cover during a pause, a page switch
+ *   that ends a pause and changes the cover at once).
  *
  * Constraint: Node 24 loads it directly (no DOM, no Cesium import); the timers can be replaced in tests.
  */
 
 export const RENDER_PAUSE_LIMIT_MS = 1500
+/** The globe's frames a second while another page covers the map. */
+export const COVERED_FRAME_RATE = 10
 
 /** What ended a pause. */
 export type RenderPauseEnd = 'applied' | 'failed' | 'released' | 'limit' | 'hidden' | 'page' | 'unmount' | 'no-renderer'
@@ -36,6 +49,8 @@ export interface RenderPauseEpisode {
 
 export interface RenderLoopTarget {
   useDefaultRenderLoop: boolean
+  /** Cesium's cap of frames a second (`Viewer.targetFrameRate`); undefined is no cap. */
+  targetFrameRate?: number | undefined
   isDestroyed(): boolean
 }
 
@@ -68,6 +83,8 @@ const listeners = new Set<(paused: boolean) => void>()
 const episodes: RenderPauseEpisode[] = []
 /** Renderers bound now (`bindRenderLoop`). */
 let renderers = 0
+let covered = false
+const coverListeners = new Set<(covered: boolean) => void>()
 
 function record(episodeRecord: RenderPauseEpisode) {
   episodes.push(episodeRecord)
@@ -121,7 +138,17 @@ export function subscribeRenderPause(listener: (paused: boolean) => void): () =>
   return () => { listeners.delete(listener) }
 }
 
-/** A renderer follows the pauses (see the module comment); the returned unbind gives it back its loop. */
+/** Another page covers the map, or no longer does (地球被盖住时; see the module comment). */
+export function coverRendering(isCovered: boolean): void {
+  if (covered === isCovered) return
+  covered = isCovered
+  for (const listener of [...coverListeners]) listener(covered)
+}
+
+/**
+ * A renderer follows the pauses and the cover (see the module comment); the returned unbind gives it back its loop and
+ * its frame cap.
+ */
 export function bindRenderLoop(target: RenderLoopTarget): () => void {
   renderers++
   let bound = true
@@ -137,16 +164,33 @@ export function bindRenderLoop(target: RenderLoopTarget): () => void {
       before = undefined
     }
   }
+  // The cap there was before the cover (boxed: undefined, no cap, is a value too).
+  let rateBefore: { readonly value: number | undefined } | undefined
+  const followCover = (isCovered: boolean) => {
+    if (target.isDestroyed()) return
+    if (isCovered) {
+      if (rateBefore !== undefined) return
+      rateBefore = { value: target.targetFrameRate }
+      target.targetFrameRate = COVERED_FRAME_RATE
+    } else if (rateBefore !== undefined) {
+      target.targetFrameRate = rateBefore.value
+      rateBefore = undefined
+    }
+  }
   const unsubscribe = subscribeRenderPause(follow)
+  coverListeners.add(followCover)
+  followCover(covered)
   return () => {
     if (bound) { bound = false; renderers-- }
     unsubscribe()
+    coverListeners.delete(followCover)
     follow(false)
+    followCover(false)
   }
 }
 
-export function renderPauseState(): { readonly paused: boolean; readonly count: number; readonly episodes: readonly RenderPauseEpisode[] } {
-  return { paused: pausedSince !== undefined, count, episodes: [...episodes] }
+export function renderPauseState(): { readonly paused: boolean; readonly count: number; readonly episodes: readonly RenderPauseEpisode[]; readonly covered: boolean } {
+  return { paused: pausedSince !== undefined, count, episodes: [...episodes], covered }
 }
 
 /** Tests: another clock (fake timers), and a clean state. */
@@ -156,4 +200,6 @@ export function resetRenderPauseForTests(testClock: Clock = realClock): void {
   episodes.length = 0
   listeners.clear()
   renderers = 0
+  covered = false
+  coverListeners.clear()
 }

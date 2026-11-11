@@ -1422,3 +1422,100 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     await expectEndedByTheLimit(page)
   })
 })
+
+test.describe('a covered map (地球被盖住时, B2)', () => {
+  const loop = (page) => page.evaluate(() => window.__travelAtlasDebugRenderLoop?.state())
+  const nav = (page, name) => page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name, exact: true }).click()
+  const COVERED_FRAME_RATE = 10 // ../../src/data/renderPause.ts
+  /**
+   * Another page covers the map: the globe's cap is set, its loop is on and frames still come (the sky moves behind the
+   * page's glass), no faster than the cap allows (with a margin for the frame timing; software GL on CI draws far fewer).
+   */
+  async function expectCapped(page, when) {
+    await expect.poll(async () => (await loop(page))?.covered, { timeout: 5000 }).toBe(true)
+    const start = await loop(page)
+    expect({ cap: start.diagnostics.targetFrameRate, loop: start.useDefaultRenderLoop }, `capped, the loop on: ${when}`)
+      .toEqual({ cap: COVERED_FRAME_RATE, loop: true })
+    await expect.poll(async () => (await loop(page)).frames - start.frames, { timeout: 10000, intervals: [200, 400] }).toBeGreaterThanOrEqual(2)
+    await page.waitForTimeout(2000)
+    const end = await loop(page)
+    const perSecond = (end.frames - start.frames) / ((end.diagnostics.observedAt - start.diagnostics.observedAt) / 1000)
+    test.info().annotations.push({ type: `covered frames a second (${when})`, description: perSecond.toFixed(1) })
+    expect(perSecond, `frames a second while covered: ${when}`).toBeLessThanOrEqual(COVERED_FRAME_RATE * 1.3)
+    return end
+  }
+  /** The map shown again: no cover, no cap, the loop on and new frames. */
+  async function expectFullRate(page, when) {
+    await expect.poll(async () => (await loop(page))?.covered, { timeout: 5000 }).toBe(false)
+    const state = await loop(page)
+    expect({ cap: state.diagnostics.targetFrameRate, loop: state.useDefaultRenderLoop }, `no cap, the loop on: ${when}`)
+      .toEqual({ cap: undefined, loop: true })
+    await expect.poll(async () => (await loop(page)).frames - state.frames, { timeout: 5000, intervals: [100, 250] }).toBeGreaterThanOrEqual(2)
+    const { renderErrorCount, contextLostCount } = (await loop(page)).diagnostics
+    expect({ renderErrorCount, contextLostCount }).toEqual({ renderErrorCount: 0, contextLostCount: 0 })
+  }
+  const cameraPose = (page) => page.evaluate(() => ({ pose: window.__travelAtlasDebugCamera?.getCameraPose(), command: window.__travelAtlasDebugCamera?.getCameraCommandState() }))
+  /** The camera's pose once its last command has completed and two samples agree. */
+  async function settledPose(page) {
+    let previous
+    let pose
+    await expect.poll(async () => {
+      const { pose: now, command } = await cameraPose(page)
+      const settled = command?.status === 'completed' && previous !== undefined && JSON.stringify(now) === JSON.stringify(previous)
+      previous = now
+      if (settled) pose = now
+      return Boolean(settled)
+    }, { timeout: 20000, intervals: [200, 300, 400] }).toBe(true)
+    return pose
+  }
+  const wantToGoLayer = (page) => page.getByRole('menuitemcheckbox', { name: /^Want to Go (Shown|Hidden)$/ })
+  const layersMenu = (page) => page.getByRole('button', { name: /Map layers, .* layers shown/ })
+
+  test('another page covers the map: the globe draws at most 10 frames a second there; back on the map, full rate with the same camera, selection and layers', async ({ page }) => {
+    await openMap(page)
+    await expectFullRate(page, 'the map at first')
+    await selectReykjavik(page)
+    await layersMenu(page).click()
+    await wantToGoLayer(page).click()
+    await expect(wantToGoLayer(page)).toHaveAttribute('aria-checked', 'false')
+    await layersMenu(page).click()
+    const pose = await settledPose(page)
+    for (const name of ['Journey', 'Collection']) {
+      await nav(page, name)
+      await expectCapped(page, name)
+      await nav(page, 'Map')
+      await expectFullRate(page, `back from ${name}`)
+      await expect(page.locator('.atlas-info-panel h2')).toHaveText('Reykjavik')
+      await layersMenu(page).click()
+      await expect(wantToGoLayer(page)).toHaveAttribute('aria-checked', 'false')
+      await layersMenu(page).click()
+      const after = (await cameraPose(page)).pose
+      for (const key of ['lat', 'lng', 'height', 'heading', 'pitch']) expect(Math.abs(after[key] - pose[key]), `${key} back from ${name}`).toBeLessThan(1e-6 * Math.max(1, Math.abs(pose[key])))
+    }
+  })
+
+  test('a save on a covered map: its pause starts and ends as always with no frame in it, the cap stays, and back on the map the globe renders at full rate', async ({ page }) => {
+    await openMap(page)
+    await openCollection(page)
+    await expectCapped(page, 'Collection')
+    // Answered after 1.2 s: long enough that a loop left on in the pause (the cover undoing it) draws frames in it, even
+    // with software GL on CI (a covered globe draws 2-3 frames a second there); the watchdog may end it on a slow runner.
+    await page.route('**/__travelatlas/editor/wanttogo/update', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      await route.continue()
+    })
+    await armAtSaveClick(page, 'button[aria-label="Hide: Nuuk"]')
+    await page.getByRole('button', { name: 'Hide: Nuuk', exact: true }).click()
+    const started = await pauseStartedAtClick(page)
+    expect(started.pausedAfter).toBe(true)
+    await expect.poll(async () => (await loop(page)).episodes.length, { timeout: 10000 }).toBe(started.episodesAtStart + 1)
+    const resumed = await loop(page)
+    // The episode as A′ records it (applied, or the watchdog on a slow runner), and no frame while it lasted.
+    expect(['applied', 'limit']).toContain(resumed.episodes.at(-1).endedBy)
+    expect(resumed.framesAtResume, `no frame while paused: ${JSON.stringify({ started, resumed: { frames: resumed.frames, framesAtResume: resumed.framesAtResume } })}`).toBe(started.framesAtStart)
+    await expect(page.getByRole('button', { name: 'Restore: Nuuk', exact: true })).toBeVisible({ timeout: 10000 })
+    await expectCapped(page, 'Collection after the save')
+    await nav(page, 'Map')
+    await expectFullRate(page, 'back from Collection after the save')
+  })
+})

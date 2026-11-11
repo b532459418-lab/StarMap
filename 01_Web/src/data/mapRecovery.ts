@@ -10,7 +10,7 @@
  *
  * - `createMapRecovery(clock)`: one per globe (it outlives the viewers it rebuilds). Its methods return the new state.
  * - `guardRenderLoop(target, renders)`: the render loop target of one viewer whose loop can only be turned on while
- *   `renders()`.
+ *   `renders()` (its frame cap, for a covered map, passes through).
  *
  * Constraint: Node 24 loads it directly (no DOM, no Cesium import); the clock can be replaced in tests.
  */
@@ -79,6 +79,9 @@ export function guardRenderLoop(target: RenderLoopTarget, renders: () => boolean
   return {
     get useDefaultRenderLoop() { return target.useDefaultRenderLoop },
     set useDefaultRenderLoop(on: boolean) { target.useDefaultRenderLoop = on && renders() },
+    // The cap of a covered map (./renderPause.ts) passes through: it never turns a loop on.
+    get targetFrameRate() { return target.targetFrameRate },
+    set targetFrameRate(fps: number | undefined) { target.targetFrameRate = fps },
     isDestroyed: () => target.isDestroyed(),
   }
 }
