@@ -17,6 +17,68 @@ import sharp from 'sharp'
 // §7-1), so no case depends on what an earlier one wrote, and each runs alone or in any order. A case that needs media
 // imports them itself (seedSampleMedia; importing the same files again adds nothing).
 test.beforeEach(async () => { await createBrowserFixture(process.env.STARMAP_BROWSER_TEST_ROOT) })
+
+for (const motion of ['no-preference', 'reduce']) {
+  test(`sky wide paths preserve rotation, independent aurora phases and disposal (${motion})`, async ({ page }) => {
+    // Keep the real factory, materials, scene and render loop. Observe only the owners returned to the App.
+    await page.route(url => url.pathname.endsWith('/src/components/skyPolylinePrimitives.ts') && !url.searchParams.has('sky-original'), route => {
+      const original = new URL(route.request().url())
+      original.searchParams.set('sky-original', '1')
+      return route.fulfill({ contentType: 'application/javascript', body: `
+        import { createSkyPolylineBatch as create } from ${JSON.stringify(original.href)}
+        export * from ${JSON.stringify(original.href)}
+        export function createSkyPolylineBatch(...args) {
+          const owner = create(...args)
+          ;(window.__observedSkyOwners ??= []).push(owner)
+          return owner
+        }` })
+    })
+    await page.emulateMedia({ reducedMotion: motion })
+    await openMap(page)
+    const sample = () => page.evaluate(() => {
+      const owners = (window.__observedSkyOwners ?? []).filter(owner => !owner.collection.isDestroyed())
+      const paths = owners.flatMap(owner => owner.resources)
+      if (paths.length !== 33) return null
+      const angle = ({ primitive: p }) => Math.atan2(p.modelMatrix[1], p.modelMatrix[0])
+      const phases = paths.slice(3).map(({ material }) => material.uniforms.phase)
+      return {
+        frames: window.__travelAtlasDebugRenderLoop.state().frames,
+        materials: paths.map(r => r.material.type),
+        uniqueMaterials: new Set(paths.map(r => r.material)).size,
+        angle: angle(paths[0]), allRotateTogether: paths.every(p => angle(p) === angle(paths[0])),
+        phase: phases[0], independentOffsets: phases.every((p, i) => Math.abs(p - phases[0] - i * 0.82) < 1e-8),
+      }
+    })
+    const expected = [
+      ...Array.from({ length: 3 }, (_, i) => 'TravelAtlasGalaxyGlow' + i),
+      ...Array.from({ length: 30 }, (_, i) => 'TravelAtlasAuroraGlow' + i),
+    ]
+    await expect.poll(async () => (await sample())?.materials).toEqual(expected)
+    await expect.poll(async () => (await sample())?.independentOffsets).toBe(true)
+    const initial = await sample()
+    await expect.poll(async () => (await sample())?.frames).toBeGreaterThan(initial.frames + 1)
+    const later = await sample()
+    expect(later.uniqueMaterials).toBe(33)
+    expect(later.allRotateTogether && later.independentOffsets).toBe(true)
+    if (motion === 'reduce') {
+      expect([initial.angle, later.angle, initial.phase, later.phase]).toEqual([0, 0, 0, 0])
+    } else {
+      expect(later.phase).toBeGreaterThan(initial.phase)
+      expect(later.angle - initial.angle).toBeCloseTo((later.phase - initial.phase) * (0.32 * Math.PI / 180) / 0.42, 8)
+    }
+    await page.evaluate(() => {
+      window.__previousSkyPaths = window.__observedSkyOwners.flatMap(owner => owner.resources)
+    })
+    await openCollection(page)
+    await page.getByRole('navigation').getByRole('button', { name: 'Map', exact: true }).click()
+    expect((await sample())?.materials).toEqual(expected)
+    await page.evaluate(() => window.__travelAtlasDebugRenderLoop.replaceViewer())
+    await expect.poll(() => page.evaluate(() => window.__previousSkyPaths.filter(({ primitive, material }) => primitive.isDestroyed() && material.isDestroyed()).length)).toBe(33)
+    await expect.poll(async () => (await sample())?.materials).toEqual(expected)
+    expect(pageErrors(page)).toEqual([])
+  })
+}
+
 /**
  * Two Reykjavik photos (the one named cover-… is the city's cover photo by the import rule) and a Torshavn aerial photo:
  * real Inbox files imported into the store through the media service (media items are store-native since 3C-4c).
