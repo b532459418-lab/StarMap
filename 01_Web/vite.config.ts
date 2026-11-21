@@ -15,7 +15,7 @@ const cesiumPackageJson = createRequire(import.meta.url).resolve('cesium/package
 const cesiumVersion: string = JSON.parse(readFileSync(cesiumPackageJson, 'utf8')).version
 const cesiumBaseUrl = `cesium/${cesiumVersion}`
 const cesiumBuildRoot = path.join(path.dirname(cesiumPackageJson), 'Build', 'Cesium')
-// Cesium's own minified ESM build of the same version (one file, the same 1352 exports as the sources).
+// Cesium's minified ESM build exposes the same exports as the installed sources in one file.
 const cesiumMinifiedEntry = path.join(cesiumBuildRoot, 'index.js')
 // Cesium's prebuilt files, including the copied workers, open with its Apache-2.0 license header. Bundling from the
 // sources drops it, so the Cesium chunk gets the same header back, read from the installed package.
