@@ -17,6 +17,7 @@ import {
   buildModuleUrl,
 } from 'cesium'
 import { useCesium } from 'resium'
+import { createSkyPolylineBatch, type SkyPolylineSpec } from './skyPolylinePrimitives'
 
 type StarDefinition = {
   longitude: number
@@ -420,20 +421,22 @@ export function CesiumConstellationSky({
   useEffect(() => {
     if (!viewer || !show) return undefined
 
-    const pointCollection = viewer.scene.primitives.add(
+    const primitives = viewer.scene.primitives
+    const pointCollection = primitives.add(
       new PointPrimitiveCollection({ blendOption: BlendOption.TRANSLUCENT }),
     )
-    const galaxyGlowCollection = viewer.scene.primitives.add(new PolylineCollection())
-    const auroraGlowCollection = viewer.scene.primitives.add(new PolylineCollection())
-    const lineCollection = viewer.scene.primitives.add(new PolylineCollection())
-
-    galaxyGlowLayers.forEach((layer, layerIndex) => {
-      galaxyGlowCollection.add({
-        material: createGalaxyGlowMaterial(layer.color, layerIndex),
+    let wideLines: ReturnType<typeof createSkyPolylineBatch>
+    try {
+      wideLines = createSkyPolylineBatch(primitives, galaxyGlowLayers.map((layer, layerIndex) => ({
+        createMaterial: () => createGalaxyGlowMaterial(layer.color, layerIndex),
         positions: createGalaxyGlowPath(layer.latitudeOffset, layer.phaseOffset),
         width: layer.width,
-      })
-    })
+      })))
+    } catch (error) {
+      if (!primitives.isDestroyed()) primitives.remove(pointCollection)
+      throw error
+    }
+    const lineCollection = primitives.add(new PolylineCollection())
 
     stars.forEach((star) => {
       pointCollection.add({
@@ -611,7 +614,8 @@ export function CesiumConstellationSky({
         },
       ]
 
-      Array.from({ length: auroraBankCount }, (_, bankIndex) => {
+      const auroraSpecs: SkyPolylineSpec[] = []
+      for (let bankIndex = 0; bankIndex < auroraBankCount; bankIndex++) {
         const bankAngle = bankIndex * CesiumMath.TWO_PI / auroraBankCount
         const bankRotation = Matrix3.fromRotationZ(bankAngle, new Matrix3())
         const bankPhaseOffset = bankIndex * 0.53
@@ -628,17 +632,19 @@ export function CesiumConstellationSky({
             layer.tilt * (bankIndex % 2 === 0 ? 1 : -1),
           )
           const materialIndex = bankIndex * auroraLayerDefinitions.length + layerIndex
-          const material = createAuroraGlowMaterial(layer.color, materialIndex)
-          auroraMaterials.push(material)
-          auroraGlowCollection.add({
-            material,
+          auroraSpecs.push({
+            createMaterial: () => createAuroraGlowMaterial(layer.color, materialIndex),
             positions: sourcePath.map((position) => (
               Matrix3.multiplyByVector(bankRotation, position, new Cartesian3())
             )),
             width: layer.width,
           })
         })
-      })
+      }
+      // Publish phase targets only after the complete set of new paths was installed.
+      const firstAurora = wideLines.resources.length
+      wideLines.add(auroraSpecs)
+      for (const { material } of wideLines.resources.slice(firstAurora)) auroraMaterials.push(material)
 
       moonBaseModelMatrix = Matrix4.fromTranslation(moonPosition, new Matrix4())
       moonMaterial = new Material({
@@ -726,15 +732,8 @@ export function CesiumConstellationSky({
       Matrix3.fromRotationZ(angle, rotation)
       Matrix4.fromRotationTranslation(rotation, Cartesian3.ZERO, modelMatrix)
       pointCollection.modelMatrix = Matrix4.clone(modelMatrix, pointCollection.modelMatrix)
-      galaxyGlowCollection.modelMatrix = Matrix4.clone(
-        modelMatrix,
-        galaxyGlowCollection.modelMatrix,
-      )
+      wideLines.setModelMatrix(modelMatrix)
       lineCollection.modelMatrix = Matrix4.clone(modelMatrix, lineCollection.modelMatrix)
-      auroraGlowCollection.modelMatrix = Matrix4.clone(
-        modelMatrix,
-        auroraGlowCollection.modelMatrix,
-      )
       const auroraPhase = reduceMotion ? 0 : elapsedSeconds * auroraDriftRadiansPerSecond
       auroraMaterials.forEach((material, materialIndex) => {
         material.uniforms.phase = auroraPhase + materialIndex * 0.82
@@ -749,18 +748,13 @@ export function CesiumConstellationSky({
     viewer.scene.requestRender()
 
     return () => {
+      window.clearTimeout(celestialPlacementTimer)
+      wideLines.destroy()
       if (viewer.isDestroyed()) return
 
-      window.clearTimeout(celestialPlacementTimer)
       viewer.scene.preRender.removeEventListener(updateRotation)
       if (viewer.scene.primitives.contains(pointCollection)) {
         viewer.scene.primitives.remove(pointCollection)
-      }
-      if (viewer.scene.primitives.contains(galaxyGlowCollection)) {
-        viewer.scene.primitives.remove(galaxyGlowCollection)
-      }
-      if (viewer.scene.primitives.contains(auroraGlowCollection)) {
-        viewer.scene.primitives.remove(auroraGlowCollection)
       }
       if (viewer.scene.primitives.contains(lineCollection)) {
         viewer.scene.primitives.remove(lineCollection)

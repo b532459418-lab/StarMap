@@ -34,6 +34,10 @@ Online city lookup is explicit rather than autocomplete-on-every-keystroke. Each
 
 Media success payloads are also checked at runtime: upload responses must confirm a filename, positive byte count and Inbox-relative path; import responses must include string output and a list of restored media IDs. Empty output is valid; the ID list may be empty only when no source paths were requested. These checks remain for legacy API callers. Durable task responses additionally validate fixed library/target/file identity, revisions, completion summaries and preview selection; an unreadable response triggers read-only discovery, never an automatic retry.
 
+## Cesium sky rendering
+
+When the sky is mounted, it builds static Cesium geometry for three galaxy bands and thirty aurora paths. Their model matrices turn at 0.32 degrees per second. Each aurora has its own material and phase offset. Reduced motion fixes the rotation and the phase offsets. The constellation edges continue to use the original polyline collection.
+
 ## Incremental refresh (3C-5 D)
 
 A save no longer reloads the page; the page follows the library by its changes.
