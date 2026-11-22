@@ -789,7 +789,7 @@ function App() {
   )
 
   return (
-    <main className="theme-night relative h-[100dvh] overflow-clip bg-[#010409] text-slate-950">
+    <main className="theme-night atlas-viewport relative overflow-clip bg-[#010409] text-slate-950">
       <div className="app-background fixed inset-0 -z-10" />
       <div className="app-grid fixed inset-0 -z-10" />
       <div className="star-field fixed inset-0 -z-10" />
@@ -800,7 +800,7 @@ function App() {
         scrollbarWidth={pageScrollbarWidth}
       />
       <section
-        className="atlas-experience cesium-lab-page relative h-[100dvh] w-screen overflow-clip"
+        className="atlas-experience cesium-lab-page relative h-full w-screen overflow-clip"
         data-page={activePage}
         data-sidebars-open={sidebarsOpen}
         onScrollCapture={syncPageScrolled}
