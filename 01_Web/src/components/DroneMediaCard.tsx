@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { EditorDateInput } from './EditorDateInput'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { editorErrorNotice } from '../i18n/editorErrors.ts'
@@ -441,7 +442,8 @@ export function DroneMediaCard({ cityId, activeItemId, onSelectItem, onOpenPanor
                     <div className="atlas-drone-metadata-fields">
                       <label>
                         <span>{t('date')} <em>{draft.fromFile.date ? t('fromFile') : t('missingRequired')}</em></span>
-                        <input type="date" required disabled={busy || sessionLocked || mediaLocked} readOnly={draft.fromFile.date} value={draft.date} onChange={(event) => updateFileDraft(draft.id, 'date', event.target.value)} />
+                        <EditorDateInput label={t('date')} required disabled={busy || sessionLocked || mediaLocked}
+                          readOnly={draft.fromFile.date} value={draft.date} onChange={(date) => updateFileDraft(draft.id, 'date', date)} />
                       </label>
                       <label>
                         <span>{t('latitude')} <em>{draft.fromFile.lat ? t('fromFile') : t('missingOptional')}</em></span>

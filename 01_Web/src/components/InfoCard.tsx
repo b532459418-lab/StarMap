@@ -1,4 +1,5 @@
 import { LocalEditorError, editorErrorNotice } from '../i18n/editorErrors.ts'
+import { EditorDateInput } from './EditorDateInput'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
@@ -680,11 +681,13 @@ export function InfoCard({ mode, selectedCountryId, selectedCityId, matchingTrav
                 <div className="atlas-local-editor-form-grid">
                   <label className="atlas-local-editor-date-field">
                     <span>{t('editor:visitDate')}</span>
-                    <input required type="date" value={cityVisitDates.startDate} onChange={(event) => setCityVisitDates((dates) => ({ ...dates, startDate: event.target.value }))} />
+                    <EditorDateInput label={t('editor:visitDate')} required value={cityVisitDates.startDate}
+                      onChange={(date) => setCityVisitDates((dates) => ({ ...dates, startDate: date }))} />
                   </label>
                   <label className="atlas-local-editor-date-field">
                     <span>{t('editor:endDate')}</span>
-                    <input type="date" min={cityVisitDates.startDate || undefined} value={cityVisitDates.endDate} onChange={(event) => setCityVisitDates((dates) => ({ ...dates, endDate: event.target.value }))} />
+                    <EditorDateInput label={t('editor:endDate')} min={cityVisitDates.startDate || undefined} value={cityVisitDates.endDate}
+                      onChange={(date) => setCityVisitDates((dates) => ({ ...dates, endDate: date }))} />
                   </label>
                 </div>
                 {!isManualCityEntry ? (

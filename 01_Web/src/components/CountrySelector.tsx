@@ -1,4 +1,5 @@
 import { editorErrorNotice } from '../i18n/editorErrors.ts'
+import { EditorDateInput } from './EditorDateInput'
 import { usePlaceNames } from '../i18n/usePlaceNames'
 import { useLocalizedNotice } from '../i18n/useLocalizedNotice'
 import { useTranslation } from 'react-i18next'
@@ -391,7 +392,7 @@ export function CountrySelector({
           />
           <label className="atlas-local-editor-date-field">
             <span>{t('editor:firstVisit')}</span>
-            <input required type="date" value={countryVisitedDate} onChange={(event) => setCountryVisitedDate(event.target.value)} />
+            <EditorDateInput label={t('editor:firstVisit')} required value={countryVisitedDate} onChange={setCountryVisitedDate} />
           </label>
           <button type="submit" disabled={isSaving || !selectedCountryOption}>{t('editor:confirmCountry')}</button>
         </form>

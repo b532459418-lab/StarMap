@@ -1,4 +1,5 @@
 import { LocalEditorError, editorErrorNotice, requiresEditorReload } from '../i18n/editorErrors.ts'
+import { EditorDateInput } from './EditorDateInput'
 import { useWorldGraph } from '../data/worldGraph'
 import { WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import { PLANNED_SOURCE } from '../worldgraph/adapters/plannedRecords'
@@ -254,26 +255,26 @@ function ConvertToTravelDialogContent({
           <div className="atlas-local-editor-form-grid">
             <label className="atlas-local-editor-date-field">
               <span>{t('editor:visitDate')}</span>
-              <input
+              <EditorDateInput
                 required
-                type="date"
+                label={t('editor:visitDate')}
                 disabled={fieldsDisabled}
                 value={startDate}
-                onChange={(event) => {
-                  setStartDate(event.target.value)
+                onChange={(date) => {
+                  setStartDate(date)
                   setNotice('')
                 }}
               />
             </label>
             <label className="atlas-local-editor-date-field">
               <span>{t('editor:endDate')}</span>
-              <input
-                type="date"
+              <EditorDateInput
+                label={t('editor:endDate')}
                 disabled={fieldsDisabled}
                 min={startDate || undefined}
                 value={endDate}
-                onChange={(event) => {
-                  setEndDate(event.target.value)
+                onChange={(date) => {
+                  setEndDate(date)
                   setNotice('')
                 }}
               />
