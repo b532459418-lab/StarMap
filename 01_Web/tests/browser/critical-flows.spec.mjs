@@ -18,6 +18,38 @@ import sharp from 'sharp'
 // imports them itself (seedSampleMedia; importing the same files again adds nothing).
 test.beforeEach(async () => { await createBrowserFixture(process.env.STARMAP_BROWSER_TEST_ROOT) })
 
+async function observeCoveredMarkerUpdates(page) {
+  await page.route(url => url.pathname === '/src/components/coveredMarkerUpdates.ts' && !url.searchParams.has('marker-original'), route => {
+    const original = new URL(route.request().url())
+    original.searchParams.set('marker-original', '1')
+    return route.fulfill({ contentType: 'application/javascript', body: `
+      import { bindCoveredMarkerUpdates as bind } from ${JSON.stringify(original.pathname + original.search)};
+      export function bindCoveredMarkerUpdates(viewer) {
+        const cleanup = bind(viewer);
+        const previous = window.__starmapCoveredMarkerProbe;
+        const installs = (previous?.installs ?? 0) + Number(Boolean(cleanup));
+        const visualizers = viewer.dataSourceDisplay.defaultDataSource._visualizers;
+        const wrapped = visualizers.filter(item => Object.hasOwn(item, 'update')).map(item => [item, item.update]);
+        const retired = previous && previous.viewer !== viewer && previous.viewer.isDestroyed()
+          ? previous.wrapped.length === 3 && previous.wrapped.every(([item, update]) => item.update !== update)
+          : previous?.retired ?? false;
+        function primitive(id, property, kind) {
+          const entity = viewer.entities.values.find(item => item.properties?.[property]?.getValue() === id);
+          return entity && visualizers.some(item => item._items?.get?.(entity.id)?.[kind]?.show);
+        }
+        window.__starmapCoveredMarkerProbe = { viewer, wrapped, retired, installs, read: id => ({
+          installs, bound: Boolean(cleanup), retired,
+          point: Boolean(primitive(id, 'entityId', 'pointPrimitive')),
+          badge: Boolean(primitive(id, 'badgeForEntityId', 'billboard')),
+        }) };
+        return cleanup;
+      }
+    ` })
+  })
+}
+
+const coveredMarkerState = (page, id) => page.evaluate((entityId) => window.__starmapCoveredMarkerProbe?.read(entityId), id)
+
 for (const motion of ['no-preference', 'reduce']) {
   test(`sky wide paths preserve rotation, independent aurora phases and disposal (${motion})`, async ({ page }) => {
     // Keep the real factory, materials, scene and render loop. Observe only the owners returned to the App.
@@ -1422,7 +1454,10 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
   })
 
   test('saves one after another, and a viewer replaced during a pause: the map renders again with the last one', async ({ page }) => {
+    await observeCoveredMarkerUpdates(page)
     await openMap(page)
+    const akureyri = (await readFixture('places')).places.find((place) => place.names.en === 'Akureyri').id
+    await expect.poll(() => coveredMarkerState(page, akureyri)).toMatchObject({ bound: true, point: true, badge: true })
     await openCollection(page)
     let held = 0
     await page.route('**/__travelatlas/editor/wanttogo/update', async (route) => {
@@ -1452,6 +1487,7 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
     expectNoFrameWhilePaused(after, started)
     // The viewer is replaced (destroyed and made again) during a pause: the new one renders once the save is applied.
     const viewer = after.viewer
+    const beforeReplacement = await coveredMarkerState(page, akureyri)
     // The main thread's long tasks from here on (making the new viewer is one; with software rendering, seconds).
     const clickedAt = await page.evaluate(() => {
       if (!PerformanceObserver.supportedEntryTypes.includes('longtask')) throw new Error('No long task timing in this browser')
@@ -1482,6 +1518,15 @@ test.describe('the map pauses during a save (3C-5 D, A′)', () => {
       .reduce((sum, [start, end]) => sum + Math.max(0, Math.min(end, to) - Math.max(start, from)), 0), [clickedAt, clickedAt + pausedMs + 250])
     test.info().annotations.push({ type: 'pause and long tasks', description: JSON.stringify({ endedBy, pausedMs, blockedMs: Math.round(blockedMs) }) })
     await expectEndedByTheLimit(page)
+    expect((await readFixture('wantToGo')).items.find((item) => item.placeId === akureyri).hidden).toBe(false)
+    expect((await loop(page)).diagnostics.targetFrameRate).toBe(10)
+    await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name: 'Map', exact: true }).click()
+    await expect.poll(() => coveredMarkerState(page, akureyri)).toMatchObject({ bound: true, point: true, badge: true })
+    const finalMarkers = await coveredMarkerState(page, akureyri)
+    expect(finalMarkers.retired).toBe(true)
+    expect(finalMarkers.installs).toBeGreaterThan(beforeReplacement.installs)
+    expect((await loop(page)).diagnostics.targetFrameRate).toBeUndefined()
+    test.info().annotations.push({ type: 'markers after replacement', description: JSON.stringify({ before: beforeReplacement, after: finalMarkers }) })
   })
 })
 
@@ -1557,9 +1602,12 @@ test.describe('a covered map (地球被盖住时, B2)', () => {
   })
 
   test('a save on a covered map: its pause starts and ends as always with no frame in it, the cap stays, and back on the map the globe renders at full rate', async ({ page }) => {
+    await observeCoveredMarkerUpdates(page)
     await openMap(page)
+    await expect.poll(() => coveredMarkerState(page, fixtureIds.nuuk)).toMatchObject({ bound: true, point: true })
     await openCollection(page)
     await expectCapped(page, 'Collection')
+    await expect.poll(() => coveredMarkerState(page, fixtureIds.nuuk)).toMatchObject({ bound: true, point: false })
     // Answered after 1.2 s: long enough that a loop left on in the pause (the cover undoing it) draws frames in it, even
     // with software GL on CI (a covered globe draws 2-3 frames a second there); the watchdog may end it on a slow runner.
     await page.route('**/__travelatlas/editor/wanttogo/update', async (route) => {
@@ -1576,8 +1624,12 @@ test.describe('a covered map (地球被盖住时, B2)', () => {
     expect(['applied', 'limit']).toContain(resumed.episodes.at(-1).endedBy)
     expect(resumed.framesAtResume, `no frame while paused: ${JSON.stringify({ started, resumed: { frames: resumed.frames, framesAtResume: resumed.framesAtResume } })}`).toBe(started.framesAtStart)
     await expect(page.getByRole('button', { name: 'Restore: Nuuk', exact: true })).toBeVisible({ timeout: 10000 })
+    expect((await readFixture('wantToGo')).items.find((item) => item.placeId === fixtureIds.nuuk).hidden).toBe(true)
     await expectCapped(page, 'Collection after the save')
     await nav(page, 'Map')
     await expectFullRate(page, 'back from Collection after the save')
+    const markers = await coveredMarkerState(page, fixtureIds.nuuk)
+    expect(markers).toMatchObject({ bound: true, point: false, badge: false })
+    test.info().annotations.push({ type: 'markers after saved hide', description: JSON.stringify(markers) })
   })
 })

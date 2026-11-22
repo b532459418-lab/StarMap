@@ -44,6 +44,7 @@ import type { EntityId } from '../worldgraph/types'
 import { resolveName } from '../worldgraph/localizedText'
 import { useUiLocale } from '../i18n/useUiLocale'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
+import { bindCoveredMarkerUpdates } from './coveredMarkerUpdates'
 import { useStableCallback } from './useStableCallback'
 import { useElementCache } from './useElementCache'
 import { bindRenderLoop, coverRendering, renderPauseState, resumeRendering, subscribeRenderPause } from '../data/renderPause'
@@ -1699,6 +1700,11 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
     if (!viewer || viewer.isDestroyed()) return
     viewer.entities.show = showMapContent
   }, [showMapContent, viewerReadyVersion])
+
+  useLayoutEffect(() => {
+    const viewer = viewerRef.current?.cesiumElement
+    return viewer ? bindCoveredMarkerUpdates(viewer) : undefined
+  }, [viewerReadyVersion])
 
   // 地球被盖住时 (B2): while another page covers the map, the globe draws the sky behind the page's glass at most
   // COVERED_FRAME_RATE frames a second (../data/renderPause.ts, the second reason beside a save's pause); the sky keeps
