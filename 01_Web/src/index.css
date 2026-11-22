@@ -5315,7 +5315,7 @@ button {
   text-decoration: none;
 }
 
-.atlas-local-editor-form :is(input, select) {
+.atlas-local-editor-form :is(input, select, .atlas-editor-date-trigger) {
   min-width: 0;
   height: 34px;
   border: 1px solid rgba(148, 163, 184, 0.22);
@@ -5326,6 +5326,81 @@ button {
   font-size: 11px;
   outline: none;
   transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.atlas-editor-date-trigger {
+  width: max-content;
+  max-width: 100%;
+}
+
+.atlas-editor-date-dialog {
+  width: min(340px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  margin: auto;
+  padding: 20px;
+  border: 1px solid #475569;
+  border-radius: 14px;
+  background: #111827;
+  color: #f8fafc;
+  color-scheme: dark;
+}
+
+.atlas-editor-date-dialog::backdrop {
+  background: rgb(2 6 23 / 72%);
+}
+
+.atlas-editor-date-dialog h2 {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.atlas-editor-date-parts {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 8px;
+}
+
+.atlas-editor-date-parts label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.atlas-editor-date-parts :is(input, select),
+.atlas-editor-date-actions button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid #64748b;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.atlas-editor-date-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.atlas-editor-date-actions button:last-child {
+  border-color: #7dd3fc;
+  background: #bae6fd;
+  color: #082f49;
+}
+
+.atlas-editor-date-actions button:disabled {
+  opacity: 0.5;
+}
+
+.atlas-local-editor-form .atlas-editor-date-trigger:focus-visible,
+.atlas-editor-date-dialog :focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 2px;
 }
 
 .atlas-local-editor-form .atlas-local-media-kind {
