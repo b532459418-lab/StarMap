@@ -1,5 +1,5 @@
 /**
- * The eight editor writes of the new-library mode through the session (3C-4a spec §2.2, §2.3; 3C-5 C1, C2: every one is
+ * The native editor writes of the new-library mode through the session (3C-4a spec §2.2, §2.3; 3C-5 C1, C2: every one is
  * store-native): each commits on its base revision with its changed rows, its answer and data are what the same planner
  * gives in memory on the same state (scripts and host agree), the cache moves on without a new read; the cache is dropped
  * when the store is not the cached one; STARMAP_STORE_VERIFY compares every commit with the store read again. 3C-5 E:
@@ -20,6 +20,7 @@ import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
 import { TEST_CATALOG, WRITE_EPOCH_MS, migratedFiles, placeNamed } from '../src/data/editor/editor.fixture.ts'
+import { defaultLayerId } from '../src/data/interest/templates.ts'
 import { readModelOf } from '../src/worldgraph/readModel/build.ts'
 import { liveReadModelIndex } from '../src/worldgraph/readModel/liveIndex.ts'
 import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts'
@@ -51,7 +52,7 @@ async function migratedSession(t, options = {}) {
   return { ...context, files, session, output, write }
 }
 
-test('the eight editor writes: each commits on its base revision with its changed rows, as its planner does in memory, verified, read without a new projection', async (t) => {
+test('all native editor writes commit with changed rows matching the in-memory planner without a new projection', async (t) => {
   const { session, output, write, paths } = await migratedSession(t, { verify: true })
   // The in-memory run: the store's own rows after the migration, the same planners, ids and times.
   const handle = openStore(storeFileOf(paths), { privatePaths: paths, readOnly: true, policy: OFFICIAL_POLICY })
@@ -74,6 +75,11 @@ test('the eight editor writes: each commits on its base revision with its change
     ] })],
     ['POST /__travelatlas/editor/wanttogo/delete', (view) => ({ ids: [wish(view, 'Tromsø')] })],
     ['POST /__travelatlas/editor/countries/delete', (view) => ({ ids: [id(view, 'Norway')] })],
+    ['POST /__travelatlas/editor/interests', (view) => ({
+      op: 'add', kind: 'movie', layerId: defaultLayerId('movie'),
+      object: { title: 'Synthetic film', details: {} },
+      activity: { status: 'done', date: '2026-09-26', place: id(view, 'Japan') },
+    })],
   ]
   assert.deepEqual(steps.map(([route]) => route).sort(), Object.keys(NATIVE_WRITES).sort())
   let revision = (await session.moduleExports()).revision

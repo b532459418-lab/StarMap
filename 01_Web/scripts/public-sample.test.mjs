@@ -9,6 +9,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { SAMPLE_ALLOWED_FILES, SAMPLE_DIRECTORY, SAMPLE_SOURCE_FILE_NAME, auditPublicSampleDirectory, runSampleBuild } from './public-sample.mjs'
 import { SAMPLE_READ_MODEL_FILE_NAME, sampleReadModelText } from '../src/data/sample/sampleBuild.ts'
+import { READ_MODEL_FORMAT_VERSION } from '../src/worldgraph/readModel/types.ts'
 
 const quiet = { log: () => {}, logError: () => {} }
 
@@ -57,7 +58,7 @@ test('the audit refuses a read model the source did not generate, and files that
 
 test('the audit refuses an invalid read model and the wrong origin', (t) => {
   failsWith(t, (model) => { model.entries[0].entityId = '01a0ed02-0000-7000-8000-000000000000' }, /full read-model check \(E_REFERENCE/)
-  failsWith(t, (model) => { model.formatVersion = 2 }, /E_READ_MODEL_TOO_NEW/)
+  failsWith(t, (model) => { model.formatVersion = READ_MODEL_FORMAT_VERSION + 1 }, /E_READ_MODEL_TOO_NEW/)
   failsWith(t, (model) => { model.origin = 'local' }, /origin = sample/)
 })
 

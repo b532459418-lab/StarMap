@@ -220,6 +220,7 @@ const WRITE_ENDPOINTS = [
   'POST /__travelatlas/editor/wanttogo/update',
   'POST /__travelatlas/editor/wanttogo/delete',
   'POST /__travelatlas/editor/wanttogo/convert',
+  'POST /__travelatlas/editor/interests',
   'POST /__travelatlas/editor/upload',
   'POST /__travelatlas/editor/import',
   'POST /__travelatlas/editor/media/delete',
@@ -256,10 +257,10 @@ const sourceBetween = (source, start, end, includeEnd) => {
   return source.slice(from, includeEnd ? to + end.length : to)
 }
 
-test('插件的编辑接口：只读端点（两个目录搜索；读模型按常量路径）是插件里仅有的按方法与路径写死的分支；16 个写入端点全在两张路由表里', () => {
+test('插件的编辑接口：只读端点（两个目录搜索；读模型按常量路径）是插件里仅有的按方法与路径写死的分支；17 个写入端点全在两张路由表里', () => {
   const branches = [...pluginSource().matchAll(/request\.method === '([A-Z]+)' && url\.pathname === '([^']+)'/g)].map(([, method, pathname]) => `${method} ${pathname}`)
   assert.deepEqual([...branches].sort(), [...READ_ONLY_ENDPOINTS].sort())
-  assert.equal(WRITE_ENDPOINTS.length, 16)
+  assert.equal(WRITE_ENDPOINTS.length, 17)
   assert.deepEqual(
     [...Object.keys(STORE_WRITE_ROUTES), ...Object.keys(V2_MEDIA_ROUTES)].sort(),
     [...WRITE_ENDPOINTS].sort(),
@@ -284,7 +285,7 @@ test('媒体路由表：八个媒体端点经 V2_MEDIA_ROUTES（3C-5 F 的三个
   }
 })
 
-test('非媒体路由表正好是 8 个写入端点（3C-5 E：都是存储原生的规划器；PUT /state 已删除）；没列进去的接口（包括将来新加的、媒体端点、换了方法的）没有路由；成功状态码不变', () => {
+test('非媒体路由表正好是 9 个写入端点（都是存储原生的规划器）；未登记的接口没有路由，登记的路由返回约定的成功状态码', () => {
   assert.deepEqual(Object.keys(STORE_WRITE_ROUTES).sort(), [...NON_MEDIA_WRITE_ENDPOINTS].sort())
   assert.deepEqual(Object.keys(NATIVE_WRITES).sort(), [...NON_MEDIA_WRITE_ENDPOINTS].sort())
   for (const endpoint of NON_MEDIA_WRITE_ENDPOINTS) assert.equal(typeof NATIVE_WRITES[endpoint].plan, 'function', endpoint)
@@ -306,6 +307,7 @@ test('非媒体路由表正好是 8 个写入端点（3C-5 E：都是存储原�
     'POST /__travelatlas/editor/wanttogo/update': 200,
     'POST /__travelatlas/editor/wanttogo/delete': 200,
     'POST /__travelatlas/editor/wanttogo/convert': 200,
+    'POST /__travelatlas/editor/interests': 200,
   })
 })
 
