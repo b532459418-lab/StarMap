@@ -15,6 +15,9 @@ import { sequentialUuids } from '../src/data/canonical/v2.fixture.ts'
 import { OFFICIAL_POLICY } from '../src/data/store/officialDefinitions.ts'
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { applyReadModelDelta } from '../src/worldgraph/readModel/delta.ts'
+import { validateReadModel } from '../src/worldgraph/readModel/check.ts'
+import { interestPins, readInterests } from '../src/data/interest/read.ts'
+import { defaultLayerId } from '../src/data/interest/templates.ts'
 import { fail } from '../src/data/editor/errors.ts'
 import { NATIVE_WRITES } from '../src/data/editor/native/routes.ts'
 import { TEST_CATALOG, WRITE_EPOCH_MS, migratedFiles, placeNamed } from '../src/data/editor/editor.fixture.ts'
@@ -25,6 +28,67 @@ let counter = 0
 const requestId = () => `01960000-0000-7000-8000-${(++counter).toString(16).padStart(12, '0')}`
 const headers = (base, id = requestId()) => ({ [STORE_REQUEST_ID_HEADER]: id, [STORE_BASE_REVISION_HEADER]: String(base) })
 const contextOf = (n) => ({ newId: sequentialUuids(WRITE_EPOCH_MS + n * 1000), now: new Date(Date.UTC(2026, 8, 27, 8, n)), countryCatalog: TEST_CATALOG })
+
+test('interest records retain typed viewing places, deduplicate on import and reopen without changing old collections', async (t) => {
+  const { session, write, storeNow } = await nativeSession(t, null)
+  const before = await storeNow()
+  const route = 'POST /__travelatlas/editor/interests'
+  let revision = before.revision
+  const save = async (input, expected = 200) => {
+    const result = await write(route, input, revision, contextOf(revision))
+    assert.equal(result.status, expected, JSON.stringify(result.body))
+    if (expected === 200) revision = result.body.revision
+    return result.body
+  }
+  const place = { name: 'Synthetic cinema', lat: 64.15, lng: -21.93 }
+  const add = {
+    op: 'add', kind: 'movie', layerId: defaultLayerId('movie'),
+    object: {
+      title: 'Synthetic film', details: { sourceUrl: 'https://www.wikidata.org/wiki/Q155653', release: '1995' },
+      imported: { key: 'wikidata:Q155653', retrievedAt: '2026-09-26T00:00:00Z' },
+    },
+    activity: { status: 'done', date: '2026-09-26', place, rating: 4, note: 'First viewing' },
+  }
+  const first = await save(add)
+  assert.equal(before.formatVersion, 1)
+  assert.equal(session.lastSnapshot.model.formatVersion, 2)
+  const current = readInterests(session.lastSnapshot.model)
+  const movie = current.entities.find(({ id }) => id === first.entityId)
+  const cinema = current.places.find(({ entity }) => entity.title.names.en === place.name).entity
+  const another = await save({
+    op: 'add-activity', entity: { id: movie.id, revision: movie.revision }, layerId: add.layerId,
+    activity: { status: 'done', date: '2026-09-27', place: cinema.id },
+  })
+  const unset = await save({
+    op: 'add-activity', entity: { id: movie.id, revision: movie.revision }, layerId: add.layerId,
+    activity: { status: 'done', date: '2026-09-28' },
+  })
+  const duplicate = await save({ ...add, object: { ...add.object, title: 'Ignored on reimport' }, activity: { status: 'saved' } })
+  assert.equal(duplicate.unchanged, true)
+  assert.equal(duplicate.existingMatch, true)
+  const reopened = await storeNow()
+  validateReadModel(reopened, OFFICIAL_POLICY)
+  const records = readInterests(reopened).records
+  assert.deepEqual(interestPins(records, false).map(({ id }) => id).sort(), [first.id, another.id].sort())
+  assert.equal(records.find(({ entry }) => entry.id === unset.id).place, undefined)
+  assert.equal(records.find(({ entry }) => entry.id === first.id).entry.fields.note, 'First viewing')
+  assert.deepEqual(officialViewOf(reopened, 'local'), officialViewOf(before, 'local'))
+  const malformed = {
+    ...reopened,
+    entries: reopened.entries.map((row) => row.id === first.id ? { ...row, fields: { ...row.fields, watchPlaceId: movie.id } } : row),
+  }
+  assert.throws(() => validateReadModel(malformed, OFFICIAL_POLICY), { code: 'E_TYPE', path: 'entries.fields.watchPlaceId' })
+  const deletion = await save({ op: 'remove-place', place: { id: cinema.id, revision: cinema.revision } }, 400)
+  assert.equal(deletion.code, 'E_INTEREST_PLACE_IN_USE')
+  assert.deepEqual(deletion.params.references.map(({ id, field }) => [id, field]).sort(), [first.id, another.id].sort().map((id) => [id, 'fields.watchPlaceId']))
+  assert.equal((await storeNow()).revision, reopened.revision)
+  const firstEntry = records.find(({ entry }) => entry.id === first.id).entry
+  await save({ op: 'hide', entry: { id: firstEntry.id, revision: firstEntry.revision } })
+  assert.deepEqual(interestPins(readInterests(await storeNow()).records, true).map(({ id }) => id), [another.id])
+  await save({ op: 'restore', entry: { id: firstEntry.id, revision: firstEntry.revision } })
+  await save({ op: 'remove-activity', entry: { id: firstEntry.id, revision: firstEntry.revision } })
+  assert.deepEqual(interestPins(readInterests(await storeNow()).records, true).map(({ id }) => id), [another.id])
+})
 
 /** A stand-in native write: the note of a want-to-go item (the official reader finds it by its V2 id). */
 const noteWrite = Object.freeze({

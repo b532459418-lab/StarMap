@@ -45,7 +45,7 @@ function fieldDefinitions(value: unknown, path: string, dialect: RowDialect): Ob
   const keys = new Set<string>()
   for (const field of value) {
     if (dialect==='formal') {
-      shape(field,['key','kind','required','min','max','deprecated'],['key','kind'],path)
+      shape(field,['key','kind','required','min','max','deprecated','targetTypeId'],['key','kind'],path)
       // A deprecated field accepts no new values, so it cannot also be required.
       if (field.deprecated!==undefined && (field.deprecated!==true || field.required===true)) reject('E_SCHEMA',path)
     } else shape(field,['key','kind','required','min','max'],['key','kind'],path)
@@ -53,6 +53,10 @@ function fieldDefinitions(value: unknown, path: string, dialect: RowDialect): Ob
     if (['__proto__','constructor','prototype'].includes(field.key) || keys.has(field.key)) reject('E_SCHEMA',path)
     keys.add(field.key)
     if (typeof field.kind !== 'string' || !['text','number','boolean','date','date_evidence','entity_ref','asset_ref'].includes(field.kind)) reject('E_FIELD_KIND',path)
+    if (field.targetTypeId !== undefined) {
+      if (field.kind !== 'entity_ref') reject('E_SCHEMA',path)
+      opaqueId(field.targetTypeId,path)
+    }
     if (field.required !== undefined && typeof field.required !== 'boolean') reject('E_SCHEMA',path)
     if (field.min !== undefined || field.max !== undefined) {
       if (field.kind !== 'number') reject('E_SCHEMA',path)
@@ -84,6 +88,9 @@ export function validateRow(table: RowTable, row: unknown, lookup: RowLookup, po
     if (!found) reject('E_REFERENCE',path); return found as ObjectValue
   }
   const refs=(v:unknown,t:StoreTable,path:string) => { for (const id of ids(v,path)) get(t,id,path) }
+  const validateDefinitions=(value:unknown,path:string) => {
+    for (const f of definitions(value,path)) if (f.targetTypeId !== undefined) get('entityTypes',f.targetTypeId,path)
+  }
   function source(v:unknown,path:string) {
     shape(v,['sourceId','recordId','evidenceIds','reviewId'],['sourceId','recordId','evidenceIds'],path)
     opaqueId(v.sourceId,path); opaqueId(v.recordId,path)
@@ -109,7 +116,11 @@ export function validateRow(table: RowTable, row: unknown, lookup: RowLookup, po
       }
       if (f.kind==='date' && !isCalendarDate(x)) reject('E_DATE',path)
       if (f.kind==='date_evidence') validateStoredDates(x,path)
-      if (f.kind==='entity_ref') get('entities',x,path)
+      if (f.kind==='entity_ref') {
+        const fieldPath = path+'.'+key
+        const entity = get('entities',x,f.targetTypeId === undefined ? path : fieldPath)
+        if (f.targetTypeId !== undefined && entity.typeId !== f.targetTypeId) reject('E_TYPE',fieldPath)
+      }
       if (f.kind==='asset_ref') get('assets',x,path)
     }
   }
@@ -130,12 +141,12 @@ export function validateRow(table: RowTable, row: unknown, lookup: RowLookup, po
       return
     case 'entityTypes':
       shape(r,['id','revision','title','schemaVersion','fields']); names(r.title,'entityTypes.title')
-      if (r.schemaVersion!==1) reject('E_SCHEMA_VERSION','entityTypes'); definitions(r.fields,'entityTypes.fields')
+      if (r.schemaVersion!==1) reject('E_SCHEMA_VERSION','entityTypes'); validateDefinitions(r.fields,'entityTypes.fields')
       return
     case 'layers':
       shape(r,['id','revision','title','schemaVersion','acceptedEntityTypes','entryFields','systemKey'],['id','revision','title','schemaVersion','acceptedEntityTypes','entryFields'])
       names(r.title,'layers.title'); if (r.schemaVersion!==1) reject('E_SCHEMA_VERSION','layers')
-      refs(r.acceptedEntityTypes,'entityTypes','layers.acceptedEntityTypes'); definitions(r.entryFields,'layers.entryFields')
+      refs(r.acceptedEntityTypes,'entityTypes','layers.acceptedEntityTypes'); validateDefinitions(r.entryFields,'layers.entryFields')
       if (r.systemKey!==undefined) {
         opaqueId(r.systemKey,'layers.systemKey')
         if (!Object.hasOwn(policy.officialLayers??{},r.systemKey) || policy.officialLayers![r.systemKey]!==r.id) reject('E_SYSTEM_KEY','layers.systemKey')
@@ -160,7 +171,7 @@ export function validateRow(table: RowTable, row: unknown, lookup: RowLookup, po
     case 'relationTypes':
       shape(r,['id','revision','title','fromTypes','toTypes','fields','schemaVersion']); names(r.title,'relationTypes.title')
       if(r.schemaVersion!==1)reject('E_SCHEMA_VERSION','relationTypes')
-      refs(r.fromTypes,'entityTypes','relationTypes.fromTypes'); refs(r.toTypes,'entityTypes','relationTypes.toTypes'); definitions(r.fields,'relationTypes.fields')
+      refs(r.fromTypes,'entityTypes','relationTypes.fromTypes'); refs(r.toTypes,'entityTypes','relationTypes.toTypes'); validateDefinitions(r.fields,'relationTypes.fields')
       return
     case 'relations': {
       shape(r,['id','revision','typeId','fromEntityId','toEntityId','source','fields'])

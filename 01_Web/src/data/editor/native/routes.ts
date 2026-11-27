@@ -14,6 +14,7 @@ import type { OfficialReader } from '../../store/officialReader.ts'
 import type { CatalogCountry } from '../rules/places.ts'
 import { convertWrite } from './convert.ts'
 import { editorViewWrite } from './editorView.ts'
+import { interestWrite } from './interests.ts'
 import { addCountryWrite, addTravelRecordWrite, deleteCountriesWrite } from './footprint.ts'
 import { addWantToGoWrite, deleteWantToGoWrite, updateWantToGoWrite } from './wantToGo.ts'
 
@@ -36,6 +37,7 @@ export interface NativeWrite {
 
 /** The store-native endpoints by `METHOD /path` (3C-5 C1 and C2: every editor endpoint but PUT /state). */
 export const NATIVE_WRITES: Readonly<Record<string, NativeWrite>> = Object.freeze({
+  'POST /__travelatlas/editor/interests': interestWrite,
   'POST /__travelatlas/editor/view': editorViewWrite,
   'POST /__travelatlas/editor/records': addTravelRecordWrite,
   'POST /__travelatlas/editor/countries': addCountryWrite,

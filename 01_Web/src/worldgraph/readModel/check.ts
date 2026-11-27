@@ -30,7 +30,7 @@ export function readReadModel(value: unknown): ReadModel {
   if (value.format !== READ_MODEL_FORMAT) reject('E_READ_MODEL_FORMAT', '$.format')
   const version = value.formatVersion
   if (typeof version === 'number' && Number.isSafeInteger(version) && version > READ_MODEL_FORMAT_VERSION) reject('E_READ_MODEL_TOO_NEW', '$.formatVersion')
-  if (version !== READ_MODEL_FORMAT_VERSION) reject('E_READ_MODEL_VERSION', '$.formatVersion')
+  if (version !== 1 && version !== READ_MODEL_FORMAT_VERSION) reject('E_READ_MODEL_VERSION', '$.formatVersion')
   shape(value, [...READ_MODEL_HEADER_KEYS, ...READ_MODEL_TABLES])
   revision(value.revision, '$.revision')
   if (!READ_MODEL_ORIGINS.includes(value.origin as ReadModelOrigin)) reject('E_READ_MODEL_ORIGIN', '$.origin')

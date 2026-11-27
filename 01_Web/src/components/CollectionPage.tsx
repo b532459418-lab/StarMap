@@ -1,6 +1,6 @@
 import { editorErrorNotice, localizedConversionReason } from '../i18n/editorErrors.ts'
 import { useLocalizedNoticeWith } from '../i18n/useLocalizedNotice'
-import { memo, useCallback, useId, useMemo, useState } from 'react'
+import { memo, useCallback, useId, useMemo, useState, type ReactNode } from 'react'
 import { Heart, Plus, Search } from 'lucide-react'
 // 收藏页首开 (I-1): the cards' icons, one element each shared by all cards (lucide's markup; 收藏页余量 A2′: its shapes in
 // fewer elements where no pixel changes). An action's label is the button's own text, without a wrapper element.
@@ -30,6 +30,9 @@ import { officialLayers, WANT_TO_GO_LAYER_ID } from '../worldgraph/layers'
 import type { ConvertToTravelTarget } from './ConvertToTravelDialog'
 
 type CollectionPageProps = {
+  modeSwitcher?: ReactNode
+  interestContent?: ReactNode
+  showingInterests?: boolean
   /** 想去图层的全部条目（App 用 queryCollection 算好，含已隐藏与无坐标）。 */
   entries: CollectionEntry[]
   /** 「在地图上查看」：只对有坐标且未隐藏的条目调用。 */
@@ -79,7 +82,9 @@ const isFromTravelLog = (entry: CollectionEntry) => entry.readOnly && entry.sour
  * 写入只走 localEditorApi（D26）；成功后整页刷新，失败把错误留在卡片里。
  */
 // 3C-5 D: memoized: with the entries held while the page is not shown, a save elsewhere does not render it again.
-export const CollectionPage = memo(function CollectionPage({ entries, onViewOnMap, onAddWantToGo, onConvertToTravel }: CollectionPageProps) {
+export const CollectionPage = memo(function CollectionPage({
+  entries, onViewOnMap, onAddWantToGo, onConvertToTravel, modeSwitcher, interestContent, showingInterests = false,
+}: CollectionPageProps) {
   const { locale } = useUiLocale()
   const { t } = useTranslation('collection')
   // 性能续 a: the cards' translations, one subscription for all of them.
@@ -170,7 +175,9 @@ export const CollectionPage = memo(function CollectionPage({ entries, onViewOnMa
   cardElements.begin()
   return (
     <div className="atlas-journey-scroll selector-scrollbar h-full overflow-y-auto overscroll-contain">
-      <div className="atlas-journey-shell mx-auto w-full max-w-7xl px-5 pb-20 sm:px-8">
+      {modeSwitcher}
+      {interestContent && <div hidden={!showingInterests}>{interestContent}</div>}
+      <div className="atlas-journey-shell mx-auto w-full max-w-7xl px-5 pb-20 sm:px-8" hidden={showingInterests}>
         <section className="journey-command-panel collection-command-panel">
           <div className="journey-command-copy">
             <p className="journey-kicker">{t('title')}</p>

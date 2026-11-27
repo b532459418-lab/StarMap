@@ -35,6 +35,7 @@ import type { LocalConvertToTravelResult } from './data/localEditorApi'
 import { getInitialLayerVisibility, rememberLayerVisibility } from './data/layerVisibility'
 import { readLayerTimeFilters, rememberLayerTimeFilters } from './data/layerTimeFilters'
 import { HoldDataWhileHidden, useBrowseProjection, useCollectionEntries, useVisiblePlaces } from './data/appStore'
+import { allInterests, type InterestPin } from './data/interest/read'
 import { PausedWhileHidden } from './components/PausedWhileHidden'
 import { resumeRendering } from './data/renderPause'
 import { includedBrowseRecordKeys, countMappedTravelRecords } from './data/derive/browseTimeProjection'
@@ -136,6 +137,9 @@ const WantToGoAddDialog = import.meta.env.DEV && localEditorAvailable
   : undefined
 const ConvertToTravelDialog = import.meta.env.DEV && localEditorAvailable
   ? lazy(() => codeOf(import('./components/ConvertToTravelDialog')).then((module) => ({ default: module.ConvertToTravelDialog })))
+  : undefined
+const InterestCollection = import.meta.env.DEV && localEditorAvailable
+  ? lazy(() => codeOf(import('./components/InterestCollection')).then((module) => ({ default: module.InterestCollection })))
   : undefined
 
 const overviewDistance = 3.25
@@ -240,6 +244,10 @@ function App() {
   const [globeDistance, setGlobeDistance] = useState(restoredGlobeDistance)
   const [globeResetVersion, setGlobeResetVersion] = useState(0)
   const [activePage, setActivePage] = useState<AtlasPage>(restoredActivePage)
+  const [interestMode, setInterestMode] = useState(false)
+  const [interestOpened, setInterestOpened] = useState(false)
+  const [interestFilters, setInterestFilters] = useState(allInterests)
+  const [interestSelection, setInterestSelection] = useState<{ id: string }>()
   // 3C-5 D (A′): another page ends a map pause of a save at once (../data/renderPause.ts).
   useEffect(() => resumeRendering('page'), [activePage])
   // 打开过的页面（第 5B 批）：按需加载的 Collection 与更新页从第一次打开起才挂载，切走后保持挂载。
@@ -663,6 +671,25 @@ function App() {
 
   // 3C-5 D: stable handlers for the memoized Collection cards.
   const stableViewOnMap = useStableCallback(viewOnMap)
+  const viewInterestOnMap = useStableCallback((pin: InterestPin) => {
+    setSelectedCountryId(undefined)
+    setSelectedCityId(undefined)
+    setSelectedWantToGoEntityId(undefined)
+    setSelectedWantToGoRecord(undefined)
+    setActiveDroneMediaCityId(undefined)
+    setActiveDroneMediaItemId(undefined)
+    setSelectionMode('overview')
+    setGlobeDistance(countryDistance)
+    viewOnMapRequestIdRef.current += 1
+    setMapFocusPlace({ entityId: 'interest-' + pin.id, lat: pin.lat, lng: pin.lng, requestId: viewOnMapRequestIdRef.current })
+    changePrimaryPage('map')
+  })
+  const openInterest = useStableCallback((pin: InterestPin) => {
+    setInterestOpened(true)
+    setInterestMode(true)
+    setInterestSelection({ id: pin.id })
+    changePrimaryPage('collection')
+  })
   const openAddWantToGo = useStableCallback(() => setIsAddWantToGoOpen(true))
 
   const selectDroneMedia = (cityId: CityId) => {
@@ -859,6 +886,8 @@ function App() {
               onSelectWantToGoPlace={selectWantToGoPlaceStable}
               onSelectDroneMediaItem={selectDroneMediaItemStable}
               focusPlace={mapFocusPlace}
+              interestFilters={InterestCollection ? interestFilters : undefined}
+              onSelectInterest={openInterest}
             />
             </ErrorBoundary>
             </HoldDataWhileHidden>
@@ -1102,11 +1131,23 @@ function App() {
             {visitedPages.has('collection') ? (
               <ErrorBoundary name="page:collection" fallback={pageNotice(t('appShell:errorPartCollection'), { onBackToMap: backToMap })}>
               <Suspense fallback={null}>
-                <CollectionPage
-                  entries={collectionEntries}
-                  onViewOnMap={stableViewOnMap}
-                  onAddWantToGo={openAddWantToGo}
-                  onConvertToTravel={setConvertTarget}
+                <CollectionPage entries={collectionEntries} onViewOnMap={stableViewOnMap}
+                  onAddWantToGo={openAddWantToGo} onConvertToTravel={setConvertTarget} showingInterests={interestMode}
+                  modeSwitcher={InterestCollection && <div className="mx-auto flex w-full max-w-7xl gap-2 px-5 pb-3 sm:px-8" role="group"
+                    aria-label={t('collection:modeLabel')}>
+                    <button className="rounded-md border border-slate-600 px-3 py-1 text-slate-100 aria-pressed:bg-sky-200 aria-pressed:text-slate-900"
+                      type="button" aria-pressed={!interestMode} onClick={() => setInterestMode(false)}>{t('collection:wishMode')}</button>
+                    <button className="rounded-md border border-slate-600 px-3 py-1 text-slate-100 aria-pressed:bg-sky-200 aria-pressed:text-slate-900"
+                      type="button" aria-pressed={interestMode} onClick={() => {
+                        setInterestOpened(true)
+                        setInterestMode(true)
+                      }}>{t('collection:interestMode')}</button>
+                  </div>}
+                  interestContent={InterestCollection && interestOpened &&
+                    <HoldDataWhileHidden visible={activePage === 'collection' && interestMode}>
+                      <InterestCollection filters={interestFilters} onFilters={setInterestFilters} onMap={viewInterestOnMap}
+                        selection={interestSelection} />
+                    </HoldDataWhileHidden>}
                 />
               </Suspense>
               </ErrorBoundary>

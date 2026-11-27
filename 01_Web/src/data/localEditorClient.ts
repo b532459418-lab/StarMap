@@ -74,6 +74,8 @@ export const addLocalCountry: LocalEditorApi['addLocalCountry'] = (...args) =>
   withApi((api) => api.addLocalCountry(...args))
 export const applyLocalViewOperations: LocalEditorApi['applyLocalViewOperations'] = (...args) =>
   withApi((api) => api.applyLocalViewOperations(...args))
+export const writeLocalInterest: LocalEditorApi['writeLocalInterest'] = (...args) =>
+  withApi((api) => api.writeLocalInterest(...args))
 export const deleteHiddenLocalMedia: LocalEditorApi['deleteHiddenLocalMedia'] = (...args) =>
   withApi((api) => api.deleteHiddenLocalMedia(...args))
 export const deleteHiddenLocalCountries: LocalEditorApi['deleteHiddenLocalCountries'] = (...args) =>

@@ -43,6 +43,8 @@ import type { LayerPlace, LayerQueryResult } from '../worldgraph/query'
 import type { EntityId } from '../worldgraph/types'
 import { resolveName } from '../worldgraph/localizedText'
 import { useUiLocale } from '../i18n/useUiLocale'
+import type { InterestFilters, InterestPin } from '../data/interest/read'
+import { InterestMapPins } from './InterestMapPins'
 import { CesiumConstellationSky } from './CesiumConstellationSky'
 import { bindCoveredMarkerUpdates } from './coveredMarkerUpdates'
 import { useStableCallback } from './useStableCallback'
@@ -109,6 +111,8 @@ type CesiumAtlasGlobeProps = {
    * 同一地点再点一次也会重新飞过去。
    */
   focusPlace?: { entityId: EntityId; lat: number; lng: number; requestId: number }
+  interestFilters?: InterestFilters
+  onSelectInterest?: (pin: InterestPin) => void
 }
 
 type CursorTrailPoint = {
@@ -888,6 +892,8 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
   onSelectWantToGoPlace,
   onSelectDroneMediaItem,
   focusPlace,
+  interestFilters,
+  onSelectInterest,
 }: CesiumAtlasGlobeProps) {
   const { locale, t } = useUiLocale()
   const { droneMediaById, droneMediaItems } = useDroneMedia()
@@ -2439,6 +2445,9 @@ export const CesiumAtlasGlobe = memo(function CesiumAtlasGlobe({
           }
           return badgeElements.element(key, props, () => <WantToGoBadgeEntity key={key} {...props} />)
         })}
+
+        {import.meta.env.DEV && interestFilters && onSelectInterest && <InterestMapPins filters={interestFilters}
+          focusedId={focusPlace?.entityId} onSelect={onSelectInterest} />}
 
         {activeDroneMediaItems.map((item, index) => {
           const isSelected = item.id === activeDroneMediaItemId

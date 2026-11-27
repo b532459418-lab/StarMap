@@ -13,7 +13,7 @@
 import type { FormalState, FormalTables } from '../store/formal.ts'
 import { reject, revision as checkRevision } from '../store/primitives.ts'
 import {
-  READ_MODEL_FORMAT, READ_MODEL_FORMAT_VERSION, READ_MODEL_ORIGINS, READ_MODEL_TABLES, compareIds,
+  READ_MODEL_FORMAT, READ_MODEL_ORIGINS, READ_MODEL_TABLES, compareIds, readModelVersion,
   type ReadModel, type ReadModelOrigin, type ReadModelRow, type ReadModelTable,
 } from './types.ts'
 
@@ -33,7 +33,7 @@ export function readModelOf(rows: ReadModelSource, header: { readonly origin: Re
     if (!Array.isArray(list)) reject('E_SHAPE', table)
     tables[table] = byId(list)
   }
-  return { format: READ_MODEL_FORMAT, formatVersion: READ_MODEL_FORMAT_VERSION, revision, origin: header.origin, ...tables } as unknown as ReadModel
+  return { format: READ_MODEL_FORMAT, formatVersion: readModelVersion(rows), revision, origin: header.origin, ...tables } as unknown as ReadModel
 }
 
 /** The formal state of a read model: its rows, no tombstones, no review receipts. */

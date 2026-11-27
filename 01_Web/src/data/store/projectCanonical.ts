@@ -334,7 +334,7 @@ function placesOf(state: FormalState, consume: Consume): Map<string, Json> {
   const parents = group(state.relations, r => (r.typeId === OFFICIAL.partOf ? r.fromEntityId : undefined))
   const locations = group(state.anchors, a => (a.kind === 'location' ? a.entityId : undefined))
   for (const entity of state.entities) {
-    if (entity.typeId !== OFFICIAL.place) continue
+    if (entity.typeId !== OFFICIAL.place || entity.fields.subtype === 'interest-point') continue
     places.set(entity.id, placeValueOf(entity))
     consume('entities', entity.id)
   }
