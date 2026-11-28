@@ -127,6 +127,7 @@ export function storeOpenMessage(code) {
  * operations (3C-5 C1) replaced PUT /state, which 3C-5 E removed.
  */
 export const STORE_WRITE_ROUTES = Object.freeze({
+  'POST /__travelatlas/editor/interests': 'starmap.editor.interests',
   'POST /__travelatlas/editor/view': 'starmap.editor.view',
   'POST /__travelatlas/editor/records': 'starmap.editor.records',
   'POST /__travelatlas/editor/countries': 'starmap.editor.countries',

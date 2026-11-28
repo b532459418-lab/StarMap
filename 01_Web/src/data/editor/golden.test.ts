@@ -77,10 +77,10 @@ for (const seed of SEQUENCE_SEEDS) {
   })
 }
 
-test('the native endpoints are the eight editor endpoints', () => {
+test('the native endpoint registry includes all nine editor endpoints', () => {
   assert.deepEqual(Object.keys(NATIVE_WRITES).sort(), [
     VIEW_ROUTE, editorRoute('wanttogo'), editorRoute('wanttogo/update'), editorRoute('wanttogo/delete'), editorRoute('records'), editorRoute('countries'),
-    editorRoute('countries/delete'), editorRoute('wanttogo/convert'),
+    editorRoute('countries/delete'), editorRoute('wanttogo/convert'), editorRoute('interests'),
   ].sort())
 })
 

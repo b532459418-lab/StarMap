@@ -127,6 +127,7 @@ export const V2_WRITE_MESSAGES = {
    */
   E_PLACE_CHOICE_REQUIRED: () => '找到可能是同一个地方的已有地点，请选择要使用的地点，或新建一个独立地点。本次尚未保存。',
   E_UNKNOWN_PLACE_REF: () => '编辑状态引用了不存在的地点，或地点类型不对，未保存。请刷新页面后重试。',
+  E_INTEREST_PLACE_IN_USE: () => '此地点仍被兴趣记录引用。请先修改对应记录的地点。',
   /**
    * 新（第 2C 批）：新的已去过记录的行程标题与已有行程相同，请求里又没有明确选择加入哪个行程或新建。
    * `params.tripTitle` 是标题，`params.candidates` 是候选行程（行程 id、标题、日期范围、城市的中英文名与总数——

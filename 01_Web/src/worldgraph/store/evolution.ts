@@ -17,6 +17,7 @@ function fieldsWiden(before: readonly FormalFieldDefinition[], after: readonly F
     const next = after.find(field => field.key === old.key)
     if (!next || next.kind !== old.kind) reject('E_SCHEMA_CHANGE', path)
     if (!old.required && next.required) reject('E_SCHEMA_CHANGE', path)
+    if (next.targetTypeId !== undefined && next.targetTypeId !== old.targetTypeId) reject('E_SCHEMA_CHANGE', path)
     if (next.min !== undefined && (old.min === undefined || next.min > old.min)) reject('E_SCHEMA_CHANGE', path)
     if (next.max !== undefined && (old.max === undefined || next.max < old.max)) reject('E_SCHEMA_CHANGE', path)
   }

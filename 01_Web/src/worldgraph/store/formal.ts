@@ -17,7 +17,10 @@ export const FORMAL_TABLES: readonly FormalTable[] = Object.freeze([
   'relationTypes', 'relations', 'anchors', 'assets', 'sequences', 'viewItems', 'viewSettings',
 ])
 /** A deprecated field keeps its stored values and stays readable; it accepts no new value. */
-export interface FormalFieldDefinition extends FieldDefinition { readonly deprecated?: true }
+export interface FormalFieldDefinition extends FieldDefinition {
+  readonly deprecated?: true
+  readonly targetTypeId?: string
+}
 export interface FormalEntityType extends Omit<EntityTypeDefinition,'fields'> { readonly fields: readonly FormalFieldDefinition[] }
 export interface FormalLayer extends Omit<LayerDefinition,'entryFields'> { readonly entryFields: readonly FormalFieldDefinition[] }
 export interface FormalRelationType extends Omit<RelationTypeDefinition,'fields'> { readonly fields: readonly FormalFieldDefinition[] }

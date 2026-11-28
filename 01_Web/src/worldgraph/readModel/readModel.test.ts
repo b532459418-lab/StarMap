@@ -66,7 +66,7 @@ test('readReadModel checks the header and the shape only, and refuses a newer fo
   const value = () => clone(model) as unknown as Record<string, unknown>
   fails(() => readReadModel(null), 'E_SHAPE', '$')
   fails(() => readReadModel({ ...value(), format: 'starmap.world-store' }), 'E_READ_MODEL_FORMAT')
-  fails(() => readReadModel({ ...value(), formatVersion: 2 }), 'E_READ_MODEL_TOO_NEW')
+  fails(() => readReadModel({ ...value(), formatVersion: 3 }), 'E_READ_MODEL_TOO_NEW')
   fails(() => readReadModel({ ...value(), formatVersion: 0 }), 'E_READ_MODEL_VERSION')
   fails(() => readReadModel({ ...value(), formatVersion: '1' }), 'E_READ_MODEL_VERSION')
   fails(() => readReadModel({ ...value(), origin: 'remote' }), 'E_READ_MODEL_ORIGIN')

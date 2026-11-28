@@ -53,14 +53,24 @@ export function referencesOf(table: FormalTable, row: FormalRow, reader: Pick<St
       else if (f.kind === 'asset_ref') add('fields.'+f.key,'assets',values[f.key])
     }
   }
+  const fieldTypes = (path: string, definitions: readonly FormalFieldDefinition[]) => {
+    for (const f of definitions) add(path+'.'+f.key+'.targetTypeId','entityTypes',f.targetTypeId)
+  }
   switch (table) {
     case 'evidence': add('sourceId','sources',(row as Evidence).sourceId); break
     case 'reviews': add('sourceId','sources',(row as ReviewReceipt).sourceId); break
-    case 'layers': for (const id of (row as FormalLayer).acceptedEntityTypes) add('acceptedEntityTypes','entityTypes',id); break
+    case 'entityTypes': fieldTypes('fields',(row as FormalEntityType).fields); break
+    case 'layers': {
+      const r = row as FormalLayer
+      for (const id of r.acceptedEntityTypes) add('acceptedEntityTypes','entityTypes',id)
+      fieldTypes('entryFields',r.entryFields)
+      break
+    }
     case 'relationTypes': {
       const r = row as FormalRelationType
       for (const id of r.fromTypes) add('fromTypes','entityTypes',id)
       for (const id of r.toTypes) add('toTypes','entityTypes',id)
+      fieldTypes('fields',r.fields)
       break
     }
     case 'entities': {

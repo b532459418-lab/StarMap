@@ -17,7 +17,7 @@
 import { FORMAL_TABLES, type FormalTable, type FormalTables } from '../store/formal.ts'
 
 export const READ_MODEL_FORMAT = 'starmap.read-model'
-export const READ_MODEL_FORMAT_VERSION = 1
+export const READ_MODEL_FORMAT_VERSION = 2
 export type ReadModelOrigin = 'local' | 'sample'
 export const READ_MODEL_ORIGINS: readonly ReadModelOrigin[] = Object.freeze(['local', 'sample'])
 
@@ -33,11 +33,19 @@ export type ReadModelRow<T extends ReadModelTable = ReadModelTable> = ReadModelT
 
 export interface ReadModelHeader {
   readonly format: typeof READ_MODEL_FORMAT
-  readonly formatVersion: typeof READ_MODEL_FORMAT_VERSION
+  readonly formatVersion: 1 | typeof READ_MODEL_FORMAT_VERSION
   readonly revision: number
   readonly origin: ReadModelOrigin
 }
 export interface ReadModel extends ReadModelHeader, ReadModelTables {}
+
+/** Typed references require v2. Export unchanged schemas in their original format. */
+export function readModelVersion(tables: Pick<ReadModelTables, 'layers' | 'entityTypes' | 'relationTypes'>): ReadModelHeader['formatVersion'] {
+  const typed = (field: { readonly targetTypeId?: string }) => field.targetTypeId !== undefined
+  return tables.layers.some((layer) => layer.entryFields.some(typed))
+    || tables.entityTypes.some((type) => type.fields.some(typed))
+    || tables.relationTypes.some((type) => type.fields.some(typed)) ? 2 : 1
+}
 
 export const READ_MODEL_HEADER_KEYS: readonly (keyof ReadModelHeader)[] = Object.freeze(['format', 'formatVersion', 'revision', 'origin'])
 

@@ -29,6 +29,7 @@ import { PERSONAL_BUILD_CLEARED_SCOPES, filterReadModelForPersonalBuild, mediaFi
 import { officialViewOf } from '../src/data/store/projectCanonical.ts'
 import { integrityProblems } from '../src/data/compat/v2/v2Integrity.ts'
 import { formalStateOfReadModel, readModelOf } from '../src/worldgraph/readModel/build.ts'
+import { READ_MODEL_FORMAT_VERSION } from '../src/worldgraph/readModel/types.ts'
 import { validateReadModel } from '../src/worldgraph/readModel/check.ts'
 import { emptyFormalState } from '../src/worldgraph/store/formal.ts'
 import { applyChangeSet, planCommands } from '../src/worldgraph/store/planner.ts'
@@ -189,7 +190,7 @@ test('3. the filtered read model passes the full check, its V2 view the V2 check
 test('3b. something that is not a read model is refused instead of being written unfiltered; an empty library comes back as it was', () => {
   const model = readModelOfFiles(hiddenContentFixture())
   assert.throws(() => filterReadModelForPersonalBuild({ ...model, format: 'starmap.v2' }), { code: 'E_READ_MODEL_FORMAT' })
-  assert.throws(() => filterReadModelForPersonalBuild({ ...model, formatVersion: 2 }), { code: 'E_READ_MODEL_TOO_NEW' })
+  assert.throws(() => filterReadModelForPersonalBuild({ ...model, formatVersion: READ_MODEL_FORMAT_VERSION + 1 }), { code: 'E_READ_MODEL_TOO_NEW' })
   assert.throws(() => filterReadModelForPersonalBuild(undefined), { code: 'E_SHAPE' })
   const empty = readModelOf(emptyFormalState(), { origin: 'local' })
   const filtered = filterReadModelForPersonalBuild(empty)

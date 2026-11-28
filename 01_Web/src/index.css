@@ -3046,6 +3046,11 @@ button {
     visibility 0s linear;
 }
 
+.atlas-experience[data-page='collection'] .atlas-collection-stage {
+  /* Keep scrolled collection actions above the fixed map dock. */
+  bottom: 72px;
+}
+
 .atlas-journey-scroll {
   position: relative;
   padding-top: 214px;

@@ -1,0 +1,50 @@
+.interest-shell { max-width: 80rem; margin: auto; padding: clamp(1rem, 3vw, 2rem) clamp(1rem, 3vw, 2rem) 5rem; color: #e6edf6; }
+.interest-shell h2, .interest-shell h3 { color: #f8fafc; margin: 0; font-weight: 650; }
+.interest-shell h2 { font-size: clamp(1.6rem, 4vw, 2.4rem); }
+.interest-shell h3 { font-size: 1.1rem; overflow-wrap: anywhere; }
+.interest-shell p { color: #b4c4d7; margin: .4rem 0; }
+.interest-shell button, .interest-shell a {
+  padding: .42rem .68rem; border-radius: .46rem; border: 1px solid #465a71; color: #dbeafe; background: #17283d;
+  line-height: 1.25; min-height: 2.15rem;
+}
+.interest-shell .interest-primary { color: #0f2234; background: #a9d9f1; border-color: #a9d9f1; font-weight: 650; }
+.interest-shell button:disabled { opacity: .5; }
+.interest-header { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; justify-content: space-between; margin-bottom: 1.1rem; }
+.interest-toolbar, .interest-actions { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; }
+.interest-toolbar { margin-bottom: .85rem; }
+.interest-toolbar label { flex: 0 1 13rem; min-width: min(100%, 6.25rem); }
+.interest-filters { padding-block: .75rem; border-block: 1px solid #3c4f66; }
+.interest-shell label { display: grid; gap: .32rem; color: #c3d2e3; font-size: .86rem; min-width: 0; }
+.interest-shell input, .interest-shell textarea, .interest-shell select {
+  width: 100%; min-height: 2.2rem; min-width: 0; color: #edf5fc; color-scheme: dark; background: #101b2d;
+  border: 1px solid #4b627a; border-radius: .4rem; padding: .38rem .55rem; font: inherit;
+}
+.interest-shell textarea { min-height: 4.4rem; }
+.interest-shell :is(button, a, input, select, textarea, summary):focus-visible { outline: 2px solid #99cff4; outline-offset: 2px; }
+.interest-editor, .interest-card { background: #152338; border: 1px solid #3a4e65; border-radius: .7rem; padding: .95rem; }
+.interest-editor { display: grid; gap: .65rem; margin-bottom: .9rem; }
+.interest-editor form > fieldset { margin: .6rem 0 .85rem; border-top: 1px solid #435a72; padding-block: .4rem; }
+.interest-editor legend { padding-right: .5rem; font-weight: 600; }
+.interest-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(10.5rem, 100%), 1fr)); gap: .7rem; }
+.interest-form-grid .interest-full, .interest-place-field { grid-column: 1 / -1; }
+.interest-coordinates { margin-top: .5rem; }
+.interest-preview { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: .5rem; }
+.interest-preview p { grid-column: 1 / -1; }
+.interest-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); gap: .8rem; }
+.interest-list { display: grid; gap: .55rem; }
+.interest-card-layer { display: inline-block; color: #8fd3ee; font-size: .8rem; margin-bottom: .4rem; }
+.interest-card details { margin: .6rem 0; color: #c1d6eb; font-size: .9rem; }
+.interest-card summary { cursor: pointer; }
+.interest-card dl { display: grid; gap: .22rem; padding-block: .45rem; }
+.interest-card dl div { display: grid; grid-template-columns: minmax(5rem, 32%) 1fr; gap: .5rem; }
+.interest-card dd, .interest-note { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.interest-card a { text-decoration: underline; }
+.interest-notice { padding: .7rem; border: 1px solid #54738f; border-radius: .45rem; margin-bottom: .8rem; }
+.interest-notice[role="alert"] { color: #ffcfbd; border-color: #9e6150; }
+.interest-notice li { margin-top: .4rem; }
+.interest-empty { padding-block: 1rem; }
+
+@media (max-width: 640px) {
+  .interest-toolbar label { flex: 1 1 8rem; }
+  .interest-shell input, .interest-shell select, .interest-shell textarea { font-size: 1rem; }
+}

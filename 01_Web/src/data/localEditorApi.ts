@@ -414,3 +414,7 @@ export const convertLocalWantToGoToTravel = (input: LocalConvertToTravelInput, o
 
 /** 定义在 ./localEditorCoordination.ts（第 5B 批）：组件经 ./localEditorClient.ts 同步调用它，不必先加载本模块。 */
 export { reloadAfterLocalSave } from './localEditorCoordination.ts'
+
+export const writeLocalInterest = (input: import('./interest/templates.ts').InterestWrite, options?: EditorWriteOptions) =>
+  editorWrite('/__travelatlas/editor/interests', 'POST', input,
+    parseResponse<import('./interest/templates.ts').InterestWriteResult>, { ...options, retryStale: false })

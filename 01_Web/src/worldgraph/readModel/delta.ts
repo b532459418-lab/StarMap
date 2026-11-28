@@ -13,7 +13,7 @@
  */
 import type { ChangeSet } from '../store/planner.ts'
 import { reject } from '../store/primitives.ts'
-import { READ_MODEL_TABLES, compareIds, type ReadModel, type ReadModelRow, type ReadModelTable } from './types.ts'
+import { READ_MODEL_TABLES, compareIds, readModelVersion, type ReadModel, type ReadModelRow, type ReadModelTable } from './types.ts'
 
 const isReadModelTable = (table: string): table is ReadModelTable => (READ_MODEL_TABLES as readonly string[]).includes(table)
 
@@ -55,6 +55,9 @@ export function applyReadModelDelta(model: ReadModel, changeSet: Pick<ChangeSet,
       else merged.push(added[j++])
     }
     next[table] = merged
+  }
+  if (touched.has('layers') || touched.has('entityTypes') || touched.has('relationTypes')) {
+    next.formatVersion = readModelVersion(next as unknown as ReadModel)
   }
   return next as unknown as ReadModel
 }

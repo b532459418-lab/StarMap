@@ -158,7 +158,7 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
     if (places.has(id)) return places.get(id)
     const entity = index.get('entities', id) as StoreEntity | undefined
     let value: CanonicalPlace | undefined
-    if (entity?.typeId === OFFICIAL.place) {
+    if (entity?.typeId === OFFICIAL.place && entity.fields.subtype !== 'interest-point') {
       const built = placeValueOf(entity) as Record<string, unknown>
       // The projection's part-of: the first part-of relation (by id) to a place; its location: the first location anchor.
       const parent = index.relationsFrom(id, OFFICIAL.partOf).find((relation) => isPlaceEntity(relation.toEntityId))
@@ -359,7 +359,8 @@ export function officialReader(index: OfficialReaderIndex): OfficialReader {
       return subtype === 'country' || subtype === 'city' ? subtype : undefined
     },
     places() {
-      placeList ??= Object.freeze(inOfficialOrder(index.entitiesOfType(OFFICIAL.place).map((entity) => entity.id)))
+      placeList ??= Object.freeze(inOfficialOrder(index.entitiesOfType(OFFICIAL.place)
+        .filter((entity) => entity.fields.subtype !== 'interest-point').map((entity) => entity.id)))
       return placeList
     },
     countries() {
