@@ -29,6 +29,8 @@
     "store:restore": "node scripts/store-backup.mjs restore",
     "store:export-v2": "node scripts/compat/store-export-v2.mjs",
     "store:export-read-model": "node scripts/store-read-model.mjs",
+    "store:export-exchange": "node scripts/store-exchange.mjs export",
+    "store:import-exchange": "node scripts/store-exchange.mjs import",
     "sample:build": "node scripts/public-sample.mjs",
     "store:upgrade": "node scripts/store-upgrade.mjs",
     "media:check": "node scripts/import-media.mjs",

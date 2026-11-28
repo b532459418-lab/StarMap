@@ -198,6 +198,10 @@ A trip title alone never joins an existing journey. A new visited record from `P
 
 City details also offer **Mark as Want to Go** for the current city. This shortcut posts its existing `placeId` through the same loopback editor and write coordinator; it never resolves the selected city again by its display name or changes its travel records. Existing entries, including hidden entries, disable the add button. Hidden entries can be restored in Collection. Public and forced-sample views render no shortcut. An ambiguous or unknown write outcome locks retry until the user reloads and verifies the list.
 
+## Portable data exchange
+
+Use `store:export-exchange` and `store:import-exchange` for transfers between private libraries. The exchange package contains the Core graph and its referenced local media. Import previews changes before `--apply`, and selected copies can contain just the entries or layers you choose. See the [R15 exchange contract and commands](../docs/data-exchange.md).
+
 ## Whole-library backup and recovery
 
 An offline directory-snapshot tool preserves a root's V2 files, source index, Inbox originals/sidecars and local media (take it before `npm run store:migrate -- --apply`; on a root with a new library it uses `store:backup`). `npm run backup -- create --root <explicit-private-root> --out <fresh-backup-directory>` creates a checked snapshot; `inspect --from <backup-directory>` validates it. `restore --from <backup-directory> --to <fresh-private-root>` previews recovery, and `--apply` creates that new directory. Existing directories are always refused and activation is manual, leaving the previous root available for rollback. Use separate private storage and stop personal previews/importers before creation. Configuration and credentials are excluded. See [scope, commands, validation and limitations](../docs/local-backup.md).

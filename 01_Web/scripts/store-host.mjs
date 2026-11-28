@@ -22,6 +22,7 @@ import {
   StoreHostError, closeQuietly, openConnection, pragmaValue, scratchConnection, sqliteDetail, storeErrorFrom, transactionState,
 } from './store-sqlite.mjs'
 import { FORMAL_TABLES, readFormalState as readFormalStateCore } from '../src/worldgraph/store/formal.ts'
+import { planExchange } from '../src/worldgraph/store/exchange.ts'
 import { memoryReader, refKey, referencesOf } from '../src/worldgraph/store/reader.ts'
 import { planCommands } from '../src/worldgraph/store/planner.ts'
 import { readModelOf } from '../src/worldgraph/readModel/build.ts'
@@ -622,6 +623,19 @@ function applyRequest(db, request, digest, at, settings, phase) {
   // caller that keeps a read model up to date (applyReadModelDelta). Never stored: the receipt stays as it was.
   const changes = { baseRevision: changeSet.baseRevision, nextRevision: changeSet.nextRevision, upserts: changeSet.upserts, deletes: changeSet.deletes }
   return { receipt: deepFreeze(receipt), changes: deepFreeze(changes) }
+}
+
+function applyExchange(db, { graph, media, requestId, baseRevision }, settings, at) {
+  if (currentRevision(db) !== baseRevision) fail('E_STALE', { path: 'exchange.baseRevision' })
+  const changes = core(() => planExchange(formalStateValue(db), graph, settings.policy), 'not_committed')
+  executeChangeSet(db, changes, () => {})
+  const sql = writeStatements(db)
+  if (changes.nextRevision !== baseRevision && sql.revision.run(changes.nextRevision, baseRevision).changes !== 1) inconsistent('store_meta')
+  applyMediaBlock(db, validMediaBlock(media), { requestId, at })
+  checkWrittenAssets(db, changes.upserts)
+  const result = { revision: changes.nextRevision, added: changes.upserts.length, unchanged: changes.unchanged, tombstones: changes.tombstones.length }
+  if (result.revision !== baseRevision) sql.opLogAdd.run(requestId, at, 'store:import-exchange', 'store.exchange', JSON.stringify(result))
+  return result
 }
 
 /** A failure with what happened to the request: confirmed not committed, or unknown. */
@@ -1273,6 +1287,13 @@ function makeHandle({ db, file, settings, diagnostic, writable, library, timings
       const digest = requestDigest(valid)
       return enqueue(() => runCommit(valid, digest, leaseToken))
     },
+    /** Import a validated exchange graph under the caller's library lease. */
+    async importExchange(exchange, options) {
+      writer()
+      const leaseToken = writeOptions(options)
+      core(() => uuid(exchange.requestId, 'requestId'), 'not_committed')
+      return enqueue(() => smallWrite((connection) => applyExchange(connection, exchange, settings, hostTime(settings)), leaseToken))
+    },
     /** The original receipt of a committed request: { found: true, receipt } or { found: false }. */
     lookup(requestId) {
       core(() => uuid(requestId, 'requestId'))
@@ -1410,6 +1431,10 @@ export async function createStore(file, options = {}) {
   const settings = hostOptions(options)
   core(() => uuid(options.libraryId, 'libraryId'), 'not_committed')
   const initial = options.initial === undefined ? undefined : validRequest({ kind: 'store.create', ...options.initial, baseRevision: 0 })
+  const exchange = options.exchange
+  if (exchange !== undefined) {
+    core(() => uuid(exchange.requestId, 'requestId'), 'not_committed')
+  }
   const library = resolveLibrary(options)
   // Creation takes the library lease (it makes a new file under the private root).
   return library.lease(() => {
@@ -1434,6 +1459,7 @@ export async function createStore(file, options = {}) {
         .run(STORE_FORMAT, STORE_FORMAT_VERSION, options.libraryId, createdAt)
       db.prepare('INSERT INTO store_definitions (singleton, version) VALUES (1, ?)').run(settings.definitionsVersion)
       if (initial) applyRequest(db, initial, requestDigest(initial), createdAt, settings, () => {})
+      if (exchange) applyExchange(db, { ...exchange, baseRevision: currentRevision(db) }, settings, createdAt)
       db.exec('COMMIT')
     } catch (error) {
       if (db && transactionState(db) === true) { try { db.exec('ROLLBACK') } catch { /* Closing releases it. */ } }
