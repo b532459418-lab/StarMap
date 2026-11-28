@@ -25,6 +25,14 @@
 .interest-editor { display: grid; gap: .65rem; margin-bottom: .9rem; }
 .interest-editor form > fieldset { margin: .6rem 0 .85rem; border-top: 1px solid #435a72; padding-block: .4rem; }
 .interest-editor legend { padding-right: .5rem; font-weight: 600; }
+.interest-layer-order { max-width: 32rem; }
+.interest-layer-order ol { display: grid; gap: .3rem; margin: .5rem 0; }
+.interest-layer-order li {
+  display: flex; align-items: center; gap: .35rem; padding: .35rem .5rem;
+  border: 1px solid #3a4e65; border-radius: .45rem; cursor: grab;
+}
+.interest-layer-order li[data-dragging="true"] { opacity: .5; }
+.interest-layer-order li span { flex: 1; overflow-wrap: anywhere; }
 .interest-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(10.5rem, 100%), 1fr)); gap: .7rem; }
 .interest-form-grid .interest-full, .interest-place-field { grid-column: 1 / -1; }
 .interest-coordinates { margin-top: .5rem; }

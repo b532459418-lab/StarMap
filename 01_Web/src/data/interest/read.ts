@@ -1,8 +1,8 @@
 import type { ReadModel } from '../../worldgraph/readModel/types.ts'
 import type { FormalLayer } from '../../worldgraph/store/formal.ts'
-import type { LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
+import type { JsonValue, LayerEntry, StoreEntity } from '../../worldgraph/store/types.ts'
 import { OFFICIAL, VIEW_SCOPES } from '../store/officialDefinitions.ts'
-import { interestHiddenScope, interestKindOf, interestTemplates, isInterestLayer, type InterestKind } from './templates.ts'
+import { interestHiddenScope, interestKindOf, interestLayerOrder, interestTemplates, isInterestLayer, type InterestKind } from './templates.ts'
 
 export type InterestPlace = {
   readonly entity: StoreEntity
@@ -34,8 +34,24 @@ export const fieldText = (row: { readonly fields: StoreEntity['fields'] }, key: 
   return typeof value === 'string' ? value : ''
 }
 
+export function orderedInterestLayers(rows: readonly FormalLayer[], saved: JsonValue | undefined): FormalLayer[] {
+  const layers = rows.filter((layer) => isInterestLayer(layer.id) && interestKindOf(layer.acceptedEntityTypes[0]))
+  if (!Array.isArray(saved)) return layers
+  const byId = new Map(layers.map((layer) => [layer.id, layer]))
+  const ordered: FormalLayer[] = []
+  for (const id of saved) {
+    if (typeof id !== 'string') continue
+    const layer = byId.get(id)
+    if (!layer) continue
+    ordered.push(layer)
+    byId.delete(id)
+  }
+  return [...ordered, ...byId.values()]
+}
+
 export function readInterests(model: ReadModel) {
-  const layers = model.layers.filter((layer) => isInterestLayer(layer.id) && interestKindOf(layer.acceptedEntityTypes[0]))
+  const order = model.viewSettings.find((row) => row.scope === interestLayerOrder.scope && row.key === interestLayerOrder.key)
+  const layers = orderedInterestLayers(model.layers, order?.value)
   const layerById = new Map(layers.map((layer) => [layer.id, layer]))
   const entities = model.entities.filter((entity) => interestKindOf(entity.typeId))
   const entityById = new Map(entities.map((entity) => [entity.id, entity]))

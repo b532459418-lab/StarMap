@@ -3,13 +3,14 @@ import { positionBetween } from '../../../worldgraph/store/position.ts'
 import type { FormalLayer } from '../../../worldgraph/store/formal.ts'
 import type { JsonValue, LayerEntry, StoreEntity } from '../../../worldgraph/store/types.ts'
 import {
-  commonFields, defaultLayerId, interestEntityDefinition, interestHiddenScope, interestKindOf, interestLayerDefinition,
+  commonFields, defaultLayerId, interestEntityDefinition, interestHiddenScope, interestKindOf, interestLayerDefinition, interestLayerOrder,
   interestPlaceSubtype, interestPrefix, interestTemplates, interestTypeId, isInterestKind, isInterestLayer, wikidataItemId,
   wikidataSource, type InterestKind, type InterestWriteResult,
 } from '../../interest/templates.ts'
+import { orderedInterestLayers } from '../../interest/read.ts'
 import { OFFICIAL } from '../../store/officialDefinitions.ts'
 import type { OfficialReader } from '../../store/officialReader.ts'
-import { sourceRef, viewItemRow } from '../../store/v2RecordRows.ts'
+import { sourceRef, viewItemRow, viewSettingRow } from '../../store/v2RecordRows.ts'
 import { fail } from '../errors.ts'
 import { commandBatch, viewRowId } from './batch.ts'
 import { referencesOf, userSource } from './places.ts'
@@ -157,6 +158,20 @@ function planWrite(reader: OfficialReader, value: unknown, ctx: NativeWriteConte
       const row = current(request.layer, layer)
       if (!isInterestLayer(row.id)) return invalid('layer')
       batch.update('layers', row, { ...row, title: names(required(request.name, 'name', 80)) })
+      return finish({ id: row.id })
+    }
+    case 'order-layers': {
+      const { scope, key } = interestLayerOrder
+      const setting = reader.viewSetting(scope, key)
+      const currentIds = orderedInterestLayers(reader.index.model.layers, setting?.value).map(({ id }) => id)
+      const { baseline, ids } = request
+      if (!Array.isArray(baseline) || JSON.stringify(baseline) !== JSON.stringify(currentIds)) return fail('E_STALE')
+      const allowed = new Set(currentIds)
+      if (!Array.isArray(ids) || ids.length !== allowed.size || new Set(ids).size !== allowed.size
+        || ids.some((id) => typeof id !== 'string' || !allowed.has(id))) return invalid('layers')
+      const row = viewSettingRow(scope, setting?.id ?? viewRowId(scope, ctx.newId), key, { value: ids })
+      if (setting) batch.update('viewSettings', setting, row)
+      else batch.create('viewSettings', row)
       return finish({ id: row.id })
     }
     case 'add': {
