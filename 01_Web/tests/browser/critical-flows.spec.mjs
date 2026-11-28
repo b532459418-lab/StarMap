@@ -366,8 +366,9 @@ test.describe("Collection's code", () => {
     fail = false
     await nav.getByRole('button', { name: 'Collection', exact: true }).click()
     await expect(notice).toBeVisible()
-    await Promise.all([page.waitForEvent('load'), notice.getByRole('button', { name: 'Reload page', exact: true }).click()])
+    await notice.getByRole('button', { name: 'Reload page', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Places you want to go', exact: true })).toBeVisible()
+    expect(await page.evaluate(() => performance.getEntriesByType('navigation')[0]?.type)).toBe('reload')
     await expect(page.locator('[data-error-boundary]')).toHaveCount(0)
   })
 })

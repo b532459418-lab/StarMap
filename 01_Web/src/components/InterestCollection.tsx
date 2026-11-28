@@ -256,6 +256,70 @@ function InterestCard({ record, tr, onMap, onEditObject, onEditActivity, onAdd, 
   </article>
 }
 
+function InterestLayerOrder({ layers, zh, tr, busy, onSave }: {
+  layers: Data['layers']
+  zh: boolean
+  tr: Translate
+  busy: boolean
+  onSave: (ids: readonly string[], baseline: readonly string[]) => void
+}) {
+  const baseline = layers.map(({ id }) => id)
+  const [ids, setIds] = useState(() => baseline)
+  const [draggedId, setDraggedId] = useState<string>()
+  const changed = ids.some((id, index) => id !== baseline[index])
+  const layerById = new Map(layers.map((layer) => [layer.id, layer]))
+  const move = (id: string, to: number) => {
+    setIds((current) => {
+      const from = current.indexOf(id)
+      if (from < 0 || from === to || to < 0 || to >= current.length) return current
+      const next = [...current]
+      next.splice(from, 1)
+      next.splice(to, 0, id)
+      return next
+    })
+  }
+
+  return <fieldset className="interest-layer-order">
+    <legend>{tr('图层顺序', 'Layer order')}</legend>
+    <ol aria-label={tr('图层顺序', 'Layer order')}>
+      {ids.map((id, index) => {
+        const layer = layerById.get(id)
+        if (!layer) return null
+        const name = interestTitle(layer, zh)
+        return <li key={id} draggable={!busy} data-dragging={draggedId === id}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = 'move'
+            event.dataTransfer.setData('text/plain', id)
+            setDraggedId(id)
+          }}
+          onDragOver={(event) => {
+            if (!draggedId || busy) return
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'move'
+          }}
+          onDrop={(event) => {
+            if (!draggedId || busy) return
+            event.preventDefault()
+            move(draggedId, index)
+            setDraggedId(undefined)
+          }}
+          onDragEnd={() => setDraggedId(undefined)}>
+          <span>{name}</span>
+          <button type="button" aria-label={tr('上移 ' + name, 'Move ' + name + ' up')} disabled={busy || index === 0}
+            onClick={() => move(id, index - 1)}>↑</button>
+          <button type="button" aria-label={tr('下移 ' + name, 'Move ' + name + ' down')} disabled={busy || index === ids.length - 1}
+            onClick={() => move(id, index + 1)}>↓</button>
+        </li>
+      })}
+    </ol>
+    <div className="interest-actions">
+      <button type="button" className="interest-primary" disabled={busy || !changed}
+        onClick={() => onSave(ids, baseline)}>{tr('保存图层顺序', 'Save layer order')}</button>
+      {changed && <button type="button" disabled={busy} onClick={() => setIds(baseline)}>{tr('取消排序', 'Cancel reordering')}</button>}
+    </div>
+  </fieldset>
+}
+
 export function InterestCollection({ filters, onFilters, onMap, selection }: {
   filters: InterestFilters; onFilters: (filters: InterestFilters) => void; onMap: (pin: InterestPin) => void
   selection?: { id: string }
@@ -397,6 +461,9 @@ export function InterestCollection({ filters, onFilters, onMap, selection }: {
           <label>{tr('当前图层名称', 'Selected layer name')}<input name="name" defaultValue={interestTitle(selectedLayer, zh)} required maxLength={80} /></label>
           <button type="submit" disabled={busy}>{tr('重命名图层', 'Rename layer')}</button>
         </form>}
+        {data.layers.length > 1 && <InterestLayerOrder key={JSON.stringify(data.layers.map(({ id }) => id))}
+          layers={data.layers} zh={zh} tr={tr} busy={busy}
+          onSave={(ids, baseline) => { void request({ op: 'order-layers', ids, baseline }) }} />}
         {locationOptions.filter(({ entity }) => entity.fields.subtype === interestPlaceSubtype).map(({ entity }) => <div key={entity.id} className="interest-actions">
           <span>{seenTitle(entity, tr)}</span>
           <button type="button" disabled={busy} onClick={() => {

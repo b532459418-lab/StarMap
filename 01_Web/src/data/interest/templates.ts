@@ -8,6 +8,7 @@ export type DetailField = { readonly key: string; readonly label: LocalLabel; re
 
 export const interestPrefix = 'starmap:interest:'
 export const interestHiddenScope = 'starmap:interest.hidden'
+export const interestLayerOrder = { scope: 'starmap:interest.layers', key: 'order' } as const
 export const interestPlaceSubtype = 'interest-point'
 export const wikidataSource = 'starmap:interest.wikidata'
 
@@ -114,6 +115,7 @@ export type InterestWrite =
   | { op: 'remove-object'; entity: RowVersion }
   | { op: 'create-layer'; kind: InterestKind; name: string }
   | { op: 'rename-layer'; layer: RowVersion; name: string }
+  | { op: 'order-layers'; ids: readonly string[]; baseline: readonly string[] }
   | { op: 'remove-place'; place: RowVersion }
 export type InterestWriteResult = {
   id: string

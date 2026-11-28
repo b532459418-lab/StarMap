@@ -1,5 +1,6 @@
 import { test, expect, openMap, openCollection } from './helpers.mjs'
 import { createBrowserFixture } from '../../scripts/browser-fixture.mjs'
+import { defaultLayerId } from '../../src/data/interest/templates.ts'
 
 const claim = (value) => ({ rank: 'normal', mainsnak: { datavalue: { value } } })
 const item = (id, label, claims = {}) => ({ id, labels: { en: { value: label } }, claims })
@@ -102,6 +103,53 @@ test('three interests share preview, save, filtering and the map in the personal
   await expect(page.locator('#interest-' + race.id)).toContainText('03:58:12')
   await page.getByRole('button', { name: 'Want to Go', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Places you want to go', exact: true })).toBeVisible()
+})
+
+test('interest layer drag order survives reopening with the same memberships', async ({ page }) => {
+  const samples = [
+    { kind: 'food', layer: 'Food & places', title: sampleEntities.Q2263744.labels.en.value },
+    { kind: 'movie', layer: 'Film & TV', title: sampleEntities.Q155653.labels.en.value },
+    { kind: 'race', layer: 'Marathons', title: sampleEntities.Q132858911.labels.en.value },
+  ].map((sample) => ({ ...sample, layerId: defaultLayerId(sample.kind) }))
+  const openInterests = async (tab) => {
+    await openMap(tab)
+    await openCollection(tab)
+    await tab.getByRole('button', { name: 'Interests', exact: true }).click()
+    await expect(tab.getByRole('heading', { name: 'Interest collection', exact: true })).toBeVisible()
+  }
+  await openInterests(page)
+  await page.evaluate(async (rows) => {
+    const { writeLocalInterest } = await import('/src/data/localEditorClient.ts')
+    for (const { kind, layerId, title } of rows) {
+      await writeLocalInterest({ op: 'add', kind, layerId, object: { title, details: {} }, activity: { status: 'done' } })
+    }
+  }, samples)
+
+  await page.getByRole('button', { name: 'Manage layers and places' }).click()
+  const order = page.getByRole('list', { name: 'Layer order', exact: true })
+  const rows = order.getByRole('listitem')
+  const names = rows.locator('span')
+  const before = samples.map(({ layer }) => layer)
+  const after = [before[2], before[0], before[1]]
+  await expect(names).toHaveText(before)
+  await rows.last().dragTo(rows.first())
+  await expect(names).toHaveText(after)
+  await page.getByRole('button', { name: 'Save layer order', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: 'Layer', exact: true }).locator('option:not([value=""])')).toHaveText(after)
+
+  const reopened = await page.context().newPage()
+  await page.close()
+  try {
+    await openInterests(reopened)
+    const layers = reopened.getByRole('combobox', { name: 'Layer', exact: true })
+    await expect(layers.locator('option:not([value=""])')).toHaveText(after)
+    for (const { layerId, title } of samples) {
+      await layers.selectOption(layerId)
+      await expect(reopened.locator('.interest-card h3')).toHaveText([title])
+    }
+  } finally {
+    await reopened.close()
+  }
 })
 
 async function openCollectionFromMap(page) {
